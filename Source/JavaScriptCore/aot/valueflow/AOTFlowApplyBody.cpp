@@ -10,6 +10,7 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAnalysisContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTRepresentation.h"
@@ -671,7 +672,9 @@ static bool tryExpectInPlaceOfChecking(const Program& program, Function& functio
     Type returned = function.at(terminator.callOperand()).opcode == Opcode::Call ? Type::anything() : typing.typeOf(terminator.callOperand());
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts()) {
-        if (isCheck(cast)) {
+        // A cast that does nothing may rest on a test in front of it.
+        bool restsOnTest = cast.resolution == CastResolution::Nothing && !returned.isSubsetOf(typing.typeOf(cast.declared), program);
+        if (isCheck(cast) || restsOnTest) {
             cast.resolution = CastResolution::Nothing;
             cast.declared.flags.add(PositionFlags::IsExpected);
         }
@@ -772,6 +775,23 @@ static uint64_t countChecks(const Function& function)
     return numberOfChecks;
 }
 
+// The front end writes the read of a locked member as a constant.
+static void initializeMembersOfListedHolders(const FlowCastInsertion& insertion)
+{
+    const Function& function = insertion.body.function;
+    const BuiltinTable& builtins = insertion.body.program.builtins();
+    for (uint32_t index = 0; index < function.values.size(); ++index) {
+        const Value& constant = function.values[index];
+        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, insertion.body.results, constant.builtin()))
+            continue;
+        const UseLists& useLists = insertion.analyses.useLists();
+        if (useLists.locationOf(ValueID(index)).placement != ValuePlacement::InBlock)
+            continue;
+        insertion.builder.setOrigin(constant.origin());
+        insertion.builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, insertion.body.results, constant));
+    }
+}
+
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
@@ -800,6 +820,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
         return constant;
     });
     replaceDefinedValues(insertion, update);
+    initializeMembersOfListedHolders(insertion);
     builder.applyInsertions();
 
     TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build };

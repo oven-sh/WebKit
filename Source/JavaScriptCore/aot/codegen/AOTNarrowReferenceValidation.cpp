@@ -104,6 +104,8 @@ private:
         bool hasSafepoint { false };
         unsigned walkedAt { 0 };
         unsigned changedAt { 0 };
+        unsigned numberOfPredecessorsReported { 0 };
+        B3::BasicBlock* lastPredecessorReported { nullptr };
     };
 
     void analyze()
@@ -139,8 +141,20 @@ private:
         for (B3::BasicBlock* block : postOrder) {
             if (!needsFixedPoint || !m_insertsGuards || m_blockStates[block].hasSafepoint)
                 walk(block, Reports::Yes);
+            // What is live at the head of a block is read by its predecessors alone.
+            for (B3::BasicBlock* successor : block->successorBlocks()) {
+                BlockState& state = m_blockStates[successor];
+                if (std::exchange(state.lastPredecessorReported, block) != block && ++state.numberOfPredecessorsReported == successor->numPredecessors())
+                    forgetHead(successor);
+            }
         }
         m_findings.numberOfReferencesAcrossSafepoints += m_wordsAcrossSafepoints.bitCount();
+    }
+
+    void forgetHead(B3::BasicBlock* block)
+    {
+        m_wordsAtHead[block] = { };
+        m_pointersAtHead[block] = { };
     }
 
     bool needsWalk(B3::BasicBlock* block) const
@@ -349,7 +363,7 @@ private:
         for (B3::BasicBlock* block : m_proc) {
             for (unsigned index = 0; index < block->size(); ++index) {
                 B3::Value* word = block->at(index);
-                if (!m_unprotectedWords.contains(word) || m_displacedWords.contains(word) || isDropped(word))
+                if (!isWord(word) || !m_unprotectedWords.get(factsOf(word).wordNumber) || m_displacedWords.contains(word) || isDropped(word))
                     continue;
                 if (isShift(word, B3::ZShr)) {
                     m_pointerBeside.add(word, word->child(0));
@@ -706,11 +720,11 @@ private:
     {
         auto* patchpoint = safepoint->as<B3::PatchpointValue>();
         bool isSuspension = savesFrame(safepoint);
-        for (size_t number : words) {
+        m_wordsAcrossSafepoints.merge(words);
+        m_wordsToCheck = words;
+        m_wordsToCheck.exclude(m_unprotectedWords);
+        for (size_t number : m_wordsToCheck) {
             B3::Value* word = m_words[number];
-            m_wordsAcrossSafepoints.set(number);
-            if (m_insertsGuards && m_unprotectedWords.contains(word))
-                continue;
             bool isProtected = false;
             if (!isSuspension) {
                 for (unsigned pointer : m_pointersOfWord[number])
@@ -731,7 +745,7 @@ private:
             if (isProtected || !m_reported.add({ word, safepoint }).isNewEntry)
                 continue;
             if (m_insertsGuards) {
-                m_unprotectedWords.add(word);
+                m_unprotectedWords.set(number);
                 continue;
             }
             auto kind = m_displacedWords.contains(word) ? NarrowReferenceViolationKind::IsDisplaced : NarrowReferenceViolationKind::HasNoPointer;
@@ -883,7 +897,8 @@ private:
     UncheckedKeyHashSet<PointerAndWord> m_reported;
     bool m_insertsGuards { false };
     bool m_removedDeadCode { false };
-    UncheckedKeyHashSet<B3::Value*> m_unprotectedWords;
+    BitVector m_unprotectedWords;
+    BitVector m_wordsToCheck;
     UncheckedKeyHashMap<B3::Value*, B3::Value*> m_pointerBeside;
     Vector<std::pair<B3::Value*, B3::Value*>> m_replacements;
 };

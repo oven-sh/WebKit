@@ -32,7 +32,7 @@ ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext& context, const ValueFl
     if (!operand.node)
         return { };
     ClimbingSet listed = context.valueWithin(only(context, ValueFlowUniverse::markOfNamedBun()), operand.node);
-    if (mayBeUnknownObject(context, context.valueOf(operand)))
+    if (holdsSomething(context, listed) || mayBeUnknownObject(context, context.valueOf(operand)))
         listed = context.unite(listed, context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node));
     return holdsSomething(context, listed) ? context.holding(listed) : ValueFlowNodeID();
 }

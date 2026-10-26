@@ -132,7 +132,7 @@ JSObject* withAllPropertiesInline(JSGlobalObject* globalObject, JSObject* object
 static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& excluded, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     if (isCompiledObject(source)) {
-        auto walkResult = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& property) {
+        auto walkResult = PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const PropertyWalk::OwnProperty& property) {
             if ((property.attributes & PropertyAttribute::DontEnum) || excluded.contains(property.name))
                 return IterationStatus::Continue;
             if (property.name == vm.propertyNames->underscoreProto.impl())

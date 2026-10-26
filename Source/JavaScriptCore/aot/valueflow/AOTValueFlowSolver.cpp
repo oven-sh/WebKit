@@ -11,12 +11,12 @@
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
 #include "AOTSort.h"
+#include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/CPUTime.h>
-#include <wtf/OSAllocator.h>
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -264,8 +264,8 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         ValueSetID wholeUnknownValue = m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone;
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
         if (m_input.nodes && m_input.universe) {
-            // What arrives behind a retired node goes straight on to both nodes that the retired node flows into.
-            m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
+            // What arrives behind a retired node that carries values out goes straight on to the node that takes them.
+            m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut), wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
         }
         if (keptOutOfNodesMadeForUnknownObject != ValueSets::nothing) {
             m_graph.keepOutOfNodesMadeForPlaceholders(keptOutOfNodesMadeForUnknownObject, m_input.escaped, [](const void* solver, ValueFlowNodeID node) {
@@ -346,6 +346,21 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     }
 }
 
+// A computed key is a text or a symbol, never a private name.
+bool ValueFlowSolver::mayBeComputedKey(ValueFlowName name) const
+{
+    if (!m_input.program || (name.kind != ValueFlowNameKind::Property && name.kind != ValueFlowNameKind::Getter && name.kind != ValueFlowNameKind::Setter))
+        return true;
+    switch (m_input.program->at(PropertyKeyID(name.payload)).kind) {
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+    case PropertyKeyKind::PrivateName:
+        return false;
+    default:
+        return true;
+    }
+}
+
 ALWAYS_INLINE ValueFlowNodeID ValueFlowSolver::nodeAwaitedBy(ValueFlowStatementID id, const ValueFlowStatement& statement) const
 {
     if (!m_statementsWait || id.index() >= m_input.statements.size() || statement.kind != ValueFlowStatementKind::Operation || !statement.operandCount)
@@ -367,8 +382,7 @@ ListThatStaysInPlace<T>::~ListThatStaysInPlace()
 {
     if (!m_elements)
         return;
-    OSAllocator::decommit(m_elements, m_numberWithMemory.load(std::memory_order_relaxed) * sizeof(T));
-    OSAllocator::releaseDecommitted(m_elements, mostElements * sizeof(T), 0);
+    releasePages(m_elements, mostElements * sizeof(T));
 }
 
 template<typename T>
@@ -379,12 +393,12 @@ void ListThatStaysInPlace<T>::takeMemoryFor(size_t size)
     RELEASE_ASSERT(size <= mostElements);
     Locker locker { m_lock };
     if (!m_elements)
-        m_elements = static_cast<T*>(OSAllocator::reserveUncommitted(mostElements * sizeof(T), OSAllocator::FastMallocPages));
+        m_elements = static_cast<T*>(reservePages(mostElements * sizeof(T)));
     size_t withMemory = m_numberWithMemory.load(std::memory_order_relaxed);
     if (size <= withMemory)
         return;
     size_t end = roundUpToMultipleOf<elementsPerStep>(size);
-    OSAllocator::commit(m_elements + withMemory, (end - withMemory) * sizeof(T), true, false);
+    commitPages(m_elements + withMemory, (end - withMemory) * sizeof(T));
     m_numberWithMemory.store(end, std::memory_order_release);
 }
 
@@ -1079,7 +1093,7 @@ private:
         const ValueFlowNodeKey& key = at(number).key;
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
         const KindOfNames& kind = m_solver.m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
-        if (isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt)
+        if ((isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt) && m_solver.mayBeComputedKey(key.name()))
             wishes.append(Wish { number, ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind) });
     }
 
@@ -1638,7 +1652,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     case ValueFlowMadeNodeKind::Written: {
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
         const KindOfNames& kind = m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
-        if (isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt)
+        if ((isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt) && mayBeComputedKey(key.name()))
             join(ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind));
         break;
     }
@@ -2807,6 +2821,7 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
             bool hasHolder = false;
             for (ValueFlowNodeID predecessor : predecessors) {
                 bool hasComeBy = m_sets.contains(m_objectsLookedForBesideUnknownObject, lookedFor) && isMadeForUnknownObject(predecessor);
+                hasComeBy |= m_input.nodes && predecessor == m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut);
                 if (!hasComeBy && !m_sets.contains(m_graph.valueOf(predecessor), lookedFor))
                     continue;
                 hasHolder = true;
@@ -3671,6 +3686,11 @@ bool ValueFlowSolver::solve()
         },
         [&] {
             m_graph.addInitialEdges(m_input.edges);
+            if (m_input.nodes && m_input.universe && m_input.escaped) {
+                ValueFlowNodeID carriedOut = m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut);
+                ValueFlowEdge onward[] { { carriedOut, m_input.escaped }, { carriedOut, m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues) } };
+                m_graph.addInitialEdges(onward);
+            }
         },
     });
 

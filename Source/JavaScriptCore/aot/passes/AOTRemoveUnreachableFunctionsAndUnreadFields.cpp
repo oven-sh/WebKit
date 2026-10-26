@@ -27,6 +27,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <numeric>
@@ -271,6 +272,8 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
 // A built-in function and the symbol of a key live as long as the program. A closure that is only called, that nothing tells from another and that captures nothing holds nothing, and nobody sees it go.
 static bool mayHoldObject(const Program& program, const FlowResults& flow, const Type& type)
 {
+    if (type.isOpaque(OpaqueKind::Guard))
+        return false;
     if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
         return true;
     return std::ranges::any_of(type.functions, [&](FunctionID function) {
@@ -278,15 +281,46 @@ static bool mayHoldObject(const Program& program, const FlowResults& flow, const
     });
 }
 
+// Remembers which functions return only new objects that hold no object. An answer depends on the function and on how many calls deep the search may go, so every thread finds the same one.
+class FreshDataFunctions {
+public:
+    static constexpr unsigned maxCallDepth = 2;
+
+    explicit FreshDataFunctions(size_t numberOfFunctions)
+    {
+        for (auto& answers : m_answers)
+            answers = Vector<uint8_t>(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
+    }
+
+    std::optional<bool> find(FunctionID function, unsigned callDepth) const
+    {
+        uint8_t answer = WTF::atomicLoad(&m_answers[callDepth][function.index()], std::memory_order_relaxed);
+        return answer ? std::optional(answer == isFresh) : std::nullopt;
+    }
+
+    void set(FunctionID function, unsigned callDepth, bool answer)
+    {
+        WTF::atomicStore(&m_answers[callDepth][function.index()], answer ? isFresh : isNotFresh, std::memory_order_relaxed);
+    }
+
+private:
+    static constexpr uint8_t isFresh = 1;
+    static constexpr uint8_t isNotFresh = 2;
+
+    mutable std::array<Vector<uint8_t>, maxCallDepth> m_answers;
+};
+
 // Whether a store in one function keeps an object alive that would go without it.
 class StoresOfObjects {
 public:
-    StoresOfObjects(const Program& program, const FlowResults& flow, const EffectSummaries* effects, FunctionID id)
+    StoresOfObjects(const Program& program, const FlowResults& flow, const EffectSummaries* effects, FunctionID id, FreshDataFunctions* freshDataFunctions = nullptr, unsigned callDepth = FreshDataFunctions::maxCallDepth)
         : m_program(program)
         , m_flow(flow)
         , m_effects(effects)
         , m_id(id)
         , m_function(program.at(id))
+        , m_freshDataFunctions(freshDataFunctions)
+        , m_callDepth(callDepth)
     {
     }
 
@@ -308,10 +342,21 @@ public:
             return useLists().useCount(stored) != 1 || !isSeenOnlyByItsMaker(definition.operand(OperandIndex::FinishObject::object), stored, depth);
         case Opcode::NewObject:
             return !isSeenOnlyByItsMaker(stored, ValueID(), depth);
+        case Opcode::NewArray:
+            return useLists().useCount(stored) != 1 || std::ranges::any_of(definition.elementsOperands(), [&](ValueID element) {
+                return keepsObjectAlive(element, holder, depth - 1);
+            });
+        case Opcode::Data:
+        case Opcode::NewMapFromData:
+        case Opcode::NewSetFromData:
+        case Opcode::NewRegExp:
+            return useLists().useCount(stored) != 1;
         case Opcode::Call:
         case Opcode::Construct:
             // The annotation says that the call may go when nobody uses its answer.
             return !definition.isAnnotatedPure() || useLists().useCount(stored) != 1;
+        case Opcode::CallDirect:
+            return definition.isConstruction() || useLists().useCount(stored) != 1 || !returnsOnlyFreshData(definition.function());
         default:
             return !isCastWithoutTest(definition.opcode) || useLists().useCount(stored) != 1 || keepsObjectAlive(definition.valueOperand(), holder, depth - 1);
         }
@@ -341,6 +386,7 @@ private:
         };
         if (!std::ranges::all_of(allocation.variadicOperands(), holdsNoObject))
             return false;
+        constexpr OperandUses fillingUses { OperandUse::Inspects, OperandUse::StoresByKey };
         unsigned numberOfOwners = finished ? 1 : 0;
         for (const Use& use : useLists().usesOf(object)) {
             if (use.kind != Use::Kind::Operand)
@@ -348,7 +394,16 @@ private:
             if (use.user == finished)
                 continue;
             const Value& user = m_function.at(use.user);
-            if (summarizeOperand(EffectContext { m_program, *m_effects }, m_function, user, use.operandIndex).uses != OperandUses { OperandUse::Inspects }) {
+            OperandUses uses = summarizeOperand(EffectContext { m_program, *m_effects }, m_function, user, use.operandIndex).uses;
+            // Defining a property of a new ordinary object runs no code of the program, and neither does a store to a data property that the object has had since its creation.
+            if (receiverOf(user.opcode) == use.operandIndex && (user.opcode == Opcode::PropDefine || user.opcode == Opcode::ElemDefine))
+                uses.remove(OperandUse::PassesToUserCode);
+            else if (user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object) {
+                auto field = findField(m_program, allocation.layout(), user.key(), BaseChain::Proven);
+                if (field && field->layout == allocation.layout() && std::ranges::contains(allocation.fields(), field->field) && !fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
+                    uses.remove(OperandUse::PassesToUserCode);
+            }
+            if (!fillingUses.containsAll(uses)) {
                 if (++numberOfOwners > 1)
                     return false;
                 continue;
@@ -361,6 +416,33 @@ private:
                 return false;
         }
         return true;
+    }
+
+    // Each object that the function returns is new, only the function has seen it, and what fills it holds no object.
+    bool returnsOnlyFreshData(FunctionID callee)
+    {
+        if (!m_freshDataFunctions || !m_callDepth)
+            return false;
+        unsigned callDepth = m_callDepth - 1;
+        if (std::optional<bool> known = m_freshDataFunctions->find(callee, callDepth))
+            return *known;
+        const Function& function = m_program.at(callee);
+        bool answer = !function.blocks.isEmpty() && function.results.size() == 1 && function.hasOrdinaryFrame() && !function.isUnsplitCoroutine();
+        if (answer) {
+            StoresOfObjects stores(m_program, m_flow, m_effects, callee, m_freshDataFunctions, callDepth);
+            answer = std::ranges::none_of(function.blocks, [&](const Block& block) {
+                switch (block.terminator.kind) {
+                case TerminatorKind::Return:
+                    return !block.terminator.valueOperand() || stores.keepsObjectAlive(block.terminator.valueOperand(), ValueID());
+                case TerminatorKind::ReturnCall:
+                    return stores.keepsObjectAlive(block.terminator.callOperand(), ValueID());
+                default:
+                    return false;
+                }
+            });
+        }
+        m_freshDataFunctions->set(callee, callDepth, answer);
+        return answer;
     }
 
     // An environment that its holder names in a field of its own, stored once, lives as long as the holder.
@@ -394,6 +476,8 @@ private:
     const EffectSummaries* m_effects;
     FunctionID m_id;
     const Function& m_function;
+    FreshDataFunctions* m_freshDataFunctions;
+    unsigned m_callDepth;
     std::optional<CFG> m_cfg;
     std::optional<UseLists> m_useLists;
     std::optional<HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_environmentsHeld;
@@ -616,6 +700,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         Vector<uint32_t, 1> candidates;
     };
     using FunctionAccesses = std::pair<FunctionID, Vector<RemovableAccess>>;
+    FreshDataFunctions freshDataFunctions(program.functions.size());
     Vector<FunctionAccesses> functions = collectInParallel<FunctionAccesses>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         const Function& function = program.at(id);
@@ -623,7 +708,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             return;
         bool canChangeFunction = build.isEnabled(PassID::RemoveUnreadFields, id);
         std::optional<BitVector> usedValues;
-        StoresOfObjects stores(program, inputs.flow, &inputs.effects, id);
+        StoresOfObjects stores(program, inputs.flow, &inputs.effects, id, &freshDataFunctions);
         Vector<RemovableAccess> accesses;
         forEachListedValue(program, id, scannedOpcodes, [&](BlockID block, uint32_t, ValueID valueID, const Value& value) {
             Opcode opcode = value.opcode;

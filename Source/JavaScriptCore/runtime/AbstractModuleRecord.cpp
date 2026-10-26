@@ -1670,14 +1670,6 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
         return promise;
     };
 
-#if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
-        compiled->takeStatus();
-        // Whoever imports a CommonJS file while it runs gets what the file has exported by then.
-        if (compiled->isRunningCommonJSFile())
-            return wrap(jsUndefined());
-    }
-#endif
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
         return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));

@@ -10,6 +10,7 @@
 
 #include "AOTCurrentWork.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
@@ -515,9 +516,9 @@ private:
 
 void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
 {
-    Thread::create("AOT build"_s, [&] {
+    startBuildThread("AOT build"_s, [&] {
         functor();
-    }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->waitForCompletion();
+    })->waitForCompletion();
 }
 
 void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)

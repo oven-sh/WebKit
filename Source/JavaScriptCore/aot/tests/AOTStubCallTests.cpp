@@ -98,6 +98,7 @@ public:
     void initializeSlimClosure(FakeSlimClosure& closure, uint64_t word)
     {
         closure.setHeader(idOf(StructureOf::SlimClosure), SlimClosureType);
+        closure.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = OverridesGetCallData;
         closure.at<uint64_t>(offsetOfSlimClosureWord) = word;
     }
 
@@ -234,7 +235,7 @@ static void testCallsOfEngineCallees(bool hasOneInstance)
     FakeSlimClosure slimClosureThatIsNotCallable;
     FakeFunction interpretedFunction;
     FakeExecutable functionExecutable;
-    FakeObject<16> object;
+    FakeObject<16> objectWithCallData;
     calls.initializeClosure(classObject, StructureOf::PlainClosure, wordOfClass);
     calls.initializeClosure(classObjectWithOtherStructure, StructureOf::AsyncClosure, wordOfClass);
     calls.initializeClosure(closureOfOtherRealm, StructureOf::ClosureOfOtherRealm, calls.runner.closureWord(0));
@@ -242,9 +243,10 @@ static void testCallsOfEngineCallees(bool hasOneInstance)
     functionExecutable.setHeader(0, FunctionExecutableType);
     interpretedFunction.setHeader(calls.idOf(StructureOf::OtherFunction), JSFunctionType);
     interpretedFunction.at<uint64_t>(JSFunction::offsetOfExecutableOrRareData()) = functionExecutable.address();
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    objectWithCallData.setHeader(calls.idOf(StructureOf::Object), ObjectType);
+    objectWithCallData.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = OverridesGetCallData;
 
-    for (uint64_t callee : { classObject.address(), classObjectWithOtherStructure.address(), closureOfOtherRealm.address(), slimClosureThatIsNotCallable.address(), interpretedFunction.address(), object.address() })
+    for (uint64_t callee : { classObject.address(), classObjectWithOtherStructure.address(), closureOfOtherRealm.address(), slimClosureThatIsNotCallable.address(), interpretedFunction.address(), objectWithCallData.address() })
         checkCallOfEngineCallee(calls, callee);
 }
 
@@ -257,7 +259,9 @@ static void testCallsOfNonCells(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
     calls.runner.recordCallsOf(Entry::operationAOTThrowUnlessCallable);
-    for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits }) {
+    FakeObject<16> objectWithoutCallData;
+    objectWithoutCallData.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits, objectWithoutCallData.address() }) {
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValueWithoutThis(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(0), callee, thisValue, { }), callee);

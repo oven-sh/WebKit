@@ -407,7 +407,7 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     return numbering;
 }
 
-static TraceVisibility visibilityOf(const Function& function)
+static TraceVisibility visibilityOf(const Function& function, bool implementsBuiltin)
 {
     switch (function.role) {
     case FunctionRole::OutlinedBody:
@@ -436,8 +436,8 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
-        // What the front end hides is a function of its own that no trace lists. What its role hides is a part of a function that traces list.
-        if (function.has(FunctionFlags::IsHiddenInStackTraces))
+        // What the front end hides is a function of its own that no trace lists, unless it is a built-in. What its role hides is a part of a function that traces list.
+        if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
     }
@@ -535,7 +535,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.sourceFunctionIndex = sourceID.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function));
+    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin.has_value()));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
     record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);

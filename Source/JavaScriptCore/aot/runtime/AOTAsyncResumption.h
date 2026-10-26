@@ -47,7 +47,7 @@ JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGen
 JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated);
 // A PromiseReactionJob whose handler is compiled code and gets the argument alone, under the async context that is in place. False: nothing is done.
 JS_EXPORT_PRIVATE bool tryRunHandlerOfJob(JSGlobalObject*, VM&, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob);
-// A BunPerformMicrotaskJob whose function is compiled code and gets no argument. What it throws is reported before this returns. The caller has no AsyncContextSwapScope yet.
+// A BunPerformMicrotaskJob whose function is compiled code and gets no argument, where no async context is in place. What it throws is reported before this returns.
 JS_EXPORT_PRIVATE bool tryRunFunctionOfJob(JSGlobalObject*, VM&, JSValue function, bool endsJob);
 // For the job that resumes a driver.
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);

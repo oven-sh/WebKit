@@ -2125,8 +2125,10 @@ struct LoopPathSeparator : LoopEditor {
         m_analyses.didChangeValues();
     }
 
+    enum class PathsThatOnlyCompute : uint8_t { Stay, Leave };
+
     // An unlikely block leaves with every unlikely block that leads to it or follows it: a path is in one copy from the edge that enters it to the edge that joins the likely path.
-    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop)
+    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
         BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
@@ -2146,7 +2148,7 @@ struct LoopPathSeparator : LoopEditor {
             if (frequencies.classOf(block) <= frequencyOfLoop)
                 continue;
             isUnlikely.set(block.index());
-            if (!onlyComputes(m_function.at(block)) && !leaves.set(block.index()))
+            if ((pathsThatOnlyCompute == PathsThatOnlyCompute::Leave || !onlyComputes(m_function.at(block))) && !leaves.set(block.index()))
                 worklist.append(block);
         }
 
@@ -2165,7 +2167,7 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
-    bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
+    BitVector findNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves)
     {
         Vector<BlockID, 16> blocksWithParameters;
         Vector<std::optional<Type>> typeWithoutLeavingPaths(m_function.values.size());
@@ -2204,13 +2206,17 @@ struct LoopPathSeparator : LoopEditor {
         }
 
         const UseLists& uses = m_analyses.useLists();
-        return std::ranges::any_of(blocksWithParameters, [&](BlockID block) {
-            return std::ranges::any_of(m_function.at(block).parameters, [&](ValueID parameter) {
-                return !typeOf(parameter).isSubsetOf(*typeWithoutLeavingPaths[parameter.index()], m_program) && std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
+        BitVector narrowed;
+        for (BlockID block : blocksWithParameters) {
+            for (ValueID parameter : m_function.at(block).parameters) {
+                bool isRead = std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
                     return use.kind != Use::Kind::EdgeArgument;
                 });
-            });
-        });
+                if (isRead && !typeOf(parameter).isSubsetOf(*typeWithoutLeavingPaths[parameter.index()], m_program))
+                    narrowed.set(parameter.index());
+            }
+        }
+        return narrowed;
     }
 
     // A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
@@ -2227,7 +2233,13 @@ struct LoopPathSeparator : LoopEditor {
                 const Value& value = m_function.at(id);
                 if (value.opcode == Opcode::CallDirect && isHot(heat.of(m_program, value.function())))
                     return true;
-                if (value.inlineFrame && isHot(heat.of(m_program, m_function.inlineFrames[value.inlineFrame].callee)))
+                if (!value.inlineFrame)
+                    continue;
+                FunctionID callee = m_function.inlineFrames[value.inlineFrame].callee;
+                if (isHot(heat.of(m_program, callee)))
+                    return true;
+                // The loop itself came out of a function, where it ran as often.
+                if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(m_program, callee, frequencyConstants.iterationsPerLoop)))
                     return true;
             }
         }
@@ -2257,7 +2269,11 @@ struct LoopPathSeparator : LoopEditor {
             bytes += estimatedCodeBytes(m_program, m_function, m_function.at(block));
         }
 
-        BitVector leaves = findLeavingBlocks(loop, isInLoop);
+        BitVector leaves = findLeavingBlocks(loop, isInLoop, PathsThatOnlyCompute::Stay);
+        // A path that only computes leaves too where a parameter is wider for it alone.
+        BitVector unlikelyBlocks = findLeavingBlocks(loop, isInLoop, PathsThatOnlyCompute::Leave);
+        if (unlikelyBlocks != leaves && findNarrowedParameters(isInLoop, unlikelyBlocks) != findNarrowedParameters(isInLoop, leaves))
+            leaves = WTF::move(unlikelyBlocks);
         plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
@@ -2270,7 +2286,7 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves))
+        if (!movesTest && !plan.letsVariablesBeCarried && findNarrowedParameters(isInLoop, leaves).isEmpty())
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());

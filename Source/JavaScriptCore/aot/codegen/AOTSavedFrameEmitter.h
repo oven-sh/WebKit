@@ -29,6 +29,7 @@ public:
     void generateAwaitBySavingFrame(const ValueContext&);
     void generateAwaitCallBySavingFrame(const ValueContext&);
     void generateYieldBySavingFrame(const ValueContext&);
+    void generateKeepAlive(const ValueContext&);
     void generateAsyncGeneratorYield(const ValueContext&);
     void generateReturnAsyncResult(const ValueContext&);
     void generatePromiseAllOfElements(const ValueContext&);

@@ -162,6 +162,7 @@ struct AssignmentPlan {
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
+    bool storesNameBehindSymbol { false };
     // Every store copies a field to a field whose type always accepts it.
     bool storesOnlyFieldsThatFit { false };
     bool mayStoreCells { false };

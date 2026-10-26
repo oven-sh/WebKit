@@ -4,7 +4,7 @@
 # so the mark of an empty variable does not get past CheckInitialized: the key is the one symbol, and the store names a field
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
-# CHECK: {key=symbol("state")@m0:100 declared={type=int} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m0:100 declared={type=1} flags=[IsAddedLate
 # CHECK: variable g0 name="kState" {{*}}declared={type=symbol("state")@m0:100
 
 typesite w0 module=m0 position=6 kind=Variable text="unique symbol"

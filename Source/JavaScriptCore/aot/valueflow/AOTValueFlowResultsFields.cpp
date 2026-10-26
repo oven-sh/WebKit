@@ -32,6 +32,16 @@ ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap& usesOfHeap)
     return usesOfHeap.uses.objectsThatMayBeEnumerated();
 }
 
+ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
+{
+    return usesOfHeap.uses.objectsWithAllKeysShown();
+}
+
+ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
+{
+    return usesOfHeap.uses.objectsWithEnumerableKeysShown();
+}
+
 void listStoresByLayout(const ValueFlowResultInputs& inputs, ValueFlowUsesOfHeap& usesOfHeap, const FlowResultTables& tables)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
@@ -398,6 +408,7 @@ struct FieldResults {
         contents.stored = Vector<Vector<ValueSetID>>(numberOfLayouts);
         contents.storedNumbers = Vector<Vector<ValueFlowNumbers>>(numberOfLayouts);
         contents.storedInAppendedFields = Vector<Vector<ValueSetID>>(numberOfLayouts);
+        contents.numbersStoredInAppendedFields = Vector<Vector<ValueFlowNumbers>>(numberOfLayouts);
         Vector<Vector<FactsOfField>> known(numberOfLayouts);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             size_t numberOfFields = program.layouts[index].fields.size();
@@ -508,13 +519,26 @@ struct FieldResults {
         return contents;
     }
 
+    bool mayHaveAccessor(LayoutID id) const
+    {
+        if (std::ranges::any_of(application.layouts[id.index()].fields, [](const FlowFieldUpdate& field) { return field.accessor.isAccessor(); }))
+            return true;
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        return std::ranges::any_of(stores.keysStoredInto(id), [&](PropertyKeyID key) {
+            return stores.mayGetAccessorUnder(id, key) || stores.accessorDefinedUnder(maker.get(), id, key).isAccessor();
+        });
+    }
+
     void computeKeyEnumerations() const
     {
         for (uint32_t index : findIndicesInParallel(loops, numberOfLayouts, [&](unsigned index) {
             LayoutID id(index);
             if (!hasObjects(id) || application.layouts[index].flow.allocationClasses.isEmpty() || !build.isEnabled(FlowResultKind::ObjectUses, index))
                 return false;
-            return isSeenByFollowedCodeAlone(id) && !possibleMutationsOf(id).contains(ObjectMutation::BecomePrototype) && !uses.mayBeEnumerated(layoutsOfObjects.objectsWith(id));
+            if (!isSeenByFollowedCodeAlone(id) || possibleMutationsOf(id).contains(ObjectMutation::BecomePrototype) || uses.mayBeEnumerated(layoutsOfObjects.objectsWith(id)))
+                return false;
+            // The loader reads the members in the order of the keys, which shows where a read runs a getter.
+            return !uses.mayBeExportedByCommonJSModule(layoutsOfObjects.objectsWith(id)) || !mayHaveAccessor(id);
         })) {
             LayoutFlow& flow = application.layouts[index].flow;
             flow.keys = KeyEnumeration::NeverEnumerated;
@@ -820,6 +844,7 @@ struct FieldResults {
                 field.key = key;
                 OptionSet<ObjectMutation> possible;
                 ValueSetID stored = ValueSets::nothing;
+                ValueFlowNumbers storedNumbers;
                 bool isStoredBeforeObjectsLeak = true;
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
@@ -830,6 +855,7 @@ struct FieldResults {
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : possibleMutationsOf(below));
                     stored = maker.unite(stored, stores.storedUnder(maker, below, key));
+                    storedNumbers.unite(stores.numbersStoredUnder(below, key));
                     isStoredBeforeObjectsLeak &= constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { });
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
@@ -838,6 +864,7 @@ struct FieldResults {
                     field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 application.layouts[index].appendedFields.append(WTF::move(field));
                 contents.storedInAppendedFields[index].append(stored);
+                contents.numbersStoredInAppendedFields[index].append(storedNumbers);
             }
         });
         uint64_t numberOfAppendedFields = 0;
@@ -1270,6 +1297,9 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                 ValueSetID stored = contents.storedInAppendedFields[index][field];
                 ValueFlowPositionResult result = positions.resultAt(Type::anything(), maker.unite(stored, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))));
                 if (result.proof == ValueFlowProof::Proven && result.narrowed) {
+                    const ValueFlowNumbers& storedNumbers = contents.numbersStoredInAppendedFields[index][field];
+                    if (!storedNumbers.isEmpty())
+                        storedNumbers.narrow(*result.narrowed);
                     fields[field].position.type = arena.intern(*result.narrowed);
                     fields[field].position.isProven = true;
                 }

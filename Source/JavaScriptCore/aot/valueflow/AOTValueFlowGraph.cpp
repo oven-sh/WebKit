@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
+#include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include <algorithm>
 #include <optional>
@@ -203,7 +204,7 @@ template<typename T>
 void ValueFlowGraph::ArrayByNode<T>::release()
 {
     if (m_elements)
-        OSAllocator::decommitAndRelease(m_elements, roundUpToMultipleOf(pageSize(), m_capacity * sizeof(T)));
+        releasePages(m_elements, roundUpToMultipleOf(pageSize(), m_capacity * sizeof(T)));
     m_elements = nullptr;
     m_capacity = 0;
 }
@@ -224,10 +225,10 @@ template<typename T>
 void ValueFlowGraph::ArrayByNode<T>::grow(size_t numberInUse, size_t capacity)
 {
     static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
-    T* elements = static_cast<T*>(OSAllocator::reserveAndCommit(roundUpToMultipleOf(pageSize(), capacity * sizeof(T))));
+    T* elements = static_cast<T*>(allocatePages(roundUpToMultipleOf(pageSize(), capacity * sizeof(T))));
     if (m_elements) {
         memcpy(static_cast<void*>(elements), m_elements, numberInUse * sizeof(T));
-        OSAllocator::decommitAndRelease(m_elements, roundUpToMultipleOf(pageSize(), m_capacity * sizeof(T)));
+        releasePages(m_elements, roundUpToMultipleOf(pageSize(), m_capacity * sizeof(T)));
     }
     m_elements = elements;
     m_capacity = capacity;
@@ -899,6 +900,14 @@ void ValueFlowGraph::connectStraightToCoveredNode(Covering& covering, uint32_t n
     ++m_counters.edgesStraightIntoCoveredNodes;
 }
 
+// One covered node may flow into another. What goes straight to the nearer one reaches both.
+bool ValueFlowGraph::isRetiredUnderNearerCovering(const Covering& covering, uint32_t node) const
+{
+    return std::ranges::any_of(m_coverings, [&](const Covering& nearer) {
+        return nearer.covered != covering.covered && covering.flowsIntoCovered.quickGet(nearer.covered) && nearer.isRetired.quickGet(node);
+    });
+}
+
 void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
 {
     if (!m_counters.nodesRetired)
@@ -907,12 +916,12 @@ void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
     for (Covering& covering : m_coverings) {
         findIndices(&team, numberOfEdges, m_found, [&](size_t index) {
             uint32_t to = m_edgesNotInLists[index].to.index();
-            return covering.isRetired.quickGet(to) && !(m_gates[to].flags & IsAtRest);
+            return covering.isRetired.quickGet(to) && !(m_gates[to].flags & IsAtRest) && !isRetiredUnderNearerCovering(covering, to);
         });
         for (uint32_t index : m_found)
             connectStraightToCoveredNode(covering, m_edgesNotInLists[index].from.index());
         for (uint32_t node : m_nodesWoken) {
-            if (!covering.isRetired.quickGet(node))
+            if (!covering.isRetired.quickGet(node) || isRetiredUnderNearerCovering(covering, node))
                 continue;
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
                 connectStraightToCoveredNode(covering, predecessor);
@@ -1010,6 +1019,8 @@ void ValueFlowGraph::connectPredecessorsOfNodesJustRetired()
 {
     for (Covering& covering : m_coverings) {
         for (uint32_t node : covering.nodesJustRetired) {
+            if (isRetiredUnderNearerCovering(covering, node))
+                continue;
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
                 connectStraightToCoveredNode(covering, predecessor);
             });

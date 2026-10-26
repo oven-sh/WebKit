@@ -874,6 +874,10 @@ static void emitIndexedOpen(IterationExpansion& expansion, ArmState& state)
     // The call that makes an iterator validates the view. The @@iterator method of that iterator validates nothing.
     if (state.arm.form == IterationForm::TypedArray && !state.arm.bypassesIterator)
         builder.append(Opcode::RequireAttachedTypedArray, { state.subject });
+    if (expansion.origin == IterationOrigin::Spread && state.arm.form == IterationForm::TypedArray)
+        builder.append(Opcode::RequireLengthFitsList, { state.subject, builder.append(makeWith(Opcode::GetTypedArrayLength, { state.subject }, &Value::setTypedArrayType, state.arm.typedArrayType)) });
+    if (expansion.origin == IterationOrigin::Spread && state.arm.form == IterationForm::String && expansion.program.typeOf(expansion.function, state.subject).isString())
+        builder.append(Opcode::RequireLengthFitsList, { state.subject, builder.append(Opcode::GetStringLength, { state.subject }) });
 
     // A step is typed from the definition it names, before SSARepair picks the one that reaches it: every definition lies in the type of this one.
     ValueID zero = builder.appendInteger(0);
@@ -1145,6 +1149,8 @@ static OpenedIterator openAsyncIterator(IterationExpansion& expansion, ValueID i
 static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, IteratorKind kind)
 {
     IRBuilder& builder = expansion.builder;
+    if (expansion.origin == IterationOrigin::Spread)
+        builder.append(Opcode::RequireLengthFitsList, { state.subject });
     if (!state.arm.alsoServesStrings) {
         OpenedIterator opened = kind == IteratorKind::Async ? openAsyncIterator(expansion, state.subject) : openSyncIterator(expansion, state.subject);
         state.subject = opened.iterator;

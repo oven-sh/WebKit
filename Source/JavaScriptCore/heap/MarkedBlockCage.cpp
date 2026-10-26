@@ -97,7 +97,8 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
     RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
 
-    size_t remaining = remainingAddressSpace();
+    // The first range gets the smallest size whatever its share is: without it nothing runs.
+    size_t remaining = s_firstRange ? remainingAddressSpace() : std::max(remainingAddressSpace(), minSize);
     if (minSize > remaining)
         return nullptr;
 
@@ -147,6 +148,8 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
         }
         size_t randomPrefixRange = std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize) / randomPrefixDivisor;
         if (hasAddressSpaceLimit())
+            shareCLibraryHeapBetweenThreads();
+        if (hasAddressSpaceLimit())
             s_firstRange = tryCreateRange(std::clamp(availableAddressSpace() / MB * MB, smallestUsableSize, size), smallestUsableSize, randomPrefixRange, initialCageSegmentSize(smallestUsableSize));
         else
             s_firstRange = tryCreateRange(size, smallestUsableSize, randomPrefixRange);
@@ -164,6 +167,28 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
     return { };
 }
 
+bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
+{
+    constexpr size_t roomForNewVM = 4 * MB;
+    ReservedRangeHeap* range;
+    {
+        Locker locker { s_poolLock };
+        if (!s_firstRange || !s_isGrowable)
+            return true;
+        range = s_firstRange;
+    }
+    Vector<void*, 16> pieces;
+    while (pieces.size() < count) {
+        void* piece = range->tryAllocateAligned(MarkedBlock::blockSize, roomForNewVM);
+        if (!piece)
+            break;
+        pieces.append(piece);
+    }
+    for (void* piece : pieces)
+        range->free(piece);
+    return pieces.size() == count;
+}
+
 MarkedBlockCage::MarkedBlockCage()
 {
     if (!isEnabled())
@@ -173,11 +198,10 @@ MarkedBlockCage::MarkedBlockCage()
     if (!s_firstRange)
         return;
 
+    // A range that takes address space as it needs it serves every thread: what one of them gives back, another can take.
     if (!s_freeRanges->isEmpty())
         m_range = s_freeRanges->takeLast();
-    else if (s_isGrowable)
-        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, smallestUsableSize, smallestUsableSize / randomPrefixDivisor, smallestUsableSize);
-    else
+    else if (!s_isGrowable)
         m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
     if (!m_range) {
         m_range = s_firstRange;

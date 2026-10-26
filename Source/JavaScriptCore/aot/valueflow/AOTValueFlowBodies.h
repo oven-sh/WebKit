@@ -311,9 +311,10 @@ enum class ValueFlowHostNode : uint8_t {
     PairsOfSteps,
     CodeOutsideImageIsLoaded,
     NamespacesCarriedOutAsValues,
+    ValuesCarriedOut,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 40;
+inline constexpr unsigned numberOfValueFlowHostNodes = 41;
 
 class ValueFlowProgramNodes {
 public:

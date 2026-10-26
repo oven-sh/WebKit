@@ -318,7 +318,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 #if ENABLE(AOT)
         if (sourceStructure->isCompiledStructure()) {
             EnsureStillAliveScope sourceScope(source);
-            auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+            auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
                 if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
                     return IterationStatus::Continue;
                 if (property.name == vm.propertyNames->underscoreProto.impl())

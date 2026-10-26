@@ -519,7 +519,10 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         fieldStores.reserveInitialCapacity(properties->size());
         storesInSourceOrder.reserveInitialCapacity(properties->size());
     }
+    bool hasStoredSymbol = false;
     for (auto& property : *properties) {
+        plan.storesNameBehindSymbol |= hasStoredSymbol && !property.name->isSymbol();
+        hasStoredSymbol |= property.name->isSymbol();
         const FieldData* field = record ? layouts.field(vm, *layout, property.name) : nullptr;
         if (!field) {
             if (record && !layout->extraPropertiesSlot())

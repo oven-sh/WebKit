@@ -230,6 +230,35 @@ void ObjectInterpreter::execute(ValueID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool mayHoldObject(const Type& type)
+{
+    return type.anyObject || type.anyFunction || type.layouts || type.environment || !type.classes.isEmpty() || !type.functions.isEmpty() || type.primitives & Primitive::Symbol;
+}
+
+void ObjectInterpreter::keepMembersAlive(ValueID usedObject)
+{
+    VirtualObjectID used = objectOf(usedObject);
+    if (!used)
+        return;
+    Vector<ValueID, 4> members;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (entry.state.isCell() || (entry.object != used && !m_state.canReach(used, entry.object)))
+            continue;
+        const ObjectValues* held = values().find(entry.object);
+        if (!held)
+            continue;
+        for (ValueID member : held->fields) {
+            if (member && mayHoldObject(program().typeOf(cursor().builder().function(), member)) && !members.contains(member))
+                members.append(member);
+        }
+    }
+    if (members.isEmpty())
+        return;
+    Value keepAlive = IRBuilder::make(Opcode::KeepAlive);
+    keepAlive.setValuesOperands(members.span());
+    cursor().emit(WTF::move(keepAlive));
+}
+
 void ObjectInterpreter::executeAllocation(ValueID id)
 {
     VirtualObjectID object = m_sinking.candidateDefinedBy(id);

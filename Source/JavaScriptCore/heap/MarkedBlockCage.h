@@ -29,6 +29,8 @@ class MarkedBlockCage {
 public:
     enum class Error : uint8_t { Disabled, InvalidSize, ReservationFailed, BlocksOutsideCage };
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> initialize();
+    // Where every VM shares a range that takes address space as it fills: makes sure that it has room for the cells that this many VMs make when they are created.
+    JS_EXPORT_PRIVATE static bool tryEnsureRoomForNewVMs(unsigned count);
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> require();
 
     MarkedBlockCage();

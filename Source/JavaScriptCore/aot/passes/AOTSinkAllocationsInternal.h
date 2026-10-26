@@ -350,6 +350,9 @@ struct RewriteTables {
     BitVector blocksLeftAsTheyAre;
     // Of a function that reads its arguments. No analysis can be made of a function that is half rewritten.
     Vector<ValueID> identityOfValue;
+    // Those that control may enter after the function was suspended.
+    BitVector blocksBehindSuspensions;
+    bool maySuspend { false };
 };
 
 class RewriteCursor {
@@ -532,6 +535,8 @@ private:
     void findNames();
     const BitVector& findBlocksWithLiveDefinition(VirtualObjectID);
     void findWhetherObjectsAreBuiltBeforeBranches();
+    void findBlocksBehindSuspensions();
+    void keepOnlySpecifiedValuesAlive(IRBuilder&);
     void computeInputs();
     void computeInputsOf(BlockID);
 

@@ -15,6 +15,10 @@
 #include <sys/resource.h>
 #endif
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 namespace JSC {
 
 // Returns SIZE_MAX when there is no limit, and on every system but Linux.
@@ -54,6 +58,14 @@ inline size_t addressSpaceToReserve()
     if (!hasAddressSpaceLimit())
         return available;
     return available - available / unreservedAddressSpaceDivisor;
+}
+
+// glibc reserves 64 MB for the malloc of each thread that has a heap of its own.
+inline void shareCLibraryHeapBetweenThreads()
+{
+#if defined(__GLIBC__)
+    mallopt(M_ARENA_MAX, 1);
+#endif
 }
 
 // The structure heap gets 1/N of addressSpaceToReserve().

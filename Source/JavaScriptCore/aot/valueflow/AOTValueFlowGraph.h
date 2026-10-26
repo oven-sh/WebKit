@@ -382,6 +382,7 @@ private:
     bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
     void connectPredecessorsOfRetiredNodes(Team&);
     void connectStraightToCoveredNode(Covering&, uint32_t node);
+    bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 

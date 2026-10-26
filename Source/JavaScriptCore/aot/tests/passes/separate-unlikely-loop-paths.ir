@@ -57,7 +57,7 @@ function f0 name="sum" parameters=[{type=anything}, {type=number}] results=[{typ
 # CHECK-NEXT: Jump -> next [[header0]]([[carried0]], [[counter0]])
 }
 
-# An unlikely path that only computes is one more form of the likely path
+# An unlikely path that only computes, and hands on no more than the likely path does, is one more form of the likely path
 function f1 name="unlikelyPathOnlyComputes" parameters=[{type=number}, {type=number}] results=[{type=number}] {
     v2 = Integer integer=0
     v3 = Integer integer=0
@@ -73,7 +73,7 @@ function f1 name="unlikelyPathOnlyComputes" parameters=[{type=number}, {type=num
     v10 = BitOr v9, v9
     Jump -> next b5(v10)
   b4() frequency=Unlikely:
-    v11 = Mul v0, v0
+    v11 = BitOr v0, v0
     Jump -> next b5(v11)
   b5(v12):
     v13 = Add v4, v12
@@ -82,7 +82,7 @@ function f1 name="unlikelyPathOnlyComputes" parameters=[{type=number}, {type=num
   b6():
     Return v4
 # CHECK: b4() frequency=Unlikely:
-# CHECK-NEXT: = Mul v0, v0
+# CHECK-NEXT: = BitOr v0, v0
 # CHECK-NEXT: Jump -> next b5(v11)
 # CHECK: b6():
 # CHECK-NEXT: Return v4

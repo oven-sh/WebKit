@@ -218,6 +218,9 @@ public:
     RowDisplacementTable& front() { return m_front; }
     HashedSlotTable& hashedTable() { return m_hashedTable; }
 
+    // No VM reserves more for its tables when it is created.
+    static size_t maxSizeOfPagesAtStart();
+
     bool isSharedByInstances() const { return m_isSharedByInstances; }
     void didCreateInstance(Instance&);
     void publishWords(Instance&) const;

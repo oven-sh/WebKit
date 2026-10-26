@@ -102,6 +102,7 @@ family ExpandedIteration Prepared..Placed
 operation DestructureIterable (iterable: Any/Iterated, count: UInt32) -> results(unknown, ..) ; Allocates throws ; interpreted = List ; runtime = DestructureIterable ; replaces = IteratorOpen, IteratorResume, IteratorClose
 operation EnumeratorGetByVal (object: Any/inspects, property: Any/inspects, enumerator: Enumerator/inspects, position: Integer/inspects, guard: Guard/inspects) -> unknown ; Allocates UsesRuntime reads(NamedProperties, ObjectFields) ; receiver = object ; accessClass = Slot ; replaces = ElemGet ; runtime = EnumeratorGetByVal ; relies = EnumeratorCurrent ; guarded = enumerator
 operation RequireAttachedTypedArray (view: Object/inspects) -> none ; reads(TypedArrayStorage) throws ; runtime = ThrowIfTypedArrayIsDetached
+operation RequireLengthFitsList (source: Any/inspects, length?: Integer/inspects) -> none ; CreatesString reads(TypedArrayStorage) ; runtime = ThrowIfTooLongForList
 operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: Any/retains(result)) -> natural(object) ; Allocates ; runtime = CreateAsyncFromSyncIterator
 operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable
 
@@ -123,6 +124,7 @@ operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseS
 operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
 operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, arguments...: Declared/retains, accessSite?: AccessSite) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
+operation KeepAlive (values...: Any/inspects) -> none ; writes(InternalFields) ; boundTo = Frame
 operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable)) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
 operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame
 operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...: Any/retains+runs(Thenable)) -> allocation(Promise<contents>) ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = PromiseAll ; replaces = CallBuiltin

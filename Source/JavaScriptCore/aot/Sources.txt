@@ -434,6 +434,7 @@ aot/support/AOTDiagnostics.cpp
 aot/support/AOTLosses.cpp
 aot/support/AOTPhaseTimes.cpp
 aot/support/AOTStatistics.cpp
+aot/support/AOTSystemResources.cpp
 aot/support/AOTThreads.cpp
 aot/valueflow/AOTFlowApplication.cpp
 aot/valueflow/AOTFlowApply.cpp

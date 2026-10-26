@@ -2258,7 +2258,6 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     ModuleData entry { };
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
-    entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;

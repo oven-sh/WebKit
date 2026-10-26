@@ -463,6 +463,7 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueSetID>> stored;
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
+    Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
 };
 
 class ValueFlowNodesAskedFor {
@@ -812,6 +813,8 @@ std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> computeUsesOfHe
 void listStoresByLayout(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const FlowResultTables&);
 ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap&);
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
+ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);
+ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
 
 struct ValueFlowConstructions {
     struct OfLayout {
@@ -864,6 +867,7 @@ struct ValueFlowWriteUnderNewName {
 };
 
 Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&);
+void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUsesOfHeap&, FlowBuiltinTables&);
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&);
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);

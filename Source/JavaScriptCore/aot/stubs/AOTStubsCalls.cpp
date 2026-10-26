@@ -874,6 +874,17 @@ void generateCallEngineCallee(StubAssembler& jit)
     const GPRReg word = jit.allocateScratch(StubRegister::T13);
     JumpList doesNotFitOnStack;
 
+    // An object that is no function and has no call data of its own is never callable. The run time throws, and names the callee as the call site does.
+    JumpList mayBeCallable;
+    mayBeCallable.append(jit.branchIfNotCell(calleeGPR));
+    static_assert(CompiledClosureType == JSFunctionType + 1 && InternalFunctionType == JSFunctionType + 2);
+    jit.load8(Address(calleeGPR, JSCell::typeInfoTypeOffset()), word);
+    jit.sub32(TrustedImm32(JSFunctionType), word);
+    mayBeCallable.append(jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(InternalFunctionType - JSFunctionType)));
+    mayBeCallable.append(jit.branchTest8(CCallHelpers::NonZero, Address(calleeGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetCallData)));
+    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
+    mayBeCallable.link(&jit);
+
     emitSpillArgumentsAndPushFrame(jit);
     if (jit.options().validates)
         emitCallNativeFunctionByOperation(jit, count, frame);

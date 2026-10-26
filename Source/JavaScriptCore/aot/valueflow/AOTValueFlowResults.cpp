@@ -469,6 +469,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         computeClosuresNeverCompared(inputs, heap, tables);
     }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
+        findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
             return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;

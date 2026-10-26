@@ -26,10 +26,6 @@
 
 #include "config.h"
 #include "JSModuleLoader.h"
-
-#if ENABLE(AOT)
-#include "AOTModuleRecord.h"
-#endif
 #include "ProgramExecutable.h"
 
 #include "BuiltinNames.h"
@@ -994,12 +990,6 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
                 // 2.a. Append module to state.[[Visited]].
                 state->appendVisited(vm, cyclic);
-#if ENABLE(AOT)
-                if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
-                    compiled->willLoadRequests();
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-#endif
                 // 2.b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].
                 size_t requestedModulesCount = module->requestedModules().size();
                 // 2.c. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] + requestedModulesCount.
@@ -1032,17 +1022,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
                     unsigned loadedModulesCountBefore = module->loadedModules().size();
-                    bool useImportMap = true;
-#if ENABLE(AOT)
-                    auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
-                    useImportMap = !compiled;
-                    bool wasAskingHost = compiled && compiled->setIsAskingHost(true);
-#endif
-                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), useImportMap);
-#if ENABLE(AOT)
-                    if (compiled)
-                        compiled->setIsAskingHost(wasAskingHost);
-#endif
+                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), true);
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
                         return;
@@ -1504,12 +1484,6 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     if (auto* record = dynamicDowncast<AbstractModuleRecord>(moduleData)) {
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->markAsHandled();
-#if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
-            compiled->didLoad();
-            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
-        }
-#endif
         scope.release();
         promise->fulfill(vm, record);
         return promise;

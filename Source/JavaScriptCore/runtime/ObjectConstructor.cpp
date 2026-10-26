@@ -346,6 +346,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+#if ENABLE(AOT)
+    if (targetObject && !targetCanPerformFastPut)
+        targetCanPerformFastPut = AOT::PropertyWalk::wouldPerformFastPut(vm, targetObject);
+#endif
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.

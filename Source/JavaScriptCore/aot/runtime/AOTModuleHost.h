@@ -113,6 +113,19 @@ JS_EXPORT_PRIVATE void setESModuleMarker(JSCell* moduleNamespace, bool);
 
 JS_EXPORT_PRIVATE void setVerbose(bool);
 
+// The address space for the tables that a thread reserves when it creates its VM and its instance. The thread that starts it takes the pages, so it is there that a refusal is heard.
+// Only where the address space of the process is limited: elsewhere there is nothing to take, and the pages are null.
+struct PagesForNewThread {
+    void* pages { nullptr };
+    bool isRefused { false };
+};
+JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForNewThread();
+JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
+// On the new thread, before it has a VM.
+JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
+// On the new thread, once it has its instance, or ends without one.
+JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
+
 } // namespace AOT
 } // namespace JSC
 

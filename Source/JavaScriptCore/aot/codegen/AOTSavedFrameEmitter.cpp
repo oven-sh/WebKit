@@ -320,6 +320,18 @@ void SavedFrameEmitter::generateIsGeneratorRunning(const ValueContext& value)
     defineTest(value, equal(state, word32(static_cast<int32_t>(Generator::State::Running))));
 }
 
+void SavedFrameEmitter::generateKeepAlive(const ValueContext& value)
+{
+    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->effects.writesLocalState = true;
+    patchpoint->effects.reads = B3::HeapRange::top();
+    for (ValueID kept : value->valuesOperands())
+        patchpoint->append(get(kept).value, B3::ValueRep::ColdAny);
+    patchpoint->setRunsWithoutFrame(true);
+    patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+}
+
 void SavedFrameEmitter::generateMarkGeneratorRunning(const ValueContext& value)
 {
     m_out.store32(m_out.constInt32(static_cast<int32_t>(Generator::State::Running)), stateOf(in<CellPointer>(value->generatorOperand())));

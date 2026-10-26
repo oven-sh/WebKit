@@ -385,9 +385,24 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     return constant;
 }
 
-std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const Value& constant)
+// The first read of a member may add it to its holder, which decides where it stands among the holder's keys.
+bool firstReadChangesListedKeys(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
 {
-    if (constant.opcode != Opcode::Builtin || !isMadeWithCodeOfLibrary(table, constant.builtin()))
+    BuiltinID holder = table.at(member).holder;
+    if (!holder || holder == Builtins::GlobalThis || !flow.listsKeysOf(table.canonicalID(holder)))
+        return false;
+    // What a module exports is filled when the module runs.
+    BuiltinID root = holder;
+    while (BuiltinID above = table.at(root).holder)
+        root = above;
+    return root == Builtins::GlobalThis;
+}
+
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, const Value& constant)
+{
+    if (constant.opcode != Opcode::Builtin)
+        return std::nullopt;
+    if (!isMadeWithCodeOfLibrary(table, constant.builtin()) && !firstReadChangesListedKeys(table, flow, constant.builtin()))
         return std::nullopt;
     Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
     initialization.setBuiltin(constant.builtin());

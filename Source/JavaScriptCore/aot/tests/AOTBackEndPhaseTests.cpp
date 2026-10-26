@@ -791,7 +791,7 @@ static TwoTests appendTestForNaNAndTestOfNumber(B3::Procedure& proc, TestBehindT
     B3::PatchpointValue* truncated = blocks.second->appendNew<B3::PatchpointValue>(proc, B3::Int64, origin);
     truncated->append(test == TestBehindTestForNaN::IsWholeNumberOfAnother ? other : number, B3::ValueRep::SomeRegister);
     truncated->effects = B3::Effects::none();
-    truncated->pureFunction = Typed::pureFunction(Typed::PureOperation::TruncateToInt64, 0, true);
+    truncated->pureFunction = Typed::truncationToInt64(0);
     auto constant = [&](int64_t value) {
         return blocks.second->appendNew<B3::Const64Value>(proc, origin, value);
     };
@@ -883,7 +883,7 @@ static void checkNaNTestMovesBehindLengthTest(B3::Opcode lengthRelation, bool le
     B3::PatchpointValue* truncated = exactnessTest->appendNew<B3::PatchpointValue>(proc, B3::Int64, origin);
     truncated->append(number, B3::ValueRep::SomeRegister);
     truncated->effects = B3::Effects::none();
-    truncated->pureFunction = Typed::pureFunction(Typed::PureOperation::TruncateToInt64, 0, true);
+    truncated->pureFunction = Typed::truncationToInt64(0);
     B3::Value* isExact = exactnessTest->appendNew<B3::Value>(proc, B3::EqualOrUnordered, origin, exactnessTest->appendNew<B3::Value>(proc, B3::IToD, origin, truncated), number);
     exactnessTest->appendNew<B3::Value>(proc, B3::Branch, origin, isExact);
     exactnessTest->setSuccessors(B3::FrequentedBlock(lengthTest), B3::FrequentedBlock(fractionCase, B3::FrequencyClass::Rare));

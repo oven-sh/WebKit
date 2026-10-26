@@ -95,6 +95,7 @@ public:
     bool meet(ClimbingSet first, ClimbingSet second) const { return m_maker.meet(first.m_set, second.m_set); }
     bool meet(ClimbingSet set, ValueSetID constant) const { return m_maker.meet(set.m_set, constant); }
     ClimbingSet unite(ClimbingSet first, ClimbingSet second) { return ClimbingSet(m_maker.unite(first.m_set, second.m_set)); }
+    ValueSetID withMembersOf(ValueSetID constant, ClimbingSet set) { return m_maker.unite(constant, set.m_set); }
     ClimbingSet restrict(ClimbingSet set, ValueSetID mask) { return ClimbingSet(m_maker.intersect(set.m_set, mask)); }
 
     const ValueSets& sets() const { return m_maker.sets(); }

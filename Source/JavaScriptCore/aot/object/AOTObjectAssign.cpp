@@ -13,6 +13,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPropertyWalk.h"
 #include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "AOTThreshold.h"
@@ -545,7 +546,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
         size_t index = number & ~AssignmentPlan::isExtraPropertyStore;
         if (number & AssignmentPlan::isExtraPropertyStore) {
             const AssignmentPlan::ExtraPropertyStore& store = m_plan.extraPropertyStores[index];
-            numberOfExtraKeysAdded += store.addsName && m_target.hasPositionAmongKeys(store.name);
+            numberOfExtraKeysAdded += store.addsName && !PropertyName(store.name).isPrivateName();
             continue;
         }
         uint16_t key = layout.indexOf(*m_plan.fieldStores[index].to);
@@ -1063,7 +1064,15 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     DeferGC deferGC(vm);
     JSObject* extra = target.extraProperties();
     State& state = target.state();
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, *assignmentSource);
+    AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
+    AssignmentPlan* plan = plans.planFor(vm, &target, extra, *assignmentSource);
+    if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
+        // Stores that go one by one through the objects above take the names first, then the symbols.
+        if (!PropertyWalk::wouldPerformFastPut(vm, &target))
+            return false;
+        // The question may have changed an object above, and with it the plan.
+        plan = plans.planFor(vm, &target, extra, *assignmentSource);
+    }
     if (!plan->isUsable)
         return false;
     assignByPlan(vm, target, state, *plan, extra, *assignmentSource);

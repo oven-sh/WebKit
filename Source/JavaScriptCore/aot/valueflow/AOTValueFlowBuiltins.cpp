@@ -716,6 +716,8 @@ private:
             if (const RuntimeFunctionEntry* entry = findRuntimeFunction(m_program, function)) {
                 enter(entry->function);
                 applyReadsIntoResult(overload);
+                if (m_builtins.canonicalID(m_builtin) == Builtins::ObjectFromEntries)
+                    listNamedBunOnResult(BuiltinOperand::argument(0));
                 return;
             }
         }
@@ -755,6 +757,8 @@ private:
             applyHandlerCall(handlerCall);
         for (const BuiltinPropertyAction& action : overload.flow.propertyActions)
             applyPropertyAction(action);
+        if (!overload.isUndeclared())
+            listNamedBunAmongSettledValues();
         m_plainDataOfResult = { };
         if (ValueFlowNodeID result = nodeTakingResult())
             m_context.add(result, answersObjectsOfNativeCell(overload) ? m_tables.primitivesOf(overload.result.type) : valueOfType(overload.result.type, m_resultObject));
@@ -806,6 +810,7 @@ private:
             connectFrom(ownValues, m_context.written(pair, name));
         connectOperands(BuiltinOperand::argument(0), m_context.written(pair, sourcesOfEntriesPair));
         answer(m_context.maker().of(m_resultObject));
+        listNamedBunOnResult(BuiltinOperand::argument(0));
         throwValue(unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime));
     }
 
@@ -1489,6 +1494,62 @@ private:
         return listedBun;
     }
 
+    bool holdsNamedBun(const ValueFlowOperand& operand)
+    {
+        return operand.node && m_context.holdsAnyOf(only(m_context, ValueFlowUniverse::markOfNamedBun()), operand.node) && m_context.holdsAnyOf(only(m_context, m_universe.objectOf(Builtins::Bun)), operand.node);
+    }
+
+    // A name read on the result is a name of the object at the operand.
+    void listNamedBunOnResult(BuiltinOperand position)
+    {
+        if (!m_call.result)
+            return;
+        forEachOperandAt(position, [&](const ValueFlowOperand& operand) {
+            if (holdsNamedBun(operand))
+                m_context.connect(findNodeOfListedBun(m_context, operand), m_call.result);
+        });
+    }
+
+    // Where the result may also be the unknown object, its node may stop listing the new object. The unknown object stands for it then, and holds what it holds.
+    void storeNamedBunInUnknownObject(const BuiltinPlace& source, ValueFlowName name)
+    {
+        if (!m_call.result || !m_context.holdsAnyOf(unknownObjectAlone(), m_call.result))
+            return;
+        forEachOperandAt(source, [&](const ValueFlowOperand& operand) {
+            if (holdsNamedBun(operand))
+                m_context.add(m_context.written(unknownObjectAlone(), name), only(m_context, m_universe.objectOf(Builtins::Bun)));
+        });
+    }
+
+    // The rows of these two say that what they hand out holds anything.
+    void listNamedBunAmongSettledValues()
+    {
+        BuiltinID canonical = m_builtins.canonicalID(m_builtin);
+        BuiltinPlace source;
+        ValueFlowName name;
+        if (canonical == Builtins::PromiseAllSettled) {
+            source = { .kind = BuiltinPlaceKind::IteratedValues, .operand = BuiltinOperand::argument(0), .isSettled = true };
+            name = property(m_context, BuiltinNames::value);
+        } else if (canonical == Builtins::PromiseWithResolvers) {
+            // Nobody follows the function that resolves the promise, so whatever has escaped may have been handed to it.
+            source = { .kind = BuiltinPlaceKind::NativeMemory };
+            name = nameOf(BuiltinSlots::PromiseValue);
+        } else
+            return;
+        auto store = [&](const ValueFlowOperand& operand) {
+            if (holdsNamedBun(operand) && m_contentsObject)
+                m_context.add(m_context.written(only(m_context, m_contentsObject), name), only(m_context, m_universe.objectOf(Builtins::Bun)));
+        };
+        if (source.kind == BuiltinPlaceKind::NativeMemory) {
+            store(operandOfBuiltinAt(escaped()));
+            if (holdsNamedBun(operandOfBuiltinAt(escaped())) && m_call.result && m_context.holdsAnyOf(unknownObjectAlone(), m_call.result))
+                m_context.add(m_context.written(unknownObjectAlone(), name), only(m_context, m_universe.objectOf(Builtins::Bun)));
+            return;
+        }
+        forEachOperandAt(source, store);
+        storeNamedBunInUnknownObject(source, name);
+    }
+
     void forEachOperandAt(const BuiltinPlace& place, NOESCAPE const Invocable<void(const ValueFlowOperand&)> auto& functor)
     {
         if (place.kind == BuiltinPlaceKind::None)
@@ -1517,6 +1578,11 @@ private:
         });
         if (constant != ValueSets::nothing)
             functor(operandHolding(constant));
+        if (place.kind == BuiltinPlaceKind::IteratedValues) {
+            // Whatever goes over an array may hand out its elements.
+            if (ValueFlowNodeID listedBun = findNodeOfListedBun(m_context, operandOfBuiltinAt(m_context.read(known(objectsAt(*place.operand)), elementsName))))
+                functor(operandOfBuiltinAt(listedBun));
+        }
     }
 
     void connectFrom(const BuiltinPlace& place, ValueFlowNodeID target)
@@ -1608,6 +1674,10 @@ private:
         forEachTargetAt(to, [&](ValueFlowNodeID target) {
             connectFrom(source, target);
         });
+        if (to.kind == BuiltinPlaceKind::ResultSlot)
+            storeNamedBunInUnknownObject(source, nameOf(to.slot));
+        else if (to.kind == BuiltinPlaceKind::ResultField)
+            storeNamedBunInUnknownObject(source, nameOfResultField(to.fieldIndex));
     }
 
     static bool listsWhatIsMadeWithoutSpecies(const BuiltinType& type) { return type.freshness == BuiltinFreshness::UnlessSpecies && std::ranges::contains(type.parts, BuiltinTypePartKind::Instance, &BuiltinTypePart::kind); }
@@ -1714,10 +1784,7 @@ private:
             if (mayHaveReachedUnknownJavaScript(ClimbingSet(m_universe.objectsWith(layout))))
                 made.append(m_universe.instanceOf(layout));
         }
-        m_context.forEachMember(m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
-            made.append(record);
-        });
-        return m_context.maker().of(made.span());
+        return m_context.withMembersOf(m_context.maker().of(made.span()), m_context.valueOf(m_context.nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)));
     }
 
     ValueSetID primitivesInsidePlainData(ValueSetID listed) const
@@ -1842,6 +1909,7 @@ private:
                 continue;
             forEachPlaceHandedOnIn(contents.type, [&](const BuiltinPlace& handedOn) {
                 connectFrom(handedOn, held);
+                storeNamedBunInUnknownObject(handedOn, nameOf(contents.slot));
             });
         }
         if (part.kind == BuiltinTypePartKind::Instance) {
@@ -2118,6 +2186,7 @@ private:
         }
         case BuiltinPropertyActionKind::DescribesOwnProperties:
             applyWith({ }, m_call.result);
+            listNamedBunOnResult(action.object);
             return;
         case BuiltinPropertyActionKind::DeletesByKey:
         case BuiltinPropertyActionKind::ChangesIntegrity:
@@ -2624,15 +2693,12 @@ void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, Val
 // An argument, a result or the contents of an object put a value into hands nobody sees. A receiver is only what a member was found on.
 void carryOut(ValueFlowRuleContext& context, ValueFlowNodeID values)
 {
-    context.connect(values, ValueFlowProgramNodes::escaped());
-    context.connect(values, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
+    context.connect(values, context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut));
 }
 
 void carryOut(ValueFlowRuleContext& context, const ValueFlowOperand& values)
 {
-    context.connect(values, ValueFlowProgramNodes::escaped());
-    if (values.maskKind == ValueFlowMaskKind::Plain)
-        context.connect(values, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
+    context.connect(values, values.maskKind == ValueFlowMaskKind::Plain ? context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut) : ValueFlowProgramNodes::escaped());
 }
 
 void noteCallOfBuiltin(BuiltinID builtin, ValueFlowCallKind kind, ValueFlowRuleContext& context)

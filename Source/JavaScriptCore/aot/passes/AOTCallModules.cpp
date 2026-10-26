@@ -167,8 +167,6 @@ static bool needsLoaderItself(const Program& program, const Module& module)
     }
     if (module.flags.contains(ModuleFlags::HasTopLevelAwait))
         return true;
-    if (module.flags.contains(ModuleFlags::IsLoadedByLoader))
-        return true;
     if (std::ranges::any_of(module.requests, [](const ModuleRequest& request) { return request.phase == ImportPhase::Defer; }))
         return true;
     return hasCode(program, module) && !canBeCalledByCode(program.at(module.body));
@@ -750,8 +748,8 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         if (!isEvaluatedWithImporter(program, module) || needsLoader.quickGet(index))
             continue;
         plan.isWalkedByCode.quickSet(index);
-        // Whoever enters a graph of modules in which something is to be linked goes through the loader: the host with an entry point, import(), require(). So does a require() of an ES module: the run time knows whether another graph is being loaded.
-        if (!needsLink.quickGet(index) && module.kind != ModuleKind::SourceText)
+        // Whoever enters a graph of modules in which something is to be linked goes through the loader: the host with an entry point, import(), require().
+        if (!needsLink.quickGet(index))
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;
@@ -781,12 +779,12 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             if (plan.isCalledWhereRequired.quickGet(target)) {
                 isRequiredLate.quickSet(target);
                 ++numberOfSitesBound;
-            } else
-                isAskedOfLoader.quickSet(target);
+            }
             break;
         case SiteKind::Required:
-        case SiteKind::Named:
             isAskedOfLoader.quickSet(target);
+            break;
+        case SiteKind::Named:
             break;
         case SiteKind::Record:
             recordsRequires = true;

@@ -88,6 +88,32 @@ void ExpandedIterationEmitter::generateRequireAttachedTypedArray(const ValueCont
     m_out.appendTo(continuation);
 }
 
+void ExpandedIterationEmitter::generateRequireLengthFitsList(const ValueContext& value)
+{
+    LBasicBlock mayBeTooLong = newBlock();
+    LBasicBlock continuation = newBlock();
+    CellPointer source;
+    if (value->lengthOperand()) {
+        source = in<CellPointer>(value->sourceOperand());
+        m_out.branch(greaterThan(integerOf(value->lengthOperand()), integer(IndexingHeader::maximumLength)).value(), rareEdge(mayBeTooLong), normalEdge(continuation));
+    } else {
+        Boxed boxed = in<Boxed>(value->sourceOperand());
+        LBasicBlock isCellCase = newBlock();
+        m_out.branch(isCell(boxed).value(), normalEdge(isCellCase), rareEdge(continuation));
+
+        m_out.appendTo(isCellCase);
+        source = unboxCell(boxed);
+        Condition hasLength = logicalOr(hasCellType(source, StringType), hasCellTypeIn(source, { static_cast<JSType>(FirstTypedArrayType), static_cast<JSType>(LastTypedArrayTypeExcludingDataView) }));
+        m_out.branch(hasLength.value(), rareEdge(mayBeTooLong), normalEdge(continuation));
+    }
+
+    m_out.appendTo(mayBeTooLong);
+    callVoidOperation(value, RuntimeOperation::ThrowIfTooLongForList, { source }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
 void ExpandedIterationEmitter::generateCreateAsyncFromSyncIterator(const ValueContext& value)
 {
     define(value, callOperation<CellPointer>(value, RuntimeOperation::CreateAsyncFromSyncIterator, { in<CellPointer>(value->iteratorOperand()), in<Boxed>(value->nextOperand()) }));

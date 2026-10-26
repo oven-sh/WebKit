@@ -306,6 +306,8 @@ struct Copier {
     UncheckedKeyHashMap<uint64_t, FunctionID> closuresInEnvironments;
     UncheckedKeyHashMap<uint64_t, FunctionID> methodsOfConstructors;
     UncheckedKeyHashMap<uint64_t, FunctionID> methodsOfLiterals;
+    // By constant of a module: the array that the program writes out and stores there.
+    UncheckedKeyHashMap<uint32_t, DataID> arraysInConstants;
     unsigned numberOfValuesAsRead { 0 };
     unsigned numberOfValuesInCopiesOfFactories { 0 };
     unsigned numberOfValuesInCopiesOfMakers { 0 };
@@ -563,7 +565,8 @@ struct Copier {
             if (!definesClosureUnderWrittenName && isNamedByClosedType(callee))
                 return;
             Size size = sizeOf(callee);
-            if (size.numberOfValuesWithClosures > (isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || analyses.isInCycle(point.block))
+            // However often it runs, a call that hands on a written name defines closures of its copy under that name alone.
+            if (size.numberOfValuesWithClosures > (isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || (!definesClosureUnderWrittenName && analyses.isInCycle(point.block)))
                 return;
             calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded, holder });
         });
@@ -1070,7 +1073,8 @@ struct Copier {
     std::optional<Vector<StringID, 4>> namesWrittenIn(const Function& function, ValueID list)
     {
         const Value& array = function.at(definitionBehindDeadZoneChecks(function, list));
-        const DataNode::Array* written = array.opcode == Opcode::Data ? program.at(array.data()).root.tryAs<DataNode::Array>() : nullptr;
+        DataID data = array.opcode == Opcode::Data ? array.data() : array.opcode == Opcode::GetModuleVariable ? arraysInConstants.get(array.variable().index() + 1) : DataID();
+        const DataNode::Array* written = data ? program.at(data).root.tryAs<DataNode::Array>() : nullptr;
         if (!written || !written->elements.size() || written->elements.size() > maxWrittenNamesOfLoop)
             return std::nullopt;
         Vector<StringID, 4> names;
@@ -1230,10 +1234,16 @@ struct Copier {
             const Function& function = program.at(functionID);
             if (!std::ranges::any_of(function.values, [](const Value& value) { return value.opcode == Opcode::Data; }))
                 return;
+            forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& store) {
+                if (store.opcode != Opcode::PutModuleVariable || !isConstantOfModule(store.variable()))
+                    return;
+                if (const Value& stored = function.at(definitionBehindDeadZoneChecks(function, store.valueOperand())); stored.opcode == Opcode::Data)
+                    arraysInConstants.add(store.variable().index() + 1, stored.data());
+            });
             AnalysisContext context { build, program, nullptr, nullptr, functionID };
             FunctionAnalyses analyses(context, function);
             BitVector blocksOfTurns;
-            forEachNameOfCreatedClosure(function, [&](ValueID name) {
+            auto addTurnHanded = [&](ValueID name) {
                 if (turns.containsIf([&](const CodeForWrittenNames& turn) { return turn.name == name; }))
                     return;
                 std::optional<CodeForWrittenNames> turn = findTurnOfLoopOverWrittenNames(function, analyses, name);
@@ -1242,9 +1252,24 @@ struct Copier {
                 for (BlockID block : turn->blocks)
                     blocksOfTurns.set(block.index());
                 turns.append(WTF::move(*turn));
-            });
+            };
+            forEachNameOfCreatedClosure(function, addTurnHanded);
             forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& call) {
-                if (call.opcode != Opcode::Call || !call.thisValueOperand())
+                if (call.opcode != Opcode::Call)
+                    return;
+                // `for (const name of ["a", "b"]) define(name);`
+                std::span<const ValueID> arguments = call.variadicOperands();
+                if (std::ranges::any_of(arguments, [&](ValueID argument) { return function.at(definitionBehindDeadZoneChecks(function, argument)).opcode == Opcode::ResultAt; })) {
+                    const Value& callee = function.at(definitionBehindDeadZoneChecks(function, call.calleeOperand()));
+                    FunctionID called = callee.opcode == Opcode::NewClosure ? callee.function() : callee.opcode == Opcode::GetModuleVariable ? functionHeldBy(callee.variable()) : FunctionID();
+                    if (called) {
+                        forEachParameterThatNamesCreatedClosure(program.at(called), [&](unsigned parameter) {
+                            if (parameter < arguments.size())
+                                addTurnHanded(definitionBehindDeadZoneChecks(function, arguments[parameter]));
+                        });
+                    }
+                }
+                if (!call.thisValueOperand())
                     return;
                 std::optional<Vector<StringID, 4>> names = namesWrittenIn(function, call.thisValueOperand());
                 if (!names)

@@ -604,7 +604,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             if (hasMemberThatHostMakes) {
                 holdersOfMembersThatHostMakes.appendVector(objects);
-                if (entry.origin == BuiltinOrigin::Host && entry.kind == BuiltinKind::Namespace && builtins.canonicalID(holder) != Builtins::Bun)
+                bool isNamespaceOrFunction = entry.kind == BuiltinKind::Namespace || entry.kind == BuiltinKind::Function;
+                if (isNamespaceOrFunction && holder != Builtins::GlobalThis && holder != Builtins::Bun)
                     namespacesWhoseHoldersListThem.appendVector(objects);
             }
             if (hasMemberUnderNumericName)

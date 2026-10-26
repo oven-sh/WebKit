@@ -874,7 +874,7 @@ static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSOb
     Vector<UniquedStringImpl*, 8> properties;
     MarkedArgumentBuffer values;
     EnsureStillAliveScope sourceScope(source);
-    auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+    auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
         PropertyName propertyName(property.name);
         if (propertyName == vm.propertyNames->underscoreProto)
             return IterationStatus::Done;

@@ -20,6 +20,12 @@ struct BuiltinIteration {
     ValueSetID containers { ValueSets::nothing };
 };
 
+// The unknown value stands for everything else that the unknown object holds.
+static ValueFlowNodeID bunStoredInUnknownObject(ValueFlowRuleContext& context, ValueFlowName name)
+{
+    return context.masked(context.read(ClimbingSet(context.universe().unknownObjectAlone()), name), context.maker().of(context.universe().objectOf(Builtins::Bun)));
+}
+
 struct StepTarget {
     void take(ValueFlowNodeID values) const
     {
@@ -55,8 +61,10 @@ struct StepTarget {
             if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::lost()))
                 take(context.read(untrackedObject, name));
         }
-        if (mayBeUnknownObject(context, objects))
+        if (mayBeUnknownObject(context, objects)) {
             context.add(node, unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+            take(bunStoredInUnknownObject(context, name));
+        }
     }
 
     ValueFlowRuleContext& context;
@@ -260,6 +268,7 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
     if (mayBeUnknownObject(context, state)) {
         context.add(values, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
         context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), iteratorResultsName(step.mode));
+        target.take(bunStoredInUnknownObject(context, elementsName));
     }
 
     ClimbingSet holders = context.restrict(without(context, state, ValueFlowUniverse::unknownObject()), universe.objects());

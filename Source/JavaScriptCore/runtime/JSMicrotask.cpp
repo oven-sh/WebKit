@@ -2283,11 +2283,20 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             return;
 
 #if ENABLE(AOT)
-        // An error is reported under the context that is in place now.
-        if (vm.hasCompiledCode() && argument2.isEmpty() && argument3.isEmpty() && argument1.isUndefined() && AsyncContextSwapScope::current(vm, globalObject).isUndefined()
-            && AOT::tryRunFunctionOfJob(globalObject, vm, job, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop())) {
-            scope.release();
-            return;
+        if (vm.hasCompiledCode() && argument2.isEmpty() && argument3.isEmpty() && argument1.isUndefined()) {
+            bool endsJob = microtaskCallCache && microtaskCallCache->isOwnedByJobLoop();
+            if (!vm.isAsyncContextTrackingEnabled()) {
+                if (AOT::tryRunFunctionOfJob(globalObject, vm, job, endsJob)) {
+                    scope.release();
+                    return;
+                }
+            } else if (AsyncContextSwapScope::current(vm, globalObject).isUndefined()) {
+                AsyncContextSwapScope asyncContextScope(vm, globalObject, jsUndefined());
+                if (AOT::tryRunFunctionOfJob(globalObject, vm, job, endsJob)) {
+                    scope.release();
+                    return;
+                }
+            }
         }
 #endif
 

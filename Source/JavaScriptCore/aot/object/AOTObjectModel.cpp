@@ -339,11 +339,6 @@ bool RuntimeLayoutTable::hasStringKey(const FieldData& field) const
     return keyKindOf(text().identifier(field.name).kind()) == FieldKeyKind::String && !field.isPrivate();
 }
 
-bool RuntimeLayoutTable::hasPositionAmongKeys(const LayoutData& layout, UniquedStringImpl* name) const
-{
-    return !name->isSymbol() || (!static_cast<SymbolImpl*>(name)->isPrivate() && layout.hasFieldsWithSymbolKeys);
-}
-
 bool RuntimeLayoutTable::mayBeAbsent(const FieldData& field) const
 {
     return traitsOf(field.slot.representation()).hasAbsent || field.isOutOfLine();
@@ -1109,8 +1104,13 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         ASSERT(kind == AllocatedCellKind::Object);
         ObjectModel& objects = *m_state.objects;
         FunctionID function(m_tables.constructorOfAllocation(number));
-        // Without a class object that the run time knows, the operation names the prototype.
-        JSCell* constructor = objects.closures.hasSingletonClosure(function) ? objects.closures.closure(vm, function) : objects.closures.closureIfCreated(function);
+        // Without a class object that the run time knows, the operation names the prototype. Instances of a class whose prototype is made first need no class object.
+        JSCell* constructor = objects.closures.closureIfCreated(function);
+        if (!constructor && objects.closures.hasSingletonClosure(function)) {
+            const LayoutData& constructedClass = *objects.classes.classConstructedBy(function);
+            if (!constructedClass.createsPrototypeBeforeClassObject || !objects.classes.classPrototypeOfInstances(vm, constructedClass))
+                constructor = objects.closures.closure(vm, function);
+        }
         if (constructor)
             structure = objectStructure(vm, allocation.shape, objects.classes.prototypeForInstancesOf(vm, asObject(constructor)));
     }

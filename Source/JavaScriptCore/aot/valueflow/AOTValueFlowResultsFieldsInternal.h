@@ -39,6 +39,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 inline constexpr Protocols protocolsListingKeys { Protocol::OwnKeys, Protocol::OwnValues, Protocol::ToJSON };
+// Which own keys of an operand the program gets to see, in their order.
+enum class ShownKeys : uint8_t { None, Enumerable, All };
 
 inline constexpr OptionSet<ObjectMutation> mutationsThatReach { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
 
@@ -601,6 +603,9 @@ public:
 
     bool mayBeEnumerated(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_enumerated); }
     ValueSetID objectsThatMayBeEnumerated() const { return m_enumerated; }
+    ValueSetID objectsWithAllKeysShown() const { return m_withAllKeysShown; }
+    ValueSetID objectsWithEnumerableKeysShown() const { return m_withEnumerableKeysShown; }
+    bool mayBeExportedByCommonJSModule(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_exportedByCommonJSModules); }
     bool mayBeObservedUnder(ValueSetID objects, PropertyKeyID) const;
     bool mayBeCalledUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_calledUnderKey, key.index())); }
     bool mayBeAccessedUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_accessedUnderKey, key.index())); }
@@ -615,6 +620,9 @@ private:
 
     struct Notes {
         UnionOfSets enumerated;
+        UnionOfSets withAllKeysShown;
+        UnionOfSets withEnumerableKeysShown;
+        UnionOfSets walkedForEnumerableKeys;
         UnionOfSets observedUnderAnyKey;
         PartsByNumber observedUnderKey;
         PartsByNumber startsOfTestsUnderKey;
@@ -628,6 +636,9 @@ private:
         ValueSetMaker& maker;
     };
 
+    bool isFullyKnown(ValueSetID objects) const;
+    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
+    ValueSetID followKnownPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);
@@ -661,6 +672,8 @@ private:
         bool areToldApart { false };
         bool enumeratesAnything { false };
         Vector<BuiltinOperand, 4> enumerated;
+        Vector<BuiltinOperand, 2> withAllKeysShown;
+        Vector<BuiltinOperand, 2> withEnumerableKeysShown;
         Vector<BuiltinOperand, 4> observedUnderAnyKey;
         Vector<TestUnderName, 4> testsUnderNames;
         Vector<TestUnderOperand, 2> testsUnderOperands;
@@ -699,6 +712,9 @@ private:
     const ValueFlowResultInputs& m_inputs;
     const ValueFlowHeapView& m_heap;
     ValueSetID m_enumerated { ValueSets::nothing };
+    ValueSetID m_withAllKeysShown { ValueSets::nothing };
+    ValueSetID m_withEnumerableKeysShown { ValueSets::nothing };
+    ValueSetID m_exportedByCommonJSModules { ValueSets::nothing };
     ValueSetID m_observedUnderAnyKey { ValueSets::nothing };
     SetsByNumber m_observedUnderKey;
     SetsByNumber m_calledUnderKey;

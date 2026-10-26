@@ -186,17 +186,6 @@ public:
 
     size_t size() const { return m_queue.size(); }
 
-#if ENABLE(AOT)
-    bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const
-    {
-        for (const QueuedTask& task : m_queue) {
-            if (!functor(task))
-                return false;
-        }
-        return true;
-    }
-#endif
-
     void clear()
     {
         m_queue.clear();
@@ -252,10 +241,6 @@ public:
     }
 
     size_t size() const { return m_queue.size(); }
-
-#if ENABLE(AOT)
-    bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const { return m_queue.allOf(functor); }
-#endif
 
     void clear()
     {

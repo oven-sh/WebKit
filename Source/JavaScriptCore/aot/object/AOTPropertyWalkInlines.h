@@ -49,20 +49,36 @@ ALWAYS_INLINE JSCell* cellInNarrowSlot(const JSObject* compiledObject, uint32_t 
 }
 
 template<typename Functor>
-ALWAYS_INLINE Result forEachOwnPropertyInline(VM& vm, JSObject* object, Filter filter, const Functor& functor)
+ALWAYS_INLINE std::optional<Result> tryVisitListedFields(JSObject* object, bool listsSymbols, const Functor& functor)
 {
     Object* typed = compiledObjectOrNull(object);
-    bool listsEveryKey = typed && (filter != Filter::StringsAndSymbols || !typed->layout().hasFieldsWithSymbolKeys);
-    if (auto fields = listsEveryKey ? typed->fieldsInKeyOrder() : std::nullopt) [[likely]] {
-        unsigned attributes = typed->attributesOfPublicFields();
-        for (auto& property : *fields) {
-            JSValue value = typed->readListedField(property);
-            if (value && functor(OwnProperty { property.name, value, attributes }) == IterationStatus::Done)
-                return Result::Stopped;
-        }
-        return Result::Completed;
+    bool listsEveryKey = typed && (!listsSymbols || !typed->layout().hasFieldsWithSymbolKeys);
+    auto fields = listsEveryKey ? typed->fieldsInKeyOrder() : std::nullopt;
+    if (!fields) [[unlikely]]
+        return std::nullopt;
+    unsigned attributes = typed->attributesOfPublicFields();
+    for (auto& property : *fields) {
+        JSValue value = typed->readListedField(property);
+        if (value && functor(OwnProperty { property.name, value, attributes }) == IterationStatus::Done)
+            return Result::Stopped;
     }
+    return Result::Completed;
+}
+
+template<typename Functor>
+ALWAYS_INLINE Result forEachOwnPropertyInline(VM& vm, JSObject* object, Filter filter, const Functor& functor)
+{
+    if (auto result = tryVisitListedFields(object, filter == Filter::StringsAndSymbols, functor)) [[likely]]
+        return *result;
     return forEachOwnProperty(vm, object, filter, functor);
+}
+
+template<typename Functor>
+ALWAYS_INLINE Result forEachOwnPropertyAsCreatedInline(VM& vm, JSObject* object, const Functor& functor)
+{
+    if (auto result = tryVisitListedFields(object, true, functor)) [[likely]]
+        return *result;
+    return forEachOwnPropertyAsCreated(vm, object, functor);
 }
 
 } } } // namespace JSC::AOT::PropertyWalk

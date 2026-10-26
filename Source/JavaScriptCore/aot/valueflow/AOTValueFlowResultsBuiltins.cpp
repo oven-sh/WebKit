@@ -899,6 +899,25 @@ static LegacyRegExpStatics findReadsOfLegacyRegExpStatics(const ValueFlowResultI
     return isMentioned ? LegacyRegExpStatics::Unknown : LegacyRegExpStatics::NeverRead;
 }
 
+void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueFlowUsesOfHeap& usesOfHeap, FlowBuiltinTables& tables)
+{
+    const BuiltinTable& builtins = inputs.program.builtins();
+    BorrowedValueSetMaker maker(inputs.makerPool());
+    auto forEachHolderIn = [&](ValueSetID objects, NOESCAPE const Invocable<void(BuiltinID)> auto& functor) {
+        inputs.sets().forEachMember(maker.get().intersect(objects, inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
+            functor(builtins.canonicalID(inputs.universe().builtinOf(object)));
+        });
+    };
+    forEachHolderIn(objectsWithAllKeysShown(usesOfHeap), [&](BuiltinID holder) {
+        tables.holdersWithListedKeys.set(holder.index());
+    });
+    // No member of an object of the language is enumerable.
+    forEachHolderIn(objectsWithEnumerableKeysShown(usesOfHeap), [&](BuiltinID holder) {
+        if (builtins.at(holder).origin == BuiltinOrigin::Host)
+            tables.holdersWithListedKeys.set(holder.index());
+    });
+}
+
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs)
 {
     const BuiltinTable& builtins = inputs.program.builtins();

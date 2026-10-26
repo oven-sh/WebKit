@@ -8,6 +8,8 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBitMatrixLiveness.h"
+#include "AirInstInlines.h"
+#include "AirTmpInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -134,6 +136,107 @@ private:
     size_t m_wordsPerSlice { 0 };
     size_t m_nextFact { 0 };
 };
+
+// What each block does to the Tmps that count, each named by its linear index.
+struct UsesAndDefsByBlock {
+    UsesAndDefsByBlock(Code& code, NOESCAPE const Invocable<bool(Tmp)> auto& counts)
+    {
+        const unsigned numberOfIndices = Tmp::linearIndexEnd(code);
+        Vector<unsigned> stamps(FillWith { }, numberOfIndices, 0u);
+        crossesBoundary.fill(0, numberOfIndices);
+        blockEnds.grow(code.size());
+        Vector<std::pair<unsigned, Arg::Role>, 8> mentions;
+        for (unsigned blockIndex = 0; blockIndex < code.size(); ++blockIndex) {
+            const unsigned useStamp = (blockIndex + 1) << 1;
+            const unsigned defStamp = useStamp | 1;
+            auto noteUse = [&](unsigned index) {
+                if ((stamps[index] | 1) == defStamp)
+                    return;
+                stamps[index] = useStamp;
+                crossesBoundary[index] = 1;
+                exposedUses.append(index);
+            };
+            auto noteDef = [&](unsigned index) {
+                if (stamps[index] == defStamp)
+                    return;
+                stamps[index] = defStamp;
+                defs.append(index);
+            };
+            BasicBlock* block = code[blockIndex];
+            for (unsigned instIndex = 0; block && instIndex < block->size(); ++instIndex) {
+                mentions.shrink(0);
+                block->at(instIndex).forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+                    if (counts(tmp))
+                        mentions.append({ tmp.linearlyIndexed(code).index(), role });
+                });
+                auto forEachMention = [&](bool (*hasTiming)(Arg::Role), NOESCAPE const Invocable<void(unsigned)> auto& func) {
+                    for (auto [index, role] : mentions) {
+                        if (hasTiming(role))
+                            func(index);
+                    }
+                };
+                forEachMention(Arg::isEarlyDef, noteDef);
+                forEachMention(Arg::isEarlyUse, noteUse);
+                forEachMention(Arg::isLateDef, noteDef);
+                forEachMention(Arg::isLateUse, [&](unsigned index) {
+                    if (instIndex + 1 < block->size()) {
+                        noteUse(index);
+                        return;
+                    }
+                    crossesBoundary[index] = 1;
+                    usesAtTails.append(index);
+                });
+            }
+            blockEnds[blockIndex].exposedUses = exposedUses.size();
+            blockEnds[blockIndex].defs = defs.size();
+            blockEnds[blockIndex].usesAtTail = usesAtTails.size();
+        }
+        indexToColumn.grow(numberOfIndices);
+        for (unsigned index = 0; index < numberOfIndices; ++index) {
+            if (!crossesBoundary[index])
+                continue;
+            indexToColumn[index] = columnToIndex.size();
+            columnToIndex.append(index);
+        }
+    }
+
+    BlockFacts facts() const
+    {
+        return BlockFacts { blockEnds.span(), exposedUses.span(), defs.span(), usesAtTails.span(), crossesBoundary.span(), indexToColumn.span(), static_cast<unsigned>(columnToIndex.size()) };
+    }
+
+    Vector<BlockEnds> blockEnds;
+    Vector<unsigned> exposedUses;
+    Vector<unsigned> defs;
+    Vector<unsigned> usesAtTails;
+    Vector<uint8_t> crossesBoundary;
+    Vector<unsigned> indexToColumn;
+    Vector<unsigned> columnToIndex;
+};
+
+// Goes from the last block to the first. What setIsLive(index, bool) has been told describes the block's tail in atTail(block) and its head in atHead(block).
+void forEachBlockBackwards(Code& code, const BitMatrixLiveness<TmpBoundaryRows>& liveness, const UsesAndDefsByBlock& usesAndDefs, NOESCAPE const Invocable<void(unsigned, bool)> auto& setIsLive, NOESCAPE const Invocable<void(BasicBlock*)> auto& atTail, NOESCAPE const Invocable<void(BasicBlock*)> auto& atHead)
+{
+    for (unsigned blockIndex = code.size(); blockIndex--;) {
+        BasicBlock* block = code[blockIndex];
+        if (!block)
+            continue;
+        liveness.forEachLiveOnlyAtHeadOfNextBlock(block, [&](unsigned column) {
+            setIsLive(usesAndDefs.columnToIndex[column], false);
+        });
+        liveness.forEachLiveOnlyAtTail(block, [&](unsigned column) {
+            setIsLive(usesAndDefs.columnToIndex[column], true);
+        });
+        atTail(block);
+        const BlockEnds begin = blockIndex ? usesAndDefs.blockEnds[blockIndex - 1] : BlockEnds { };
+        const BlockEnds end = usesAndDefs.blockEnds[blockIndex];
+        for (unsigned i = begin.defs; i < end.defs; ++i)
+            setIsLive(usesAndDefs.defs[i], false);
+        for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
+            setIsLive(usesAndDefs.exposedUses[i], true);
+        atHead(block);
+    }
+}
 
 } } } // namespace JSC::B3::Air
 

@@ -138,6 +138,7 @@ runtime EnumeratorNext : UGPRPair (JSCell* enumerator, EncodedJSValue object, ui
 runtime EnumeratorGetByVal : EncodedJSValue (EncodedJSValue object, EncodedJSValue property, JSCell* enumerator) ; RuntimeCreatesConstant throws
 runtime CreateAsyncFromSyncIterator : JSCell* (JSCell* iterator, EncodedJSValue next) ; RuntimeAllocates
 runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; reads(all) throws collects
+runtime ThrowIfTooLongForList : void (JSCell* source) ; RuntimeCreatesString
 
 runtime NewPromise : JSCell* () ; RuntimeAllocates
 runtime CreatePromise : JSCell* (EncodedJSValue constructor) ; unknownCode

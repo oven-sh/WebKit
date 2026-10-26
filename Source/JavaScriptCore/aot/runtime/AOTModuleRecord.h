@@ -57,14 +57,6 @@ public:
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
-    void willLoadRequests();
-    void didLoad();
-    void takeStatus();
-    bool isRunningCommonJSFile();
-    void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
-    bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
-    void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
-    bool setIsAskingHost(bool);
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
@@ -90,8 +82,6 @@ private:
     Vector<UniquedStringImpl*, 2> m_resolveSet;
     bool m_holdsStatus { false };
     bool m_isRetained { false };
-    bool m_runsWhenLoaded { false };
-    bool m_isRequestedByWalkedModule { false };
 };
 
 } } // namespace JSC::AOT

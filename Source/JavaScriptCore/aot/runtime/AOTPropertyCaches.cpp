@@ -66,21 +66,54 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCaches);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HashedSlotTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RowDisplacementTable);
 
-static constexpr size_t sizeOfCellsInPlane = RowDisplacementTable::cellsPerPlane * sizeof(PackedSlot);
-static constexpr size_t sizeOfPlane = roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane);
-static constexpr size_t sizeOfOccupied = RowDisplacementTable::cellsPerPlane / 8 + sizeof(uint64_t);
-static constexpr size_t offsetOfOccupied = numberOfSlotAccesses * sizeOfPlane;
-static constexpr size_t sizeOfTables = offsetOfOccupied + roundUpToMultipleOf<16 * KB>(sizeOfOccupied);
-static_assert(!(RowDisplacementTable::cellsPerPlane % 64));
+// The planes, and a bit for each cell of a plane. A cell is the base of a row plus a column.
+struct PagesOfPlanes {
+    explicit constexpr PagesOfPlanes(uint32_t numberOfBases)
+        : sizeOfCellsInPlane((static_cast<size_t>(numberOfBases) + RowDisplacementTable::numberOfColumns) * sizeof(PackedSlot))
+        , sizeOfPlane(roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane))
+        , sizeOfOccupied(roundUpToMultipleOf<16 * KB>(roundUpToMultipleOf<64>(sizeOfCellsInPlane / sizeof(PackedSlot)) / 8 + sizeof(uint64_t)))
+        , offsetOfOccupied(numberOfSlotAccesses * sizeOfPlane)
+        , size(offsetOfOccupied + sizeOfOccupied)
+    {
+    }
 
-static void* reservePagesOfTable(size_t size)
+    size_t sizeOfCellsInPlane;
+    size_t sizeOfPlane;
+    size_t sizeOfOccupied;
+    size_t offsetOfOccupied;
+    size_t size;
+};
+static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
+
+static void* tryReservePagesOfTable(size_t size)
 {
-    void* result = reserveGuardedPages(size);
+    void* result = tryReserveGuardedPages(size);
 #if OS(LINUX)
-    while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
     return result;
 }
+
+static void* reservePagesOfTable(size_t size)
+{
+    void* result = tryReservePagesOfTable(size);
+    RELEASE_ASSERT(result, size);
+    return result;
+}
+
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static constexpr bool pagesOfTablesCanGrow = true;
+
+// What the pages held stays, what is added is zero. A refusal changes nothing.
+static void* tryGrowPagesOfTable(void* pages, size_t size, size_t newSize)
+{
+    void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
+    return result == MAP_FAILED ? nullptr : result;
+}
+#else
+static constexpr bool pagesOfTablesCanGrow = false;
+static void* tryGrowPagesOfTable(void*, size_t, size_t) { return nullptr; }
+#endif
 
 StructureRows& StructureRows::singleton()
 {
@@ -109,21 +142,65 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
     , m_structureRows(StructureRows::singleton())
     , m_cageBase(vm.heap.cage().base())
 {
-    auto* tables = static_cast<uint8_t*>(reservePagesOfTable(sizeOfTables));
-    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
-        uint8_t* plane = tables + i * sizeOfPlane;
-        m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
-        m_writtenRegions[i] = makeUniqueWithoutFastMallocCheck<RememberedSlotSet>(std::span<const uint8_t> { plane, sizeOfCellsInPlane }, regionShift);
-    }
-    m_occupied = reinterpret_cast<uint64_t*>(tables + offsetOfOccupied);
     m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
+    m_capacityOfBases = pagesOfTablesCanGrow ? std::min(initialNumberOfBases, m_limitOfBases) : m_limitOfBases;
+    PagesOfPlanes layout(m_capacityOfBases);
+    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(layout.size));
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
+        uint8_t* plane = pages + i * layout.sizeOfPlane;
+        m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
+        m_writtenRegions[i] = makeUniqueWithoutFastMallocCheck<RememberedSlotSet>(std::span<const uint8_t> { plane, layout.sizeOfCellsInPlane }, regionShift);
+    }
+    m_occupied = reinterpret_cast<uint64_t*>(pages + layout.offsetOfOccupied);
+    m_numbersOfBasesWithPages.fill(m_capacityOfBases);
     registry.add(CacheKind::WeakByKey, "RowDisplacementTable"_s, *this);
 }
 
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
-    releaseGuardedPages(m_planes[0], sizeOfTables);
+    if (!pagesOfTablesCanGrow) {
+        releaseGuardedPages(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
+        return;
+    }
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
+        releaseGuardedPages(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
+    releaseGuardedPages(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
+}
+
+// Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
+bool RowDisplacementTable::tryGrow()
+{
+    if (m_capacityOfBases >= m_limitOfBases)
+        return false;
+    uint32_t numberOfBases = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(m_capacityOfBases) * 2, m_limitOfBases));
+    PagesOfPlanes to(numberOfBases);
+    auto tryGrowPart = [&](unsigned part, void* pages, size_t PagesOfPlanes::* size) -> void* {
+        if (m_numbersOfBasesWithPages[part] == numberOfBases)
+            return pages;
+        void* result = tryGrowPagesOfTable(pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
+        if (result)
+            m_numbersOfBasesWithPages[part] = numberOfBases;
+        return result;
+    };
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
+        void* plane = tryGrowPart(i, m_planes[i], &PagesOfPlanes::sizeOfPlane);
+        if (!plane) {
+            m_limitOfBases = m_capacityOfBases;
+            return false;
+        }
+        m_planes[i] = static_cast<RememberedSlot<PackedSlot>*>(plane);
+        m_writtenRegions[i]->didMoveAndGrowTable({ static_cast<const uint8_t*>(plane), to.sizeOfCellsInPlane });
+        m_didMovePlanes = true;
+    }
+    void* occupied = tryGrowPart(numberOfSlotAccesses, m_occupied, &PagesOfPlanes::sizeOfOccupied);
+    if (!occupied) {
+        m_limitOfBases = m_capacityOfBases;
+        return false;
+    }
+    m_occupied = static_cast<uint64_t*>(occupied);
+    m_capacityOfBases = numberOfBases;
+    return true;
 }
 
 void RowDisplacementTable::writeCell(SlotAccess access, uint32_t index, PackedSlot cell, bool dependsOnChain)
@@ -240,7 +317,7 @@ size_t RowDisplacementTable::removeDeadEntries(VM& vm, CollectionScope scope)
     if (scope == CollectionScope::Full && vm.heap.collectionScope() != CollectionScope::Eden) {
         compactBases();
         for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
-            decommitEmptyPages({ reinterpret_cast<uint8_t*>(m_planes[i]), sizeOfCellsInPlane }, *m_writtenRegions[i]);
+            decommitEmptyPages({ reinterpret_cast<uint8_t*>(m_planes[i]), PagesOfPlanes(m_capacityOfBases).sizeOfCellsInPlane }, *m_writtenRegions[i]);
     }
     return numberRemoved;
 }
@@ -302,7 +379,7 @@ uint32_t RowDisplacementTable::firstFittingBase(uint32_t from, std::span<const u
     if (!fitting)
         return 0;
     uint32_t base = from + WTF::ctz(fitting);
-    return base < m_limitOfBases ? base : 0;
+    return base < m_capacityOfBases ? base : 0;
 }
 
 uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint32_t preferredBase)
@@ -322,12 +399,15 @@ uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint3
         }
     }
     m_nextBase = from < m_endOfBases ? from : firstBase;
-    for (from = m_endOfBases; from < m_limitOfBases; from += basesPerBatch) {
-        if (uint32_t base = firstFittingBase(from, columns)) {
-            m_endOfBases = base + 1;
-            return base;
+    from = m_endOfBases;
+    do {
+        for (; from < m_capacityOfBases; from += basesPerBatch) {
+            if (uint32_t base = firstFittingBase(from, columns)) {
+                m_endOfBases = base + 1;
+                return base;
+            }
         }
-    }
+    } while (tryGrow());
     return 0;
 }
 
@@ -335,9 +415,9 @@ uint32_t RowDisplacementTable::findBaseEvictingRows(std::span<const uint16_t> co
 {
     countLimitHit(m_vm, LimitID::LookupTableBases);
     Vector<uint32_t, 33> occupiedIndexes;
-    for (uint32_t basesLeft = m_limitOfBases - firstBase; basesLeft; --basesLeft) {
+    for (uint32_t basesLeft = m_capacityOfBases - firstBase; basesLeft; --basesLeft) {
         uint32_t base = m_evictionHand;
-        m_evictionHand = base + 1 < m_limitOfBases ? base + 1 : firstBase;
+        m_evictionHand = base + 1 < m_capacityOfBases ? base + 1 : firstBase;
         occupiedIndexes.shrink(0);
         bool overlapsKeep = false;
         auto collect = [&](uint32_t index) {
@@ -871,6 +951,14 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
     });
 }
 
+size_t VMPropertyCaches::maxSizeOfPagesAtStart()
+{
+    auto usual = [](LimitID limit) { return defaultLimitValue(limit, hostArchitecture()); };
+    return sizeOfRecords(safeCast<uint32_t>(usual(LimitID::CustomAccessorRecords)))
+        + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
+        + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(usual(LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
+}
+
 void VMPropertyCaches::publishWords(Instance& instance) const
 {
     PropertyCacheWords& words = instance.propertyCaches;
@@ -1003,7 +1091,12 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
     StructureID id = structure->id();
     ASSERT(slot.structureID == id);
     if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber)) {
-        if (m_front.trySet(structure, *column, access, slot)) {
+        bool isSet = m_front.trySet(structure, *column, access, slot);
+        if (m_front.takeDidMovePlanes()) {
+            for (Instance* instance : m_vm.aotState().instances)
+                publishWords(*instance);
+        }
+        if (isSet) {
             if (slot.has(Slot::dependsOnChain)) {
                 auto result = m_columnsByNameAddress.add(name.uid, static_cast<uint16_t>(*column));
                 ASSERT(result.iterator->value == *column);

@@ -238,7 +238,9 @@ void IRBuilder::demoteReturnCall(BlockID block)
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
-    m_function.edit(result, ValueEdit::Definition).isTailCall = true;
+    Value& call = m_function.edit(result, ValueEdit::Definition);
+    // What is written Reflect.construct(..) constructs, and a construction is no tail call.
+    call.isTailCall = !(FlagMask::isReflectConstructSyntax(call.opcode) && call.isReflectConstructSyntax());
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
         casts.append(cast);

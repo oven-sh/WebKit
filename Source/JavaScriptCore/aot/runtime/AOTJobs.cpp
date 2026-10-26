@@ -85,6 +85,15 @@ static LastEnteredByAdapter didLeaveAdapter(const AsyncGeneratorBodyEntry& entry
     return { static_cast<SavedFrame*>(std::exchange(coroutines.enteredFrame, entry.outerFrame)), std::exchange(coroutines.enteredAsyncGenerator, entry.outerAsyncGenerator), std::exchange(coroutines.promiseOfEnteredHandler, entry.outerPromiseOfHandler) };
 }
 
+// The adapter enters the function of a job only where no async context is in place, and an error is reported under what was in place in front of the job.
+static void reportErrorOfFunctionOfJob(Instance& instance, JSValue exceptionOrValue)
+{
+    VM& vm = *instance.vm;
+    if (vm.isAsyncContextTrackingEnabled())
+        instance.globalObject->m_asyncContextData->putInternalField(vm, 0, jsUndefined());
+    reportErrorOfMicrotask(instance.globalObject, exceptionOrValue);
+}
+
 static void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm, JSValue awaited, SavedFrame* waiter, InternalMicrotask task = InternalMicrotask::CompiledAsyncFunctionResume)
 {
     if (!awaited.isObject()) {
@@ -278,7 +287,7 @@ JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&
         if (promiseOfHandler)
             settlePromiseOfHandler(*instance.vm, promiseOfHandler, returned, error);
         else if (error) [[unlikely]]
-            reportErrorOfMicrotask(instance.globalObject, error);
+            reportErrorOfFunctionOfJob(instance, error);
     } else if (error) [[unlikely]] {
         EnsureStillAliveScope keepsLastFrame(lastFrame);
         lastFrame->reject(instance.globalObject, *instance.vm, error);
@@ -466,7 +475,7 @@ static void finishAdapterEntry(VM& vm, const AsyncGeneratorBodyEntry& entry, Top
     }
     if (!lastFrame) {
         if (exception) [[unlikely]]
-            reportErrorOfMicrotask(instance.globalObject, exception);
+            reportErrorOfFunctionOfJob(instance, exception);
         return;
     }
     if (lastFrame->kind() == CoroutineKind::AsyncGenerator) {

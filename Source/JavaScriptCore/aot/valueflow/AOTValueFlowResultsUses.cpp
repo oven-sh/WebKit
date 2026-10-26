@@ -81,7 +81,16 @@ static void uniteTakenAtOperand(const ValueFlowBuiltinTables& tables, ValueSetMa
         takenAtOperands[position].taken = maker.unite(takenAtOperands[position].taken, taken);
 }
 
-static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID builtin, BuiltinCallMode mode, NOESCAPE const Invocable<void(std::optional<BuiltinOperand>)> auto& listsKeys, NOESCAPE const Invocable<void(BuiltinOperand)> auto& looksUnderAnyKey, NOESCAPE const Invocable<void(BuiltinOperand object, PropertyKeyID, bool looksAtOwnPropertyAlone)> auto& testsName, NOESCAPE const Invocable<void(BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone)> auto& testsKeyInOperand)
+static ShownKeys keysShownBy(const BuiltinTable& builtins, BuiltinID function, const BuiltinParameter& parameter)
+{
+    if (!parameter.protocols.contains(Protocol::OwnKeys))
+        return ShownKeys::None;
+    function = builtins.canonicalID(function);
+    bool skipsWhatIsNotEnumerable = function == Builtins::ObjectKeys || function == Builtins::ObjectValues || function == Builtins::ObjectEntries || function == Builtins::ObjectAssign || function == Builtins::JSONStringify;
+    return skipsWhatIsNotEnumerable ? ShownKeys::Enumerable : ShownKeys::All;
+}
+
+static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID builtin, BuiltinCallMode mode, NOESCAPE const Invocable<void(std::optional<BuiltinOperand>, ShownKeys)> auto& listsKeys, NOESCAPE const Invocable<void(BuiltinOperand)> auto& looksUnderAnyKey, NOESCAPE const Invocable<void(BuiltinOperand object, PropertyKeyID, bool looksAtOwnPropertyAlone)> auto& testsName, NOESCAPE const Invocable<void(BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone)> auto& testsKeyInOperand)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
     for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
@@ -99,7 +108,7 @@ static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID
                 return;
             }
             bool goesOnToContents = parameter.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
-            listsKeys(goesOnToContents && !inputs.universe().builtinTables().behaviorOf(parameter) ? std::nullopt : std::optional(parameter.operand));
+            listsKeys(goesOnToContents && !inputs.universe().builtinTables().behaviorOf(parameter) ? std::nullopt : std::optional(parameter.operand), keysShownBy(builtins, builtin, parameter));
         };
         auto lookAtTest = [&](const BuiltinPropertyAction& action) {
             const BuiltinParameter* parameter = builtins.parameterFor(overload, action.object);
@@ -132,7 +141,7 @@ static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID
                 lookAtTest(action);
                 break;
             case LookOfPropertyAction::ListsKeysOfValue:
-                listsKeys(action.value.operand);
+                listsKeys(action.value.operand, ShownKeys::All);
                 break;
             case LookOfPropertyAction::None:
                 break;
@@ -170,12 +179,16 @@ UsesOfObjects::UsesOfObjects(const ValueFlowResultInputs& inputs, const ValueFlo
         if (behavior.protocols.containsAny(protocolsListingKeys) || readsEveryMember)
             m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
     }
+    UnionOfSets exportedByCommonJSModules;
     for (const Module& module : inputs.program.modules) {
+        if (module.kind == ModuleKind::CommonJs && module.exportsVariable && module.body && inputs.isReached(module.body))
+            exportedByCommonJSModules.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().variable(module.exportsVariable)));
         if (module.kind != ModuleKind::RuntimeSource || module.exportRule == SyntheticExportRule::None || !module.body || !inputs.isReached(module.body))
             continue;
         if (!inputs.program.at(module.body).results.isEmpty())
             m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().result(module.body, 0)));
     }
+    m_exportedByCommonJSModules = exportedByCommonJSModules.takeExpanded(heap, makers.of(0));
     findHostFunctionsThatProgramHasStored(makers);
     times.didFinish("uses of the heap: operations, behaviors, modules"_s);
     forEachBuiltinApplicationInParallel(inputs, heap, makers, m_builtinsThatLookAtObjects, ValueFlowBuiltinApplicationOnWorkerFunctor([&](unsigned worker, const ValueFlowBuiltinApplication& application) {
@@ -248,6 +261,8 @@ void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
         [&] {
             BorrowedValueSetMaker maker(m_inputs.makerPool());
             m_enumerated = m_heap.chainOf(maker.get(), takeUnion(&Notes::enumerated).takeExpanded(m_heap, maker.get()));
+            m_withAllKeysShown = takeUnion(&Notes::withAllKeysShown).take(maker.get());
+            m_withEnumerableKeysShown = maker.get().unite(takeUnion(&Notes::withEnumerableKeysShown).take(maker.get()), followKnownPrototypeLinks(maker.get(), takeUnion(&Notes::walkedForEnumerableKeys).take(maker.get())));
         },
         [&] {
             BorrowedValueSetMaker maker(m_inputs.makerPool());
@@ -492,6 +507,39 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     followMadeStatements();
 }
 
+bool UsesOfObjects::isFullyKnown(ValueSetID objects) const
+{
+    return !ValueSets::isComplement(objects) && !m_inputs.sets().meet(objects, m_inputs.universe().placeholdersAlone());
+}
+
+void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, bool goesOnToPrototypes) const
+{
+    if (shown == ShownKeys::None || !isFullyKnown(objects))
+        return;
+    if (goesOnToPrototypes)
+        noter.notes.walkedForEnumerableKeys.add(objects);
+    else
+        (shown == ShownKeys::All ? noter.notes.withAllKeysShown : noter.notes.withEnumerableKeysShown).add(noter.maker.intersect(objects, m_inputs.universe().builtinObjects()));
+}
+
+// Stops at an object whose prototype may be one that nobody knows.
+ValueSetID UsesOfObjects::followKnownPrototypeLinks(ValueSetMaker& maker, ValueSetID objects) const
+{
+    ValueSetID chain = objects;
+    ValueSetID frontier = objects;
+    while (frontier != ValueSets::nothing) {
+        ValueSetID above = ValueSets::nothing;
+        m_inputs.sets().forEachMember(frontier, [&](ValueFlowObjectID object) {
+            ValueSetID prototypes = m_heap.prototypesOf(maker, maker.of(object));
+            if (isFullyKnown(prototypes))
+                above = maker.unite(above, prototypes);
+        });
+        frontier = maker.intersect(above, ValueSets::complement(chain));
+        chain = maker.unite(chain, above);
+    }
+    return chain;
+}
+
 void UsesOfObjects::noteOperations(ValueSetMakers& makers)
 {
     const Program& program = m_inputs.program;
@@ -505,8 +553,12 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                 continue;
             std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
             for (uint32_t operand = 0; operand < operands.size(); ++operand) {
-                if (protocolsOf(statement.opcode, operand).containsAny(protocolsListingKeys))
-                    noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[operand]));
+                Protocols protocols = protocolsOf(statement.opcode, operand);
+                if (!protocols.containsAny(protocolsListingKeys))
+                    continue;
+                ValueSetID objects = m_heap.possibleValuesOf(noter.maker, operands[operand]);
+                noter.notes.enumerated.add(objects);
+                noteShownKeys(noter, objects, ShownKeys::Enumerable, protocols.contains(Protocol::PrototypeChain));
             }
             switch (statement.opcode) {
             case Opcode::PropHas:
@@ -517,11 +569,12 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                 noter.notes.observedUnderAnyKey.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::ElemHas::object]));
                 break;
             case Opcode::CopyDataProperties:
-                noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::CopyDataProperties::source]));
+            case Opcode::CopyObject: {
+                ValueSetID source = m_heap.possibleValuesOf(noter.maker, operands[statement.opcode == Opcode::CopyObject ? OperandIndex::CopyObject::source : OperandIndex::CopyDataProperties::source]);
+                noter.notes.enumerated.add(source);
+                noteShownKeys(noter, source, ShownKeys::Enumerable);
                 break;
-            case Opcode::CopyObject:
-                noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::CopyObject::source]));
-                break;
+            }
             default:
                 break;
             }
@@ -640,8 +693,10 @@ void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplicati
     if (!m_builtinsThatLookAtObjects.quickGet(application.builtin.index()))
         return;
     noteRefusedOperands(noter, application);
-    forEachLookAtOperands(m_inputs, application.builtin, application.mode(), [&](std::optional<BuiltinOperand> operand) {
-        noter.notes.enumerated.add(operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything);
+    forEachLookAtOperands(m_inputs, application.builtin, application.mode(), [&](std::optional<BuiltinOperand> operand, ShownKeys shown) {
+        ValueSetID objects = operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything;
+        noter.notes.enumerated.add(objects);
+        noteShownKeys(noter, objects, shown);
     }, [&](BuiltinOperand operand) {
         noter.notes.observedUnderAnyKey.add(application.valueAt(operand, noter.maker));
     }, [&](BuiltinOperand object, PropertyKeyID key, bool looksAtOwnPropertyAlone) {
@@ -663,11 +718,14 @@ auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunction
         BuiltinID builtin = m_inputs.universe().builtinOf(callee);
         if (!m_builtinsThatLookAtObjects.quickGet(builtin.index()))
             return;
-        forEachLookAtOperands(m_inputs, builtin, mode, [&](std::optional<BuiltinOperand> operand) {
-            if (operand)
-                addOnce(notes->enumerated, *operand);
-            else
+        forEachLookAtOperands(m_inputs, builtin, mode, [&](std::optional<BuiltinOperand> operand, ShownKeys shown) {
+            if (!operand) {
                 notes->enumeratesAnything = true;
+                return;
+            }
+            addOnce(notes->enumerated, *operand);
+            if (shown != ShownKeys::None)
+                addOnce(shown == ShownKeys::All ? notes->withAllKeysShown : notes->withEnumerableKeysShown, *operand);
         }, [&](BuiltinOperand operand) {
             addOnce(notes->observedUnderAnyKey, operand);
         }, [&](BuiltinOperand object, PropertyKeyID key, bool looksAtOwnPropertyAlone) {
@@ -735,6 +793,10 @@ void UsesOfObjects::noteApplicationOfAll(Noter noter, const ValueFlowBuiltinAppl
         noter.notes.enumerated.add(ValueSets::anything);
     for (BuiltinOperand operand : notes.enumerated)
         noter.notes.enumerated.add(application.valueAt(operand, noter.maker));
+    for (BuiltinOperand operand : notes.withAllKeysShown)
+        noteShownKeys(noter, application.valueAt(operand, noter.maker), ShownKeys::All);
+    for (BuiltinOperand operand : notes.withEnumerableKeysShown)
+        noteShownKeys(noter, application.valueAt(operand, noter.maker), ShownKeys::Enumerable);
     for (BuiltinOperand operand : notes.observedUnderAnyKey)
         noter.notes.observedUnderAnyKey.add(application.valueAt(operand, noter.maker));
     for (const NotesOfBuiltins::TestUnderName& test : notes.testsUnderNames)

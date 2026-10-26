@@ -58,7 +58,7 @@ public:
     static constexpr uint32_t numberOfColumns = 1u << 15;
     static constexpr uint32_t maxColumn = numberOfColumns - 1;
     static constexpr uint32_t maxNumberOfBases = 1u << 21;
-    static constexpr uint32_t cellsPerPlane = maxNumberOfBases + numberOfColumns;
+    static constexpr uint32_t initialNumberOfBases = 1u << 15;
     static constexpr uint32_t rowMarkerColumn = 0;
     static constexpr uint16_t rowMarkerTag = UINT16_MAX;
     static constexpr unsigned regionShift = 12;
@@ -76,6 +76,8 @@ public:
     ~RowDisplacementTable();
 
     const PackedSlot* plane(SlotAccess access) const { return &m_planes[static_cast<unsigned>(access)]->get(); }
+    // Whoever keeps the addresses of the planes reads them again.
+    bool takeDidMovePlanes() { return std::exchange(m_didMovePlanes, false); }
 
     bool trySet(Structure*, uint32_t column, SlotAccess, const Slot&);
     std::optional<Slot> find(StructureID, uint32_t column, SlotAccess) const;
@@ -148,6 +150,7 @@ private:
     uint32_t findBase(std::span<const uint16_t> columns, uint32_t preferredBase = 0);
     uint32_t findBaseEvictingRows(std::span<const uint16_t> columns, StructureID keep);
     void compactBases();
+    bool tryGrow();
     void reserve(uint32_t index, PackedSlot);
     void vacate(uint32_t index);
     uint32_t createRow(Structure*, uint16_t column);
@@ -167,6 +170,10 @@ private:
     std::array<RememberedSlot<PackedSlot>*, numberOfSlotAccesses> m_planes { };
     uint64_t* m_occupied { nullptr };
     uint32_t m_limitOfBases { 0 };
+    uint32_t m_capacityOfBases { 0 };
+    // Of each plane, and of the occupied bits.
+    std::array<uint32_t, numberOfSlotAccesses + 1> m_numbersOfBasesWithPages { };
+    bool m_didMovePlanes { false };
     uint32_t m_nextBase { firstBase };
     uint32_t m_endOfBases { firstBase };
     SegmentedVector<Row, 128> m_rows;
@@ -182,6 +189,7 @@ private:
 static_assert(RowDisplacementTable::rowMarkerColumn == PackedSlot::noName && RowDisplacementTable::maxColumn < RowDisplacementTable::rowMarkerTag && RowDisplacementTable::rowMarkerTag <= PackedSlot::maxName);
 static_assert(defaultLimitValue(LimitID::LookupTableNames, Architecture::ARM64) == RowDisplacementTable::maxColumn && defaultLimitValue(LimitID::LookupTableNames, Architecture::X86_64) == RowDisplacementTable::maxColumn);
 static_assert(defaultLimitValue(LimitID::LookupTableBases, Architecture::ARM64) == RowDisplacementTable::maxNumberOfBases && defaultLimitValue(LimitID::LookupTableBases, Architecture::X86_64) == RowDisplacementTable::maxNumberOfBases);
+static_assert(hasOneBitSet(RowDisplacementTable::initialNumberOfBases) && RowDisplacementTable::initialNumberOfBases <= RowDisplacementTable::maxNumberOfBases);
 static_assert(RowDisplacementTable::hotNameMultiplier % 2 && !RowDisplacementTable::numberForRank(0, 5000));
 static_assert(RowDisplacementTable::numberForRank(1, 5000) == RowDisplacementTable::hotNameMultiplier && RowDisplacementTable::numberForRank(2048, 5000) == 2048);
 static_assert(RowDisplacementTable::numberForRank(3, 6) == 1 && RowDisplacementTable::numberForRank(4, 6) == 4);

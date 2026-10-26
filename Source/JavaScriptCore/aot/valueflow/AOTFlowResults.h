@@ -187,6 +187,8 @@ struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
     BitVector constantMembers;
     BitVector intactHolders;
+    // An operation that lists own keys is handed one of these, by canonical ID.
+    BitVector holdersWithListedKeys;
     Vector<BuiltinUseRecord> uses;
     Vector<FeatureUseRecord> featureUses;
     BitVector builtinsThatMayBeTrimmed;
@@ -285,6 +287,7 @@ public:
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
+    bool listsKeysOf(BuiltinID canonicalHolder) const { return m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }

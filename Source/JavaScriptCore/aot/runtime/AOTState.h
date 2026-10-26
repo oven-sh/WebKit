@@ -43,6 +43,7 @@ struct ObjectModel;
 
 // Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
 class ZeroedPages {

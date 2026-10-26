@@ -17,11 +17,13 @@
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTModuleHost.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
 #include "AOTSavedFrame.h"
 #include "AOTSavedFrameMap.h"
 #include "AOTShellProcess.h"
+#include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
@@ -31,6 +33,7 @@
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
 #include <wtf/SetForScope.h>
@@ -864,6 +867,60 @@ static void testRootLimit()
     AOT_TEST_CHECK(rootLimitHitsWith(limit + 1) == 1);
 }
 
+static constexpr uint64_t wordOfDeadStack = 0x5ca1ab1e5ca1ab1eULL;
+static unsigned numberOfSaveAreasRead;
+static const Instance* instanceOfSaveArea;
+
+static NEVER_INLINE void fillDeadStack()
+{
+    volatile uint64_t words[2048];
+    for (volatile uint64_t& word : words)
+        word = wordOfDeadStack;
+}
+
+static JSC_DECLARE_HOST_FUNCTION(readSaveAreaAboveResumedCaller);
+JSC_DEFINE_HOST_FUNCTION(readSaveAreaAboveResumedCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    // The call behind the first await is the one with arguments.
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsNumber(1));
+    // The adapter's is the first frame above that holds the instance in its place.
+    constexpr ptrdiff_t instanceWord = AdapterFrame::offsetOfInstance / static_cast<ptrdiff_t>(sizeof(uint64_t));
+    auto* frameOfAdapter = reinterpret_cast<const uint64_t*>(callFrame);
+    unsigned numberOfFrames = 0;
+    do {
+        frameOfAdapter = *reinterpret_cast<const uint64_t* const*>(frameOfAdapter);
+        AOT_TEST_CHECK(++numberOfFrames < 6);
+    } while (frameOfAdapter[instanceWord] != std::bit_cast<uintptr_t>(instanceOfSaveArea));
+    for (ptrdiff_t word = 1; word <= static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize / sizeof(uint64_t)); ++word)
+        AOT_TEST_CHECK(frameOfAdapter[-word] != wordOfDeadStack);
+    ++numberOfSaveAreasRead;
+    return JSValue::encode(jsNumber(2));
+}
+
+static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
+    std::optional<ModuleID> module = findModule("main.js"_s);
+    AOT_TEST_CHECK(module);
+    evaluateModuleSynchronously(realm, *module);
+    AOT_TEST_CHECK(!scope.exception());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, realm, 0, "readSaveArea"_s, readSaveAreaAboveResumedCaller, ImplementationVisibility::Public));
+    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
+    numberOfSaveAreasRead = 0;
+    instanceOfSaveArea = &program.instance();
+    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
+    AOT_TEST_CHECK(!scope.exception() && !numberOfSaveAreasRead);
+    fillDeadStack();
+    vm.drainMicrotasks();
+    AOT_TEST_CHECK(!scope.exception() && numberOfSaveAreasRead == 1);
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -884,6 +941,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
         { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
         { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
+        { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

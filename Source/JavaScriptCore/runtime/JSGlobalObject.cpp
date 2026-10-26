@@ -2899,10 +2899,8 @@ public:
         return IterationStatus::Continue;
     }
 
-    bool findsNothingAmongObjects(VM& vm) const
+    bool findsNothingBelowInterceptor(VM& vm) const
     {
-        if (hasBrokenIndexing(m_interceptor))
-            return false;
         bool someStructureIsBelowInterceptor = false;
         auto visitStructure = [&](Structure* structure) {
             if (hasBrokenIndexing(structure->indexingType()))
@@ -3182,7 +3180,9 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     Vector<JSObject*> foundObjects;
     Vector<JSGlobalObject*> affectedRealms;
     ObjectsWithInterceptorInChainFinder finder(interceptor, foundObjects, affectedRealms);
-    if (!finder.findsNothingAmongObjects(vm)) {
+    if (finder.findsNothingBelowInterceptor(vm))
+        foundObjects.append(interceptor);
+    else {
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
     }

@@ -30,6 +30,7 @@
 #include "AOTImageLoading.h"
 #include "AOTLimits.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTModuleHost.h"
 #include "AOTModuleRecord.h"
 #include "AOTModules.h"
 #include "AOTNativeCallValidation.h"
@@ -57,6 +58,7 @@
 #include "AOTStubsExceptions.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AddressSpaceBudget.h"
 #include "DeferGC.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
@@ -466,6 +468,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
+    releaseUnusedPagesOfThread();
     return instance;
 }
 
@@ -936,13 +939,94 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
 }
 #endif
 
-void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static thread_local uint8_t* t_pagesOfThread;
+static thread_local size_t t_sizeOfPagesOfThread;
+static thread_local bool t_isStarting;
+static std::atomic<unsigned> s_numberOfThreadsStarting;
+
+// The thread may run another image of the executable than the thread that starts it. What its tables need beyond these pages they get as they do without them.
+static size_t sizeOfPagesForNewThread(const Image& image)
 {
+    constexpr size_t sizeOfSmallTables = 512 * KB;
+    auto [below, above] = reservationSizes(image);
+    return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart() + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
+}
+
+// Until a thread adopts them the pages begin with their size.
+PagesForNewThread tryReservePagesForNewThread()
+{
+    const Image* image = Image::current();
+    if (!hasAddressSpaceLimit() || !image)
+        return { };
+    size_t size = sizeOfPagesForNewThread(*image);
+    void* pages = MarkedBlockCage::tryEnsureRoomForNewVMs(++s_numberOfThreadsStarting) ? OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages) : nullptr;
+    if (!pages) {
+        --s_numberOfThreadsStarting;
+        return { nullptr, true };
+    }
+    *static_cast<size_t*>(pages) = size;
+    return { pages, false };
+}
+
+void releasePagesForNewThread(void* pages)
+{
+    if (!pages)
+        return;
+    OSAllocator::releaseDecommitted(pages, *static_cast<size_t*>(pages), 0);
+    --s_numberOfThreadsStarting;
+}
+
+void adoptPagesForNewThread(void* pages)
+{
+    RELEASE_ASSERT(!t_pagesOfThread);
+    t_pagesOfThread = static_cast<uint8_t*>(pages);
+    t_sizeOfPagesOfThread = pages ? std::exchange(*static_cast<size_t*>(pages), 0) : 0;
+    t_isStarting = !!pages;
+}
+
+void releaseUnusedPagesOfThread()
+{
+    if (t_sizeOfPagesOfThread)
+        OSAllocator::releaseDecommitted(t_pagesOfThread, t_sizeOfPagesOfThread, 0);
+    t_pagesOfThread = nullptr;
+    t_sizeOfPagesOfThread = 0;
+    if (std::exchange(t_isStarting, false))
+        --s_numberOfThreadsStarting;
+}
+
+static void* tryTakePagesOfThread(size_t bytes)
+{
+    bytes = roundUpToMultipleOf(pageSize(), bytes);
+    if (bytes > t_sizeOfPagesOfThread)
+        return nullptr;
+    t_sizeOfPagesOfThread -= bytes;
+    return std::exchange(t_pagesOfThread, t_pagesOfThread + bytes);
+}
+#else
+PagesForNewThread tryReservePagesForNewThread() { return { }; }
+void releasePagesForNewThread(void*) { }
+void adoptPagesForNewThread(void*) { }
+void releaseUnusedPagesOfThread() { }
+static void* tryTakePagesOfThread(size_t) { return nullptr; }
+#endif
+
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+{
+    if (void* pages = tryTakePagesOfThread(bytes))
+        return pages;
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
     if (void* pages = tryReserveGuardedPagesAtRandomAddress(bytes, usage))
         return pages;
 #endif
-    return OSAllocator::reserveAndCommit(bytes, usage, nullptr, true, false, false, guardPagesOnEachEnd);
+    return OSAllocator::tryReserveAndCommit(bytes, usage, nullptr, true, false, false, guardPagesOnEachEnd);
+}
+
+void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+{
+    void* pages = tryReserveGuardedPages(bytes, usage);
+    RELEASE_ASSERT(pages, bytes);
+    return pages;
 }
 
 void releaseGuardedPages(void* pages, size_t bytes)

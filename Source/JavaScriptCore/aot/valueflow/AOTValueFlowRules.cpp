@@ -184,6 +184,7 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
         carryOut(context, context.read(arrived, { kind, 0 }));
     context.connect(context.masked(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
+    context.connect(context.masked(context.read(others, prototypeLinkName), universe.builtinTables().heap().namespacesWhoseHoldersListThem()), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
     context.add(escapedNode, objectsHeldFromCreation(context, others));
     for (const ValueFlowClassOfEntries& classOfEntries : universe.builtinTables().heap().classesOfEntries()) {
         if (context.meet(arrived, classOfEntries.entries))
@@ -230,6 +231,7 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ValueFlowNodeID constructorsNode = context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
 
     ClimbingSet chain = context.valueOf(context.lookup(context.valueWithin(ClimbingSet(instances), escapedNode), prototypeLinkName));
+    context.add(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), context.restrict(chain, universe.builtinTables().heap().namespacesWhoseHoldersListThem()));
     if (mayBeUntrackedObject(context, chain))
         context.add(escapedNode, untrackedObject);
     ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));

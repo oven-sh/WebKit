@@ -468,7 +468,7 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::Constant: {
         Value constant = makeConstant(inputs.program, plan);
         Effects effects = declaredBoundOf(constant.opcode);
-        if (tryMakeInitializeBuiltin(inputs.program.builtins(), constant))
+        if (tryMakeInitializeBuiltin(inputs.program.builtins(), inputs.flow, constant))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         effects.merge(nullishCheckEffects);
         return effects;
@@ -639,7 +639,7 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     case BuiltinUseKind::Constant: {
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
         Value constant = makeConstant(context.program, plan);
-        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), constant))
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), context.inputs.flow, constant))
             insert(WTF::move(*initialization));
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;
