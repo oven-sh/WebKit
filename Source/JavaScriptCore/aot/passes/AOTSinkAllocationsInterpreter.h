@@ -231,39 +231,6 @@ private:
     bool m_noCellHasValidFields { false };
 };
 
-inline constexpr OpcodeSet interpretedReads {
-    Opcode::GetEnvironmentField, Opcode::GetMappedArgument, Opcode::PropGet, Opcode::ElemGet, Opcode::PrivateGet, Opcode::GetSlot,
-    Opcode::GetSlotOrUndefined, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::GetCapture, Opcode::GetStringLength, Opcode::GetStringCodeUnit,
-};
-
-inline constexpr OpcodeSet interpretedStores {
-    Opcode::PutEnvironmentField, Opcode::AppendElement, Opcode::AppendHole, Opcode::SetMappedArgument, Opcode::PropSet, Opcode::PropDefine,
-    Opcode::ElemSet, Opcode::ElemDefine, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::PutArrayElement,
-    Opcode::PropDelete,
-};
-
-inline constexpr OpcodeSet interpretedCasts {
-    Opcode::FinishObject, Opcode::Upcast, Opcode::NarrowByField, Opcode::Check, Opcode::AssumeType, Opcode::CheckInitialized,
-    Opcode::RequireObjectCoercible, Opcode::RequireObject,
-};
-
-inline constexpr OpcodeSet interpretedListUses {
-    Opcode::AppendSpread, Opcode::CopyDataProperties, Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList, Opcode::AppendElements,
-    Opcode::DestructureIterable, Opcode::ResultAt,
-};
-
-inline constexpr OpcodeSet interpretedAllocations {
-    Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::NewRegExp, Opcode::CreateUnmappedArguments,
-    Opcode::CreateMappedArguments, Opcode::NewPromise, Opcode::CreateRest, Opcode::NewGenerator,
-    Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::CallBuiltin, Opcode::TypedArrayRange,
-};
-
-static_assert((interpretedReads | opcodesInterpretedAs(Interpretation::Read)) == interpretedReads);
-static_assert((interpretedStores | opcodesInterpretedAs(Interpretation::Store)) == interpretedStores);
-static_assert((interpretedCasts | opcodesInterpretedAs(Interpretation::Cast)) == interpretedCasts);
-static_assert((interpretedListUses | opcodesInterpretedAs(Interpretation::List)) == interpretedListUses);
-static_assert((interpretedAllocations | opcodesInterpretedAs(Interpretation::Allocation)) == interpretedAllocations);
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

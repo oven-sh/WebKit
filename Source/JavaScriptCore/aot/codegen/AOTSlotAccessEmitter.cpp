@@ -82,6 +82,8 @@ Operand SlotAccessEmitter::undefinedResult(const ValueContext& value)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::RawWord:
         break;
@@ -371,6 +373,8 @@ Operand SlotAccessEmitter::decodeWordOfDeferringSlot(const ValueContext& value, 
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:

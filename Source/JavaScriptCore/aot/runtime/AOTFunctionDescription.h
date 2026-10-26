@@ -44,7 +44,7 @@ public:
     JS_EXPORT_PRIVATE bool isStrict() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
     bool isNakedConstructor() const;
-    bool isNamedBySymbol() const;
+    bool isNamedByComputedKey() const;
     bool recordsCallee() const;
     JS_EXPORT_PRIVATE bool isAsync() const;
     JS_EXPORT_PRIVATE bool isNamedByOwner() const;

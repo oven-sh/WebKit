@@ -1,4 +1,4 @@
-# A number that is boxed is tested for NaN in two instructions; the canonical NaN is made on a rare arm, not ahead of the test
+# A number that arithmetic on numbers made is boxed without a test for NaN. A number read out of a float view is tested for NaN in two instructions; the canonical NaN is made on a rare arm, not ahead of the test
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot
 # RUN: generate-code
@@ -11,4 +11,16 @@ function f0 name="boxed" parameters=[{type=number}, {type=number}] results=[{typ
     Return v2
 }
 # CHECK: f0: size={{*}}
-# X64: f0: size=60 frame=none
+# X64: f0: size=41 frame=none
+
+function f1 name="boxedElement" parameters=[{type=Float64Array}, {type=i32}] results=[{type=anything}] {
+    v2 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetTypedArrayElement v0, v1, v3 typedArrayType=10 level=Proven [isInsideView]
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f1: size={{*}}

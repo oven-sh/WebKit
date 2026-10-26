@@ -441,6 +441,8 @@ std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const Value
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:

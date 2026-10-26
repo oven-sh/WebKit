@@ -347,10 +347,15 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     }
 }
 
+static bool isNameOfProperty(ValueFlowName name)
+{
+    return name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
+}
+
 // A computed key is a text or a symbol, never a private name.
 bool ValueFlowSolver::mayBeComputedKey(ValueFlowName name) const
 {
-    if (!m_input.program || (name.kind != ValueFlowNameKind::Property && name.kind != ValueFlowNameKind::Getter && name.kind != ValueFlowNameKind::Setter))
+    if (!m_input.program || !isNameOfProperty(name))
         return true;
     switch (m_input.program->at(PropertyKeyID(name.payload)).kind) {
     case PropertyKeyKind::EnginePrivateName:
@@ -364,6 +369,12 @@ bool ValueFlowSolver::mayBeComputedKey(ValueFlowName name) const
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What lies under a symbol that the library keeps to itself is found under that symbol alone.
+bool ValueFlowSolver::isFoundUnderComputedKey(ValueFlowName name) const
+{
+    return mayBeComputedKey(name) && (!m_input.universe || !isNameOfProperty(name) || !m_input.universe->builtinTables().heap().isSymbolUsedOnlyAsKey(PropertyKeyID(name.payload)));
 }
 
 ALWAYS_INLINE ValueFlowNodeID ValueFlowSolver::nodeAwaitedBy(ValueFlowStatementID id, const ValueFlowStatement& statement) const
@@ -1102,7 +1113,7 @@ private:
         const ValueFlowNodeKey& key = at(number).key;
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
         const KindOfNames& kind = m_solver.m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
-        if ((isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt) && m_solver.mayBeComputedKey(key.name()))
+        if (isRead ? kind.writtenKindsItMayFind && m_solver.mayBeComputedKey(key.name()) : kind.readKindsThatMayFindIt && m_solver.isFoundUnderComputedKey(key.name()))
             wishes.append(Wish { number, ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind) });
     }
 
@@ -1661,7 +1672,7 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     case ValueFlowMadeNodeKind::Written: {
         bool isRead = key.kind == ValueFlowMadeNodeKind::Read;
         const KindOfNames& kind = m_kindsOfNames[static_cast<unsigned>(key.name().kind)];
-        if ((isRead ? kind.writtenKindsItMayFind : kind.readKindsThatMayFindIt) && mayBeComputedKey(key.name()))
+        if (isRead ? kind.writtenKindsItMayFind && mayBeComputedKey(key.name()) : kind.readKindsThatMayFindIt && isFoundUnderComputedKey(key.name()))
             join(ValueFlowNodeKey::underKind(isRead ? ValueFlowMadeNodeKind::ReadUnderKind : ValueFlowMadeNodeKind::WrittenUnderKind, key.set, key.name().kind));
         break;
     }
@@ -3746,7 +3757,7 @@ bool ValueFlowSolver::solve()
             if (m_input.lost)
                 m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
             if (m_input.nodes && m_input.universe)
-                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesWhoseHoldersListThem());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
         },
         [&] {
             m_graph.addInitialEdges(m_input.edges);

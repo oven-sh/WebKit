@@ -112,8 +112,6 @@ private:
 } // anonymous namespace
 
 static constexpr OpcodeSet objectTests { Opcode::ToBoolean, Opcode::TypeTest, Opcode::ShapeTest, Opcode::IsSlotFilled, Opcode::PropHas, Opcode::PropHasOwn };
-static constexpr OptionSet<FunctionCapabilities> capabilitiesClonesInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
-
 static_assert((evaluatedTests | objectTests) == evaluatedTests);
 static_assert(evaluatedTests.contains(Opcode::StrictEq));
 
@@ -884,7 +882,7 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
 
     wrapper.role = FunctionRole::ParameterWrapper;
     wrapper.creator = CreatorRecord::ParameterWrapper { body, promotion.parameter };
-    wrapper.capabilities = (initialCapabilitiesOf(wrapper) - capabilitiesClonesInherit) | (wrapper.capabilities & capabilitiesClonesInherit);
+    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, wrapper.capabilities);
     compactFunction(wrapper);
     moveToExactBuffer(wrapper.storageOfBlocks());
     showOperationsInFrameOfBody(wrapper, body);

@@ -193,6 +193,7 @@ constexpr std::array rows {
     programPass(CheckPlacement, Required, { Placed, Placed }, placementInputs | Results { Placement, SiteCaches }, { }, { }),
     programPass(GenerateCode, Required, { Placed, Placed }, codeGenerationInputs, { }, { }),
 
+    verifiedAfterNextPass(functionPass(ListLiveValuesAtSuspensions, listLiveValuesAtSuspensions, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(TypeValues, typeValues, Required, AsRead, { }, everything)),
     verifiedAfterNextPass(functionPass(CheckInt32Promises, checkInt32Promises, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, everything)),
@@ -256,6 +257,7 @@ constexpr std::array rows {
 };
 
 constexpr std::array typeSteps {
+    ScheduleStep::run(ListLiveValuesAtSuspensions),
     ScheduleStep::run(TypeValues),
     ScheduleStep::run(CheckInt32Promises),
     ScheduleStep::run(CheckRegExpLiterals),

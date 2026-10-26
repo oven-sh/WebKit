@@ -238,11 +238,6 @@ struct AnsweredCall {
 
 } // anonymous namespace
 
-static constexpr OptionSet<FunctionCapabilities> capabilitiesSplitBodiesInherit {
-    FunctionCapabilities::HasOnlyDirectCallers,
-    FunctionCapabilities::IsNeverCalledByHost,
-    FunctionCapabilities::IsHiddenInStackTraces,
-};
 static constexpr OptionSet<FunctionCapabilities> capabilitiesBehindEntrance { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
 
 static bool canBeSplit(const Program& program, const BuildContext& build, FunctionID id)
@@ -611,7 +606,7 @@ static Function createChecks(const AnalysisContext& context, TypeArena& types, c
     tests.inlineFrames.clear();
     tests.role = FunctionRole::EntryChecks;
     tests.creator = CreatorRecord::EntryChecks { typedBody, fallback };
-    tests.capabilities = (initialCapabilitiesOf(tests) - capabilitiesSplitBodiesInherit) | (header.capabilities & capabilitiesSplitBodiesInherit);
+    tests.capabilities = capabilitiesInPlaceOf(tests, header.capabilities, FunctionCapabilities::IsHiddenInStackTraces);
     if (header.isUnsplitCoroutine())
         tests.flags.add(FunctionFlags::IsHiddenInStackTraces);
 

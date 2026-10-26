@@ -22,6 +22,7 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTKnownValue.h"
 #include "AOTLargeVectors.h"
@@ -167,7 +168,7 @@ static bool isRewrittenUse(const Program& program, const Value& user, uint32_t o
         return true;
     if (user.opcode == Opcode::CallDirect)
         return *user.variadicOperandIndex(operandIndex) < program.at(user.function()).captures.size();
-    return false;
+    return isHeldOperand(user, operandIndex);
 }
 
 static PromotionScan scanForPromotion(const Program& program, const FlowResults& flow, BuildContext& build, const EnvironmentTypes& types, FunctionID id)
@@ -689,6 +690,15 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
                 value.become(Opcode::PutModuleVariable);
                 value.setVariable(variable);
                 value.setValueOperand(stored);
+            } else if (numberOfHeldOperandsOf(value)) {
+                // The variables hold what the environment held.
+                Vector<ValueID, 8> held;
+                for (ValueID listed : heldOperandsOf(value)) {
+                    LayoutID environment = program.typeOf(function, listed).environment;
+                    if (!environment || !plan.isPromoted(environment))
+                        held.append(listed);
+                }
+                setHeldOperands(value, held.span());
             }
             rewritten.append(id);
             appendCapturedValueStore(rewritten, id);

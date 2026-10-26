@@ -1454,8 +1454,8 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
 
     m_receiversOfReads = WTF::move(receivers);
     UnionOfSets above;
-    m_heap.forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID, ValueSetID value) {
-        above.add(value);
+    m_heap.forEachSeenValueWrittenUnder(prototypeLinkName, [&](ValueSetID seenValue) {
+        above.add(seenValue);
     });
     m_objectsPutAboveOthers = above.takeAsListed(m_heap.maker());
 

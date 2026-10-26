@@ -565,7 +565,7 @@ void generateBoxNumber(StubAssembler& jit)
             jit.moveDoubleTo64(number, result);
             isMarker = jit.branch64(CCallHelpers::GreaterThanOrEqual, result, TrustedImm64(static_cast<int64_t>(doubleMarkers.undefined)));
         }
-        jit.move(TrustedImm64(JSValue::encode(jsNaN())), result);
+        boxNaN(jit, number, result);
         jit.returnToCaller();
     } else {
         const GPRReg integer = jit.clobberOperand(0);

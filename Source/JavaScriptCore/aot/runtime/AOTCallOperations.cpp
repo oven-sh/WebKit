@@ -60,8 +60,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-static constexpr unsigned argumentsCalleeAttributes = PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor;
-
 struct ArgumentsObjectSource {
     uint32_t count;
     JSArray* rest;
@@ -94,25 +92,10 @@ static bool canReadRestQuickly(const ArgumentsObjectSource& source)
     return (hasContiguous(type) || hasInt32(type)) && !containsHole(source.rest->butterfly()->contiguous().data(), restLength);
 }
 
-// The first object of a realm gets its two properties one by one, which creates the Structures that are looked up here.
-static const UnmappedArgumentsShape* findShapeOfUnmappedArguments(Instance* instance)
+// The object adds `callee` and Symbol.iterator to itself when they are first listed or changed. Until then it asks its callee whether the code is strict.
+static JSFunction* calleeOfStrictCode(JSGlobalObject* globalObject)
 {
-    State& state = *instance->state;
-    UnmappedArgumentsShape& shape = state.builtinFamilies->unmappedArguments;
-    Structure* initialStructure = instance->globalObject->clonedArgumentsStructure();
-    if (shape.initialStructure == initialStructure) [[likely]]
-        return &shape;
-
-    VM& vm = *instance->vm;
-    UnmappedArgumentsShape found { initialStructure, nullptr, invalidOffset, invalidOffset };
-    found.structure = Structure::addPropertyTransitionToExistingStructure(initialStructure, vm.propertyNames->callee, argumentsCalleeAttributes, found.offsetOfCallee);
-    if (found.structure)
-        found.structure = Structure::addPropertyTransitionToExistingStructure(found.structure, vm.propertyNames->iteratorSymbol, static_cast<unsigned>(PropertyAttribute::DontEnum), found.offsetOfIterator);
-    if (!found.structure)
-        return nullptr;
-    state.immortalCells->add(found.structure);
-    shape = found;
-    return &shape;
+    return globalObject->arrayProtoValuesFunction();
 }
 
 static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const ArgumentsObjectSource& source)
@@ -121,15 +104,10 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
     JSGlobalObject* globalObject = instance->globalObject;
     if (!canReadRestQuickly(source))
         return nullptr;
-    const UnmappedArgumentsShape* shape = findShapeOfUnmappedArguments(instance);
-    if (!shape)
-        return nullptr;
-    Structure* structure = shape->structure;
+    Structure* structure = globalObject->clonedArgumentsStructure();
     if (!hasContiguous(structure->indexingType()) || structure->mayInterceptIndexedAccesses() || structure->storedPrototypeObject()->needsSlowPutIndexing())
         return nullptr;
-    JSValue callee = globalObject->throwTypeErrorArgumentsCalleeGetterSetter();
-    JSValue iterator = globalObject->arrayProtoValuesFunction();
-    ClonedArguments* result = ClonedArguments::createEmpty(vm, nullptr, structure, nullptr, source.count, nullptr);
+    ClonedArguments* result = ClonedArguments::createEmpty(vm, nullptr, structure, calleeOfStrictCode(globalObject), source.count, nullptr);
     if (!result)
         return nullptr;
 
@@ -141,8 +119,6 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
         for (uint32_t i = 0; i < restLength; ++i)
             elements.atUnsafe(source.numberInFrame + i).setWithoutWriteBarrier(rest[i].get());
     }
-    result->putDirectOffset(vm, shape->offsetOfCallee, callee);
-    result->putDirectOffset(vm, shape->offsetOfIterator, iterator);
     return result;
 }
 
@@ -153,7 +129,7 @@ static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (ClonedArguments* result = tryCreateArgumentsFast(instance, source))
         return result;
-    ClonedArguments* result = ClonedArguments::createEmpty(vm, globalObject, globalObject->clonedArgumentsStructure(), nullptr, source.count, nullptr);
+    ClonedArguments* result = ClonedArguments::createEmpty(vm, globalObject, globalObject->clonedArgumentsStructure(), calleeOfStrictCode(globalObject), source.count, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!result) {
         throwOutOfMemoryError(globalObject, scope);
@@ -165,8 +141,6 @@ static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjec
         result->putDirectIndex(globalObject, i, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    result->putDirectAccessor(globalObject, vm.propertyNames->callee, globalObject->throwTypeErrorArgumentsCalleeGetterSetter(), argumentsCalleeAttributes);
-    result->putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     return result;
 }
 
@@ -411,7 +385,7 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
 {
     AOT_THRESHOLD(uint32_t, maxLengthCopied, 64);
     VM& vm = *instance->vm;
-    if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->state->builtinFamilies->unmappedArguments.structure)
+    if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->globalObject->clonedArgumentsStructure())
         return nullptr;
     JSObject* arguments = asObject(arrayLike);
     if (!hasContiguous(arguments->indexingType()))

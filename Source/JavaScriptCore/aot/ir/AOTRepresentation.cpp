@@ -43,6 +43,8 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     case Representation::Int64:
         return { Primitive::Integer, Range::full() };
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return { Primitive::Number, Range::full() };
     case Representation::OptionalInt64:
         return { Primitive::Integer | representedMarkerPrimitives, Range::full() };
@@ -291,6 +293,8 @@ SlotRepresentation defaultSlotRepresentationOf(const Type& type)
     case Representation::RawWord:
         return SlotRepresentation::Int64;
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return SlotRepresentation::Double;
     case Representation::OptionalInt64:
         return SlotRepresentation::OptionalInt64;

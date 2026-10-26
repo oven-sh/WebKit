@@ -503,7 +503,7 @@ bool CompiledFrameIterator::isConstructCall()
         const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd);
         if (!entry)
             return runEnd.constructs(source);
-        if (entry->site.isConstruct)
+        if (entry->site.isConstruct())
             return true;
         if (entry->innermostVisibility == TraceVisibility::Visible)
             return false;
@@ -702,9 +702,9 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.innermostFunction = innermost.function;
     entry.innermostIsInlinedConstructCall = innermost.isInlinedConstructCall;
     entry.innermostVisibility = FunctionDescription(innermost.function).visibility();
-    entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall);
+    entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
     entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
-    if (entry.site.isTailCall)
+    if (entry.site.isTailCall())
         entry.shownFrameCountOnTopBehindTailCall = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), true), CallSiteCache::Entry::tooManyFramesToCount);
     return entry;
 }

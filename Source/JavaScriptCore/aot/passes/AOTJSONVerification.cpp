@@ -443,6 +443,8 @@ struct TypedDataVerifier {
             const Value& row = function.at(value);
             if (row.opcode == Opcode::StringBuilderReserve)
                 return row.size();
+            if (!OperandPosition::cursor(row.opcode))
+                return 0;
 
             uint32_t taken = bytesTakenFromReservation(program, row);
             uint32_t reserved = reservedBytesOf(row.cursorOperand());

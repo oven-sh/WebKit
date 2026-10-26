@@ -273,6 +273,8 @@ static std::optional<B3::IntRange> knownRangeOf(const Type& type, Representation
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:

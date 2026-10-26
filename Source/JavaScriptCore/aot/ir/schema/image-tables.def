@@ -1,0 +1,29 @@
+# Rows of the image's tables. `packed` says once what a row holds and how it lies in bytes: the generator writes the struct, append() and read().
+# A word is a number of variable length. Its fields lie from the lowest bit up, and the last may take all that is left. ';' begins the next word.
+# `if`: the word is there only then. List: how many, then the rows. Bytes: how many, then the bytes. CodeOffset: in units of codeOffsetUnit.
+
+# What a site with code says beyond where it is. Of a first read only the number is read. A site inside a callee lies behind a tail call.
+enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool) {
+    | engine
+    Plain(false, false, false, false, false)
+    Construct(false, true, false, false, false)
+    TailCall(false, false, true, false, false)
+    TailConstruct(false, true, true, false, false)
+    FirstRead(true, false, false, false, false)
+    InsideBuiltin(false, false, false, false, true)
+    InsideCallee(false, false, true, true, false)
+    InsideBuiltinCallee(false, false, true, true, true)
+}
+
+packed PrologueCheckRow { callOffset: CodeOffset ; resumeOffset: CodeOffset }
+packed CallSiteHead {
+    reserved: Bool hasInlineFrames: Bool hasPrologueChecks: Bool numberOfSites: UInt64
+    ; prologueChecks: List<PrologueCheckRow> if hasPrologueChecks
+    ; numberOfSitesWithoutCode: UInt64
+    ; numberOfInlineFrames: UInt64 if hasInlineFrames
+    ; inlineFrames: Bytes if hasInlineFrames
+}
+packed InlineFrameRow { isTailCall: Bool isConstruct: Bool parent: UInt32 ; function: Function }
+# The frame applies until the next site with details. The kind applies to this site only.
+packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
+packed CallSiteRow { hasDetails: Bool distance: CodeOffset ; details: CallSiteDetails if hasDetails }

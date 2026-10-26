@@ -581,7 +581,7 @@ static void printFunctionTraces(const TablesContext& context)
             .field("implements"_s, implemented).field("visibility"_s, nameOf(trace.visibility())).field("builtinKind"_s, nameOf(trace.builtinKind()))
             .word(trace.codeType() == ModuleCode ? "module"_s : "function"_s).word(trace.isStrict ? "strict"_s : "sloppy"_s).flag("constructor"_s, trace.isConstructor)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
-            .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedBySymbol"_s, trace.isNamedBySymbol);
+            .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedByComputedKey"_s, trace.isNamedByComputedKey);
     }
 }
 

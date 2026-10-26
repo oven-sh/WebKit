@@ -2062,6 +2062,9 @@ struct LoopPathSeparator : LoopEditor {
     BitVector m_isSeparatedHeader { };
     Vector<VariableOfLoop> m_variablesWithStores { };
     bool m_likelyPathCannotLeave { false };
+    bool m_pathThatOnlyComputesLeaves { false };
+
+    enum class PathsThatOnlyCompute : uint8_t { LeaveWhereTheyWidenParameters, Stay };
 
     PassOutcome run()
     {
@@ -2071,10 +2074,18 @@ struct LoopPathSeparator : LoopEditor {
                 if (m_isFinishedHeader.set(header.index()))
                     continue;
                 const NaturalLoop& loop = *m_analyses.naturalLoops().headerOf(header);
-                m_likelyPathCannotLeave = false;
-                std::optional<SeparationPlan> plan = planFor(loop, true);
-                if (!plan && m_likelyPathCannotLeave)
-                    plan = planFor(loop, false);
+                auto planWith = [&](PathsThatOnlyCompute pathsThatOnlyCompute) {
+                    m_likelyPathCannotLeave = false;
+                    std::optional<SeparationPlan> plan = planFor(loop, true, pathsThatOnlyCompute);
+                    if (!plan && m_likelyPathCannotLeave)
+                        plan = planFor(loop, false, pathsThatOnlyCompute);
+                    return plan;
+                };
+                m_pathThatOnlyComputesLeaves = false;
+                std::optional<SeparationPlan> plan = planWith(PathsThatOnlyCompute::LeaveWhereTheyWidenParameters);
+                // Where the loop cannot be copied with an entry on such a path, the paths that run code or write still leave.
+                if (!plan && m_pathThatOnlyComputesLeaves)
+                    plan = planWith(PathsThatOnlyCompute::Stay);
                 if (plan)
                     return plan;
             }
@@ -2258,17 +2269,17 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes.
-    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop)
+    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BitVector isUnlikely = findUnlikelyBlocks(loop);
         BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
             return !onlyComputes(m_function.at(block));
         });
-        if (leaves == isUnlikely)
+        if (pathsThatOnlyCompute == PathsThatOnlyCompute::Stay || leaves == isUnlikely)
             return leaves;
         Vector<std::optional<Type>> typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
         BitVector mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
-        return findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+        BitVector leavesWithPathsThatOnlyCompute = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
             if (leaves.get(block.index()))
                 return true;
             return std::ranges::any_of(m_function.at(block).terminator.targets, [&](const Target& target) {
@@ -2284,9 +2295,11 @@ struct LoopPathSeparator : LoopEditor {
                 return false;
             });
         });
+        m_pathThatOnlyComputesLeaves = leavesWithPathsThatOnlyCompute != leaves;
+        return leavesWithPathsThatOnlyCompute;
     }
 
-    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables)
+    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BlockID header = loop.header();
         if (!isHotLoop(m_context, loop))
@@ -2309,7 +2322,7 @@ struct LoopPathSeparator : LoopEditor {
             bytes += estimatedCodeBytes(m_program, m_function, m_function.at(block));
         }
 
-        BitVector leaves = findLeavingBlocks(loop, isInLoop);
+        BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute);
         plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;

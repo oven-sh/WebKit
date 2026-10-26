@@ -334,7 +334,7 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     jit.returnToCaller();
 
     returnsNaN.link(&jit);
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(boxedNaN)), r.result);
+    boxNaN(jit, r.number, r.result);
     jit.returnToCaller();
 }
 

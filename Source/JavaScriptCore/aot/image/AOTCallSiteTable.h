@@ -10,6 +10,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTImageForward.h"
+#include "AOTSchemaPackedRecords.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
 #include "HandlerInfo.h"
@@ -28,23 +29,20 @@ struct CallSiteRecord {
     CallSiteIndex callSite;
     unsigned inlineFrame;
     // A function that makes a tail call leaves the stack when its callee begins.
-    bool isTailDeleted(bool calleeWasEntered) const { return isTailCall && (calleeWasEntered || isInsideCallee); }
+    bool isTailDeleted(bool calleeWasEntered) const { return isTailCall() && (calleeWasEntered || isInsideCallee()); }
+    bool isConstruct() const { return isConstructOf(kind); }
+    bool isTailCall() const { return isTailCallOf(kind); }
+    bool isInsideCallee() const { return isInsideCalleeOf(kind); }
 
-    bool isConstruct : 1 { false };
-    bool isTailCall : 1 { false };
-    bool isInsideCallee : 1 { false };
+    CallSiteKind kind { CallSiteKind::Plain };
     // What is called runs steps of this function, which has no frame of its own.
     BuiltinID calledBuiltin { };
     std::optional<CallSiteIndex> firstReadSite { };
 };
 static_assert(sizeof(CallSiteRecord) == 20);
 
-struct InlineFrameRecord {
-    unsigned parent;
+struct InlineFrameRecord : InlineFrameRow {
     CallSiteIndex callSite;
-    FunctionID function;
-    bool isConstruct;
-    bool isTailCall;
 };
 
 class InlineFrameReader {

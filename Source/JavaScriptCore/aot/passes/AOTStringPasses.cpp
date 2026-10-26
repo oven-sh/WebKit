@@ -68,7 +68,7 @@ static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet, Opc
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
-    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
+    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
 };
 static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
 

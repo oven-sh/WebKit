@@ -18,6 +18,9 @@ public:
 
     void generateStringBuilderReserve(const ValueContext& value) { define(value, builders().reserve(value, builderOf(value), word32(value->size()))); }
     void generateStringBuilderCommit(const ValueContext& value) { builders().commit(builderOf(value), cursorOf(value)); }
+    void generateJSONResetHolders(const ValueContext&);
+    void generateJSONEnterHolder(const ValueContext&);
+    void generateJSONLeaveHolder(const ValueContext&);
     void generateJSONAppendKey(const ValueContext&);
     void generateJSONAppendToken(const ValueContext&);
     void generateJSONAppendBoolean(const ValueContext&);

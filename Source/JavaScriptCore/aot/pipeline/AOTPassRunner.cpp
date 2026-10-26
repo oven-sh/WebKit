@@ -76,6 +76,7 @@ struct PassesByContent {
 
 // A pass without a row may have something to do in any body.
 static constexpr TriggersOfPass triggersOfPasses[] {
+    { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::CheckRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
     { PassID::AddGenericVersion, { .opcodes = { Opcode::Check, Opcode::Construct, Opcode::CallBuiltin } } },

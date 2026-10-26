@@ -772,8 +772,9 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
     // A call, and the read of the method that it calls, can throw before the callee begins.
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
-    RELEASE_ASSERT(!calledBuiltin || (!options.constructs && !options.isTailCall && isInsideCallee == origin.isTailCall));
-    return { .origin = origin, .constructs = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .calledBuiltin = calledBuiltin };
+    std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
+    RELEASE_ASSERT(kind);
+    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)

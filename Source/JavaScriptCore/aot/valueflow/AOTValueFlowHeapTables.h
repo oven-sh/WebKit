@@ -88,6 +88,7 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
     macro(ValueSetID, holdersWithMembersUnderNumericNames) \
     macro(ValueSetID, holdersOfMembersThatHostMakes) \
     macro(ValueSetID, namespacesWhoseHoldersListThem) \
+    macro(ValueSetID, namespacesNotedWhenCarriedOut) \
     macro(ValueSetID, holdersOfUndeclaredPropertiesUnderAnyKey) \
     macro(ValueSetID, holdersOfUndeclaredPropertiesUnderIndexes) \
     macro(ValueSetID, lockedObjects) \
@@ -159,6 +160,7 @@ public:
     const ValueFlowNamesReadByNativeCode* namesReadByNativeCodeOn(ValueFlowObjectID) const LIFETIME_BOUND;
     std::span<const ValueFlowPropertyKeptForLife> propertiesKeptForLife() const LIFETIME_BOUND { return m_propertiesKeptForLife.span(); }
     std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
+    bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
 
     static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
@@ -251,6 +253,7 @@ private:
     Vector<ValueFlowNamesReadByNativeCode> m_namesReadByNativeCode;
     Vector<ValueFlowPropertyKeptForLife, 4> m_propertiesKeptForLife;
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
+    BitVector m_symbolsUsedOnlyAsKeys;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesAtCreation;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };

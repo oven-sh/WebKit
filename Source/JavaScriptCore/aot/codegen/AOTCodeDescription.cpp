@@ -190,7 +190,7 @@ static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall && !record.calledBuiltin;
+        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -300,15 +300,8 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
 {
     Vector<FlaggedSite> flaggedSites;
     for (uint32_t i = numberOfSitesWithoutCode; i < renumbered.size(); ++i) {
-        OptionSet<SiteFlag> flags;
-        if (renumbered[i].constructs)
-            flags.add(SiteFlag::Constructs);
-        if (renumbered[i].isTailCall)
-            flags.add(SiteFlag::IsTailCall);
-        if (renumbered[i].isInsideCallee)
-            flags.add(SiteFlag::IsInsideCallee);
-        if (!flags.isEmpty() || renumbered[i].calledBuiltin)
-            flaggedSites.append({ i + 1, flags, renumbered[i].calledBuiltin });
+        if (renumbered[i].kind != CallSiteKind::Plain)
+            flaggedSites.append({ i + 1, renumbered[i].kind, renumbered[i].calledBuiltin });
     }
     return flaggedSites;
 }

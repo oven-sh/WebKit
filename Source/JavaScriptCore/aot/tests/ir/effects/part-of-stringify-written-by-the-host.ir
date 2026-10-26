@@ -10,10 +10,10 @@ function f0 name="written" parameters=[{type=L0}, {type=L1}, {type=object}, {typ
     v4 = Undefined
     v5 = StringBuilderBegin
     v6 = CallBuiltin -, v0, v4, v4 overload=JSONStringify/0
-    v7 = StringBuilderAppendJSON v5, v0, v3
-    v8 = StringBuilderAppendJSON v5, v3, v3
-    v9 = StringBuilderAppendJSON v5, v1, v3
-    v10 = StringBuilderAppendJSON v5, v2, v3
+    v7 = StringBuilderAppendJSON v5, v0, v3, v3
+    v8 = StringBuilderAppendJSON v5, v3, v3, v3
+    v9 = StringBuilderAppendJSON v5, v1, v3, v3
+    v10 = StringBuilderAppendJSON v5, v2, v3, v3
     Return
 }
 # CHECK-LABEL: function f0

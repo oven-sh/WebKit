@@ -22,8 +22,10 @@ function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, prov
   b2():
     v8 = Undefined
     Return v8
-# CHECK: = CallDirect v1, {{*}} function=
 # CHECK: = GetArrayElement v0, v6, v3 arrayStorage=Int32
+# CHECK: role=CatchHandler
+# CHECK-NEXT: = CatchValue
+# CHECK: = CallDirect v1, {{*}} function=
 }
 
 function f1 name="testedAgainBehindUnknownCode" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L1}] results=[{type=anything}] {

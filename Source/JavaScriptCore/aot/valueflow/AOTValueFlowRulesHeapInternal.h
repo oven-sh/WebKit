@@ -166,12 +166,14 @@ private:
 
     ClimbingSet startOfLookup(ClimbingSet receivers);
     void forEachStartOfLookup(ClimbingSet receivers, NOESCAPE const Invocable<void(ClimbingSet)> auto&);
-    HeapChain chainFrom(ClimbingSet receivers);
+    HeapChain chainFrom(ClimbingSet receivers, ValueFlowName nameOfChain = prototypeLinkName);
     HeapChain chainFrom(ClimbingSet receivers, const HeapKey&);
     std::optional<ClimbingSet> chainUpToPrototypeObjectsOfEntries(ClimbingSet start, ValueFlowNodeID wholeChain, const HeapKey&);
     HeapChain chainThatGoesUpFrom(ClimbingSet receivers, const HeapKey&);
+    HeapChain chainWithCopiesThatReach(const HeapKey&, ClimbingSet receivers);
     bool mayInheritSetter(ClimbingSet objects);
     ValueSetID holdersWithLockedLocationUnder(const HeapKey&) const;
+    bool mayTakeMemberFromCopy(ClimbingSet holders, const HeapKey&);
     ValueSetID holdersOfUndeclaredPropertiesUnder(const HeapKey&);
     ValueSetID holdersWithMemberUnder(const HeapKey&) const;
     ValueFlowNodeID storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName);
@@ -257,6 +259,7 @@ private:
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) && isInProgramCode() ? m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node) : ClimbingSet(); }
     void readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers);
     bool m_keepsHoldersOfExportsItStartsFrom { false };
+    void noteClosuresWrittenUnder(const HeapKey&, ClimbingSet receivers);
     void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);

@@ -544,7 +544,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.isAsync = source.has(FunctionFlags::IsAsync);
     record.isNamedByOwner = isNamedByOwner(function);
     record.isNakedConstructor = source.has(FunctionFlags::IsNakedConstructor);
-    record.isNamedBySymbol = source.has(FunctionFlags::IsNamedBySymbol);
+    record.isNamedByComputedKey = source.has(FunctionFlags::IsNamedByComputedKey);
     record.recordsCallee = source.has(FunctionCapabilities::RecordsCallee);
     return record;
 }

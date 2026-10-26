@@ -27,8 +27,10 @@
 #include <algorithm>
 #include <climits>
 #include <optional>
+#include <ranges>
 #include <tuple>
 #include <utility>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -133,6 +135,13 @@ struct JSONTextWriter final : Emission {
         Vector<Member, 8> members;
         BlockID remainder;
         BlockID done;
+        uint32_t numberOfListedHolders { 0 };
+    };
+
+    // An object or an array that this function is writing. The builder keeps a list of those that are listed, which the host reads to find a cycle.
+    struct Holder {
+        ValueID value;
+        bool isListed { false };
     };
 
     struct ArrayLoop {
@@ -329,7 +338,8 @@ struct JSONTextWriter final : Emission {
         BuildContext& build = inputs().build;
         uint64_t limit = build.limit(LimitID::MaxJSONLayoutSetMembers);
         if (plan.layouts.size() > limit) {
-            build.gaveUp(LimitID::MaxJSONLayoutSetMembers, Subject { .function = inputs().functionAsRead, .layout = plan.layouts[limit] });
+            if (m_reportsLimits)
+                build.gaveUp(LimitID::MaxJSONLayoutSetMembers, Subject { .function = inputs().functionAsRead, .layout = plan.layouts[limit] });
             plan.layouts.shrink(limit);
         }
         return plan.layouts.isEmpty() ? ValuePlan { } : WTF::move(plan);
@@ -435,12 +445,164 @@ struct JSONTextWriter final : Emission {
     }
 
     // The host and a serializer run for a value what JSON.stringify runs for it.
-    void leaveIfWritingRunsCode(ValueID written)
+    bool writingRunsCode(const Type& written) const
     {
         EffectDescription description;
-        describeOverload(program(), program().builtins().overloadIDsOf(Builtins::JSONStringify).at(0), typeOf(written), description);
-        if (description.callsUnknownCode || !description.functions.isEmpty() || !description.slowPathFunctions.isEmpty())
+        describeOverload(program(), program().builtins().overloadIDsOf(Builtins::JSONStringify).at(0), written, description);
+        return description.callsUnknownCode || !description.functions.isEmpty() || !description.slowPathFunctions.isEmpty();
+    }
+
+    void leaveIfWritingRunsCode(ValueID written)
+    {
+        if (writingRunsCode(typeOf(written)))
             leaveAfterUnknownCode();
+    }
+
+    bool callsSerializerThatRunsCode(const ValuePlan& plan) const
+    {
+        SetForScope planOnlyToAsk(m_reportsLimits, false);
+        switch (plan.kind) {
+        case ValueKind::Generic:
+        case ValueKind::Nullish:
+        case ValueKind::Scalar:
+            return false;
+        case ValueKind::Array:
+            return callsSerializerThatRunsCode(planType(program().at(plan.element), nullptr));
+        case ValueKind::Objects:
+            return std::ranges::any_of(plan.layouts, [&](LayoutID layout) { return writingRunsCode(Type::forLayout(layout, inputs().types)); });
+        case ValueKind::ObjectParts:
+            return std::ranges::any_of(plan.parts, [&](const ValuePlan& part) { return callsSerializerThatRunsCode(part); });
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    bool isObjectOrArrayThatRunsCode(const ValuePlan& plan) const
+    {
+        switch (plan.kind) {
+        case ValueKind::Generic:
+        case ValueKind::Nullish:
+        case ValueKind::Scalar:
+            return false;
+        case ValueKind::Array:
+            return writingRunsCode(program().at(plan.tested));
+        case ValueKind::Objects:
+            return std::ranges::any_of(plan.layouts, [&](LayoutID layout) { return writingRunsCode(Type::forLayout(layout, inputs().types)); });
+        case ValueKind::ObjectParts:
+            return std::ranges::any_of(plan.parts, [&](const ValuePlan& part) { return isObjectOrArrayThatRunsCode(part); });
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // What is listed is around an object or an array whose writing may run code.
+    bool mayListHolders(const ValuePlan& plan) const
+    {
+        SetForScope planOnlyToAsk(m_reportsLimits, false);
+        switch (plan.kind) {
+        case ValueKind::Generic:
+        case ValueKind::Nullish:
+        case ValueKind::Scalar:
+            return false;
+        case ValueKind::Array:
+            return isObjectOrArrayThatRunsCode(planType(program().at(plan.element), nullptr));
+        case ValueKind::ObjectParts:
+            return std::ranges::any_of(plan.parts, [&](const ValuePlan& part) { return mayListHolders(part); });
+        case ValueKind::Objects:
+            break;
+        }
+        return std::ranges::any_of(plan.layouts, [&](LayoutID layout) {
+            for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
+                MemberSupport support = memberSupportOf(layout, field);
+                if (support != MemberSupport::NotSerialized && support != MemberSupport::WithoutText && isObjectOrArrayThatRunsCode(planField(layout, field)))
+                    return true;
+            }
+            return false;
+        });
+    }
+
+    ValuePlan planField(LayoutID layout, uint32_t fieldIndex) const
+    {
+        TypingContext typing { program(), function(), inputs().types };
+        const Field& field = program().at(layout).fields[fieldIndex];
+        bool holdsMoreThanDeclared = field.slotType || field.declared.flags.contains(PositionFlags::IsExpected);
+        Type proven = field.slotType ? program().at(slotTypeOf(program(), field)) : typing.typeOf(field.declared);
+        return planType(proven, holdsMoreThanDeclared ? &program().at(field.declared.type) : nullptr);
+    }
+
+    bool mayHoldItself(const ValuePlan& plan, Vector<LayoutID, 8>& layoutsAround, BitVector& finishedLayouts) const
+    {
+        SetForScope planOnlyToAsk(m_reportsLimits, false);
+        switch (plan.kind) {
+        case ValueKind::Generic:
+        case ValueKind::Nullish:
+        case ValueKind::Scalar:
+            return false;
+        case ValueKind::Array:
+            return mayHoldItself(planType(program().at(plan.element), nullptr), layoutsAround, finishedLayouts);
+        case ValueKind::ObjectParts:
+            return std::ranges::any_of(plan.parts, [&](const ValuePlan& part) { return mayHoldItself(part, layoutsAround, finishedLayouts); });
+        case ValueKind::Objects:
+            break;
+        }
+        for (LayoutID layout : plan.layouts) {
+            if (layoutsAround.contains(layout))
+                return true;
+            if (finishedLayouts.set(layout.index()))
+                continue;
+            layoutsAround.append(layout);
+            for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
+                MemberSupport support = memberSupportOf(layout, field);
+                if (support != MemberSupport::NotSerialized && support != MemberSupport::WithoutText && mayHoldItself(planField(layout, field), layoutsAround, finishedLayouts))
+                    return true;
+            }
+            layoutsAround.removeLast();
+        }
+        return false;
+    }
+
+    bool mayHoldItself(LayoutID layout) const
+    {
+        Vector<LayoutID, 8> layoutsAround;
+        BitVector finishedLayouts;
+        ValuePlan plan { .kind = ValueKind::Objects };
+        plan.layouts.append(layout);
+        return mayHoldItself(plan, layoutsAround, finishedLayouts);
+    }
+
+    // Lists the first holders that are not listed yet, and answers how many those were.
+    uint32_t listHolders(size_t numberOfHolders)
+    {
+        uint32_t numberListed = 0;
+        for (Holder& holder : m_holders.mutableSpan().first(numberOfHolders)) {
+            if (std::exchange(holder.isListed, true))
+                continue;
+            builder().append(Opcode::JSONEnterHolder, { m_stringBuilder, holder.value });
+            ++numberListed;
+        }
+        return numberListed;
+    }
+
+    void appendLeaveHolders(uint32_t numberListed)
+    {
+        for (uint32_t index = 0; index < numberListed; ++index)
+            builder().append(Opcode::JSONLeaveHolder, { m_stringBuilder });
+    }
+
+    // The holders that were listed last are the innermost ones.
+    void markHoldersAsNotListed(uint32_t numberListed)
+    {
+        for (Holder& holder : m_holders | std::views::reverse) {
+            if (!numberListed)
+                return;
+            if (std::exchange(holder.isListed, false))
+                --numberListed;
+        }
+        RELEASE_ASSERT(!numberListed);
+    }
+
+    void unlistHolders(uint32_t numberListed)
+    {
+        appendLeaveHolders(numberListed);
+        markHoldersAsNotListed(numberListed);
     }
 
     TypeArm beginTypeArm(ValueID value, TypeID tested, BlockFrequency otherwise)
@@ -475,6 +637,7 @@ struct JSONTextWriter final : Emission {
         }
 
         ValueID start = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
+        m_codeMayRunAroundValues = writingRunsCode(typeOf(value));
         appendValue(value, plan, Position { });
         commit();
         ValueID end = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
@@ -672,7 +835,12 @@ struct JSONTextWriter final : Emission {
             property = appendString(program().at(position.key).text);
         }
         commit();
-        BlockID hasNoText = builder().emitBranch(builder().append(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property })).notTaken;
+        RELEASE_ASSERT(!m_holders.isEmpty());
+        uint32_t numberListed = listHolders(m_holders.size() - 1);
+        ValueID innermostHolder = m_holders.last().isListed ? builder().append(Opcode::Undefined, { }) : m_holders.last().value;
+        ValueID hasText = builder().append(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property, innermostHolder });
+        unlistHolders(numberListed);
+        BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendCommaOf(position);
         jumpTo(done);
 
@@ -702,9 +870,14 @@ struct JSONTextWriter final : Emission {
             BlockID next = layout == plan.layouts.last() ? generic : builder().addBlock(frequency);
             TestedObject tested = emitShapeTest(object, singleElementSpan(layout), next);
 
+            // Around the object code of the program may have run, so the call as written cannot start over. While the object is written none runs, so the host can write it from the beginning.
+            bool runsCode = writingRunsCode(typeOf(tested.object));
+            bool isWrittenByHostAfterThrow = !runsCode && m_codeMayRunAroundValues && position.kind != JSONPosition::Root && mayHoldItself(layout);
+
             ValueID checkpoint;
-            if (isProperty) {
+            if (isProperty || isWrittenByHostAfterThrow)
                 checkpoint = builder().append(Opcode::StringBuilderCheckpoint, { m_stringBuilder });
+            if (isProperty) {
                 appendKeyOf(position);
                 commit();
             }
@@ -713,7 +886,29 @@ struct JSONTextWriter final : Emission {
             BlockID unknown = builder().addBlock(BlockFrequency::Rare);
             FunctionID serializer = inputs().functions.ensure(derivedFunctionKey(FunctionRole::Serializer, layout));
             BlockID written = builder().addBlock(currentFrequency());
-            emitBranchOnOutcome(appendCallOf(serializer, { tested.object, m_stringBuilder }), written, unknown, unknown);
+            uint32_t numberListed = runsCode ? listHolders(m_holders.size()) : 0;
+            ValueID outcome;
+            if (isWrittenByHostAfterThrow) {
+                std::optional<Target> outerHandler = builder().handler();
+                BlockID afterCall = builder().addBlock(currentFrequency());
+                BlockID threw = builder().addHandlerBlock(BlockRole::CatchHandler, ValueID());
+                builder().setHandler(Target { threw, { }, { } });
+                BlockID covered = builder().addBlock(currentFrequency());
+                builder().setHandler(WTF::move(outerHandler));
+                builder().emitJump(covered);
+
+                builder().moveToEndOf(covered);
+                outcome = appendCallOf(serializer, { tested.object, m_stringBuilder });
+                builder().emitJump(afterCall);
+
+                builder().moveToEndOf(threw);
+                builder().append(Opcode::CatchValue, { });
+                builder().emitJump(unknown);
+                builder().moveToEndOf(afterCall);
+            } else
+                outcome = appendCallOf(serializer, { tested.object, m_stringBuilder });
+            unlistHolders(numberListed);
+            emitBranchOnOutcome(outcome, written, unknown, unknown);
 
             builder().moveToEndOf(written);
             appendCommaOf(position);
@@ -721,7 +916,7 @@ struct JSONTextWriter final : Emission {
             jumpTo(done);
 
             builder().moveToEndOf(unknown);
-            if (isProperty)
+            if (checkpoint)
                 builder().append(Opcode::StringBuilderRollBack, { m_stringBuilder, checkpoint });
             builder().emitJump(afterSerializerGaveUp);
 
@@ -763,7 +958,6 @@ struct JSONTextWriter final : Emission {
         if (numberOfArmsLeftOut)
             build.exceeds(LimitID::MaxExpandedKeyOrders, maxArms + numberOfArmsLeftOut, Subject { .function = inputs().functionAsRead, .layout = layout });
 
-        TypingContext typing { program(), function(), inputs().types };
         for (const KeyOrderFamily& family : families) {
             BlockID next = builder().addBlock(&family == &families.last() ? BlockFrequency::Rare : BlockFrequency::Normal);
 
@@ -772,24 +966,28 @@ struct JSONTextWriter final : Emission {
                 uint32_t fieldIndex = family.longestOrder[position];
                 if (memberSupportOf(layout, fieldIndex) == MemberSupport::NotSerialized)
                     continue;
-                const Field& field = program().at(layout).fields[fieldIndex];
-                bool holdsMoreThanDeclared = field.slotType || field.declared.flags.contains(PositionFlags::IsExpected);
-                Type proven = field.slotType ? program().at(slotTypeOf(program(), field)) : typing.typeOf(field.declared);
-                arm.members.append(Member { field.key, fieldIndex, position, planType(proven, holdsMoreThanDeclared ? &program().at(field.declared.type) : nullptr) });
+                arm.members.append(Member { program().at(layout).fields[fieldIndex].key, fieldIndex, position, planField(layout, fieldIndex) });
             }
 
             TestedKeyOrder order = emitKeyOrderTests(tested, arm, next);
             arm.object.guard = order.guard;
             arm.numberOfOwnMembers = order.numberOfOwnMembers;
 
+            m_holders.append(Holder { tested.object });
+            if (std::ranges::any_of(arm.members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
+                arm.numberOfListedHolders = listHolders(m_holders.size());
+
             MemberListState memberList = notOpened;
             for (size_t index = 0; index < arm.members.size(); ++index)
                 appendMember(arm, index, memberList);
             appendToken(memberList.closing);
             commit();
+            appendLeaveHolders(arm.numberOfListedHolders);
             builder().emitJump(done);
 
             appendRemainder(arm);
+            markHoldersAsNotListed(arm.numberOfListedHolders);
+            m_holders.removeLast();
             builder().moveToEndOf(next);
         }
         builder().emitJump(noOrder);
@@ -968,17 +1166,20 @@ struct JSONTextWriter final : Emission {
         if (arm.numberOfOwnMembers)
             builder().append(make<&Value::setKey, &Value::setMode>(Opcode::PropSet, { keys, arm.numberOfOwnMembers }, program().keyOf(BuiltinNames::length), ECMAMode::Strict));
 
-        ValueID text = appendHelperCall(Builtins::CompilerHelpersStringifyProperties, { arm.object.object, keys, firstMember, builder().appendBoolean(true) });
-        ValueID length = builder().append(Opcode::GetStringLength, { text });
-        ValueID isEmpty = builder().append(Opcode::StrictEq, { length, builder().appendInteger(0) });
-        BlockID hasText = builder().emitBranch(isEmpty).notTaken;
-        appendToken(JSONToken::CloseObjectOverComma);
-        commit();
+        RELEASE_ASSERT(m_holders.last().value == arm.object.object);
+        uint32_t numberListed = listHolders(m_holders.size() - 1);
+        ValueID innermostHolder = m_holders.last().isListed ? builder().append(Opcode::Undefined, { }) : arm.object.object;
+        ValueID hasText = builder().append(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, arm.object.object, keys, firstMember, innermostHolder });
+        unlistHolders(numberListed);
+        BlockID hasNoText = builder().emitBranch(hasText).notTaken;
+        appendText(appendString("}"_s));
+        appendLeaveHolders(arm.numberOfListedHolders);
         builder().emitJump(arm.done);
 
-        builder().moveToEndOf(hasText);
-        appendText(text);
-        appendText(appendString("}"_s));
+        builder().moveToEndOf(hasNoText);
+        appendToken(JSONToken::CloseObjectOverComma);
+        commit();
+        appendLeaveHolders(arm.numberOfListedHolders);
         builder().emitJump(arm.done);
     }
 
@@ -1006,6 +1207,9 @@ struct JSONTextWriter final : Emission {
 
         builder().moveToEndOf(hasElements);
         bool elementsMayRunUnknownCode = false;
+        bool listsHolders = callsSerializerThatRunsCode(plan);
+        uint32_t numberOfListedHolders = 0;
+        m_holders.append(Holder { array });
         for (const ArrayStorageForm& form : arrayStorageForms) {
             if (!typeOfElementRead(form.kind).withoutNullish().overlaps(program().at(plan.element), program()))
                 continue;
@@ -1014,14 +1218,19 @@ struct JSONTextWriter final : Emission {
             m_cursor = start;
             appendKeyOf(position);
             appendToken(JSONToken::OpenArray);
+            if (listsHolders)
+                numberOfListedHolders = listHolders(m_holders.size());
             elementsMayRunUnknownCode |= appendArrayLoop({ array, builder().appendAllGuards(guards), length, plan.element, closing }, form.kind) == ElementCode::MayRunUnknownCode;
+            markHoldersAsNotListed(numberOfListedHolders);
             builder().moveToEndOf(hasStorage.notTaken);
         }
+        m_holders.removeLast();
         builder().emitJump(generic);
 
         if (closing.block) {
             continueAt(closing);
             appendToken(JSONToken::CloseArray);
+            appendLeaveHolders(numberOfListedHolders);
             if (elementsMayRunUnknownCode && m_afterUnknownCode) {
                 appendCommaOf(position);
                 leaveAfterUnknownCode();
@@ -1132,6 +1341,11 @@ struct JSONTextWriter final : Emission {
 
     ValueID m_stringBuilder;
     Cursor m_cursor { };
+    // The outermost first.
+    Vector<Holder, 4> m_holders;
+    bool m_codeMayRunAroundValues { false };
+    // False while a plan is made only to ask something about it: the plan that is written reports what it leaves out.
+    mutable bool m_reportsLimits { true };
     // Where an arm goes on that has run unknown code: the object or the array around the value renews its guards there, and the other arms keep theirs.
     MergePoint* m_afterUnknownCode { nullptr };
 };
@@ -1142,6 +1356,28 @@ bool JSONSerializerBuilder::hasPlanFor(ValueID value) const
 {
     JSONTextWriter writer { { builder, inputs }, stringBuilder };
     return writer.planValue(value).kind != JSONTextWriter::ValueKind::Generic && !writer.typeOf(value).hasOnlyPrimitives(Primitive::Undefined);
+}
+
+bool JSONSerializerBuilder::writingRunsCode(ValueID value) const
+{
+    JSONTextWriter writer { { builder, inputs }, stringBuilder };
+    return writer.writingRunsCode(writer.typeOf(value));
+}
+
+bool JSONSerializerBuilder::mayListHolders(ValueID value) const
+{
+    JSONTextWriter writer { { builder, inputs }, stringBuilder };
+    writer.m_reportsLimits = false;
+    return writer.mayListHolders(writer.planValue(value));
+}
+
+bool JSONSerializerBuilder::mayHoldItself(ValueID value) const
+{
+    JSONTextWriter writer { { builder, inputs }, stringBuilder };
+    writer.m_reportsLimits = false;
+    Vector<LayoutID, 8> layoutsAround;
+    BitVector finishedLayouts;
+    return writer.mayHoldItself(writer.planValue(value), layoutsAround, finishedLayouts);
 }
 
 void JSONSerializerBuilder::appendRoot(ValueID value, BlockID whenThereIsNoText)
@@ -1167,6 +1403,7 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
     builder.emitFailureOfPredictions(Target { differs, { }, { } });
     writer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
+    writer.m_codeMayRunAroundValues = writer.writingRunsCode(Type::forLayout(layout, inputs.types));
     writer.appendObjectOfLayout(head.parameters[0], layout, differs);
     builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
 

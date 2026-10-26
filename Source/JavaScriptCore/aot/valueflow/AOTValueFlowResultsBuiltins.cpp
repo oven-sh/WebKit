@@ -121,6 +121,14 @@ public:
         return false;
     }
 
+    void forEachHolderOfWrittenPrototypeLink(NOESCAPE const Invocable<void(BuiltinID)> auto& functor) const
+    {
+        for (size_t holder : m_ofPrototypeLinks) {
+            if (holder < m_unknownObject)
+                functor(BuiltinID(static_cast<uint32_t>(holder)));
+        }
+    }
+
     void forEachNameWritten(NOESCAPE const Invocable<void(BuiltinID, PropertyKeyID)> auto& functor) const
     {
         for (uint32_t holder = 0; holder < m_unknownObject; ++holder) {
@@ -698,6 +706,10 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
         locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Constant, noWitness });
         writesLockedLocation = true;
     });
+    PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
+    holders.forEachHolderOfWrittenPrototypeLink([&](BuiltinID holder) {
+        writesLockedLocation |= isLockedLocation(program, holder, keyOfPrototypeLink);
+    });
     if (!writesLockedLocation && !holders.mayWriteLockedLocationUnderKeyNobodyKnows())
         return { };
 
@@ -803,7 +815,9 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     });
     AOT::sort(callsOfBuiltinFunctionsAlone);
     BitVector builtinsThatWriteUnderKeys = builtinsWithOverload(builtins, [](const BuiltinOverload& overload) {
-        return std::ranges::any_of(overload.flow.propertyActions, writesUnderKey, &BuiltinPropertyAction::kind);
+        return std::ranges::any_of(overload.flow.propertyActions, [](BuiltinPropertyActionKind kind) {
+            return writesUnderKey(kind) || kind == BuiltinPropertyActionKind::ChangesPrototype;
+        }, &BuiltinPropertyAction::kind);
     });
     Notes notes { heap.maker(), writes };
     forEachBuiltinApplication(inputs, heap, builtinsThatWriteUnderKeys, [&](const ValueFlowBuiltinApplication& application) {
@@ -815,11 +829,16 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
             if (overload.mode != application.mode())
                 continue;
             for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-                if (!writesUnderKey(action.kind))
+                bool changesPrototype = action.kind == BuiltinPropertyActionKind::ChangesPrototype;
+                if (!writesUnderKey(action.kind) && !changesPrototype)
                     continue;
                 ValueSetID receivers = application.valueAt(action.object, notes.maker);
                 if (!listsItsObjects(receivers))
                     continue;
+                if (changesPrototype) {
+                    note(notes, receivers, keyOfPrototypeLink, witness);
+                    continue;
+                }
                 switch (action.key.kind) {
                 case BuiltinKeyKind::Names:
                     for (BuiltinName name : action.key.names)

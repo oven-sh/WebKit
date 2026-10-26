@@ -51,6 +51,8 @@ public:
             case Representation::Int64:
                 return strings.integerToString(context, operand.as<Integer>());
             case Representation::Double:
+            case Representation::DoubleWithPayload:
+            case Representation::ImpureDouble:
                 return convertDouble(context, operand.as<Number>(), form);
             case Representation::Unchosen:
             case Representation::Void:

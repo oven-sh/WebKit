@@ -642,9 +642,27 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
                 names.add(Identifier::fromUid(vm, name));
         });
     };
+    auto addFieldsUnderPrivateNames = [&] {
+        if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
+            return;
+        for (const FieldData& field : fields) {
+            if (field.isPrivate() || layouts.hasSymbolKey(field) || layouts.hasStringKey(field))
+                continue;
+            unsigned attributes = field.attributes();
+            if (!object->isInSlot(field)) {
+                FieldProperty property = findFieldProperty(vm, *object, field);
+                if (!property)
+                    continue;
+                attributes = property.attributes;
+            }
+            if (isIncluded(attributes))
+                names.add(Identifier::fromUid(vm, layouts.nameOf(vm, field)));
+        }
+    };
     if (names.includeStringProperties())
         addKeysInOrder(false);
     if (!layout.hasFieldsWithSymbolKeys) {
+        addFieldsUnderPrivateNames();
         if (extra)
             extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
         return;
@@ -653,7 +671,7 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
         if (!extra)
             return;
         extra->structure()->forEachProperty(vm, [&](const auto& entry) {
-            if (entry.key()->isSymbol() == symbols && !PropertyName(entry.key()).isPrivateName() && isIncluded(entry.attributes()))
+            if (entry.key()->isSymbol() == symbols && isIncluded(entry.attributes()))
                 names.add(Identifier::fromUid(vm, entry.key()));
             return true;
         });
@@ -662,6 +680,7 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
         addExtraKeys(false);
     if (names.includeSymbolProperties()) {
         addKeysInOrder(true);
+        addFieldsUnderPrivateNames();
         addExtraKeys(true);
     }
 }

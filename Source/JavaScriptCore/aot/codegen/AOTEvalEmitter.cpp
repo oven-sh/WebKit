@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTConstantEmitter.h"
 #include "AOTVector.h"
 
@@ -31,7 +32,7 @@ void EvalEmitter::generateDirectEval(const ValueContext& value)
     Boxed text = in<Boxed>(value->textOperand());
     Word32 count = word32(static_cast<int32_t>(operands.size()));
     Pointer buffer = argumentBuffer(operands.span());
-    define(value, callOperation<Boxed>(value, RuntimeOperation::DirectEval, { text, word32(static_cast<int32_t>(request->value())), count, buffer }));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::DirectEval, { text, word32(static_cast<int32_t>(request->value())), count, buffer }, { .calledBuiltin = Builtins::Eval }));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -2659,9 +2659,10 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     Vector<BlockID> cleanupBlocksToDrop;
     forEachDispatcher(&ArmDispatcher::finishCleanupBlocks, cleanupBlocksToDrop);
+    // An iteration that never opens leaves the ones behind it unreachable, and dropping a region empties every unreachable block.
+    forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     dropCleanupRegions(pass, builder, cleanupBlocksToDrop.span());
 
-    forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     builder.setHandler(std::nullopt);
     repair.run();
     builder.emptyUnreachableBlocks();

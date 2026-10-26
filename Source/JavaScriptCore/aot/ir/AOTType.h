@@ -135,6 +135,7 @@ struct Type {
     bool isNumberLike() const { return hasOnlyPrimitives(Primitive::NumberLike); }
     bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
+    bool hasOnlyClassObjects() const { return !anyObject && !anyFunction && !layouts && functions.isEmpty() && builtins.isEmpty(); }
     bool hasOnlyLayouts(const Program&) const;
     bool hasOnlyLayouts(const TypeTable&) const;
     bool isSingleValue() const;

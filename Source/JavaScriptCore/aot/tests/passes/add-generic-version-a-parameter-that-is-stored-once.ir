@@ -1,0 +1,74 @@
+# A store by name may turn out to be a store into a typed field, which tests a value that is not proven. A parameter that is stored once, outside every loop, is tested there as often as a check at the entrance tests it. So it has no check, and the function has no copy for what the check turns away.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library" displayPath="library" flags=[IsLibrary]
+
+function f0 name="storedOnce" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=number
+    PropSet v1, v2 key="x" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f0 name="storedOnce"
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: frequency=
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: Return
+
+function f1 name="storedOnceAndHandedOn" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=number
+    PropSet v1, v2 key="x" mode=Strict
+    v4 = Call v1, -, v2
+    Return v2
+}
+# CHECK-LABEL: function f1 name="storedOnceAndHandedOn"
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: frequency=
+# CHECK: Return v2
+
+function f2 name="storedOnEitherSide" module=m0 parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = Check v0 castType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v1, v3 key="x" mode=Strict
+    Return
+  b2():
+    PropSet v1, v3 key="y" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f2 name="storedOnEitherSide"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: ) frequency=Unlikely:
+
+function f3 name="storedInLoop" module=m0 parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = Check v0 castType=number
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    PropSet v1, v3 key="x" mode=Strict
+    v9 = Increment v5
+    Jump -> next b1(v9)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3 name="storedInLoop"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: ) frequency=Unlikely:
+
+# What a function of the library is handed is anybody's, so the copy for what the check turns away runs
+function f4 name="storedOnceInTheLibrary" module=m1 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=number
+    PropSet v1, v2 key="x" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f4 name="storedOnceInTheLibrary"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: ) frequency=Unlikely:

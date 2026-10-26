@@ -260,6 +260,117 @@ std::optional<PropertyKey> keyOfSymbolRegisteredBy(const BuiltinTable& builtins,
     return PropertyKey { .kind = PropertyKeyKind::RegisteredSymbol, .text = text->string() };
 }
 
+static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
+
+static bool isUsedOnlyAsKey(const Function& function, const UseLists& useLists, ValueID value)
+{
+    return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (isCast(user.opcode))
+            return isUsedOnlyAsKey(function, useLists, use.user);
+        return accessesByKey.contains(user.opcode) && use.operandIndex == OperandPosition::property(user.opcode);
+    });
+}
+
+static VariableID findOnlyVariableStoredWith(const Function& function, const UseLists& useLists, ValueID value)
+{
+    std::span<const Use> uses = useLists.usesOf(value);
+    if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+        return { };
+    const Value& user = function.at(uses[0].user);
+    if (isCast(user.opcode))
+        return findOnlyVariableStoredWith(function, useLists, uses[0].user);
+    return user.opcode == Opcode::PutModuleVariable ? user.variable() : VariableID();
+}
+
+BitVector findLibrarySymbolsUsedOnlyAsKeys(const Program& program)
+{
+    BitVector symbols(program.types.numberOfPropertyKeys());
+    BitVector modules(program.modules.size());
+    for (uint32_t index = 0; index < program.types.numberOfPropertyKeys(); ++index) {
+        const PropertyKey& key = program.at(PropertyKeyID(index));
+        if (key.kind != PropertyKeyKind::CreatedSymbol || !key.module)
+            continue;
+        const Module& module = program.at(key.module);
+        if (module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary))
+            modules.set(key.module.index());
+    }
+    if (modules.isEmpty())
+        return symbols;
+
+    struct UsesOnDemand {
+        const Function& function;
+        std::optional<CFG> cfg { };
+        std::optional<UseLists> useLists { };
+
+        const UseLists& get()
+        {
+            if (!useLists) {
+                cfg.emplace(function);
+                useLists.emplace(function, *cfg);
+            }
+            return *useLists;
+        }
+    };
+    auto forEachValueInModules = [&](NOESCAPE const Invocable<void(const Function&, UsesOnDemand&, ValueID, const Value&)> auto& functor) {
+        for (const Function& function : program.functions) {
+            if (!function.hasBody() || !function.module || !modules.get(function.module.index()))
+                continue;
+            UsesOnDemand uses { function };
+            for (const Block& block : function.blocks) {
+                for (ValueID id : block.values)
+                    functor(function, uses, id, function.at(id));
+            }
+        }
+    };
+
+    struct HeldSymbol {
+        VariableID variable;
+        PropertyKeyID key;
+    };
+    Vector<HeldSymbol> held;
+    BitVector holdsSymbol(program.variables.size());
+    forEachValueInModules([&](const Function& function, UsesOnDemand& uses, ValueID id, const Value& value) {
+        if (value.opcode != Opcode::Call || !callsSymbolDirectly(program.builtins(), function, value))
+            return;
+        std::optional<PropertyKey> named = keyOfSymbolsCreatedBy(function, value);
+        std::optional<PropertyKeyID> key = named ? program.types.find(*named) : std::nullopt;
+        VariableID variable = key ? findOnlyVariableStoredWith(function, uses.get(), id) : VariableID();
+        if (!variable)
+            return;
+        held.append({ variable, *key });
+        holdsSymbol.set(variable.index());
+    });
+
+    BitVector isStoredTo(program.variables.size());
+    BitVector leavesVariable(program.variables.size());
+    for (size_t index : modules) {
+        const Module& module = program.modules[index];
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.variable)
+                leavesVariable.set(entry.variable.index());
+        }
+        for (const SyntheticExport& entry : module.syntheticExports) {
+            if (entry.variable)
+                leavesVariable.set(entry.variable.index());
+        }
+    }
+    forEachValueInModules([&](const Function& function, UsesOnDemand& uses, ValueID id, const Value& value) {
+        if ((value.opcode != Opcode::GetModuleVariable && value.opcode != Opcode::PutModuleVariable) || !holdsSymbol.get(value.variable().index()))
+            return;
+        uint32_t variable = value.variable().index();
+        if (value.opcode == Opcode::PutModuleVariable ? isStoredTo.set(variable) : !isUsedOnlyAsKey(function, uses.get(), id))
+            leavesVariable.set(variable);
+    });
+    for (const HeldSymbol& symbol : held) {
+        if (!leavesVariable.get(symbol.variable.index()))
+            symbols.set(symbol.key.index());
+    }
+    return symbols;
+}
+
 void nameCreatedSymbols(Program& program, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);

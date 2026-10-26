@@ -34,6 +34,9 @@ operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates 
 family JSONWrite Prepared..Placed ; base = builder
 operation StringBuilderReserve (builder: StringBuilder/inspects, size: UInt32) -> natural(BuilderCursor) ; Allocates reads(StringBuilderContents) writes(StringBuilderContents, RuntimeState) throws ; runtime = StringBuilderReserve
 operation StringBuilderCommit (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> none ; writes(StringBuilderContents)
+operation JSONResetHolders (builder: StringBuilder/inspects) -> none ; writes(StringBuilderContents)
+operation JSONEnterHolder (builder: StringBuilder/inspects, holder: Any/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents)
+operation JSONLeaveHolder (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents)
 operation JSONAppendKey (string: String, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) [opensObject followsMember] -> natural(BuilderCursor) ; writes(StringBuilderContents)
 operation JSONAppendToken (jsonToken: JSONToken, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) writes(StringBuilderContents)
 operation JSONAppendBoolean (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Boolean/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents)

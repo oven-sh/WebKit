@@ -67,6 +67,8 @@ public:
         case Representation::Void:
         case Representation::Boolean:
         case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
         case Representation::OptionalInt64:
         case Representation::OptionalDouble:
         case Representation::Cell:
@@ -133,6 +135,8 @@ public:
         case Representation::Int32:
         case Representation::Int64:
         case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
         case Representation::OptionalInt64:
         case Representation::OptionalDouble:
         case Representation::Cell32:
@@ -166,6 +170,8 @@ public:
         case Representation::Int32:
         case Representation::Int64:
         case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
         case Representation::OptionalInt64:
         case Representation::OptionalDouble:
         case Representation::Cell32:
@@ -259,6 +265,8 @@ private:
     {
         switch (representationOf(id)) {
         case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
             return in<Number>(id);
         case Representation::OptionalDouble:
             return emitter<ConversionEmitter>().withoutMarkers(get(id)).as<Number>();

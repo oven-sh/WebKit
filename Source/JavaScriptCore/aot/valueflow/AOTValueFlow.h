@@ -215,6 +215,7 @@ inline constexpr ValueFlowName everyPropertyName = ValueFlowName::of(ValueFlowNa
 inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowNameKind::EveryGetter);
 inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
+inline constexpr ValueFlowName chainWithoutCopiesOntoRealmName { ValueFlowNameKind::PrototypeLink, 1 };
 inline constexpr ValueFlowName allocatedAsName = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
 inline constexpr ValueFlowName awaitedValueName = ValueFlowName::of(ValueFlowNameKind::AwaitedValue);
 

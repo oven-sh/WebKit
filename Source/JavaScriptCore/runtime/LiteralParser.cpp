@@ -2723,7 +2723,9 @@ NEVER_INLINE JSValue tryEvalAsJSON(JSGlobalObject* globalObject, StringView sour
 JSValue JSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8)
 {
     RELEASE_ASSERT(utf8.size() <= String::MaxLength);
-    LiteralParser<char8_t, JSONReviverMode::Disabled> parser(globalObject, utf8, StrictJSON);
+    if (!charactersAreAllASCII(utf8))
+        return { };
+    LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, byteCast<Latin1Character>(utf8), StrictJSON);
     return parser.tryLiteralParse();
 }
 
@@ -2731,7 +2733,9 @@ JSValue JSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8)
 StreamingJSONParseResult streamingJSONParse(JSGlobalObject* globalObject, std::span<const char8_t> utf8, MarkedArgumentBuffer& results)
 {
     RELEASE_ASSERT(utf8.size() <= String::MaxLength);
-    LiteralParser<char8_t, JSONReviverMode::Disabled> parser(globalObject, utf8, StrictJSON);
+    if (!charactersAreAllASCII(utf8))
+        return { 0, StreamingJSONParseResult::Status::NeedsText };
+    LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, byteCast<Latin1Character>(utf8), StrictJSON);
     return parser.tryStreamingParse(results);
 }
 #endif

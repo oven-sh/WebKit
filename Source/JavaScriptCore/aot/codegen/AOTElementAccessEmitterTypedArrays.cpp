@@ -72,6 +72,8 @@ Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& el
     TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
     Operand loaded = emitter<SlotEmitter>().load(element, elementStore(type));
     ensureStillAliveHere(elements.view);
+    if (isFloat(type))
+        return ImpureNumber(loaded.value);
     return loaded;
 }
 

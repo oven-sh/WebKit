@@ -111,7 +111,7 @@ function f7 name="readOfFloat32Array" parameters=[{type=Float32Array}, {type=i32
 }
 # CHECK: f7: size={{*}} frame=none
 # R-LABEL: function f7 name="readOfFloat32Array"
-# R: v4: number @Double = GetTypedArrayElement v0, v1, v3 typedArrayType=9 level=Proven [isInsideView]
+# R: v4: number @ImpureDouble = GetTypedArrayElement v0, v1, v3 typedArrayType=9 level=Proven [isInsideView]
 function f8 name="readOfFloat64Array" parameters=[{type=Float64Array}, {type=i32}] results=[{type=anything}] {
     v2 = IsInsideView v0, v1 typedArrayType=10
     TestAndBranch v2 -> taken b1(| 0), notTaken b2()
@@ -124,7 +124,7 @@ function f8 name="readOfFloat64Array" parameters=[{type=Float64Array}, {type=i32
 }
 # CHECK: f8: size={{*}} frame=none
 # R-LABEL: function f8 name="readOfFloat64Array"
-# R: v4: number @Double = GetTypedArrayElement v0, v1, v3 typedArrayType=10 level=Proven [isInsideView]
+# R: v4: number @ImpureDouble = GetTypedArrayElement v0, v1, v3 typedArrayType=10 level=Proven [isInsideView]
 function f9 name="storeInInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=i32}] results=[{type=undefined}] {
     v3 = IsInsideView v0, v1 typedArrayType=1
     TestAndBranch v3 -> taken b1(| 0), notTaken b2()
@@ -444,7 +444,7 @@ function f26 name="readsOfFloat64Array" parameters=[{type=Float64Array}, {type=i
 # S: f26 b9 Compact
 # R-LABEL: function f26 name="readsOfFloat64Array"
 # R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
-# R-COUNT-12: : number @Double = GetTypedArrayElement v0,
+# R-COUNT-12: : number @ImpureDouble = GetTypedArrayElement v0,
 # R-NOT: = GetTypedArrayElement
 function f27 name="storesInUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
     v9 = IsInsideView v0, v1 typedArrayType=2

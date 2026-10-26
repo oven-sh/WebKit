@@ -161,6 +161,7 @@ struct FunctionPassContext {
 using FunctionPass = PassOutcome (*)(FunctionPassContext&);
 
 #define FOR_EACH_AOT_FUNCTION_PASS(v) \
+    v(ListLiveValuesAtSuspensions, listLiveValuesAtSuspensions) \
     v(TypeValues, typeValues) \
     v(CheckInt32Promises, checkInt32Promises) \
     v(CheckRegExpLiterals, checkRegExpLiterals) \

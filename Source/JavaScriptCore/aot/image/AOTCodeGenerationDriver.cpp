@@ -15,6 +15,7 @@
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTProgramCaches.h"
+#include "AOTProgramTableEncoder.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSlotPlan.h"
@@ -48,7 +49,7 @@ struct HiddenBody {
 
 } // anonymous namespace
 
-CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context)
+CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context, ProgramTablesUse tables)
 {
     const Typed::Program& program = *pipeline.program;
 
@@ -61,7 +62,17 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
     }
     runTasksInParallel(context.parallelLoops(), {
         [&] {
-            plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context);
+            Typed::NamesInProgramTables namesInTables;
+            runTasksInParallel(context.parallelLoops(), {
+                [&] { plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context); },
+                [&] {
+                    plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context);
+                    if (tables == ProgramTablesUse::Written)
+                        namesInTables = Typed::findNamesInProgramTables(pipeline, plan.bodyFactsForTables, context);
+                },
+            });
+            plan.uses.keys.keysNamedByTables = WTF::move(namesInTables.keys);
+            plan.uses.keys.stringsNamedAsKeysByTables = WTF::move(namesInTables.texts);
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
@@ -74,7 +85,6 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
             if (!InstanceLayout::isAddressable(plan.instanceSizes))
                 context.reportLimitExceeded(LimitID::MaxStaticsSize, std::max(InstanceLayout::bytesReservedBelowInstance(plan.instanceSizes), InstanceLayout::bytesReservedFromInstance(plan.instanceSizes)));
         },
-        [&] { plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context); },
         [&] {
             plan.branchCounters = Typed::numberBranchCounters(program, context);
             plan.arrivalSites = Typed::numberArrivalSites(program, context);

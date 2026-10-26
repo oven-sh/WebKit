@@ -315,9 +315,11 @@ enum class ValueFlowHostNode : uint8_t {
     NamespacesCarriedOutAsValues,
     ValuesCarriedOut,
     CopiesOfObjectsNobodyKnows,
+    ObjectsHoldingSymbolsUsedOnlyAsKeys,
+    ClosuresThatStatementsWriteUnderKeysNobodyKnows,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 42;
+inline constexpr unsigned numberOfValueFlowHostNodes = 44;
 
 class ValueFlowProgramNodes {
 public:

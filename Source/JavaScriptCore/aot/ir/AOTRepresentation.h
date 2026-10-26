@@ -25,6 +25,13 @@ RepresentationSet legalRepresentationsOf(const Type&);
 SlotRepresentation defaultSlotRepresentationOf(const Type&);
 Type widestTypeOf(Representation);
 
+// A NaN that is kept as Double has no payload. Kept as DoubleWithPayload it has the sign that arithmetic gave it and any payload. Kept as ImpureDouble it has the bits of some bytes.
+constexpr bool holdsAnyNaN(Representation representation)
+{
+    return representation == Representation::DoubleWithPayload || representation == Representation::ImpureDouble;
+}
+static_assert(Representation::Double < Representation::DoubleWithPayload && Representation::DoubleWithPayload < Representation::ImpureDouble);
+
 constexpr bool holdsCells(Representation representation)
 {
     switch (representation) {
@@ -39,6 +46,8 @@ constexpr bool holdsCells(Representation representation)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::RawWord:

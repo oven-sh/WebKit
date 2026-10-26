@@ -256,6 +256,12 @@ OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)
     return capabilities;
 }
 
+OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept)
+{
+    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode };
+    return (initialCapabilitiesOf(replacement) - kept) | (ofReplaced & kept);
+}
+
 static bool hasEarlierPredecessors(const Function& function)
 {
     unsigned count = function.blocks.size();

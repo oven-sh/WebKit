@@ -646,7 +646,6 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
 
 static Function createResultWrapper(const AnalysisContext& context, FunctionID worker, const Function& original, const FreshResultShape& shape, TypeArena& types)
 {
-    constexpr OptionSet<FunctionCapabilities> capabilitiesWorkersInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::RecordsCallee };
     RELEASE_ASSERT(canReturnParts(original));
 
     bool mayBeUndefined = false;
@@ -669,7 +668,7 @@ static Function createResultWrapper(const AnalysisContext& context, FunctionID w
     wrapper.inlineFrames.clear();
     wrapper.role = FunctionRole::ResultWrapper;
     wrapper.creator = CreatorRecord::ResultWrapper { .worker = worker, .nullish = nullish, .layout = numberOfVariantsWithLayout == 1 ? layout : LayoutID() };
-    wrapper.capabilities = (initialCapabilitiesOf(wrapper) - capabilitiesWorkersInherit) | (original.capabilities & capabilitiesWorkersInherit);
+    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, original.capabilities, FunctionCapabilities::RecordsCallee);
 
     IRBuilder builder(context, wrapper, types);
     builder.setOrigin({ original.position, 0 });

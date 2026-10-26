@@ -679,26 +679,6 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
     }
 }
 
-bool isModuleOperation(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::Builtin:
-    case Opcode::ModuleNamespace:
-    case Opcode::ImportModule:
-    case Opcode::RequireModule:
-    case Opcode::EvaluateModule:
-    case Opcode::ImportDynamic:
-    case Opcode::RequireDynamic:
-    case Opcode::RequireBuiltinModule:
-    case Opcode::ResolveDynamic:
-    case Opcode::DirectEval:
-    case Opcode::NativeBinding:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
 {
     noteRequest(context, statement.function, module);

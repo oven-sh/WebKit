@@ -34,6 +34,8 @@ static bool canBeKeyRepresentation(Representation representation)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::JSValue:
         return true;
     case Representation::Unchosen:

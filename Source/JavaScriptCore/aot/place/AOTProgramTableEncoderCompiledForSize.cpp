@@ -181,11 +181,12 @@ static void setDirectEvalFlag(DirectEvalRequest& request, EvalScopeFlags flag)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-EvalBindingNames namesInRowOf(const Program& program, const EvalBinding& binding)
+// The key of the field of an instance that a private name stands for.
+static PropertyKeyID privateKeyOf(const Program& program, const EvalBinding& binding)
 {
     if (binding.variable || !binding.layout || binding.kind == EvalBindingKind::MappedArgument || program.at(binding.layout).isEnvironment())
-        return { binding.name, { } };
-    return { binding.name, fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).key };
+        return { };
+    return fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).key;
 }
 
 static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& binding, ModuleID module, EvalBindingData& data)
@@ -195,9 +196,9 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
     auto operandOf = [](std::optional<uint32_t> environmentOperand) {
         return environmentOperand ? operandsBeforeEnvironments + *environmentOperand : EvalBindingData::noOperand;
     };
-    EvalBindingNames names = namesInRowOf(program, binding);
-    data.name = names.name ? encoder.identifierNumberOfText(names.name, "what a direct eval sees in"_s, module) : 0;
-    data.privateKey = names.privateKey ? encoder.identifierNumber(names.privateKey, "the key of a private name that a direct eval sees in"_s, module) : 0;
+    PropertyKeyID privateKey = privateKeyOf(program, binding);
+    data.name = binding.name ? encoder.identifierNumberOfText(binding.name, "what a direct eval sees in"_s, module) : 0;
+    data.privateKey = privateKey ? encoder.identifierNumber(privateKey, "the key of a private name that a direct eval sees in"_s, module) : 0;
     data.kind = static_cast<uint32_t>(binding.kind);
     data.depth = binding.depth;
     data.operand = EvalBindingData::noOperand;

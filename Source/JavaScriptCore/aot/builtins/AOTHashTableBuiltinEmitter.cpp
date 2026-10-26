@@ -27,6 +27,8 @@ static KeyComparison keyComparisonOf(const Type& key)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
         return KeyComparison::Bits;

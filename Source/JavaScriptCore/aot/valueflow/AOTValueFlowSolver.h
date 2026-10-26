@@ -336,6 +336,7 @@ public:
     bool isMadeByRule(ValueFlowStatementID statement) const { return statement.index() >= m_input.statements.size(); }
     const ValueFlowNodeKey& keyOf(ValueFlowStatementID statement) const LIFETIME_BOUND { return m_madeStatements[statement.index() - m_input.statements.size()].key; }
     bool mayBeComputedKey(ValueFlowName) const;
+    bool isFoundUnderComputedKey(ValueFlowName) const;
     bool isAtRest(ValueFlowStatementID) const;
     void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const auto& functor) const
     {

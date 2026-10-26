@@ -81,6 +81,8 @@ protected:
     Representation representationOf(ValueID id) const { return m_generator.representationOf(id); }
 
     Operand get(ValueID id) const { return m_generator.get(id); }
+    // An operand that the operation took with any NaN, in the form that says so.
+    Operand getInFormOfItsNaN(ValueID) const;
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
     Boxed boxed(ValueID) const;

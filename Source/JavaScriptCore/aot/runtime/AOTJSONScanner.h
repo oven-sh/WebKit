@@ -65,6 +65,8 @@ ParsedJSONNumber parseJSONNumberSlow(const uint8_t* start, const uint8_t* source
 const uint8_t* decodeJSONString(const JSONWords&, const uint8_t* afterQuote, const uint8_t* firstSpecial, StringBuilder&);
 ParsedJSONString makeJSONStringWithEscapes(Instance&, VM&, const uint8_t* afterQuote, const uint8_t* firstSpecial);
 ParsedJSONString makeUncachedJSONString(Instance&, VM&, const uint8_t* afterQuote);
+// Up to here JSONCache makes the narrowest string whatever the source. A longer one has the width of its source.
+static constexpr unsigned maxLengthOfJSONStringOfEitherWidth = 16;
 
 ALWAYS_INLINE const uint8_t* skipJSONWhitespaceCharacters(const uint8_t* cursor)
 {
@@ -327,8 +329,13 @@ ALWAYS_INLINE std::optional<ParsedJSONString> findCachedJSONString(const JSONWor
 {
     static_assert(JSONCache::maxNameTextLength <= 2 * SIMD::stride<uint8_t> && JSONCache::maxNameTextLength <= jsonSourcePadding);
     auto* entry = vm.jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(quote), jsonSourcePadding });
-    if (!entry || (words.sourceEncoding != JSONSourceEncoding::Latin1 && !entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+    if (!entry)
         return std::nullopt;
+    if (words.sourceEncoding != JSONSourceEncoding::Latin1) {
+        constexpr unsigned quotes = 2;
+        if (entry->textLength > maxLengthOfJSONStringOfEitherWidth + quotes || (!entry->textIsASCII && !isShortTextLatin1AfterDecoding(words, quote, entry->textLength)))
+            return std::nullopt;
+    }
     return ParsedJSONString { entry->string, quote + entry->textLength };
 }
 

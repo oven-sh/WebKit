@@ -46,9 +46,7 @@ struct RecordedSite {
     friend bool operator==(const RecordedSite&, const RecordedSite&) = default;
 
     Origin origin;
-    bool constructs { false };
-    bool isTailCall { false };
-    bool isInsideCallee { false };
+    CallSiteKind kind { CallSiteKind::Plain };
     BuiltinID calledBuiltin { };
 };
 

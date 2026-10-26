@@ -189,7 +189,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (Enc
     { \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
         auto bits = NumberAndValueBits::decode(typeAndNumberSide); \
-        JSValue boxed = jsNumber(purifyNaN(number)); \
+        JSValue boxed = jsNumber(withoutPayload(number)); \
         JSValue other = JSValue::decode(value); \
         JSValue result = bits.numberIsOnRight ? function(globalObject, other, boxed) : function(globalObject, boxed, other); \
         OPERATION_RETURN_IF_EXCEPTION(scope, 0); \

@@ -709,6 +709,15 @@ public:
             functor(node.objects, node.value);
     }
 
+    void forEachSeenValueWrittenUnder(ValueFlowName name, NOESCAPE const Invocable<void(ValueSetID seenValue)> auto& functor) const
+    {
+        const NodesWrittenUnderName* nodes = m_index.findNodesWrittenUnder(name);
+        if (!nodes)
+            return;
+        for (const WrittenNode& node : nodes->nodes)
+            functor(node.seenValue);
+    }
+
 private:
     using WrittenNode = ValueFlowHeapIndex::WrittenNode;
     using NodeOfMember = ValueFlowHeapIndex::NodeOfMember;

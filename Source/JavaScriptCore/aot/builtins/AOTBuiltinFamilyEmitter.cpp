@@ -34,6 +34,8 @@ Number BuiltinFamilyEmitter::numberOperand(ValueID id)
     case Representation::Int64:
         return conversions.toNumber(in<Integer>(id), type.integers);
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return in<Number>(id);
     case Representation::OptionalInt64:
         return conversions.toNumber(conversions.withoutMarkers(get(id)).as<Integer>(), type.integers);
@@ -64,6 +66,8 @@ Integer BuiltinFamilyEmitter::integerOperand(ValueID id)
     case Representation::Int64:
         return in<Integer>(id);
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return conversions.toInteger(in<Number>(id));
     case Representation::OptionalInt64:
         return conversions.withoutMarkers(get(id)).as<Integer>();
@@ -94,6 +98,8 @@ Word32 BuiltinFamilyEmitter::int32Operand(ValueID id)
     case Representation::Int64:
         return conversions.narrow(in<Integer>(id));
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return conversions.toInt32(in<Number>(id));
     case Representation::OptionalInt64:
         return conversions.narrow(conversions.withoutMarkers(get(id)).as<Integer>());
@@ -126,6 +132,8 @@ Condition BuiltinFamilyEmitter::booleanOperand(ValueID id)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -152,6 +160,8 @@ CellPointer BuiltinFamilyEmitter::getCell(ValueID id)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:

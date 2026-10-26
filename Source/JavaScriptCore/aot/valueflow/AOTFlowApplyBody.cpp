@@ -792,6 +792,22 @@ static void initializeMembersOfListedHolders(const FlowCastInsertion& insertion)
     }
 }
 
+// It writes one also where nothing takes the value.
+static void eraseBuiltinConstantsWithoutUse(const FlowCastInsertion& insertion)
+{
+    const Function& function = insertion.body.function;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Block& block = function.blocks[blockIndex];
+        BitVector indexes;
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (function.at(block.values[index]).opcode == Opcode::Builtin && insertion.analyses.useLists().usesOf(block.values[index]).empty())
+                indexes.set(index);
+        }
+        if (!indexes.isEmpty())
+            insertion.builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+}
+
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
@@ -822,6 +838,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     replaceDefinedValues(insertion, update);
     initializeMembersOfListedHolders(insertion);
     builder.applyInsertions();
+    eraseBuiltinConstantsWithoutUse(insertion);
 
     TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build };
     TypePropagationOutcome typing = typeValuesFromNever(inputs);

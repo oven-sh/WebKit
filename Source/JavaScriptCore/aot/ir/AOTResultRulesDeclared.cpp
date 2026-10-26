@@ -262,14 +262,9 @@ std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context,
     return fieldTypeOf(context, receivers, key, FieldTypeRule::DeferringSlotRead);
 }
 
-static bool hasOnlyClassObjects(const Type& type)
-{
-    return !type.anyObject && !type.anyFunction && !type.layouts && type.functions.isEmpty() && type.builtins.isEmpty();
-}
-
 std::optional<Type> tryTypeOfContentsRead(const TypingContext& context, const Type& container, ContentsSlot slot)
 {
-    if (!container.isJavaScriptValue() || container.primitives & ~Primitive::UndefinedOrNull || !hasOnlyClassObjects(container))
+    if (!container.isJavaScriptValue() || container.primitives & ~Primitive::UndefinedOrNull || !container.hasOnlyClassObjects())
         return std::nullopt;
 
     const BuiltinTable& builtins = context.program.builtins();
@@ -339,7 +334,7 @@ std::optional<Type> tryTypeOfAwaited(const TypingContext& context, const Type& a
         return awaited;
 
     const ClassPart* promise = awaited.findClassPart(BuiltinClasses::Promise);
-    bool hasOnlyPromiseObjects = promise && awaited.classes.size() == 1 && hasOnlyClassObjects(awaited);
+    bool hasOnlyPromiseObjects = promise && awaited.classes.size() == 1 && awaited.hasOnlyClassObjects();
     switch (context.level) {
     case TypeLevel::Proven:
         if (!hasOnlyPromiseObjects || !promise->contentsAreProven)

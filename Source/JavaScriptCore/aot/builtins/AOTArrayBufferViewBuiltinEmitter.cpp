@@ -141,7 +141,11 @@ void ArrayBufferViewBuiltinEmitter::generateArrayFrom(const InlineCall& call)
         m_out.branch(below(index, count).value(), normalEdge(copy), normalEdge(copied));
 
         m_out.appendTo(copy);
-        Operand element = inRepresentation(call.context(), rawRepresentation, loadElement(source, vector, index, arrayType), elementType);
+        Operand loaded = loadElement(source, vector, index, arrayType);
+        // A NaN leaves for the operation.
+        if (loaded.is<ImpureNumber>() && rawRepresentation == Representation::Double)
+            loaded = Number(loaded.value);
+        Operand element = inRepresentation(call.context(), rawRepresentation, loaded, elementType);
         if (element.is<Number>() && !elementType.isInteger())
             branchUnless(equal(element.as<Number>(), element.as<Number>()), outOfLine);
         elementAccess.storeRawElement(form, elements, index, element);

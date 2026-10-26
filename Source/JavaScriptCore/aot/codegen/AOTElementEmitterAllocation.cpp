@@ -226,6 +226,8 @@ Number ArrayAllocationEmitter::numberOrMarker(ValueID element)
     Operand operand = get(element);
     switch (operand.representation) {
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
         return Number(operand.value);
     case Representation::Int32:
@@ -260,7 +262,7 @@ CellPointer ArrayAllocationEmitter::newArrayOutOfLine(const OperationContext& co
         ValueID element = elements[index];
         Number rawNumber = numberOrMarker(element);
         bool mayLookLikeMarker = representationOf(element) != Representation::OptionalDouble && typeOf(element).mayBeNaN();
-        return mayLookLikeMarker ? conversions.purified(rawNumber) : rawNumber;
+        return mayLookLikeMarker ? conversions.withoutPayload(rawNumber) : rawNumber;
     });
     Pointer values = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(length);
     for (unsigned i = 0; i < length; ++i)

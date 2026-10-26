@@ -80,6 +80,29 @@ void boxDoubleBits(StubAssembler& jit, PureDoubleBits bitsAndResult)
     subtractNumberTag(jit, bitsAndResult.gpr());
 }
 
+static void dropPayloadOfNaN(StubAssembler& jit, GPRReg bits)
+{
+    jit.urshift64(TrustedImm32(51), bits);
+    jit.or64(TrustedImm32(1), bits);
+    jit.lshift64(TrustedImm32(51), bits);
+}
+
+void boxNaN(StubAssembler& jit, FPRReg nan, GPRReg result)
+{
+    jit.moveDoubleTo64(nan, result);
+    dropPayloadOfNaN(jit, result);
+    subtractNumberTag(jit, result);
+}
+
+void boxDoubleWithoutPayload(StubAssembler& jit, FPRReg number, GPRReg result)
+{
+    jit.moveDoubleTo64(number, result);
+    Jump isNumber = jit.branchIfNotNaN(number);
+    dropPayloadOfNaN(jit, result);
+    isNumber.link(&jit);
+    subtractNumberTag(jit, result);
+}
+
 void boxInt32(StubAssembler& jit, GPRReg int32, GPRReg result)
 {
 #if CPU(ARM64)

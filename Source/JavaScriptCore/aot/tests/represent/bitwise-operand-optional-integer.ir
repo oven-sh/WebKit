@@ -51,5 +51,5 @@ function f3 name="sumWithIntegerOrUndefined" parameters=[{type=i32}, {type=undef
     v2 = Add v0, v1 form=Numbers
     Return v2
 # CHECK: b0(v0: i32 @Int32, v1: undefined|i32 @OptionalInt64):
-# CHECK-NEXT: number @Double = Add v0, v1 form=Numbers
+# CHECK-NEXT: number @DoubleWithPayload = Add v0, v1 form=Numbers
 }

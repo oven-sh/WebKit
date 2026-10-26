@@ -122,7 +122,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
         Number number(operand.value);
         if (operand.is<OptionalNumber>())
             branchUnless(equal(number, number), doesNotFit);
-        return Operand(emitter<ConversionEmitter>().boxNumber(number));
+        return Operand(emitter<ConversionEmitter>().boxNumber(operand.is<OptionalNumber>() ? Operand(number) : getInFormOfItsNaN(stored)));
     }
     case ElementConversion::BoxDoubleAsInt32:
         return Operand(boxInt32(emitter<ConversionEmitter>().toInt32(Number(operand.value))));
@@ -269,7 +269,7 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     const Type& storedType = typeOf(stored);
     bool isFast = value.shape() == CodeShape::Fast;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Boxed boxedValue = isFast ? conversions.box(value, get(stored), storedType) : conversions.boxInArm(value, get(stored), storedType);
+    Boxed boxedValue = isFast ? conversions.box(value, getInFormOfItsNaN(stored), storedType) : conversions.boxInArm(value, getInFormOfItsNaN(stored), storedType);
     if (value->mode() == ECMAMode::Sloppy) {
         emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
         return;

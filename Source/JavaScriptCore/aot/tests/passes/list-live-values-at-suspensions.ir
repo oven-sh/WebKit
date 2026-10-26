@@ -1,0 +1,55 @@
+# A suspension lists what the function as it is written reads behind it, beside what it listed when it was read. A value that is read only in front of the
+# suspension is not listed, and nothing is listed twice.
+# FORM: AsRead
+# RUN: pass ListLiveValuesAtSuspensions
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="awaitsTwice" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=number}] results=[{type=Promise}] {
+    v2 = NewArray v1 contents=number
+    v3 = NewArray v1 contents=number
+    v4 = NewArray v1 contents=number
+    v5 = ElemGet v2, v1
+    v6 = Await v5, v0, v3 @10
+    v7 = ElemGet v3, v1
+    v8 = Await v7, v0 @20
+    v9 = ElemGet v4, v1
+    Return v9
+}
+# CHECK-LABEL: function f0 name="awaitsTwice"
+# CHECK: Await v5, v0, v3, v1, v4 @10
+# CHECK: Await v7, v0, v1, v4 @20
+
+function f1 name="walksAList" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=object}] results=[{type=Promise}] {
+    v2 = IteratorOpen v0
+    v3 = IteratorResume v2 @25
+    v4 = Await v1 @30
+    IteratorClose v2 @35
+    Return v4
+}
+# An iteration is listed as what it walks. A step of an iteration that is not async suspends nothing and lists nothing.
+# CHECK-LABEL: function f1 name="walksAList"
+# CHECK: IteratorResume v2 @25
+# CHECK: Await v1, v0 @30
+# CHECK: IteratorClose v2 @35
+
+function f2 name="isNeverSuspended" thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1 @45
+    IteratorClose v1 @50
+    Return v0
+}
+# CHECK-LABEL: function f2 name="isNeverSuspended"
+# CHECK: IteratorResume v1 @45
+# CHECK: IteratorClose v1 @50
+
+layout L0 kind=Environment name="ofTheCaller" fields=[{key=@"x.0" declared={type=anything}}]
+function f3 name="capturesAnEnvironment" flags=[IsAsync, HasThis] captures=[{type=env L0}] thisType={type=anything} parameters=[{type=object}] results=[{type=Promise}] {
+  b0(v0: env L0, v1: anything, v2: object):
+    v3 = Await v2, v2 @55
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = PropGet v1 key="x"
+    Return v4
+}
+# What the function captures and its receiver are not listed here: what is left of them when the function is split is held until the function ends.
+# CHECK-LABEL: function f3 name="capturesAnEnvironment"
+# CHECK: Await v2, v2 @55

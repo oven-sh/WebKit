@@ -98,16 +98,16 @@ static void checkCallSites(const TestImage& image, uint32_t function, const Vect
             return;
         }
         AOT_TEST_CHECK(record && record->callSite.bits() == inFront->number && record->inlineFrame == inFront->inlineFrame);
-        AOT_TEST_CHECK(!record->isConstruct && !record->isTailCall && !record->isInsideCallee && !record->calledBuiltin && !record->firstReadSite);
+        AOT_TEST_CHECK(record->kind == CallSiteKind::Plain && !record->calledBuiltin && !record->firstReadSite);
     };
     for (const ExpectedSite& site : sites) {
         std::optional<CallSiteRecord> record = table.callSiteAt(index, site.returnOffset);
         AOT_TEST_CHECK(record);
         AOT_TEST_CHECK(record->callSite.bits() == site.number);
         AOT_TEST_CHECK(record->inlineFrame == site.inlineFrame);
-        AOT_TEST_CHECK(record->isConstruct == site.isConstruct);
-        AOT_TEST_CHECK(record->isTailCall == site.isTailCall);
-        AOT_TEST_CHECK(record->isInsideCallee == site.isInsideCallee);
+        AOT_TEST_CHECK(record->isConstruct() == site.isConstruct);
+        AOT_TEST_CHECK(record->isTailCall() == site.isTailCall);
+        AOT_TEST_CHECK(record->isInsideCallee() == site.isInsideCallee);
         AOT_TEST_CHECK(record->calledBuiltin == site.calledBuiltin);
         std::optional<uint32_t> firstReadSite;
         if (record->firstReadSite)
@@ -195,12 +195,12 @@ static void testCallSitesFlags()
 {
     SiteBody body = bodyWithCalls(1, 8);
     Vector<FlaggedSite>& flaggedSites = body.code.sites.flaggedSites;
-    flaggedSites.append(FlaggedSite { 2, SiteFlag::Constructs });
-    flaggedSites.append(FlaggedSite { 3, SiteFlag::IsTailCall });
-    flaggedSites.append(FlaggedSite { 4, { SiteFlag::Constructs, SiteFlag::IsTailCall } });
-    flaggedSites.append(FlaggedSite { 5, { SiteFlag::IsTailCall, SiteFlag::IsInsideCallee } });
-    flaggedSites.append(FlaggedSite { 6, { }, BuiltinID(0) });
-    flaggedSites.append(FlaggedSite { 7, { SiteFlag::IsTailCall, SiteFlag::IsInsideCallee }, BuiltinID(300) });
+    flaggedSites.append(FlaggedSite { 2, CallSiteKind::Construct });
+    flaggedSites.append(FlaggedSite { 3, CallSiteKind::TailCall });
+    flaggedSites.append(FlaggedSite { 4, CallSiteKind::TailConstruct });
+    flaggedSites.append(FlaggedSite { 5, CallSiteKind::InsideCallee });
+    flaggedSites.append(FlaggedSite { 6, CallSiteKind::InsideBuiltin, BuiltinID(0) });
+    flaggedSites.append(FlaggedSite { 7, CallSiteKind::InsideBuiltinCallee, BuiltinID(300) });
     body.sites[1].isConstruct = true;
     body.sites[2].isTailCall = true;
     body.sites[3].isConstruct = true;
@@ -220,7 +220,7 @@ static void testCallSitesFlagWithoutCode()
     startFramedBody(sketch, 1);
     sketch.addSite();
     sketch.code().sites.numberOfSitesWithoutCode = 1;
-    sketch.code().sites.flaggedSites.append(FlaggedSite { 1, SiteFlag::Constructs });
+    sketch.code().sites.flaggedSites.append(FlaggedSite { 1, CallSiteKind::Construct });
     Vector<ExpectedSite> expected;
     appendCall(sketch, expected, 0);
     AOT_TEST_CHECK(expected[0].number == 2);

@@ -11,12 +11,34 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTStringBuilderStorage.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
+
+void JSONWriteEmitter::generateJSONResetHolders(const ValueContext& value)
+{
+    m_out.storePtr(m_out.constIntPtr(0), builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders()));
+}
+
+void JSONWriteEmitter::generateJSONEnterHolder(const ValueContext& value)
+{
+    TypedPointer innermost = builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
+    Pointer record(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_proc.addStackSlot(sizeof(JSONHolderRecord))));
+    m_out.storePtr(m_out.loadPtr(innermost), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
+    m_out.store64(in<Boxed>(value->holderOperand()).value(), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, holder)));
+    m_out.storePtr(record.value(), innermost);
+}
+
+void JSONWriteEmitter::generateJSONLeaveHolder(const ValueContext& value)
+{
+    TypedPointer innermost = builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
+    Pointer record(m_out.loadPtr(innermost));
+    m_out.storePtr(m_out.loadPtr(builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer))), innermost);
+}
 
 void JSONWriteEmitter::generateJSONAppendKey(const ValueContext& value)
 {

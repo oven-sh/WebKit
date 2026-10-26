@@ -153,7 +153,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { frame.callPosition, frame.parent }, .constructs = frame.isConstruction, .isTailCall = frame.isTailCall }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { frame.callPosition, frame.parent } }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 
@@ -564,17 +564,22 @@ void CodeGenerator::convertOperandsOf(const OperationContext& context, const Ope
             continue;
         Representation wanted = wantedRepresentationOf(inputs, operation, operandIndex);
         Representation defined = function().at(operand).representation;
-        if (!hasRegister(wanted) || defined == wanted)
+        // An operation that takes a double with any NaN computes with it as with any number.
+        bool isTakenAsNumber = holdsAnyNaN(wanted);
+        if (!hasRegister(wanted) || (defined == wanted && !isTakenAsNumber))
             continue;
         // The operation makes such an operand itself.
         if (hasRegister(defined) && !m_values[operand.index()])
             continue;
+        Representation taken = isTakenAsNumber ? Representation::Double : wanted;
         bool isConverted = m_convertedOperands.containsIf([&](const ConvertedOperand& converted) {
-            RELEASE_ASSERT(converted.id != operand || converted.operand.representation == wanted);
+            RELEASE_ASSERT(converted.id != operand || converted.operand.representation == taken);
             return converted.id == operand;
         });
-        if (!isConverted)
-            m_convertedOperands.append({ operand, convert(context, operand, getAsDefined(operand), typeOf(operand), wanted) });
+        if (isConverted)
+            continue;
+        Operand converted = convert(context, operand, getAsDefined(operand), typeOf(operand), wanted);
+        m_convertedOperands.append({ operand, Operand(taken, converted.value) });
     }
 }
 
@@ -731,6 +736,8 @@ void CodeGenerator::defineValue(ValueID id, Operand operand)
         *m_definitionTaken = operand;
         return;
     }
+    if (operand.representation == Representation::Double && holdsAnyNaN(function().at(id).representation))
+        operand.representation = function().at(id).representation;
     RELEASE_ASSERT(operand.representation == function().at(id).representation);
     if (operand.representation == Representation::Void)
         return;

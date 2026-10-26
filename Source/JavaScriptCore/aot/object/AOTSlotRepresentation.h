@@ -61,6 +61,15 @@ static constexpr uint64_t nullDouble = 0x7ffbull << 48;
 static constexpr uint64_t absentDouble = 0x7ffcull << 48;
 static_assert(maxSlotInteger < undefinedInteger);
 
+// A NaN keeps the sign that arithmetic gave it and none of its other bits: it is no marker, and boxed it is a number.
+constexpr uint64_t quietNaNWithSignOf(uint64_t bits) { return (bits >> 51 | 1) << 51; }
+ALWAYS_INLINE double withoutPayload(double number)
+{
+    if (number == number) [[likely]]
+        return number;
+    return std::bit_cast<double>(quietNaNWithSignOf(std::bit_cast<uint64_t>(number)));
+}
+static_assert(quietNaNWithSignOf(absentDouble) == PNaNAsBits && quietNaNWithSignOf(UINT64_MAX) == (PNaNAsBits | 1ull << 63));
 // What the processor answers where arithmetic on numbers has no number to give.
 #if CPU(X86_64)
 static constexpr uint64_t bitsOfNaNFromArithmetic = PNaNAsBits | 1ull << 63;

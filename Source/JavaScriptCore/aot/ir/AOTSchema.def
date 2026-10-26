@@ -10,12 +10,13 @@ enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
 enum Interpretation { | engine None Allocation Cast Read Store Test List Guards }
 enum ValueFlowEdgeClass { | engine Unsound Allocates Copies TableProves Checks }
+enum FlowRule { | engine General Arithmetic Await Call ConversionToObject Convert DefineMethod Generator Heap InstanceOf Iteration Module NewClass NewDictionary Promise ReadOfPrototypeProperty StepOfLibrary ToPropertyKey }
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
 enum FunctionReferenceKind { Call Closure Constructor Dispatch }
 enum ModuleReferenceKind { Target Referrer }
-enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
+enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double DoubleWithPayload ImpureDouble OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
 
 enum ProofLifetime { | engine Forever Stretch }
 enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
@@ -116,6 +117,7 @@ column receiver : Operand
 column stored : Operand
 column interpreted : Interpretation
 column flow : ValueFlowEdgeClass
+column flowRule : FlowRule
 column boundTo : BoundTo
 column proves : Proof
 column relies : Proofs
@@ -152,6 +154,7 @@ include "schema/selected-operations.def"
 include "schema/placed-operations.def"
 include "schema/inline-builtins.def"
 include "schema/runtime-records.def"
+include "schema/image-tables.def"
 include "schema/runtime-operations.def"
 include "schema/runtime-property-operations.def"
 include "schema/runtime-builtin-operations.def"

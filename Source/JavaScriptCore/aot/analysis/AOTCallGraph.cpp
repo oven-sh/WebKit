@@ -620,6 +620,30 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
     });
     const bool someRecordLooksDifferentToCallers = recordLooksDifferentToCallers.contains(1);
+    // What an operation runs is also read from the records of the functions that the type of an operand lists.
+    Vector<uint8_t> typeListsRecordThatLooksDifferent;
+    if (someRecordLooksDifferentToCallers) {
+        typeListsRecordThatLooksDifferent.grow(program.types.size());
+        forEachIndexInParallel(loops, typeListsRecordThatLooksDifferent.size(), [&](unsigned index) {
+            typeListsRecordThatLooksDifferent[index] = std::ranges::any_of(program.at(TypeID(index)).functions, [&](FunctionID listed) {
+                return listed.index() < numberOfKeptBodies && recordLooksDifferentToCallers[listed.index()];
+            });
+        });
+    }
+    auto namesOnlyRecordsThatLookTheSame = [&](FunctionID id, const ReferencesOfBody& body) {
+        bool callsOne = std::ranges::any_of(body.callees, [&](FunctionID callee) {
+            return recordLooksDifferentToCallers[callee.index()];
+        });
+        if (callsOne)
+            return false;
+        BodyIndex* index = program.bodyIndex();
+        std::optional<NamesInBody> names = index && program.at(id).hasBody() ? index->namesIn(program, id) : std::nullopt;
+        if (!names)
+            return !program.at(id).hasBody();
+        return std::ranges::none_of(names->types, [&](TypeID type) {
+            return type.index() >= typeListsRecordThatLooksDifferent.size() || typeListsRecordThatLooksDifferent[type.index()];
+        });
+    };
     const bool checksKeptBodies = build.options().verifiesAfterEveryPass;
     growWithRoomToSpareInParallel(loops, bodies.m_bodies, count);
     std::atomic<uint64_t> numberOfBodiesCollected { 0 };
@@ -629,11 +653,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     forEachIndexInParallel(loops, count, largeFunctions(program, loops).span(), [&](unsigned index) {
         ReferencesOfBody& body = bodies.m_bodies[index];
         bool stillHolds = index < numberOfKeptBodies && !bodies.m_isChanged[index] && !recordLooksDifferent[index];
-        if (stillHolds && someRecordLooksDifferentToCallers) {
-            stillHolds = std::ranges::none_of(body.callees, [&](FunctionID callee) {
-                return recordLooksDifferentToCallers[callee.index()];
-            });
-        }
+        if (stillHolds && someRecordLooksDifferentToCallers)
+            stillHolds = namesOnlyRecordsThatLookTheSame(FunctionID(index), body);
         if (stillHolds) {
             RELEASE_ASSERT(!checksKeptBodies || body == collectReferencesOf(program, flow, FunctionID(index), entriesThatRunNoCode));
             return;

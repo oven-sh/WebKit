@@ -112,9 +112,9 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
     case SlotRepresentation::Int64:
         return jsNumber(static_cast<double>(as(int64_t())));
     case SlotRepresentation::Float:
-        return jsNumber(purifyNaN(as(float())));
+        return jsNumber(withoutPayload(as(float())));
     case SlotRepresentation::Double:
-        return jsNumber(purifyNaN(as(double())));
+        return jsNumber(withoutPayload(as(double())));
     case SlotRepresentation::Cell:
     case SlotRepresentation::JSValue:
         return JSValue::decode(as(EncodedJSValue()));
@@ -152,7 +152,7 @@ JSValue readSlot(SlotRepresentation representation, const void* slot, const Prog
         case absentDouble:
             return { };
         default:
-            return jsNumber(purifyNaN(as(double())));
+            return jsNumber(withoutPayload(as(double())));
         }
     case SlotRepresentation::OptionalInt32:
         switch (int32_t word = as(int32_t())) {
@@ -335,11 +335,11 @@ bool tryWriteDouble(SlotRepresentation representation, void* slot, double number
     switch (representation) {
     case SlotRepresentation::Double:
     case SlotRepresentation::OptionalDouble:
-        return storeInSlot(slot, purifyNaN(number));
+        return storeInSlot(slot, withoutPayload(number));
     case SlotRepresentation::JSValue:
-        return storeInSlot(slot, JSValue::encode(jsNumber(purifyNaN(number))));
+        return storeInSlot(slot, JSValue::encode(jsNumber(withoutPayload(number))));
     case SlotRepresentation::Float:
-        return tryWriteFloat(slot, purifyNaN(number));
+        return tryWriteFloat(slot, withoutPayload(number));
     case SlotRepresentation::Uint8:
     case SlotRepresentation::Int8:
     case SlotRepresentation::Uint16:

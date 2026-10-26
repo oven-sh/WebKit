@@ -343,7 +343,9 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
     case Typed::Representation::Int64:
         return jsNumber(static_cast<double>(static_cast<int64_t>(bits)));
     case Typed::Representation::Double:
-        return jsNumber(purifyNaN(std::bit_cast<double>(floatingPointBits)));
+    case Typed::Representation::DoubleWithPayload:
+    case Typed::Representation::ImpureDouble:
+        return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
     case Typed::Representation::LiteralString:
         if (isLiteralStringWord(bits))
             return instance->state->strings->stringForLiteralStringWord(bits);
@@ -372,7 +374,7 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
             return jsNull();
         if (floatingPointBits == undefinedDouble || floatingPointBits == absentDouble)
             return jsUndefined();
-        return jsNumber(purifyNaN(std::bit_cast<double>(floatingPointBits)));
+        return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
     case Typed::Representation::Unchosen:
     case Typed::Representation::RawWord:
         break;

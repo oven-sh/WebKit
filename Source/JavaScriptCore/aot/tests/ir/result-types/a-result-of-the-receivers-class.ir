@@ -1,0 +1,54 @@
+# A built-in that answers with an instance of its receiver's class answers, for a receiver of several classes, with an instance of one of them.
+# So a receiver of fewer classes never gives a wider result, whatever the form of the call
+# FORM: Prepared
+# RUN: result-types
+# RUN(LAWS): laws-of-result-rules f0 f1 f2 f3 f4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="part-of-one-class" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeSubarray/0 builtinCallForm=AnyReceiver
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeToReversed/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f1 name="part-of-two-classes" parameters=[{type=Uint8Array|Float64Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeSubarray/0 builtinCallForm=AnyReceiver
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeSlice/0 builtinCallForm=AnyReceiver
+    v3 = CallBuiltin v0 overload=TypedArrayPrototypeToReversed/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f2 name="part-of-two-classes-or-nothing" parameters=[{type=undefined|null|Uint8Array|Float64Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeSubarray/0 builtinCallForm=AnyReceiver
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeToReversed/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f3 name="part-of-a-view-or-something-else" parameters=[{type=string|Map|Uint8Array|Float64Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeSubarray/0 builtinCallForm=AnyReceiver
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeToReversed/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f4 name="part-of-anything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeSubarray/0 builtinCallForm=AnyReceiver
+    v2 = CallBuiltin v0 overload=TypedArrayPrototypeToReversed/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: v1: TypedArray|Uint8Array
+# CHECK-NEXT: v2: Uint8Array
+# CHECK-LABEL: function f1
+# CHECK: v1: Float64Array|TypedArray|Uint8Array
+# CHECK-NEXT: v2: Float64Array|TypedArray|Uint8Array
+# CHECK-NEXT: v3: Float64Array|Uint8Array
+# CHECK-LABEL: function f2
+# CHECK: v1: Float64Array|TypedArray|Uint8Array
+# CHECK-NEXT: v2: Float64Array|Uint8Array
+# CHECK-LABEL: function f3
+# CHECK: v1: Float64Array|TypedArray|Uint8Array
+# CHECK-NEXT: v2: object
+# CHECK-LABEL: function f4
+# CHECK: v1: TypedArray
+# CHECK-NEXT: v2: object
+# LAWS: function f0: every rule keeps both laws
+# LAWS-NEXT: function f1: every rule keeps both laws
+# LAWS-NEXT: function f2: every rule keeps both laws
+# LAWS-NEXT: function f3: every rule keeps both laws
+# LAWS-NEXT: function f4: every rule keeps both laws

@@ -31,6 +31,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     if (mayBeUnknownObject(sources))
         add(m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows), known(targets));
     notePrototypeObjectsListedAtWrite(target, targets, unknownHeapKey);
+    noteClosuresWrittenUnder(unknownHeapKey, targets);
     connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));
 
     ValueFlowNodeID copied = m_context.written(known(targets), valueUnderUnknownKey);

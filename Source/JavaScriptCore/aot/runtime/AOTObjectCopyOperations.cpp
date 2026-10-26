@@ -349,7 +349,10 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
-    if (canPutDirectly && excluded.isEmpty()) {
+    // The engine's own copy takes the keys of a source that has elements names first.
+    JSObject* holderOfElements = isCompiledObject(from) ? PropertyWalk::objectHoldingIndexedProperties(from) : from;
+    bool hasElements = holderOfElements && hasIndexedProperties(holderOfElements->indexingType());
+    if (canPutDirectly && excluded.isEmpty() && !hasElements) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer propertyValues;
         bool isDone = objectAssignFast(globalObject, ordinary, from, properties, propertyValues);

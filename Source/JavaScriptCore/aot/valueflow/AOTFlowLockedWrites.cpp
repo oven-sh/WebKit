@@ -286,6 +286,18 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool keepsPrototype(const Program& program, const Function& function, const Value& write, BuiltinID callee, BuiltinID holder)
+{
+    if (write.opcode != Opcode::Call || (callee != Builtins::ObjectSetPrototypeOf && callee != Builtins::ReflectSetPrototypeOf))
+        return false;
+    const BuiltinTable& table = program.builtins();
+    std::span<const ValueID> arguments = write.argumentsOperands();
+    if (arguments.size() < 2 || table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+        return false;
+    const Type& prototype = program.typeOf(function, arguments[1]);
+    return !prototype.primitives && prototype.singleBuiltin() == table.canonicalID(table.at(holder).inheritsFrom);
+}
+
 static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
 {
     const BuiltinTable& table = program.builtins();
@@ -311,7 +323,7 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     const Type* stored = member && value.opcode == Opcode::PropSet ? &program.typeOf(function, value.operand(*storedOf(value.opcode))) : nullptr;
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
-    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member))
+    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, function, value, callee, location.holder))
         return;
 
     bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;

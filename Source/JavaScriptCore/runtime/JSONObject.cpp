@@ -55,6 +55,7 @@
 #include "AOTJSONTextWriter.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTStringBuilderStorage.h"
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
 #endif
@@ -115,7 +116,7 @@ class Stringifier {
 public:
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
 #if ENABLE(AOT)
-    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&);
+    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&, std::span<JSCell* const> outerHolders);
 #endif
 
 private:
@@ -173,6 +174,10 @@ private:
     Vector<Holder, 16, UnsafeVectorOverflow> m_holderStack;
     String m_repeatedGap;
     StringView m_indent;
+#if ENABLE(AOT)
+    // The objects and arrays around the value, where compiled code writes them and this writes a part.
+    std::span<JSCell* const> m_outerHolders;
+#endif
 };
 
 // ------------------------------ helper functions --------------------------------
@@ -324,13 +329,14 @@ String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSVal
 }
 
 #if ENABLE(AOT)
-String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName)
+String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName, std::span<JSCell* const> outerHolders)
 {
     VM& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Stringifier stringifier(&globalObject, jsUndefined(), jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
+    stringifier.m_outerHolders = outerHolders;
 
     StringBuilder result(OverflowPolicy::RecordOverflow);
     Holder root(Holder::RootHolder, nullptr);
@@ -489,6 +495,16 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
             return StringifyFailed;
         }
     }
+#if ENABLE(AOT)
+    if (std::ranges::contains(m_outerHolders, object)) [[unlikely]] {
+        throwTypeError(m_globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
+        return StringifyFailed;
+    }
+    if (m_holderStack.size() + m_outerHolders.size() >= maximumSideStackRecursion) [[unlikely]] {
+        throwStackOverflowError(m_globalObject, scope);
+        return StringifyFailed;
+    }
+#endif
 
     if (m_holderStack.size() >= maximumSideStackRecursion) [[unlikely]] {
         throwStackOverflowError(m_globalObject, scope);
@@ -2827,19 +2843,29 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 }
 
 #if ENABLE(AOT)
-static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property)
+static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property, const AOT::JSONHolderRecord* innermostHolder)
 {
     VM& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Compiled code does not look for a cycle. It has run no code of the program since it went round one.
+    if (AOT::StringBuilderStorage::hasRepeatedHolder(innermostHolder)) [[unlikely]] {
+        throwTypeError(&globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
+        return { };
+    }
+    // The frames of the compiled code keep the holders alive.
+    Vector<JSCell*, 16> holders;
+    for (const AOT::JSONHolderRecord* record = innermostHolder; record; record = record->outer)
+        holders.append(JSValue::decode(record->holder).asCell());
+
     if (property.isNumber())
-        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber()))));
+        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber())), holders.span()));
     Identifier name = asString(property)->toIdentifier(&globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl())));
+    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span()));
 }
 
-bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property)
+bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property, const JSONHolderRecord* holders)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2855,7 +2881,7 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
     // Only the general serializer calls toJSON, which is told the key.
     String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason);
     if (text.isNull())
-        text = stringifyProperty(*globalObject, value, property);
+        text = stringifyProperty(*globalObject, value, property, holders);
     RETURN_IF_EXCEPTION(scope, false);
     if (text.isNull())
         return false;

@@ -47,6 +47,8 @@ constexpr bool isPassedInFPR(Representation representation)
 {
     switch (representation) {
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
         return true;
     case Representation::Boolean:

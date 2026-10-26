@@ -7,6 +7,7 @@ import { emitCppEnums } from "./emit-cpp-enums.ts";
 import { emitCppInlineBuiltins } from "./emit-cpp-inline-builtins.ts";
 import { emitCppOperations } from "./emit-cpp-operations.ts";
 import { emitCppOptions } from "./emit-cpp-options.ts";
+import { emitCppPacked } from "./emit-cpp-packed.ts";
 import { emitCppParser } from "./emit-cpp-parser.ts";
 import { emitCppPrinter } from "./emit-cpp-printer.ts";
 import { emitCppReader } from "./emit-cpp-reader.ts";
@@ -54,6 +55,7 @@ const engineEmitters: readonly Emitter[] = [
   emitCppEnums,
   emitCppWire,
   emitCppRecords,
+  emitCppPacked,
   emitCppOperations,
   emitCppAccessors,
   emitCppEffects,

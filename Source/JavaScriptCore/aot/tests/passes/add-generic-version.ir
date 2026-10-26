@@ -349,10 +349,11 @@ function f16 name="droppedCheckLeavesTailCasts" parameters=[{type=anything}, {ty
 # CHECK-NEXT: }
 }
 
-# A store by name may turn out to be a store into a typed field, which tests a value that is not proven at every store. So the check stays
-function f17 name="storedValueKeepsItsCheck" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+# A store by name may turn out to be a store into a typed field, which tests a value that is not proven at every store. So the check of a value that is stored twice stays
+function f17 name="valueStoredTwiceKeepsItsCheck" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Check v0 castType=number
     PropSet v1, v2 key="x" mode=Strict
+    PropSet v1, v2 key="y" mode=Strict
     Return
 # CHECK: = TypeTest v0 testedType=number
 # CHECK: PropSet v1, v2 key="x"

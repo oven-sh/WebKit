@@ -995,10 +995,41 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
 
     ValueID stringBuilder = builder.append(Opcode::StringBuilderBegin, { });
     JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder);
+
+    bool listsHolders = serializer.mayListHolders(site.source);
+    bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
+    BlockFrequency frequency = builder.function().at(builder.currentBlock()).frequency;
+    std::optional<Target> outerHandler = builder.handler();
+    BlockID threw;
+    if (isCovered) {
+        threw = builder.addHandlerBlock(listsHolders ? BlockRole::CleanupHandler : BlockRole::CatchHandler, ValueID());
+        builder.setHandler(Target { threw, { }, { } });
+        BlockID covered = builder.addBlock(frequency);
+        builder.emitJump(covered);
+        builder.moveToEndOf(covered);
+    }
+
     serializer.appendRoot(site.source, noText);
     serializer.commit();
 
     ValueID result = builder.append(Opcode::StringBuilderFinish, { stringBuilder });
+    if (isCovered) {
+        builder.setHandler(WTF::move(outerHandler));
+        BlockID finished = builder.addBlock(frequency);
+        builder.emitJump(finished);
+
+        builder.moveToEndOf(threw);
+        if (listsHolders) {
+            ValueID exception = builder.append(Opcode::CatchException, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
+            builder.emitRethrow(exception);
+        } else {
+            // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
+            builder.append(Opcode::CatchValue, { });
+            builder.emitJump(generic);
+        }
+        builder.moveToEndOf(finished);
+    }
     if (textFormCall) {
         BuiltinCallOperands operands { original.receiverOperand(), Vector<ValueID, 4>(original.argumentsOperands()) };
         operands.arguments[site.sourceArgument] = result;

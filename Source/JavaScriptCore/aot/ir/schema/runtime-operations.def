@@ -100,7 +100,8 @@ runtime StringBuilderBegin : JSCell* () ; reads(all) writes(StringBuilderContent
 runtime StringBuilderAppend : void (JSCell* builder, uint32_t count, const EncodedJSValue* parts) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderAppendString : void (JSCell* builder, JSCell* string) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderAppendStringRange : void (JSCell* builder, JSCell* string, int32_t start, int32_t end) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
-runtime StringBuilderAppendJSON : size_t (JSCell* builder, EncodedJSValue value, EncodedJSValue property) ; unknownCode
+runtime StringBuilderAppendJSON : size_t (JSCell* builder, EncodedJSValue value, EncodedJSValue property, EncodedJSValue holder) ; unknownCode
+runtime StringBuilderAppendJSONMembers : size_t (JSCell* builder, EncodedJSValue object, EncodedJSValue names, uint32_t start, EncodedJSValue holder) ; unknownCode
 runtime StringBuilderReserve : uint8_t* (JSCell* builder, uint64_t size) ; reads(all) writes(StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderRollBack : void (JSCell* builder, uint32_t checkpoint) ; reads(all) writes(StringBuilderContents, RuntimeState)
 runtime StringBuilderToString, StringBuilderFinish : JSCell* (JSCell* builder, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects

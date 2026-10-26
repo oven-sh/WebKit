@@ -118,13 +118,6 @@ Value makeIteratorResultObject(const Program& program, ValueID value, ValueID do
     return object;
 }
 
-// A ramp takes over the id and the callers of its source, so what is known about those callers carries over.
-static constexpr OptionSet<FunctionCapabilities> capabilitiesRampsInherit {
-    FunctionCapabilities::MayChangeSignature,
-    FunctionCapabilities::HasOnlyDirectCallers,
-    FunctionCapabilities::IsNeverCalledByHost,
-};
-
 static ValueID appendSettledPromise(IRBuilder& builder, Opcode settle, ValueID outcome)
 {
     ValueID promise = builder.append(Opcode::NewPromise, { });
@@ -154,7 +147,7 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
     if (unsplit.runsOnlyBehindFailedTest())
         ramp.flags.add(FunctionFlags::IsSplitOffGenericVersion);
     ramp.creator = record;
-    ramp.capabilities = (initialCapabilitiesOf(ramp) - capabilitiesRampsInherit) | (unsplit.capabilities & capabilitiesRampsInherit);
+    ramp.capabilities = capabilitiesInPlaceOf(ramp, unsplit.capabilities, FunctionCapabilities::MayChangeSignature);
 
     IRBuilder builder(context, ramp, types);
     builder.setOrigin(Origin { ramp.position, 0 });
@@ -641,6 +634,82 @@ static void replaceReturns(BodyRewrite& body)
     body.analyses.didChangeValues();
 }
 
+// In each block from the last suspension that can list what is held to the first, with what is live behind it.
+static void forEachSuspensionFromLastToFirst(const Function& function, FunctionAnalyses& analyses, NOESCAPE const Invocable<void(ValueID, const Liveness::LocalCalc&)> auto& functor)
+{
+    Vector<uint32_t, 4> suspensionIndexes;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (canHoldOperands(function.at(values[index]).opcode) && analyses.maySuspend(values[index]))
+                suspensionIndexes.append(index);
+        }
+        if (suspensionIndexes.isEmpty())
+            continue;
+
+        Liveness::LocalCalc localCalc(analyses.liveness(), block);
+        uint32_t pointIndex = values.size();
+        while (!suspensionIndexes.isEmpty()) {
+            uint32_t suspensionIndex = suspensionIndexes.takeLast();
+            while (pointIndex > suspensionIndex + 1)
+                localCalc.execute(--pointIndex);
+            functor(values[suspensionIndex], localCalc);
+        }
+    }
+}
+
+// What the function as it is written reads behind a suspension it holds there, also where a later pass finds that the read is never reached.
+PassOutcome listLiveValuesAtSuspensions(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    PassOutcome outcome = PassOutcome::Unchanged;
+    if (!function.isUnsplitCoroutine())
+        return outcome;
+    // What the function still captures when it is split it holds until it ends.
+    BitVector isHeldUntilTheEnd;
+    const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+    for (uint32_t index = 0; index < entryParameters.size(); ++index) {
+        if (function.entryParameterKind(index) != EntryParameter::Parameter)
+            isHeldUntilTheEnd.set(entryParameters[index].index());
+    }
+    Vector<ValueID, 16> held;
+    BitVector isListed;
+    forEachSuspensionFromLastToFirst(function, context.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
+        Opcode opcode = function.at(suspension).opcode;
+        if ((opcode == Opcode::IteratorResume || opcode == Opcode::IteratorClose) && function.at(suspension).iteratorKind() == IteratorKind::Sync)
+            return;
+        held.shrink(0);
+        isListed.clearAll();
+        for (ValueID listed : heldOperandsOf(function.at(suspension))) {
+            held.append(listed);
+            isListed.set(listed.index());
+        }
+        size_t numberListed = held.size();
+        auto list = [&](ValueID object) {
+            if (!isHeldUntilTheEnd.get(object.index()) && !isListed.set(object.index()))
+                held.append(object);
+        };
+        behind.forEachLive([&](ValueID live) {
+            if (live == suspension)
+                return;
+            // An iteration holds what it walks, and a closure what it captures: one that is only called need not be made.
+            const Value& definition = function.at(sameObjectThroughConversionsToObject(function, live));
+            if (definition.opcode == Opcode::IteratorOpen)
+                list(definition.iterableOperand());
+            else if (definition.opcode == Opcode::NewClosure) {
+                for (ValueID capture : definition.capturesOperands())
+                    list(capture);
+            } else
+                list(live);
+        });
+        if (held.size() == numberListed)
+            return;
+        setHeldOperands(function.edit(suspension), held.span());
+        outcome = PassOutcome::Changed;
+    });
+    return outcome;
+}
+
 // A constant of a module holds its value as long as the program runs.
 static bool isHeldByConstantOfModule(const Program& program, const Function& function, ValueID id)
 {
@@ -671,41 +740,25 @@ static void holdLiveValuesAtSuspensions(BodyRewrite& body)
             parameters.append(entryParameters[index]);
     }
 
-    Vector<uint32_t, 4> suspensionIndexes;
     Vector<ValueID, 16> held;
-    for (BlockID block : body.analyses.cfg().reversePostOrder()) {
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            if (canHoldOperands(function.at(values[index]).opcode) && body.analyses.maySuspend(values[index]))
-                suspensionIndexes.append(index);
+    forEachSuspensionFromLastToFirst(function, body.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
+        held.shrink(0);
+        auto holdUnlessLive = [&](ValueID id) {
+            if (!behind.isLive(id) && !held.contains(id))
+                held.append(id);
+        };
+        for (ValueID parameter : parameters)
+            holdUnlessLive(parameter);
+        for (ValueID listed : heldOperandsOf(function.at(suspension))) {
+            if (isHeld(listed))
+                holdUnlessLive(listed);
         }
-        if (suspensionIndexes.isEmpty())
-            continue;
-
-        Liveness::LocalCalc localCalc(body.analyses.liveness(), block);
-        uint32_t pointIndex = values.size();
-        while (!suspensionIndexes.isEmpty()) {
-            uint32_t suspensionIndex = suspensionIndexes.takeLast();
-            while (pointIndex > suspensionIndex + 1)
-                localCalc.execute(--pointIndex);
-            held.shrink(0);
-            auto holdUnlessLive = [&](ValueID id) {
-                if (!localCalc.isLive(id) && !held.contains(id))
-                    held.append(id);
-            };
-            for (ValueID parameter : parameters)
-                holdUnlessLive(parameter);
-            for (ValueID listed : heldOperandsOf(function.at(values[suspensionIndex]))) {
-                if (isHeld(listed))
-                    holdUnlessLive(listed);
-            }
-            localCalc.forEachLive([&](ValueID live) {
-                if (live != values[suspensionIndex] && isHeld(live))
-                    held.append(live);
-            });
-            setHeldOperands(function.edit(values[suspensionIndex]), held.span());
-        }
-    }
+        behind.forEachLive([&](ValueID live) {
+            if (live != suspension && isHeld(live))
+                held.append(live);
+        });
+        setHeldOperands(function.edit(suspension), held.span());
+    });
     body.analyses.didChangeValues();
 }
 

@@ -27,7 +27,7 @@ record Variable wire {
 enum FunctionKind { Plain Arrow Method Getter Setter BaseConstructor DerivedConstructor Initializer Module CommonJsModule }
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
-    HasExplicitName IsNakedConstructor IsNamedBySymbol
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey
     | engine AllocatesOwnThis IsSplitOffGenericVersion
 }
 enum EntryParameter (presentWith: FunctionFlags) {

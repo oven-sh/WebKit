@@ -92,7 +92,7 @@ ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(b
     ASSERT(!isStubReturnSite());
     bool isTailDeleted = site.isTailDeleted(calleeWasEntered);
     if (hasShownFrame) {
-        if (site.isTailCall && !isTailDeleted) [[unlikely]]
+        if (site.isTailCall() && !isTailDeleted) [[unlikely]]
             return std::nullopt;
         return static_cast<unsigned>(shownFrameCount);
     }

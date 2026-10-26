@@ -23,6 +23,12 @@ namespace JSC { namespace AOT {
 
 struct Instance;
 
+// An object or an array that compiled code is writing as JSON. The record is in the frame of that code.
+struct JSONHolderRecord {
+    JSONHolderRecord* outer;
+    EncodedJSValue holder;
+};
+
 class StringBuilderStorage final : public JSCell {
 public:
     using Base = JSCell;
@@ -81,6 +87,8 @@ public:
 
     uint32_t length() const { return m_position + m_lengthOutsideBuffer; }
     void rollBack(uint32_t length);
+    const JSONHolderRecord* jsonHolders() const { return m_jsonHolders; }
+    static bool hasRepeatedHolder(const JSONHolderRecord* innermost);
     uint32_t minLengthAppendedByReference() const { return m_limits.minLengthAppendedByReference; }
 
     enum class StringUse : uint8_t {
@@ -99,6 +107,7 @@ public:
     static constexpr ptrdiff_t offsetOfPosition() { return OBJECT_OFFSETOF(StringBuilderStorage, m_position); }
     static constexpr ptrdiff_t offsetOfLimit() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limit); }
     static constexpr ptrdiff_t offsetOfLengthOutsideBuffer() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOutsideBuffer); }
+    static constexpr ptrdiff_t offsetOfJSONHolders() { return OBJECT_OFFSETOF(StringBuilderStorage, m_jsonHolders); }
     static constexpr ptrdiff_t offsetOfNextFree() { return OBJECT_OFFSETOF(StringBuilderStorage, m_nextFree); }
     static constexpr ptrdiff_t offsetOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lastString); }
     static constexpr ptrdiff_t offsetOfLengthOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOfLastString); }
@@ -151,6 +160,7 @@ private:
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
     bool ensureRoom(JSGlobalObject*, size_t size);
+    void throwOutOfMemory(JSGlobalObject*);
     bool canGrowBy(size_t added) const;
 
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
@@ -170,6 +180,8 @@ private:
     uint32_t m_limit { 0 };
     uint32_t m_lengthOutsideBuffer { 0 };
     uint32_t m_sharedLength { 0 };
+    // The innermost first. Compiled code empties the list before it writes a value, and what it adds it takes away again unless an exception ends the writing.
+    JSONHolderRecord* m_jsonHolders { nullptr };
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;
     uint32_t m_lengthOfLastString { 0 };

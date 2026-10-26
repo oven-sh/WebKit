@@ -637,7 +637,9 @@ private:
     };
 
     bool isFullyKnown(ValueSetID objects) const;
-    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
+    ValueSetID builtinObjectsExpectedAt(ValueSetMaker&, const Function&, std::span<const ValueID>) const;
+    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, ValueSetID expectedBuiltinObjects, bool goesOnToPrototypes = false) const;
+    void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
     ValueSetID followKnownPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);

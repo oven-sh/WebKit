@@ -499,7 +499,7 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
     if (BuiltinName symbol = table.nameOfSymbol(plan.member))
         plan.key = program.keyOf(symbol);
-    else if (!tryMakeBuiltinConstant(program, plan.member))
+    else if (std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member); !constant || (constant->opcode != Opcode::Builtin && firstReadChangesListedKeys(table, inputs.flow, plan.member)))
         return { };
 
     bool isPossible = addLocationRequirement(inputs, site, location, plan);

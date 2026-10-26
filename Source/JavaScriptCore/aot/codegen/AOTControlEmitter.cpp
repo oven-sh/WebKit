@@ -78,6 +78,8 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     case Representation::Int64:
         switchOnInteger(terminator, in<Integer>(subject).value(), B3::Int64, otherwise);
         return;
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Double: {
         Number number = in<Number>(subject);
         Integer truncated = emitter<ConversionEmitter>().toInteger(number);

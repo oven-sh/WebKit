@@ -15,6 +15,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTLayout.h"
+#include "AOTNameCreatedSymbols.h"
 #include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
@@ -385,6 +386,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_booleanKinds = kindsOf(maker, Primitive::Boolean);
     m_startsOfLookups = ValueSets::complement(maker.unite(maker.unite(placeholders, universe.keys()), kindsOf(maker, Primitive::UndefinedOrNull | Primitive::Absent)));
     m_keysNobodyKnows = ValueSets::complement(maker.unite(universe.keys(), m_numberKinds));
+    m_symbolsUsedOnlyAsKeys = findLibrarySymbolsUsedOnlyAsKeys(program);
     m_accessors = maker.unite(maker.unite(universe.callables(), builtinObjects), placeholders);
     m_undescribedNativeCode = universe.objectOf(Builtins::UndeclaredNativeCode);
     if (BuiltinMemberLookup found = builtins.findMember(Builtins::ObjectPrototype, BuiltinNames::__proto__); found.outcome == BuiltinMemberLookup::Outcome::Found)
@@ -632,6 +634,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
         m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
+        m_namespacesNotedWhenCarriedOut = maker.unite(m_namespacesWhoseHoldersListThem, universe.holdersOfLibraryExports());
         m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));
         m_holdersOfUndeclaredPropertiesUnderIndexes = m_holdersThatListNotAllMembers;
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersThatListNotAllMembers, maker.of(prototypesOfInstancesWithNames.span()));

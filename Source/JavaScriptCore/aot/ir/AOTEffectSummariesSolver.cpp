@@ -302,11 +302,14 @@ uint64_t stampOfRecord(const Function& function)
     return stamp.value();
 }
 
+// The whole record, less what only a pass that is about to rewrite the function itself asks for.
 uint64_t stampOfRecordForCallers(const Function& function)
 {
+    constexpr OptionSet<FunctionCapabilities> askedOnlyToRewriteFunction { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned };
     FunctionRole role = function.role == FunctionRole::EntryChecks ? FunctionRole::Source : function.role;
     Stamp stamp;
     stamp.add(static_cast<uint64_t>(function.kind) << 32 | static_cast<uint64_t>(role) << 16 | static_cast<uint64_t>(function.isUnsplitCoroutine()) << 1 | function.hasBody());
+    stamp.add((function.capabilities - askedOnlyToRewriteFunction).toRaw());
     addPartsBesideRole(stamp, function);
     return stamp.value();
 }

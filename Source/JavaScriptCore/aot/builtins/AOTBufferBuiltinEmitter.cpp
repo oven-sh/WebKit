@@ -181,6 +181,8 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
     }
     if (isBigInt(elements))
         return newBigInt(context, element.as<Integer>(), elements == TypeBigInt64);
+    if (isFloat(elements))
+        return ImpureNumber(element.value);
     return element;
 }
 

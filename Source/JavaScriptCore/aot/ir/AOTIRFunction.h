@@ -255,6 +255,8 @@ private:
 };
 
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function&);
+// Callers and closures name a function by its id. What is known of them holds for whatever stands under that id.
+OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept = { });
 
 struct Renumbering {
     BlockID newIDOf(BlockID block) const { return blocks.isEmpty() ? block : blocks[block.index()]; }

@@ -74,6 +74,9 @@ private:
 
 void boxDouble(StubAssembler&, PureDouble, GPRReg result);
 void boxDoubleBits(StubAssembler&, PureDoubleBits bitsAndResult);
+// A NaN keeps its sign and none of its other bits.
+void boxNaN(StubAssembler&, FPRReg nan, GPRReg result);
+void boxDoubleWithoutPayload(StubAssembler&, FPRReg number, GPRReg result);
 void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
 // The caller has proven that the value is a number.
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);

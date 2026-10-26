@@ -148,17 +148,32 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
         return result;
     }
 
+    constexpr uint64_t builtinObjectsTogether = 2ull << 32;
     for (Member& member : members) {
         if (LayoutID layout = universe.layoutOf(member.object))
             member.group = layout.index();
         else if (BuiltinClassID builtinClass = universe.classOf(member.object))
             member.group = 1ull << 32 | builtinClass.index();
         else if (universe.builtinOf(member.object))
-            member.group = 2ull << 32;
+            member.group = builtinObjectsTogether;
         else
             member.group = 3ull << 32 | member.object.index();
     }
     AOT::stableSort(members, { }, &Member::group);
+    uint64_t numberOfGroups = 0;
+    for (size_t index = 0; index < members.size(); ++index)
+        numberOfGroups += !index || members[index].group != members[index - 1].group;
+    if (numberOfGroups < mostGroups) {
+        uint64_t placesLeft = mostGroups - numberOfGroups;
+        for (Member& member : members) {
+            if (member.group != builtinObjectsTogether)
+                continue;
+            if (!placesLeft--)
+                break;
+            member.group = 4ull << 32 | member.object.index();
+        }
+        AOT::stableSort(members, { }, &Member::group);
+    }
     Vector<ValueFlowObjectID, 64> objects;
     for (size_t first = 0; first < members.size();) {
         bool isRest = result.groups.size() >= mostGroups;

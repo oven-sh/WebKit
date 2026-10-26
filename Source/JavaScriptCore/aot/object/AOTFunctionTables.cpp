@@ -365,7 +365,7 @@ static String functionNameAsWritten(FunctionID function)
 }
 
 // The engine names a frame by the property `name` that the function object got when the literal was evaluated, "get " and "set " included. The frame of a generator has no function object to ask.
-static String nameInFramesOfFunctionNamedBySymbol(FunctionID function)
+static String nameInFramesOfFunctionNamedByComputedKey(FunctionID function)
 {
     FunctionID source = sourceFunctionOf(function);
     return functionKindData(source).isGenerator ? emptyString() : initialNameProperty(source);
@@ -402,8 +402,8 @@ String functionName(VM& vm, FunctionID function, NameForm form, JSObject* callee
             return name;
         else if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
             return displayName;
-        if (FunctionDescription(function).isNamedBySymbol()) [[unlikely]]
-            return nameInFramesOfFunctionNamedBySymbol(function);
+        if (FunctionDescription(function).isNamedByComputedKey()) [[unlikely]]
+            return nameInFramesOfFunctionNamedByComputedKey(function);
         return functionNameAsWritten(function);
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -583,7 +583,7 @@ String displayName(JSObject* object)
     std::optional<FunctionID> function = functionOf(object);
     if (!function)
         return String();
-    if (FunctionDescription(*function).isNamedBySymbol())
+    if (FunctionDescription(*function).isNamedByComputedKey())
         return emptyString();
     // The engine shows a built-in function by the name in its own text alone.
     FunctionKindData kindData = functionKindData(*function);

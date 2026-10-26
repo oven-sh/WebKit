@@ -1680,7 +1680,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 replacedChecks.append(observed.test);
             }
         }
-        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(held, program.at(test.castType())))
+        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), program.at(test.castType())))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 

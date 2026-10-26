@@ -1,0 +1,31 @@
+# What a body refers to is kept from one call graph to the next where a program pass left the function and the records it reads alone. SplitBehindEntryChecks splits `checked`; `readsCall`, which holds a closure of it and reads `call` on it, stays as it is.
+# With VerifyEachPass every kept list is compared with a fresh one.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass BuildCallGraph SplitBehindEntryChecks BuildCallGraph VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = NewClosure function=f1
+    v2 = CallDirect v1 function=f2
+    v3 = CallDirect v0 function=f1
+    Return v2
+}
+
+function f1 name="checked" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w0
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f2 name="readsCall" module=m0 position=6 length=1 parameters=[{type=f1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="call"
+    Return v1
+}

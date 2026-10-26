@@ -531,8 +531,9 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
 }
 
 // A stack frame shows the own property `name` or `displayName` of the function object. What code that nobody has seen may do to a closure is written down as stores under unknown keys.
-static BitVector findFunctionsWhoseClosuresMayBeRenamed(const Program& program, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
+static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
 {
+    const Program& program = inputs.program;
     Vector<PropertyKeyID, 2> keys { program.keyOf(BuiltinNames::name) };
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
         if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
@@ -540,6 +541,9 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const Program& program, 
     }
 
     BitVector functions(program.functions.size());
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsWriteUnderKeysNobodyKnows)), [&](ValueFlowObjectID closure) {
+        functions.quickSet(inputs.universe().closureFunction(closure).index());
+    });
     for (const AllocationClass& closures : classesOfClosures) {
         bool isSeenByKnownCodeAlone = closures.impossibleMutations.containsAll({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
         auto mayNameFrames = [&](PropertyKeyID key) {
@@ -646,7 +650,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         classes.append(WTF::move(closures));
     });
     noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
-    tables.functions.functionsWhoseClosuresMayBeRenamed = findFunctionsWhoseClosuresMayBeRenamed(program, added, classesOfClosures.span());
+    tables.functions.functionsWhoseClosuresMayBeRenamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, added, classesOfClosures.span());
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }
 

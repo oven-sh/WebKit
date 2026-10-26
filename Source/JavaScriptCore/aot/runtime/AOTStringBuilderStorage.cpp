@@ -17,6 +17,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -25,8 +26,11 @@
 #include <array>
 #include <charconv>
 #include <optional>
+#include <wtf/HashSet.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringBuilderJSON.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,10 +41,39 @@ static_assert(defaultLimitValue(LimitID::MaxPooledStringBuilders, hostArchitectu
 
 const ClassInfo StringBuilderStorage::s_info = { "StringBuilderStorage"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(StringBuilderStorage) };
 
-static NEVER_INLINE void throwOutOfMemory(JSGlobalObject* globalObject)
+bool StringBuilderStorage::hasRepeatedHolder(const JSONHolderRecord* innermost)
+{
+    AOT_THRESHOLD(size_t, maxNumberComparedInPairs, 16);
+    size_t numberOfHolders = 0;
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer)
+        ++numberOfHolders;
+    if (numberOfHolders <= maxNumberComparedInPairs) {
+        for (const JSONHolderRecord* record = innermost; record; record = record->outer) {
+            for (const JSONHolderRecord* other = record->outer; other; other = other->outer) {
+                if (other->holder == record->holder)
+                    return true;
+            }
+        }
+        return false;
+    }
+    UncheckedKeyHashSet<EncodedJSValue> seen;
+    seen.reserveInitialCapacity(numberOfHolders);
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer) {
+        if (!seen.add(record->holder).isNewEntry)
+            return true;
+    }
+    return false;
+}
+
+NEVER_INLINE void StringBuilderStorage::throwOutOfMemory(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Compiled code that writes a value as JSON does not look for a cycle, and the text of a value that holds itself has no end.
+    if (hasRepeatedHolder(m_jsonHolders)) {
+        throwTypeError(globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
+        return;
+    }
     throwOutOfMemoryError(globalObject, scope);
 }
 
@@ -143,6 +176,7 @@ void StringBuilderStorage::reset()
     m_position = 0;
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
+    m_jsonHolders = nullptr;
     m_lastString.clear();
     bool isTooLargeToRetain = capacity() > m_limits.maxRetainedCapacity;
     if (isTooLargeToRetain)
@@ -417,7 +451,7 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
     size_t position = cursor - storage->m_characters;
     ASSERT(position <= storage->capacity());
     if (position > String::MaxLength - storage->m_lengthOutsideBuffer) [[unlikely]] {
-        throwOutOfMemory(globalObject);
+        storage->throwOutOfMemory(globalObject);
         return nullptr;
     }
     storage->m_position = static_cast<uint32_t>(position);
@@ -427,7 +461,7 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
 Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject)
 {
     if (!storage->tryEnsureRoom(0, maxBytesWrittenPastLimit)) [[unlikely]] {
-        throwOutOfMemory(globalObject);
+        storage->throwOutOfMemory(globalObject);
         return nullptr;
     }
     ASSERT(!storage->m_sharedLength && storage->capacity() >= storage->m_position + maxBytesWrittenPastLimit);
@@ -1094,7 +1128,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendStringRange, void, (Inst
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty))
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty, EncodedJSValue encodedHolder))
 {
     constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSON;
     AOT_OPERATION_BEGIN(instance, entry);
@@ -1103,10 +1137,60 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance*
     if (!property.isNumber() && !property.isString()) [[unlikely]]
         crashOnWrongOperand(entry);
     uint32_t checkpoint = storage->length();
-    bool isAppended = appendJSONTextOfProperty(globalObject, *storage, JSValue::decode(value), property);
+    JSValue holder = JSValue::decode(encodedHolder);
+    JSONHolderRecord innermost { const_cast<JSONHolderRecord*>(storage->jsonHolders()), encodedHolder };
+    bool isAppended = appendJSONTextOfProperty(globalObject, *storage, JSValue::decode(value), property, holder.isCell() ? &innermost : storage->jsonHolders());
+    ensureStillAliveHere(holder);
     if (!isAppended)
         storage->rollBack(checkpoint);
     OPERATION_RETURN(scope, isAppended);
+}
+
+// Writes the members of an object from one name of a list on, with commas between them. True if it wrote any.
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSONMembers, size_t, (Instance* instance, JSCell* builder, EncodedJSValue encodedObject, EncodedJSValue encodedNames, uint32_t start, EncodedJSValue encodedHolder))
+{
+    constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSONMembers;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, entry);
+    JSValue holder = JSValue::decode(encodedHolder);
+    JSValue namesValue = JSValue::decode(encodedNames);
+    JSArray* names = namesValue.isCell() ? dynamicDowncast<JSArray>(namesValue.asCell()) : nullptr;
+    if (!names || !JSValue::decode(encodedObject).isObject()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    JSObject* object = asObject(JSValue::decode(encodedObject));
+    JSONHolderRecord innermost { const_cast<JSONHolderRecord*>(storage->jsonHolders()), encodedHolder };
+    const JSONHolderRecord* holders = holder.isCell() ? &innermost : storage->jsonHolders();
+
+    bool hasWrittenMember = false;
+    for (unsigned index = start; index < names->length(); ++index) {
+        JSValue name = names->getIndex(globalObject, index);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (!name.isString()) [[unlikely]]
+            crashOnWrongOperand(entry);
+        Identifier identifier = asString(name)->toIdentifier(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        JSValue value = object->get(globalObject, identifier);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+
+        uint32_t checkpoint = storage->length();
+        StringBuilder key;
+        if (hasWrittenMember)
+            key.append(',');
+        key.appendQuotedJSONString(identifier.string());
+        key.append(':');
+        auto appendedKey = key.is8Bit() ? storage->append(globalObject, key.span8()) : storage->append(globalObject, key.span16());
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (appendedKey != StringBuilderStorage::AppendResult::Appended) [[unlikely]]
+            crashOnWrongOperand(entry);
+        bool isAppended = appendJSONTextOfProperty(globalObject, *storage, value, name, holders);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (isAppended)
+            hasWrittenMember = true;
+        else
+            storage->rollBack(checkpoint);
+    }
+    ensureStillAliveHere(holder);
+    OPERATION_RETURN(scope, hasWrittenMember);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* instance, JSCell* builder, uint64_t size))

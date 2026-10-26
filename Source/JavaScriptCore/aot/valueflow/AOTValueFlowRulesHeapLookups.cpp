@@ -111,10 +111,10 @@ ClimbingSet HeapRule::startOfLookup(ClimbingSet receivers)
     return start;
 }
 
-HeapChain HeapRule::chainFrom(ClimbingSet receivers)
+HeapChain HeapRule::chainFrom(ClimbingSet receivers, ValueFlowName nameOfChain)
 {
     ClimbingSet start = startOfLookup(receivers);
-    ValueFlowNodeID wholeChain = m_context.lookup(start, prototypeLinkName);
+    ValueFlowNodeID wholeChain = m_context.lookup(start, nameOfChain);
     ClimbingSet chain = m_context.valueOf(wholeChain);
     ClimbingSet objects = known(chain);
     if (mayBeUnknownObject(chain) && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), wholeChain))
@@ -176,6 +176,12 @@ ValueSetID HeapRule::holdersWithMemberUnder(const HeapKey& key) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool HeapRule::mayTakeMemberFromCopy(ClimbingSet holders, const HeapKey& key)
+{
+    ClimbingSet writable = m_context.restrict(known(holders), ValueSets::complement(holdersWithLockedLocationUnder(key)));
+    return holdsAnything(writable) && holdsAnything(readWhereWritten(writable, copiedFromName));
+}
+
 std::optional<ClimbingSet> HeapRule::chainUpToPrototypeObjectsOfEntries(ClimbingSet start, ValueFlowNodeID wholeChain, const HeapKey& key)
 {
     if (key.keyClass != HeapKeyClass::Name)
@@ -188,7 +194,7 @@ std::optional<ClimbingSet> HeapRule::chainUpToPrototypeObjectsOfEntries(Climbing
         return std::nullopt;
 
     ValueFlowName deleted { ValueFlowNameKind::DeletedMember, key.name.index() };
-    bool mayGoOn = holdsAnything(readWhereWritten(holders, deleted)) || holdsAnything(readWhereWritten(holders, copiedFromName));
+    bool mayGoOn = holdsAnything(readWhereWritten(holders, deleted)) || mayTakeMemberFromCopy(holders, key);
     if (isStoredThroughPlaceholdersInto(holders, deleted) || mayGoOn)
         return std::nullopt;
 
@@ -205,9 +211,17 @@ std::optional<ClimbingSet> HeapRule::chainUpToPrototypeObjectsOfEntries(Climbing
     return std::nullopt;
 }
 
+HeapChain HeapRule::chainWithCopiesThatReach(const HeapKey& key, ClimbingSet receivers)
+{
+    if (!holdsAnything(readWhereWritten(ClimbingSet(m_tables.objectsOfRealm()), copiedFromName)))
+        return chainFrom(receivers);
+    HeapChain chain = chainFrom(receivers, chainWithoutCopiesOntoRealmName);
+    return mayTakeMemberFromCopy(m_context.restrict(chain.objects, m_tables.objectsOfRealm()), key) ? chainFrom(receivers) : chain;
+}
+
 HeapChain HeapRule::chainThatGoesUpFrom(ClimbingSet receivers, const HeapKey& key)
 {
-    HeapChain chain = chainFrom(receivers);
+    HeapChain chain = chainWithCopiesThatReach(key, receivers);
     std::optional<ClimbingSet> walked = chainUpToPrototypeObjectsOfEntries(chain.start, m_context.lookup(chain.start, prototypeLinkName), key);
     if (!walked)
         return chain;
@@ -239,7 +253,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
     };
 
     if (key.keyClass != HeapKeyClass::Name) {
-        HeapChain chain = chainFrom(receivers);
+        HeapChain chain = chainWithCopiesThatReach(key, receivers);
         chain.objects = m_context.unite(chain.objects, m_context.restrict(chain.start, m_tables.holdersOfMembersThatHostMakes()));
         return withoutLockedLocations(chain);
     }
@@ -260,7 +274,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
         answering = m_context.maker().unite(answering, m_tables.closuresWithPrototypeProperty());
 
     ClimbingSet holders = m_context.restrict(receivers, answering);
-    if (!holdsAnything(holders) || holdsAnything(readWhereWritten(known(holders), copiedFromName)))
+    if (!holdsAnything(holders) || mayTakeMemberFromCopy(holders, key))
         return withoutLockedLocations(chainThatGoesUpFrom(receivers, key));
     HeapChain chain = chainThatGoesUpFrom(m_context.restrict(receivers, ValueSets::complement(answering)), key);
     chain.holdersThatAnswer = holders;
@@ -621,32 +635,34 @@ ClimbingSet HeapRule::prototypesOf(ClimbingSet start, ValueSetID atCreation)
 void HeapRule::collectChain()
 {
     ClimbingSet start = m_context.setOfKey();
+    ValueFlowName nameOfChain = m_context.nameOfKey();
     add(m_statement.result, start);
     if (mayBeUnknownObject(start))
         letPrototypeObjectsOfLanguageEscape();
     if (mayBeUntrackedObject(start)) {
         if (!m_context.meet(start, ValueSets::complement(m_universe.untrackedObjectAlone()))) {
             m_context.forEachMember(known(m_context.newSince(ValueFlowProgramNodes::lost())), [&](ValueFlowObjectID object) {
-                connect(m_context.lookup(ClimbingSet(only(object)), prototypeLinkName), m_statement.result);
+                connect(m_context.lookup(ClimbingSet(only(object)), nameOfChain), m_statement.result);
             });
             return;
         }
-        connect(m_context.lookup(untrackedObjectAlone(), prototypeLinkName), m_statement.result);
+        connect(m_context.lookup(untrackedObjectAlone(), nameOfChain), m_statement.result);
     }
 
     ValueSetID& atCreation = m_context.rememberedByStatement();
     if (!atCreation)
         atCreation = prototypesAtCreationOf(start);
     ClimbingSet above = prototypesOf(start, atCreation);
-    ValueFlowNodeID chainAbove = m_context.lookup(known(above), prototypeLinkName);
+    ValueFlowNodeID chainAbove = m_context.lookup(known(above), nameOfChain);
     connect(chainAbove, m_statement.result);
     add(m_statement.result, m_context.restrict(above, m_context.maker().unite(m_universe.placeholdersAlone(), only(ValueFlowUniverse::markOfNamedBun()))));
     if (mayBeUnknownObject(above)) {
         ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
         if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
-            connect(m_context.masked(m_context.lookup(m_context.valueWithinAskedLast(ClimbingSet(objectsOfProgram), links), prototypeLinkName), m_universe.holdersOfLibraryExports()), m_statement.result);
+            connect(m_context.masked(m_context.lookup(m_context.valueWithinAskedLast(ClimbingSet(objectsOfProgram), links), nameOfChain), m_universe.holdersOfLibraryExports()), m_statement.result);
     }
-    ValueFlowNodeID sourcesOfCopies = readWhereWritten(known(start), copiedFromName);
+    ClimbingSet targetsOfCopies = nameOfChain == chainWithoutCopiesOntoRealmName ? m_context.restrict(known(start), ValueSets::complement(m_tables.objectsOfRealm())) : known(start);
+    ValueFlowNodeID sourcesOfCopies = readWhereWritten(targetsOfCopies, copiedFromName);
     above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(sourcesOfCopies))));
     add(m_statement.result, known(above));
     if (sourcesOfCopies && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), sourcesOfCopies))

@@ -11,6 +11,10 @@ import type {
   Name,
   NaturalRowSyntax,
   NaturalSyntax,
+  PackedConditionSyntax,
+  PackedFieldSyntax,
+  PackedSyntax,
+  PackedWordSyntax,
   RecordSyntax,
   TypeSyntax,
   TypeWordSyntax,
@@ -173,6 +177,33 @@ export function parseRecord(cursor: Cursor): RecordSyntax {
   const fields = parseFields(cursor, "}");
   cursor.expect("}");
   return { declares: "record", name, form, marks, fields };
+}
+
+function parsePackedCondition(cursor: Cursor): PackedConditionSyntax {
+  const first = takeWord(cursor);
+  if (!cursor.accept("(")) return { field: first, column: null };
+  const field = takeWord(cursor);
+  cursor.expect(")");
+  return { field, column: first };
+}
+
+function parsePackedWord(cursor: Cursor): PackedWordSyntax {
+  const fields: PackedFieldSyntax[] = [];
+  do {
+    const name = takeName(cursor);
+    cursor.expect(":");
+    fields.push({ name, kind: parseKind(cursor) });
+  } while (!cursor.at(";") && !cursor.at("}") && !cursor.at("if"));
+  return { fields, condition: cursor.accept("if") ? parsePackedCondition(cursor) : null };
+}
+
+export function parsePacked(cursor: Cursor): PackedSyntax {
+  const name = takeName(cursor);
+  cursor.expect("{");
+  const words = [parsePackedWord(cursor)];
+  while (cursor.accept(";")) words.push(parsePackedWord(cursor));
+  cursor.expect("}");
+  return { declares: "packed", name, words };
 }
 
 function parseCase(cursor: Cursor): CaseSyntax {

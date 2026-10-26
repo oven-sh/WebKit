@@ -140,7 +140,8 @@ operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/
 family StringBuilder Prepared..Placed
 operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin
 operation StringBuilderAppend (builder: StringBuilder/inspects, parts...: Any/inspects) -> none ; AppendsToBuilder ; Prepared..Prepared ; runtime = StringBuilderAppend
-operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
+operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects, holder: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
+operation StringBuilderAppendJSONMembers (builder: StringBuilder/inspects, object: Any/retains, names: Any/inspects, start: Integer/inspects, holder: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSONMembers
 operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
 operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString
 operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish

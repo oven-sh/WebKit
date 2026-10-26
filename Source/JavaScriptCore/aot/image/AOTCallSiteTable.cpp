@@ -47,82 +47,15 @@ struct SiteCheckpoint {
 };
 static_assert(sizeof(SiteCheckpoint) == 12 && sizeof(SiteCheckpoint::position) == 4 && sizeof(SiteCheckpoint::frame) == 4);
 
-struct HeadWord {
-    uint64_t encode() const { return numberOfSites << 3 | hasPrologueChecks << 2 | hasInlineFrames << 1; }
-    static HeadWord decode(uint64_t word) { return { word >> 3, !!(word & 4), !!(word & 2) }; }
-
-    uint64_t numberOfSites;
-    bool hasPrologueChecks;
-    bool hasInlineFrames;
-};
-
-struct InlineFrameWord {
-    uint64_t encode() const { return static_cast<uint64_t>(parent) << 2 | isConstruct << 1 | isTailCall; }
-    static InlineFrameWord decode(uint64_t word) { return { static_cast<unsigned>(word >> 2), !!(word & 2), !!(word & 1) }; }
-
-    unsigned parent;
-    bool isConstruct;
-    bool isTailCall;
-};
-
-// The frame applies until the next site with details. The flags apply to this site only.
-// Of a first read only the number is read, so its bit has another meaning together with either of the others.
-// With the bit of a tail call: the site lies inside the callee of the tail call. With the bit of a construction: the site lies inside a built-in function, whose number follows.
-struct SiteDetails {
-    static constexpr uint64_t firstReadBit = 4;
-    static constexpr uint64_t tailCallBit = 2;
-    static constexpr uint64_t constructBit = 1;
-    static constexpr uint64_t insideCalleeBits = firstReadBit | tailCallBit;
-    static constexpr uint64_t insideBuiltinBits = firstReadBit | constructBit;
-
-    void append(Vector<uint8_t>& bytes) const
-    {
-        ASSERT(!isInsideCallee || (isTailCall && !isConstruct));
-        ASSERT(!calledBuiltin || (!isConstruct && !isFirstRead && isInsideCallee == isTailCall));
-        uint64_t flags = isTailCall * tailCallBit | isConstruct * constructBit;
-        if (isFirstRead)
-            flags = firstReadBit;
-        else if (isInsideCallee)
-            flags = insideCalleeBits;
-        if (calledBuiltin)
-            flags |= insideBuiltinBits;
-        appendVarint(bytes, static_cast<uint64_t>(frame) << 3 | flags);
-        if (calledBuiltin)
-            appendVarint(bytes, calledBuiltin.index());
-    }
-    static SiteDetails read(const uint8_t*& cursor)
-    {
-        uint64_t word = readVarint(cursor);
-        bool isInsideCallee = (word & insideCalleeBits) == insideCalleeBits;
-        bool isInsideBuiltin = (word & insideBuiltinBits) == insideBuiltinBits;
-        SiteDetails details { static_cast<unsigned>(word >> 3), (word & firstReadBit) && !isInsideCallee && !isInsideBuiltin, !!(word & tailCallBit), (word & constructBit) && !isInsideBuiltin, isInsideCallee, { } };
-        if (isInsideBuiltin)
-            details.calledBuiltin = BuiltinID(static_cast<uint32_t>(readVarint(cursor)));
-        return details;
-    }
-
-    unsigned frame;
-    bool isFirstRead;
-    bool isTailCall;
-    bool isConstruct;
-    bool isInsideCallee;
-    BuiltinID calledBuiltin;
-};
-
 struct SiteWithCode {
     uint32_t returnOffset;
     uint32_t site;
     bool isFirstRead;
 };
 
-struct StreamHead {
+struct StreamHead : CallSiteHead {
     const uint8_t* sites() const { return checkpoints + SiteCheckpoint::numberFor(numberOfSites) * sizeof(SiteCheckpoint); }
 
-    uint64_t numberOfSites { 0 };
-    Vector<std::pair<uint32_t, uint32_t>, 1> prologueChecks;
-    uint64_t numberOfSitesWithoutCode { 0 };
-    uint64_t numberOfInlineFrames { 0 };
-    const uint8_t* inlineFrames { nullptr };
     const uint8_t* checkpoints { nullptr };
 };
 
@@ -155,6 +88,9 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
     });
     RELEASE_ASSERT(firstReadSites.empty());
     AOT::stableSort(returnSites, { }, &SiteWithCode::returnOffset);
+    // findCallSite() hands a return address the site in front of it only if that site says nothing but where it is.
+    for (size_t i = 1; i < returnSites.size(); ++i)
+        RELEASE_ASSERT(returnSites[i].site != returnSites[i - 1].site || !std::ranges::binary_search(code.sites.flaggedSites, returnSites[i].site, { }, &FlaggedSite::site));
     returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
     return returnSites;
 }
@@ -179,7 +115,6 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
     for (auto [offset, site, isFirstRead] : returnSites) {
         ++number;
         RELEASE_ASSERT(site == number);
-        RELEASE_ASSERT(!(offset % codeOffsetUnit));
         RELEASE_ASSERT(previousIsFirstRead ? offset == previousOffset : offset > previousOffset);
         if (writtenCount && !(writtenCount % SiteCheckpoint::sitesBetween)) {
             SiteCheckpoint checkpoint { static_cast<uint32_t>(previousOffset / codeOffsetUnit), static_cast<uint32_t>(siteBytes.size()), previousFrame };
@@ -190,16 +125,17 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
         RELEASE_ASSERT(frame <= numberOfInlineFrames);
         while (!flaggedSites.empty() && flaggedSites.front().site < number)
             flaggedSites = flaggedSites.subspan(1);
-        OptionSet<SiteFlag> flags;
-        BuiltinID calledBuiltin;
-        if (!flaggedSites.empty() && flaggedSites.front().site == number) {
-            flags = flaggedSites.front().flags;
-            calledBuiltin = flaggedSites.front().calledBuiltin;
+        CallSiteRow row { .distance = offset - previousOffset };
+        if (isFirstRead)
+            row.details.kind = CallSiteKind::FirstRead;
+        else if (!flaggedSites.empty() && flaggedSites.front().site == number) {
+            row.details.kind = flaggedSites.front().kind;
+            row.details.calledBuiltin = flaggedSites.front().calledBuiltin;
         }
-        bool hasDetails = frame != previousFrame || isFirstRead || !flags.isEmpty() || calledBuiltin;
-        appendVarint(siteBytes, static_cast<uint64_t>((offset - previousOffset) / codeOffsetUnit) << 1 | hasDetails);
-        if (hasDetails)
-            SiteDetails { frame, isFirstRead, flags.contains(SiteFlag::IsTailCall), flags.contains(SiteFlag::Constructs), flags.contains(SiteFlag::IsInsideCallee), calledBuiltin }.append(siteBytes);
+        row.hasDetails = frame != previousFrame || row.details.kind != CallSiteKind::Plain;
+        if (row.hasDetails)
+            row.details.frame = frame;
+        row.append(siteBytes);
         previousOffset = offset;
         previousFrame = frame;
         previousIsFirstRead = isFirstRead;
@@ -223,34 +159,28 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
     if (returnSites.isEmpty() && prologueChecks.empty())
         return;
 
-    bool hasInlineFrames = sites.hasEncodedInlineFrames();
-    appendVarint(stream, HeadWord { returnSites.size(), !prologueChecks.empty(), hasInlineFrames }.encode());
-    if (!prologueChecks.empty()) {
-        appendVarint(stream, prologueChecks.size());
-        std::optional<uint32_t> previousCallOffset;
-        for (const PrologueCheck& check : prologueChecks) {
-            RELEASE_ASSERT(!(check.callOffset % codeOffsetUnit) && !(check.resumeOffset % codeOffsetUnit));
-            RELEASE_ASSERT(!previousCallOffset || *previousCallOffset < check.callOffset);
-            appendVarint(stream, check.callOffset / codeOffsetUnit);
-            appendVarint(stream, check.resumeOffset / codeOffsetUnit);
-            previousCallOffset = check.callOffset;
-        }
+    CallSiteHead head;
+    head.numberOfSites = returnSites.size();
+    head.hasPrologueChecks = !prologueChecks.empty();
+    for (const PrologueCheck& check : prologueChecks) {
+        RELEASE_ASSERT(head.prologueChecks.isEmpty() || head.prologueChecks.last().callOffset < check.callOffset);
+        head.prologueChecks.append({ .callOffset = check.callOffset, .resumeOffset = check.resumeOffset });
     }
-    appendVarint(stream, sites.numberOfSitesWithoutCode);
-    if (hasInlineFrames) {
+    head.numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
+    Vector<uint8_t> frames;
+    if (sites.hasEncodedInlineFrames()) {
         const Vector<InlineFrame>& inlineFrames = sites.inlineFrames;
         RELEASE_ASSERT(inlineFrames.size() - 1 <= sites.numberOfSitesWithoutCode);
-        Vector<uint8_t> frames;
         for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
             RELEASE_ASSERT(inlineFrames[frame].parent < frame);
             RELEASE_ASSERT(inlineFrames[frame].callSite == sites.numberOfSitesWithoutCode - (inlineFrames.size() - 1) + frame);
-            appendVarint(frames, InlineFrameWord { inlineFrames[frame].parent, inlineFrames[frame].isConstruct, inlineFrames[frame].isTailCall }.encode());
-            appendVarint(frames, code.body.callees[inlineFrames[frame].callee].index());
+            InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = code.body.callees[inlineFrames[frame].callee] }.append(frames);
         }
-        appendVarint(stream, inlineFrameCount(sites));
-        appendVarint(stream, frames.size());
-        stream.appendVector(frames);
+        head.hasInlineFrames = true;
+        head.numberOfInlineFrames = inlineFrameCount(sites);
+        head.inlineFrames = frames.span();
     }
+    head.append(stream);
     appendSites(stream, code, returnSites.span());
 }
 
@@ -279,23 +209,7 @@ Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, BuildC
 
 static StreamHead readHead(const uint8_t* cursor)
 {
-    HeadWord word = HeadWord::decode(readVarint(cursor));
-    StreamHead head;
-    head.numberOfSites = word.numberOfSites;
-    if (word.hasPrologueChecks) {
-        for (uint64_t count = readVarint(cursor); count--;) {
-            uint32_t callOffset = static_cast<uint32_t>(readVarint(cursor) * codeOffsetUnit);
-            uint32_t resumeOffset = static_cast<uint32_t>(readVarint(cursor) * codeOffsetUnit);
-            head.prologueChecks.append(std::pair { callOffset, resumeOffset });
-        }
-    }
-    head.numberOfSitesWithoutCode = readVarint(cursor);
-    if (word.hasInlineFrames) {
-        head.numberOfInlineFrames = readVarint(cursor);
-        uint64_t size = readVarint(cursor);
-        head.inlineFrames = cursor;
-        cursor += size;
-    }
+    StreamHead head { CallSiteHead::read(cursor) };
     head.checkpoints = cursor;
     return head;
 }
@@ -312,17 +226,16 @@ void InlineFrameReader::read(const Image& image, uint32_t function, unsigned las
 {
     std::optional<StreamHead> head = readHead(image, function);
     RELEASE_ASSERT(head && last && last <= head->numberOfInlineFrames);
-    const uint8_t* cursor = head->inlineFrames;
+    const uint8_t* cursor = head->inlineFrames.data();
     m_image = &image;
     m_function = function;
     m_frames.shrink(0);
     m_frames.reserveCapacity(last);
     for (unsigned frame = 1; frame <= last; ++frame) {
-        InlineFrameWord word = InlineFrameWord::decode(readVarint(cursor));
+        InlineFrameRow row = InlineFrameRow::read(cursor);
         uint32_t callSite = static_cast<uint32_t>(head->numberOfSitesWithoutCode - head->numberOfInlineFrames + frame);
-        uint32_t callee = static_cast<uint32_t>(readVarint(cursor));
-        RELEASE_ASSERT(word.parent < frame);
-        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { word.parent, CallSiteIndex(callSite), FunctionID(callee), word.isConstruct, word.isTailCall });
+        RELEASE_ASSERT(row.parent < frame);
+        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(callSite) });
     }
 }
 
@@ -332,7 +245,7 @@ SiteFrames::SiteFrames(const Image& image, uint32_t function)
     if (!head || !head->numberOfSites)
         return;
     m_remainingInlineFrames = head->numberOfInlineFrames;
-    m_inlineFrames = head->inlineFrames;
+    m_inlineFrames = head->inlineFrames.data();
     RELEASE_ASSERT(m_remainingInlineFrames <= head->numberOfSitesWithoutCode);
     m_remainingSuspensionSites = head->numberOfSitesWithoutCode - m_remainingInlineFrames;
     m_remainingSitesWithCode = head->numberOfSites;
@@ -347,15 +260,14 @@ unsigned SiteFrames::next()
     }
     if (m_remainingInlineFrames) {
         --m_remainingInlineFrames;
-        unsigned parent = InlineFrameWord::decode(readVarint(m_inlineFrames)).parent;
-        readVarint(m_inlineFrames);
-        return parent;
+        return InlineFrameRow::read(m_inlineFrames).parent;
     }
     if (!m_remainingSitesWithCode)
         return 0;
     --m_remainingSitesWithCode;
-    if (readVarint(m_sites) & 1)
-        m_frame = SiteDetails::read(m_sites).frame;
+    CallSiteRow row = CallSiteRow::read(m_sites);
+    if (row.hasDetails)
+        m_frame = row.details.frame;
     return m_frame;
 }
 
@@ -414,24 +326,22 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     unsigned frameInFront = 0;
     std::optional<CallSiteIndex> firstReadSite;
     while (count--) {
-        uint64_t word = readVarint(cursor);
-        offset += (word >> 1) * codeOffsetUnit;
-        SiteDetails details { frame, false, false, false, false, { } };
-        if (word & 1)
-            details = SiteDetails::read(cursor);
-        frame = details.frame;
+        CallSiteRow row = CallSiteRow::read(cursor);
+        offset += row.distance;
+        if (row.hasDetails)
+            frame = row.details.frame;
         ++number;
         if (offset > returnOffset)
             break;
         if (offset < returnOffset) {
-            hasSiteInFront = !details.isFirstRead && !details.isConstruct && !details.isTailCall && !details.calledBuiltin;
+            hasSiteInFront = row.details.kind == CallSiteKind::Plain;
             numberInFront = number;
             frameInFront = frame;
             continue;
         }
         CallSiteIndex callSite(static_cast<uint32_t>(number));
-        if (!details.isFirstRead)
-            return CallSiteRecord { callSite, frame, details.isConstruct, details.isTailCall, details.isInsideCallee, details.calledBuiltin, firstReadSite };
+        if (row.details.kind != CallSiteKind::FirstRead)
+            return CallSiteRecord { callSite, frame, row.details.kind, row.details.calledBuiltin, firstReadSite };
         firstReadSite = callSite;
     }
     if (!hasSiteInFront)

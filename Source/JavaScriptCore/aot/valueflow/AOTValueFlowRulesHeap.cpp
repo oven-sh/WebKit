@@ -109,6 +109,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         connect(m_context.lookup(start, name), m_statement.result);
     });
     if (key.keyClass == HeapKeyClass::Unknown) {
+        // A key nobody knows may be a symbol that the program has found by listing the keys.
+        if (m_context.holdsAnyOf(known(receivers), m_context.nodes().ofHost(ValueFlowHostNode::ObjectsHoldingSymbolsUsedOnlyAsKeys)))
+            add(m_statement.result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
         if (ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers); holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
         readExportsOfListedHolders(object, receivers);
@@ -202,11 +205,13 @@ void HeapRule::noteTestOfMembers(const ValueFlowOperand& object, const HeapKey& 
 void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOperand& value)
 {
     connect(value, m_context.written(known(objects), name));
+    bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
+    if (namesProperty && m_tables.isSymbolUsedOnlyAsKey(PropertyKeyID(name.payload)))
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsHoldingSymbolsUsedOnlyAsKeys), known(objects));
     bool mayBeUntracked = mayBeUntrackedObject(objects);
     if (mayBeUntracked)
         connect(value, m_context.written(untrackedObjectAlone(), name));
     bool writesIntoRealm = mayBeUntracked && hasBeenLost(ClimbingSet(m_tables.objectsOfRealm()));
-    bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
     m_context.forEachMember(m_context.restrict(objects, m_universe.builtinObjects()), [&](ValueFlowObjectID object) {
         if (m_universe.kindOf(object) != ValueFlowObjectKind::Builtin)
             return;
@@ -380,6 +385,7 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         noteWrittenMembers(holders, key, true);
     }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
+    noteClosuresWrittenUnder(key, receivers);
     markDefinition(receivers, key, part);
     mayThrow();
 }
@@ -460,6 +466,14 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
     return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key)), allButBunUnlessNamed(object))), object.node);
 }
 
+void HeapRule::noteClosuresWrittenUnder(const HeapKey& key, ClimbingSet receivers)
+{
+    if (key.keyClass != HeapKeyClass::Unknown)
+        return;
+    if (ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures()); holdsAnything(closures))
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsWriteUnderKeysNobodyKnows), closures);
+}
+
 void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
@@ -532,6 +546,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
         noteWrittenMembers(listed, key, true);
     }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
+    noteClosuresWrittenUnder(key, receivers);
     markStore(receivers, key);
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
         callSettersOfReceivers(start, key, value);
@@ -1074,66 +1089,6 @@ void HeapRule::runOperation()
         return;
     default:
         RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-bool isHeapOperation(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::PropGet:
-    case Opcode::ElemGet:
-    case Opcode::PropSet:
-    case Opcode::ElemSet:
-    case Opcode::PropDefine:
-    case Opcode::ElemDefine:
-    case Opcode::DefineGetter:
-    case Opcode::DefineSetter:
-    case Opcode::TryDefineLiveBinding:
-    case Opcode::TryReExportFields:
-    case Opcode::PropHas:
-    case Opcode::ElemHas:
-    case Opcode::PropDelete:
-    case Opcode::ElemDelete:
-    case Opcode::SetFunctionName:
-    case Opcode::AppendHole:
-    case Opcode::SetLiteralPrototype:
-    case Opcode::CopyDataProperties:
-    case Opcode::CopyObject:
-    case Opcode::ScopeHasBinding:
-    case Opcode::ForInOpen:
-    case Opcode::ForInStep:
-    case Opcode::GetSuperBase:
-    case Opcode::SuperGet:
-    case Opcode::SuperSet:
-    case Opcode::PrivateGet:
-    case Opcode::PrivateSet:
-    case Opcode::PrivateDefine:
-    case Opcode::PrivateHas:
-    case Opcode::NewObject:
-    case Opcode::NewArray:
-    case Opcode::NewTemplateObject:
-    case Opcode::AppendElement:
-    case Opcode::CreateUnmappedArguments:
-    case Opcode::CreateMappedArguments:
-    case Opcode::GetMappedArgument:
-    case Opcode::SetMappedArgument:
-    case Opcode::Data:
-    case Opcode::CreateIteratorResult:
-    case Opcode::GetOwnProperty:
-    case Opcode::GetByValWithThis:
-    case Opcode::GetContiguousIndex:
-    case Opcode::GetDoubleIndex:
-    case Opcode::PutContiguousIndex:
-    case Opcode::TryPutByValDirect:
-    case Opcode::TryPutIndex:
-    case Opcode::PutDoubleIndex:
-    case Opcode::GrowNewArray:
-    case Opcode::TruncateNewArray:
-    case Opcode::GetInternalField:
-    case Opcode::PutInternalField:
-        return true;
-    default:
-        return false;
     }
 }
 

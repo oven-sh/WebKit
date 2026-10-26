@@ -435,6 +435,11 @@ struct GenericVersionBuilder {
     {
         TypingContext typing { program, function, types };
         auto takesAnything = [](TypeID required) { return !required || required == TypeTable::anything; };
+        // A store into a typed field tests a value that is not proven. One store outside every loop tests as often as the check. What the library is handed is anybody's, and its copy runs.
+        unsigned numberOfStores = 0;
+        auto isOnlyStore = [&](ValueID store) {
+            return !isLibraryCode(program, function) && function.at(store).opcode == Opcode::PropSet && !analyses.isInCycle(analyses.useLists().locationOf(store).block) && !numberOfStores++;
+        };
         return !acceptsEveryUseOfCheckedValue(check, casts, [](Opcode opcode) { return castsBehindChecks.contains(opcode); }, [&](const Use& use, auto&...) {
             if (use.kind == Use::Kind::TerminatorOperand) {
                 const Terminator& terminator = function.at(use.block).terminator;
@@ -443,9 +448,9 @@ struct GenericVersionBuilder {
             const Value& user = function.at(use.user);
             if (user.operandUses(use.operandIndex) != OperandUses { OperandUse::Retains })
                 return false;
-            // The type of an array literal follows its elements, and a store into a typed field tests a value that is not proven. So only calls count among the operations that take any value.
+            // The type of an array literal follows its elements. So only calls and that store count among the operations that take any value.
             if (user.operandKind(use.operandIndex) == OperandKind::Any)
-                return effectRuleOf(user.opcode) == EffectRule::Call;
+                return effectRuleOf(user.opcode) == EffectRule::Call || isOnlyStore(use.user);
             return user.operandKind(use.operandIndex) == OperandKind::Declared && takesAnything(requiredTypeOfOperand(typing, user, use.operandIndex));
         });
     }

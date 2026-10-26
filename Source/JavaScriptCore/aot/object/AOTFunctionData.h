@@ -57,7 +57,7 @@ struct FunctionTraceData {
     uint16_t isNakedConstructor : 1;
     uint16_t implementsBuiltin : 1;
     // `{ [Symbol.dispose]() { } }`: the written name is what the property `name` holds. The engine gives such a function that property when the literal is evaluated, and the console goes on showing it without a name.
-    uint16_t isNamedBySymbol : 1;
+    uint16_t isNamedByComputedKey : 1;
     // Its frames are named by the function object that runs in them.
     uint16_t recordsCallee : 1;
     uint16_t unused : 1;

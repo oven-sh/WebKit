@@ -438,7 +438,7 @@ ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
         if constexpr (std::same_as<Unboxed, bool>)
             return jsBoolean(value);
         else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(purifyNaN(value));
+            return jsNumber(withoutPayload(value));
         else if constexpr (std::same_as<Unboxed, int32_t>)
             return jsNumber(value);
         else

@@ -252,6 +252,7 @@ export function declareTypes(scope: Scope, declarations: readonly DeclarationInF
         break;
       case "include":
       case "word":
+      case "packed":
       case "heap":
       case "effects":
       case "uses":

@@ -368,7 +368,7 @@ private:
         if (!(exponent >= 0 && exponent <= maxExponentForIntegerMathPow) || exponent != std::trunc(exponent))
             return std::nullopt;
         if (exponent == 1)
-            return emitter<ConversionEmitter>().purified(base);
+            return emitter<ConversionEmitter>().withoutPayload(base);
         Number result;
         Number square = base;
         for (unsigned bits = static_cast<unsigned>(exponent); bits; bits >>= 1) {
@@ -443,6 +443,8 @@ Number OperatorEmitter::asNumericOperand(ValueID id)
 {
     switch (representationOf(id)) {
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return in<Number>(id);
     case Representation::OptionalDouble:
         return asNumber(in<OptionalNumber>(id), typeOf(id));
@@ -499,6 +501,8 @@ Operand OperatorEmitter::arithmeticOnIntegers(const ValueContext& value, Arithme
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -525,6 +529,8 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -547,7 +553,7 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
 std::optional<OperatorEmitter::RemainderLeftToTest> OperatorEmitter::findRemainderLeftToTest(ValueID id)
 {
     const Value& remainder = m_function.at(id);
-    if (remainder.opcode != Opcode::Mod || remainder.form() != OperatorForm::Numbers || representationOf(id) != Representation::Double || generator().validatesOrChecksProofs())
+    if (remainder.opcode != Opcode::Mod || remainder.form() != OperatorForm::Numbers || (representationOf(id) != Representation::Double && !holdsAnyNaN(representationOf(id))) || generator().validatesOrChecksProofs())
         return std::nullopt;
     const Value& divisor = m_function.at(remainder.rightOperand());
     if (divisor.opcode != Opcode::Integer || divisor.integer() < 2 || divisor.integer() > std::numeric_limits<int32_t>::max())

@@ -230,7 +230,7 @@ static void printCode(PrintStream& out, const CompiledCode& code)
     out.print(" constants=", code.body.constants.size(), " jumpTables=", code.body.jumpTables.size());
     out.print(" prologueChecks=", code.frame.prologueChecks.size());
     size_t numberOfTailCallSites = std::ranges::count_if(sites.flaggedSites, [](const FlaggedSite& site) {
-        return site.flags.contains(SiteFlag::IsTailCall);
+        return isTailCallOf(site.kind);
     });
     if (numberOfTailCallSites)
         out.print(" tailCallSites=", numberOfTailCallSites);
@@ -382,7 +382,7 @@ static void runGenerateCode(TestCommandContext& context)
     }
 
     BuildContext& build = context.build;
-    CodeGenerationPlan plan = prepareCodeGeneration(*output, build);
+    CodeGenerationPlan plan = prepareCodeGeneration(*output, build, context.form == IRForm::AsRead ? ProgramTablesUse::Written : ProgramTablesUse::NeverWritten);
     if (!build.diagnostics().hasErrors()) {
         for (const CompiledCode& code : compileAllFunctions(*output, plan, build)) {
             printCode(context.out, code);

@@ -908,7 +908,7 @@ static OperandSummary summarizeArgumentOf(const EffectContext& context, const Va
     if (!entryParameter)
         return { };
 
-    OperandSummary summary = context.summaries.of(callee).operand(*entryParameter);
+    OperandSummary summary = CalleeSummary(context, callee)->operand(*entryParameter);
     summary.uses.add(OperandUse::Inspects);
     if (summary.retainedIn != RetainedIn::Operand)
         return summary;

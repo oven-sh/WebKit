@@ -39,7 +39,9 @@ struct GeneratedCode {
     Vector<OperationCounts> operationCountsByFunction;
 };
 
-CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput&, BuildContext&);
+// A test that generates code for a program written in a later form writes no tables: not every such program has what they describe.
+enum class ProgramTablesUse : bool { Written, NeverWritten };
+CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput&, BuildContext&, ProgramTablesUse = ProgramTablesUse::Written);
 Typed::CodeGenerationInputs createCodeGenerationInputs(const Typed::PipelineOutput&, const CodeGenerationPlan&);
 
 class CodeGenerationJob {

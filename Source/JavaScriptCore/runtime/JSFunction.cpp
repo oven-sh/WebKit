@@ -277,6 +277,13 @@ const String JSFunction::calculatedDisplayName(VM& vm)
     
     if (!explicitName.isEmpty())
         return explicitName;
+
+#if ENABLE(AOT)
+    if (isCompiledClosure()) {
+        if (String displayName = AOT::CompiledCallee::displayName(this); !displayName.isNull())
+            return displayName;
+    }
+#endif
     
     const String actualName = name(vm);
     if (!actualName.isEmpty() || isHostOrBuiltinFunction())

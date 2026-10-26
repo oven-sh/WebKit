@@ -512,14 +512,42 @@ bool UsesOfObjects::isFullyKnown(ValueSetID objects) const
     return !ValueSets::isComplement(objects) && !m_inputs.sets().meet(objects, m_inputs.universe().placeholdersAlone());
 }
 
-void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, bool goesOnToPrototypes) const
+ValueSetID UsesOfObjects::builtinObjectsExpectedAt(ValueSetMaker& maker, const Function& function, std::span<const ValueID> values) const
 {
-    if (shown == ShownKeys::None || !isFullyKnown(objects))
+    ValueSetID objects = ValueSets::nothing;
+    for (ValueID value : values) {
+        TypeID expected = value ? function.at(value).expected() : TypeID();
+        if (BuiltinID builtin = expected ? m_inputs.program.types.at(expected).withoutNullish().singleBuiltin() : BuiltinID())
+            objects = maker.unite(objects, maker.of(m_inputs.universe().objectOf(builtin)));
+    }
+    return objects;
+}
+
+// Where the operand may be an object that nobody knows, the listing counts for the built-in objects that the values written there are expected to be.
+void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, ValueSetID expectedBuiltinObjects, bool goesOnToPrototypes) const
+{
+    if (shown == ShownKeys::None)
         return;
+    if (!isFullyKnown(objects))
+        objects = noter.maker.intersect(objects, expectedBuiltinObjects);
     if (goesOnToPrototypes)
         noter.notes.walkedForEnumerableKeys.add(objects);
     else
         (shown == ShownKeys::All ? noter.notes.withAllKeysShown : noter.notes.withEnumerableKeysShown).add(noter.maker.intersect(objects, m_inputs.universe().builtinObjects()));
+}
+
+void UsesOfObjects::noteShownKeys(Noter noter, const ValueFlowBuiltinApplication& application, BuiltinOperand operand, ShownKeys shown) const
+{
+    ValueSetID expected = ValueSets::nothing;
+    if (application.function && application.kind != ValueFlowCallKind::CallByNativeCode) {
+        const Function& function = m_inputs.program.at(application.function);
+        std::span<const ValueID> operands = function.at(application.site).operands();
+        size_t first = operand.isReceiver() ? 1 : std::min<size_t>(2 + operand.argumentIndex(), operands.size());
+        size_t count = operand.kind() == BuiltinOperand::Kind::ArgumentsFrom ? operands.size() - first : std::min<size_t>(1, operands.size() - first);
+        if (!passesList(function.at(application.site).opcode))
+            expected = builtinObjectsExpectedAt(noter.maker, function, operands.subspan(first, count));
+    }
+    noteShownKeys(noter, application.valueAt(operand, noter.maker), shown, expected);
 }
 
 // Stops at an object whose prototype may be one that nobody knows.
@@ -558,7 +586,7 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                     continue;
                 ValueSetID objects = m_heap.possibleValuesOf(noter.maker, operands[operand]);
                 noter.notes.enumerated.add(objects);
-                noteShownKeys(noter, objects, ShownKeys::Enumerable, protocols.contains(Protocol::PrototypeChain));
+                noteShownKeys(noter, objects, ShownKeys::Enumerable, builtinObjectsExpectedAt(noter.maker, function, function.at(statement.site).operands().subspan(operand, 1)), protocols.contains(Protocol::PrototypeChain));
             }
             switch (statement.opcode) {
             case Opcode::PropHas:
@@ -570,9 +598,10 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                 break;
             case Opcode::CopyDataProperties:
             case Opcode::CopyObject: {
-                ValueSetID source = m_heap.possibleValuesOf(noter.maker, operands[statement.opcode == Opcode::CopyObject ? OperandIndex::CopyObject::source : OperandIndex::CopyDataProperties::source]);
+                uint32_t sourceIndex = statement.opcode == Opcode::CopyObject ? OperandIndex::CopyObject::source : OperandIndex::CopyDataProperties::source;
+                ValueSetID source = m_heap.possibleValuesOf(noter.maker, operands[sourceIndex]);
                 noter.notes.enumerated.add(source);
-                noteShownKeys(noter, source, ShownKeys::Enumerable);
+                noteShownKeys(noter, source, ShownKeys::Enumerable, builtinObjectsExpectedAt(noter.maker, function, function.at(statement.site).operands().subspan(sourceIndex, 1)));
                 break;
             }
             default:
@@ -694,9 +723,9 @@ void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplicati
         return;
     noteRefusedOperands(noter, application);
     forEachLookAtOperands(m_inputs, application.builtin, application.mode(), [&](std::optional<BuiltinOperand> operand, ShownKeys shown) {
-        ValueSetID objects = operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything;
-        noter.notes.enumerated.add(objects);
-        noteShownKeys(noter, objects, shown);
+        noter.notes.enumerated.add(operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything);
+        if (operand)
+            noteShownKeys(noter, application, *operand, shown);
     }, [&](BuiltinOperand operand) {
         noter.notes.observedUnderAnyKey.add(application.valueAt(operand, noter.maker));
     }, [&](BuiltinOperand object, PropertyKeyID key, bool looksAtOwnPropertyAlone) {
@@ -794,9 +823,9 @@ void UsesOfObjects::noteApplicationOfAll(Noter noter, const ValueFlowBuiltinAppl
     for (BuiltinOperand operand : notes.enumerated)
         noter.notes.enumerated.add(application.valueAt(operand, noter.maker));
     for (BuiltinOperand operand : notes.withAllKeysShown)
-        noteShownKeys(noter, application.valueAt(operand, noter.maker), ShownKeys::All);
+        noteShownKeys(noter, application, operand, ShownKeys::All);
     for (BuiltinOperand operand : notes.withEnumerableKeysShown)
-        noteShownKeys(noter, application.valueAt(operand, noter.maker), ShownKeys::Enumerable);
+        noteShownKeys(noter, application, operand, ShownKeys::Enumerable);
     for (BuiltinOperand operand : notes.observedUnderAnyKey)
         noter.notes.observedUnderAnyKey.add(application.valueAt(operand, noter.maker));
     for (const NotesOfBuiltins::TestUnderName& test : notes.testsUnderNames)

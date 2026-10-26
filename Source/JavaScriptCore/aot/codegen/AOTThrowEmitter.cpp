@@ -138,6 +138,8 @@ static bool canBeNamedByThrowWords(Representation representation)
     case Representation::JSValue:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -210,6 +212,8 @@ Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, O
     case Representation::JSValue:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -344,6 +348,8 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Boolean:
         return;
     case Representation::Void:

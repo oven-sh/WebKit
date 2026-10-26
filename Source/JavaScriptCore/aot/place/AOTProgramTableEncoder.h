@@ -154,6 +154,15 @@ struct EncodedProgramTables {
 
 JS_EXPORT_PRIVATE EncodedProgramTables encodeProgramTables(const ProgramTableInputs&, BuildContext&);
 
+// What the tables refer to by the number of an identifier. The numbers are given out before the tables are written.
+struct NamesInProgramTables {
+    BitVector keys;
+    BitVector texts;
+};
+
+// Runs the encoder for what it asks for and drops the bytes, so nothing else has to know which rows the tables have.
+JS_EXPORT_PRIVATE NamesInProgramTables findNamesInProgramTables(const PipelineOutput&, const BodyFactsForTables&, BuildContext&);
+
 #define FOR_EACH_AOT_PROGRAM_TABLE_RULE(v) \
     v(TableOutOfBounds) \
     v(TableNotWritten) \
@@ -224,6 +233,7 @@ constexpr size_t elementSizeOf(ProgramTableIndex index)
 
 struct TableEncoder {
     TableEncoder(const ProgramTableInputs&, BuildContext&);
+    TableEncoder(const ProgramTableInputs&, const IdentifierNumbering&, NamesInProgramTables* namesToFind, BuildContext&);
 
     uint32_t stringNumber(StringID);
     uint32_t shownStringNumber(StringID);
@@ -240,6 +250,12 @@ struct TableEncoder {
     uint32_t entrypointOf(FunctionID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t checkedOffset(uint32_t offset) const;
     bool obfuscates() const { return build.options().obfuscates(); }
+    bool writesTables() const { return !namesToFind; }
+    void count(StatisticID statistic, uint64_t amount = 1) const
+    {
+        if (writesTables())
+            build.statistics().count(statistic, amount);
+    }
 
     uint32_t numberOrFail(std::optional<uint32_t> number, ProgramTableRule rule) const
     {
@@ -284,6 +300,9 @@ struct TableEncoder {
     const SlotPlan& slots;
     const Placement& placement;
     const IdentifierNumbering& identifiers;
+    NamesInProgramTables* namesToFind;
+    // Whether the run that finds the names goes through the group of tables that is being written.
+    bool mayNameIdentifiers { true };
     BuildContext& build;
     TableWriter writer;
     ProgramTables header { };

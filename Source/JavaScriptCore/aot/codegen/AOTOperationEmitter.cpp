@@ -103,6 +103,15 @@ void OperationEmitter::barrierAfterStore(const ValueContext& store, CellPointer 
     emitter<BarrierEmitter>().barrierAfterStore(store, owner, stored, storedType);
 }
 
+Operand OperationEmitter::getInFormOfItsNaN(ValueID id) const
+{
+    Operand taken = get(id);
+    if (!holdsAnyNaN(m_function.at(id).representation))
+        return taken;
+    Operand defined = m_generator.getAsDefined(id);
+    return taken.value == defined.value ? defined : taken;
+}
+
 Representation OperationEmitter::resultRepresentationOf(const InlineCall& call) const
 {
     if (const ValueContext* value = call.value())

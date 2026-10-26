@@ -353,7 +353,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
             return shapeOf(own).isValueOrAccessor() || own == ValueFlowNameKind::PrototypeLink;
         }
         case ValueFlowStatementKind::Operation: {
-            if (!isHeapOperation(statement.opcode))
+            if (flowRuleOf(statement.opcode) != FlowRule::Heap)
                 return false;
             if (shapeOf(read).isAccessor())
                 return true;

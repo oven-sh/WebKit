@@ -368,8 +368,12 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);
-    if (ClimbingSet namespaces = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, namespaces))
-        connectEnumerableMembersOf(namespaces, escapedNode, context);
+    if (ClimbingSet carriedOut = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, carriedOut)) {
+        if (ClimbingSet namespaces = context.restrict(carriedOut, universe.builtinTables().heap().namespacesWhoseHoldersListThem()); holdsSomething(context, namespaces))
+            connectEnumerableMembersOf(namespaces, escapedNode, context);
+        if (ClimbingSet holdersOfExports = context.restrict(carriedOut, universe.holdersOfLibraryExports()); holdsSomething(context, holdersOfExports))
+            context.connect(context.read(holdersOfExports, { ValueFlowNameKind::EveryGetter, 0 }), escapedNode);
+    }
 
     if (context.holdsAnyOf(known(context, escaped), ValueFlowProgramNodes::lost())) {
         ClimbingSet untrackedObject(universe.untrackedObjectAlone());
@@ -391,81 +395,52 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     lookUpThroughFamiliesOf(context, arrived);
 }
 
-#define FOR_EACH_OPERATION_WITH_RULE(v) \
-    v(Call, runCall) \
-    v(CallList, runCall) \
-    v(Construct, runCall) \
-    v(ConstructList, runCall) \
-    v(SuperConstruct, runCall) \
-    v(SuperConstructList, runCall) \
-    v(Convert, runConvert) \
-    v(ToObject, runConversionToObject) \
-    v(ToThis, runConversionToObject) \
-    v(NewDictionary, runNewDictionary) \
-    v(NewClass, runNewClass) \
-    v(DefineMethod, runDefineMethod) \
-    v(ResolveHeritage, runReadOfPrototypeProperty) \
-    v(GetClassPrototype, runReadOfPrototypeProperty) \
-    v(GetConstructPrototype, runReadOfPrototypeProperty) \
-    v(IteratorOpen, runIterationOperation) \
-    v(IteratorResume, runIterationOperation) \
-    v(IteratorClose, runIterationOperation) \
-    v(AppendSpread, runIterationOperation) \
-    v(StepArrayIterator, runStepOfLibrary) \
-    v(MapNext, runStepOfLibrary) \
-    v(SetNext, runStepOfLibrary) \
-    v(ResumeGenerator, runGeneratorOperation) \
-    v(StepGenerator, runGeneratorOperation) \
-    v(Await, runAwait) \
-    v(CreatePromise, runPromiseOperation) \
-    v(ResolvePromise, runPromiseOperation) \
-    v(RejectPromise, runPromiseOperation) \
-    v(InstanceOf, runInstanceOf) \
-    v(Add, runArithmetic) \
-    v(Sub, runArithmetic) \
-    v(Mul, runArithmetic) \
-    v(Div, runArithmetic) \
-    v(Mod, runArithmetic) \
-    v(Pow, runArithmetic) \
-    v(BitAnd, runArithmetic) \
-    v(BitOr, runArithmetic) \
-    v(BitXor, runArithmetic) \
-    v(LShift, runArithmetic) \
-    v(RShift, runArithmetic) \
-    v(Negate, runArithmetic) \
-    v(ToNumeric, runArithmetic) \
-    v(Increment, runArithmetic) \
-    v(Decrement, runArithmetic) \
-    v(BitNot, runArithmetic) \
-    v(ToPropertyKey, runToPropertyKey) \
-    v(TryPutDoubleIndex, runHeapOperation)
-
 bool hasRuleOfItsOwn(Opcode opcode)
 {
-    switch (opcode) {
-#define RETURN_TRUE(opcode, rule) case Opcode::opcode:
-    FOR_EACH_OPERATION_WITH_RULE(RETURN_TRUE)
-#undef RETURN_TRUE
-        return true;
-    default:
-        return isModuleOperation(opcode) || isHeapOperation(opcode);
-    }
+    return flowRuleOf(opcode) != FlowRule::General;
 }
 
 static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    switch (statement.opcode) {
-#define RUN_RULE(opcode, rule) \
-    case Opcode::opcode: \
-        return rule(statement, context);
-    FOR_EACH_OPERATION_WITH_RULE(RUN_RULE)
-#undef RUN_RULE
-    default:
-        if (isModuleOperation(statement.opcode))
-            return runModuleOperation(statement, context);
-        RELEASE_ASSERT(isHeapOperation(statement.opcode));
+    switch (flowRuleOf(statement.opcode)) {
+    case FlowRule::General:
+        break;
+    case FlowRule::Arithmetic:
+        return runArithmetic(statement, context);
+    case FlowRule::Await:
+        return runAwait(statement, context);
+    case FlowRule::Call:
+        return runCall(statement, context);
+    case FlowRule::ConversionToObject:
+        return runConversionToObject(statement, context);
+    case FlowRule::Convert:
+        return runConvert(statement, context);
+    case FlowRule::DefineMethod:
+        return runDefineMethod(statement, context);
+    case FlowRule::Generator:
+        return runGeneratorOperation(statement, context);
+    case FlowRule::Heap:
         return runHeapOperation(statement, context);
+    case FlowRule::InstanceOf:
+        return runInstanceOf(statement, context);
+    case FlowRule::Iteration:
+        return runIterationOperation(statement, context);
+    case FlowRule::Module:
+        return runModuleOperation(statement, context);
+    case FlowRule::NewClass:
+        return runNewClass(statement, context);
+    case FlowRule::NewDictionary:
+        return runNewDictionary(statement, context);
+    case FlowRule::Promise:
+        return runPromiseOperation(statement, context);
+    case FlowRule::ReadOfPrototypeProperty:
+        return runReadOfPrototypeProperty(statement, context);
+    case FlowRule::StepOfLibrary:
+        return runStepOfLibrary(statement, context);
+    case FlowRule::ToPropertyKey:
+        return runToPropertyKey(statement, context);
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

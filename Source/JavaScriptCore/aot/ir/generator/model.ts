@@ -193,6 +193,39 @@ export interface SchemaRecord {
   readonly location: Location;
 }
 
+export type PackedKind =
+  | { readonly tag: "Bool" | "CodeOffset" | "Bytes" }
+  | { readonly tag: "Number"; readonly cppType: "uint32_t" | "uint64_t" }
+  | { readonly tag: "Enum"; readonly type: SchemaEnum }
+  | { readonly tag: "Id"; readonly cppType: string }
+  | { readonly tag: "Record" | "List"; readonly element: PackedRecord };
+
+export interface PackedField {
+  readonly name: string;
+  readonly kind: PackedKind;
+  readonly shift: number;
+  /** Null: all the bits that the fields in front of it leave. */
+  readonly width: number | null;
+  readonly location: Location;
+}
+
+/** A Bool field of an earlier word, or a Bool column of an enumerator there. */
+export interface PackedCondition {
+  readonly field: PackedField;
+  readonly column: EnumColumn | null;
+}
+
+export interface PackedWord {
+  readonly fields: readonly PackedField[];
+  readonly condition: PackedCondition | null;
+}
+
+export interface PackedRecord {
+  readonly name: string;
+  readonly words: readonly PackedWord[];
+  readonly location: Location;
+}
+
 export interface VariantCase {
   readonly name: string;
   readonly number: number;
@@ -501,6 +534,7 @@ export interface Schema {
   readonly idKinds: readonly IdKind[];
   readonly externals: readonly External[];
   readonly types: readonly SchemaType[];
+  readonly packedRecords: readonly PackedRecord[];
   readonly lists: readonly ProgramList[];
   readonly heaps: readonly Heap[];
   readonly opaqueKinds: readonly OpaqueKind[];

@@ -274,7 +274,7 @@ static bool mergeAliases(AllocationSinking& sinking, SinkingState& into, const S
         if (!isHeadMerge)
             return;
         Opcode opcode = function.at(entry.value).opcode;
-        if (opcode == Opcode::Parameter || opcode == Opcode::AllGuards || interpretedCasts.contains(opcode))
+        if (opcode == Opcode::Parameter || opcode == Opcode::AllGuards || interpretedOf(opcode) == Interpretation::Cast)
             sinking.decisions().holdCells(entry.value, entry.object);
         else
             sinking.abandon(entry.object);

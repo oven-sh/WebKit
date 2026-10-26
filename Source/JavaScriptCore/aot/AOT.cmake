@@ -185,6 +185,7 @@ set(JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandPositions.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationColumns.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPackedRecords.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadPositions.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeColumns.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.h"

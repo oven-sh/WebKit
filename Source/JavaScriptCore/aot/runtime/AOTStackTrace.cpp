@@ -67,7 +67,7 @@ static constexpr FunctionTraceData traceOfCalledBuiltin {
     .isNamedByOwner = false,
     .isNakedConstructor = false,
     .implementsBuiltin = false,
-    .isNamedBySymbol = false,
+    .isNamedByComputedKey = false,
     .recordsCallee = false,
     .unused = 0,
 };
@@ -109,7 +109,7 @@ String FunctionDescription::nameInFrames(VM& vm, JSCell* callee) const
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isStrict)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isConstructor)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNakedConstructor)
-AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedBySymbol)
+AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedByComputedKey)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(recordsCallee)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isAsync)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedByOwner)
@@ -376,7 +376,7 @@ static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSC
 
     for (; !walk.isAtEnd(); walk.advance(), calleeWasEntered = true) {
         const CallSiteCache::Entry& site = walk.site();
-        if (site.site.isConstruct && !run.returnAddresses.isEmpty())
+        if (site.site.isConstruct() && !run.returnAddresses.isEmpty())
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         outermostCode = site.code;
         if (hasRecordedCallees && FunctionDescription(walk.image().rootFunctionOf(site.code.index())).recordsCallee()) [[unlikely]] {

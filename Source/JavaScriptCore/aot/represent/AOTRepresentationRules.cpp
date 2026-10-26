@@ -45,7 +45,7 @@ static_assert(!representedBitwiseOperators.intersects(testOperators));
 static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
 
-static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::OptionalDouble };
+static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::DoubleWithPayload, Representation::ImpureDouble, Representation::OptionalDouble };
 static constexpr RepresentationSet stringSubjectRepresentations { Representation::Cell, Representation::LiteralString };
 
 static constexpr bool forwardsOperand(Opcode opcode)
@@ -604,13 +604,103 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatComputeWithNumbers {
+    InlineBuiltin::MathAbs, InlineBuiltin::MathFloor, InlineBuiltin::MathCeil, InlineBuiltin::MathTrunc, InlineBuiltin::MathRound, InlineBuiltin::MathFround, InlineBuiltin::MathF16Round,
+    InlineBuiltin::MathSqrt, InlineBuiltin::MathPow, InlineBuiltin::MathMin, InlineBuiltin::MathMax, InlineBuiltin::MathFunction, InlineBuiltin::MathATan2, InlineBuiltin::MathHypot,
+};
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatInspectNumbers {
+    InlineBuiltin::MathImul, InlineBuiltin::MathClz32, InlineBuiltin::MathSign, InlineBuiltin::IsNaN, InlineBuiltin::IsFinite,
+    InlineBuiltin::NumberIsNaN, InlineBuiltin::NumberIsFinite, InlineBuiltin::NumberIsInteger, InlineBuiltin::NumberIsSafeInteger,
+};
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatMoveBytes { InlineBuiltin::DataViewGet, InlineBuiltin::DataViewSet, InlineBuiltin::BufferAccess };
+
+static std::optional<InlineBuiltin> inlineBuiltinOf(const Value& value)
+{
+    return value.opcode == Opcode::CallInline ? std::optional(value.inlineBuiltin()) : std::nullopt;
+}
+
+static std::optional<InlineBuiltin> inlineBuiltinOf(const Terminator& terminator)
+{
+    return terminator.kind == TerminatorKind::TryCallInline ? std::optional(terminator.inlineBuiltin()) : std::nullopt;
+}
+
+static bool computesWithNumbers(const Value& value)
+{
+    return hasOperatorForm(value.opcode) && value.form() == OperatorForm::Numbers && !isSumOfBoxedNumbers(value);
+}
+
+static bool computesWithNumbers(const Terminator&)
+{
+    return false;
+}
+
+// Arithmetic hands the sign and the payload of a NaN on to its result.
+template<typename User>
+static bool handsBitsOfNaNOnToResult(const User& user)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    return computesWithNumbers(user) || (builtin && builtinsThatComputeWithNumbers.contains(*builtin));
+}
+
+// A typed array takes the bits as they are. An array of doubles takes no NaN, and the store boxes what it hands on.
+static bool storesAsElement(const Value& value, uint32_t operandIndex)
+{
+    return value.opcode == Opcode::PutTypedArrayElement || (value.opcode == Opcode::PutArrayElement && OperandPosition::value(value.opcode) == operandIndex);
+}
+
+static bool storesAsElement(const Terminator&, uint32_t)
+{
+    return false;
+}
+
+template<typename User>
+static bool takesAnyNaN(const User& user, uint32_t operandIndex)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
+}
+
+static bool convertsOperand(const Value& value)
+{
+    return isRepresentationConversion(value.opcode);
+}
+
+static bool convertsOperand(const Terminator&)
+{
+    return false;
+}
+
+template<typename User>
+static Representation formOfDoubleMadeBy(const RepresentationInputs& inputs, const User& user)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    if (builtin && builtinsThatMoveBytes.contains(*builtin))
+        return Representation::ImpureDouble;
+    Representation form = Representation::Double;
+    if (!handsBitsOfNaNOnToResult(user))
+        return form;
+    user.forEachOperand([&](ValueID operand, uint32_t) {
+        Representation chosen = inputs.function.at(operand).representation;
+        if (holdsAnyNaN(chosen))
+            form = std::max(form, chosen);
+        // An operator takes undefined as its marker, which is a NaN.
+        else if (computesWithNumbers(user) && !inputs.typeOf(operand).isNumber())
+            form = std::max(form, Representation::DoubleWithPayload);
+    });
+    return form;
+}
+
 template<typename User>
 static Representation wantedByUser(const RepresentationInputs& inputs, const User& user, uint32_t operandIndex)
 {
-    Representation wanted = user.operand(operandIndex) ? wantedByOperation(inputs, user, operandIndex) : Representation::Unchosen;
-    if (wanted != Representation::Unchosen || user.operandKind(operandIndex) != OperandKind::Declared)
+    ValueID operand = user.operand(operandIndex);
+    Representation wanted = operand ? wantedByOperation(inputs, user, operandIndex) : Representation::Unchosen;
+    if (wanted == Representation::Unchosen && user.operandKind(operandIndex) == OperandKind::Declared)
+        wanted = wantedByDeclaredPosition(inputs, user, operandIndex);
+    bool takesDouble = wanted == Representation::Double || wanted == Representation::Unchosen;
+    if (!operand || !takesDouble || convertsOperand(user) || !holdsAnyNaN(inputs.function.at(operand).representation))
         return wanted;
-    return wantedByDeclaredPosition(inputs, user, operandIndex);
+    return takesAnyNaN(user, operandIndex) ? inputs.function.at(operand).representation : Representation::Double;
 }
 
 Representation wantedRepresentationOf(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)
@@ -726,19 +816,22 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return value.representation;
     if (numberOfResultsOf(inputs.program, inputs.function, value))
         return Representation::Void;
+    auto inFormOfDouble = [](Representation form, Representation representation) {
+        return representation == Representation::Double ? form : representation;
+    };
     if (hasOperatorForm(value.opcode))
-        return resultOfOperator(inputs, value);
+        return inFormOfDouble(formOfDoubleMadeBy(inputs, value), resultOfOperator(inputs, value));
 
     const Type& type = inputs.program.at(value.type);
     if (value.opcode == Opcode::GetArrayElement)
         return naturalOrDefaultRepresentation(type, elementRepresentationOf(value.arrayStorage()));
     if (value.opcode == Opcode::GetTypedArrayElement)
-        return naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType())));
+        return inFormOfDouble(Representation::ImpureDouble, naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType()))));
     if (operationsReturningBoxedValue.contains(value.opcode) || (value.opcode == Opcode::CallBuiltin && !isCompiledInline(value.builtinCallForm())))
         return Representation::JSValue;
 
     ResultRepresentationRules rules { inputs, std::nullopt };
-    return applyResultRule(rules, value, 0, ResultSide::Unproven);
+    return inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven));
 }
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& producer, uint32_t resultIndex)
@@ -760,7 +853,8 @@ Representation edgeResultRepresentationOf(const RepresentationInputs& inputs, Ed
         return Representation::Void;
     case EdgeResultKind::DeclaredResult: {
         ScratchTypeArena types(inputs.program.types);
-        return defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
+        Representation representation = defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
+        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : representation;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -774,7 +868,7 @@ static std::optional<Opcode> stepFromVoid(Representation to)
         return Opcode::Box;
     case Cell32: case LiteralString:
         return Opcode::Compress;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case Cell: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case Cell: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -786,7 +880,7 @@ static std::optional<Opcode> stepFromBoolean(Representation to)
     switch (to) {
     case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -798,7 +892,7 @@ static std::optional<Opcode> stepFromInt32(Representation to)
     switch (to) {
     case Int64:
         return Opcode::WidenInteger;
-    case Double:
+    case Double: case DoubleWithPayload: case ImpureDouble:
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
@@ -814,7 +908,7 @@ static std::optional<Opcode> stepFromInt64(Representation to)
     switch (to) {
     case Int32:
         return Opcode::NarrowInteger;
-    case Double:
+    case Double: case DoubleWithPayload: case ImpureDouble:
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
@@ -830,9 +924,27 @@ static std::optional<Opcode> stepFromDouble(Representation to)
     switch (to) {
     case Int32: case Int64:
         return Opcode::NumberToInteger;
-    case OptionalDouble: case JSValue:
+    case DoubleWithPayload: case ImpureDouble: case OptionalDouble: case JSValue:
         return Opcode::Box;
     case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<Opcode> stepFromDoubleWithAnyNaN(Representation from, Representation to)
+{
+    using enum Representation;
+    switch (to) {
+    case Int32: case Int64:
+        return Opcode::NumberToInteger;
+    case Double:
+        return Opcode::Unbox;
+    case OptionalDouble: case JSValue:
+        return Opcode::Box;
+    case ImpureDouble:
+        return from == DoubleWithPayload ? std::optional(Opcode::Box) : std::nullopt;
+    case Unchosen: case Void: case Boolean: case DoubleWithPayload: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -846,7 +958,7 @@ static std::optional<Opcode> stepFromOptionalInt64(Representation to)
         return Opcode::Unbox;
     case OptionalDouble: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -856,7 +968,7 @@ static std::optional<Opcode> stepFromOptionalDouble(Representation to)
 {
     using enum Representation;
     switch (to) {
-    case Double: case OptionalInt64:
+    case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64:
         return Opcode::Unbox;
     case JSValue:
         return Opcode::Box;
@@ -874,7 +986,7 @@ static std::optional<Opcode> stepFromCell(Representation to)
         return Opcode::Box;
     case Cell32: case LiteralString:
         return Opcode::Compress;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -886,7 +998,7 @@ static std::optional<Opcode> stepFromEncodedCell(Representation to)
     switch (to) {
     case Cell: case JSValue:
         return Opcode::Decode;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -896,7 +1008,7 @@ static std::optional<Opcode> stepFromJSValue(Representation to)
 {
     using enum Representation;
     switch (to) {
-    case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell:
+    case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell:
         return Opcode::Unbox;
     case Cell32: case LiteralString:
         return Opcode::Compress;
@@ -920,6 +1032,8 @@ static std::optional<Opcode> singleStep(Representation from, Representation to)
         return stepFromInt64(to);
     case Double:
         return stepFromDouble(to);
+    case DoubleWithPayload: case ImpureDouble:
+        return stepFromDoubleWithAnyNaN(from, to);
     case OptionalInt64:
         return stepFromOptionalInt64(to);
     case OptionalDouble:

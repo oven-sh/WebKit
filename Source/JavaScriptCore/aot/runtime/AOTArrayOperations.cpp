@@ -455,7 +455,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance*
     double number = std::bit_cast<double>(numberBits);
     if (number == number)
         array->tryMakeWritableDouble(vm);
-    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(purifyNaN(number))));
+    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(withoutPayload(number))));
 }
 
 static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* array, int64_t from, int64_t to)
