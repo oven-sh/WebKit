@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3EliminateDeadCode.h"
 #include "B3FoldPathConstants.h"
 #include "B3SwitchValue.h"
 #include "B3ThreadJumps.h"
@@ -844,6 +845,79 @@ static String dumpBlocks(Procedure& proc)
     return out.toString();
 }
 
+// Each Phi is needed only by the Upsilon of the next one, and control goes from the last block of the procedure to the second.
+static void testEliminateDeadCodeFollowsLongChainOfPhis()
+{
+    constexpr unsigned chainLength = 60000;
+    Procedure proc;
+    Vector<BasicBlock*> blocks;
+    for (unsigned i = 0; i < chainLength + 1; ++i)
+        blocks.append(proc.addBlock());
+    BasicBlock* block = blocks[0];
+    Value* used = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* unused = used;
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = blocks[chainLength - link];
+        UpsilonValue* usedUpsilon = block->appendNew<UpsilonValue>(proc, Origin(), used);
+        UpsilonValue* unusedUpsilon = block->appendNew<UpsilonValue>(proc, Origin(), unused);
+        block->appendNew<Value>(proc, Jump, Origin());
+        block->setSuccessors(FrequentedBlock(next));
+        used = next->appendNew<Value>(proc, Phi, Int64, Origin());
+        unused = next->appendNew<Value>(proc, Phi, Int64, Origin());
+        usedUpsilon->setPhi(used);
+        unusedUpsilon->setPhi(unused);
+        block = next;
+    }
+    block->appendNew<Value>(proc, Return, Origin(), used);
+    proc.resetReachability();
+
+    CHECK(eliminateDeadCode(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == chainLength);
+    CHECK(upsilonCount == chainLength);
+}
+
+// Each block of a long chain sets the variable and may leave for the one block that reads it.
+static void testFixSSAWithLongChainOfBlocksThatBranchToOneBlock()
+{
+    constexpr unsigned chainLength = 60000;
+    Procedure proc;
+    Variable* variable = proc.addVariable(Int64);
+    BasicBlock* block = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* argument = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = proc.addBlock();
+        Value* sum = block->appendNew<Value>(proc, Add, Origin(), argument, block->appendNew<Const64Value>(proc, Origin(), link));
+        block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, sum);
+        block->appendNew<Value>(proc, Branch, Origin(), sum);
+        block->setSuccessors(FrequentedBlock(next), FrequentedBlock(join));
+        block = next;
+    }
+    block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, argument);
+    block->appendNew<Value>(proc, Jump, Origin());
+    block->setSuccessors(FrequentedBlock(join));
+    join->appendNew<Value>(proc, Return, Origin(), join->appendNew<VariableValue>(proc, B3::Get, Origin(), variable));
+    proc.resetReachability();
+
+    CHECK(fixSSA(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == 1);
+    CHECK(upsilonCount == chainLength + 1);
+}
+
 static void testFoldPathConstantsFindsTheSameInIndexAndList()
 {
     auto policyWithLimit = [](uint64_t limit) {
@@ -1118,6 +1192,8 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testDuplicateTailsUnderDefaultPolicy());
     RUN(testDuplicateTailsSizeFromPolicy());
     RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());
+    RUN(testEliminateDeadCodeFollowsLongChainOfPhis());
+    RUN(testFixSSAWithLongChainOfBlocksThatBranchToOneBlock());
     RUN(testFoldPathConstantsFindsTheSameInIndexAndList());
     RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testFoldPathConstantsFoldsSelect());

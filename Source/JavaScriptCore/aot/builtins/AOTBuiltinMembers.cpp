@@ -14,6 +14,7 @@
 #include "AOTPropertyAccessInternal.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSort.h"
+#include "AOTValueFlowHeapTables.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
@@ -381,6 +382,15 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     Value constant = IRBuilder::make(Opcode::Double);
     constant.setNumber(*number);
     return constant;
+}
+
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const Value& constant)
+{
+    if (constant.opcode != Opcode::Builtin || !isMadeWithCodeOfLibrary(table, constant.builtin()))
+        return std::nullopt;
+    Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
+    initialization.setBuiltin(constant.builtin());
+    return initialization;
 }
 
 std::optional<Value> tryMakeBuiltinConstant(const Program& program, BuiltinID member)

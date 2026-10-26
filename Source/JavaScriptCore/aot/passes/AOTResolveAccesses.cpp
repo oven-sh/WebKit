@@ -189,6 +189,13 @@ static CalleeSetID calleesOfGetterInSlot(FunctionPassContext& context, const Pro
     return context.types.intern(WTF::move(callees));
 }
 
+static Value makeBuiltinConstant(BuiltinID builtin)
+{
+    Value constant = IRBuilder::make(Opcode::Builtin);
+    constant.setBuiltin(builtin);
+    return constant;
+}
+
 Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPlan& plan, const SlotStamp& stamp)
 {
     const Program& program = context.program;
@@ -197,8 +204,12 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         return effectsOfAccessForm(program, plan.operation, stamp.key, stamp.receivers);
     case AccessForm::Constant:
         return Effects::none();
-    case AccessForm::Builtin:
-        return declaredBoundOf(Opcode::Builtin);
+    case AccessForm::Builtin: {
+        Effects effects = declaredBoundOf(Opcode::Builtin);
+        if (tryMakeInitializeBuiltin(program.builtins(), makeBuiltinConstant(plan.member.builtin)))
+            effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
+        return effects;
+    }
     case AccessForm::Method:
         return declaredBoundOf(Opcode::NewClosure);
     case AccessForm::Variable: {
@@ -348,6 +359,8 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
             value->setBoolean(plan.booleanConstant);
         break;
     case AccessForm::Builtin:
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), makeBuiltinConstant(plan.member.builtin)))
+            insertBeforeAccess(WTF::move(*initialization));
         value->become(Opcode::Builtin);
         value->setBuiltin(plan.member.builtin);
         break;
@@ -2453,6 +2466,16 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     return plan;
 }
 
+static bool isOnlyComparedByIdentity(FunctionPassContext& context, ValueID read)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    std::optional<Use> use = useLists.singleUse(read);
+    while (use && use->kind == Use::Kind::Operand && isCast(function.at(use->user).opcode) && !use->operandIndex)
+        use = useLists.singleUse(use->user);
+    return use && use->kind == Use::Kind::Operand && function.at(use->user).opcode == Opcode::StrictEq;
+}
+
 static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context, const ValueSite& site, const PropertyAccessQuery& query, const PropertyAccessPlan& access)
 {
     if (isCold(heatClassOf(context, site.block)))
@@ -2461,7 +2484,10 @@ static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context,
     const Value& value = context.function.at(site.value);
     const MemberPartition& partition = access.partition;
     DispatchPlan dispatch = planDispatch(context, partition, query.receivers, site.value, [&](const MemberArm& arm) {
-        return isAccessArmForm(planWithReceivers(context, query, query.start, { .proof = query.receivers.proof, .level = query.receivers.level, .proven = arm.layouts }).form);
+        PropertyAccessPlan plan = planWithReceivers(context, query, query.start, { .proof = query.receivers.proof, .level = query.receivers.level, .proven = arm.layouts });
+        // `response.emit === ownEmit`: behind the tests of its class the method is a constant, and the comparison folds.
+        bool comparesMethod = plan.form == AccessForm::Method && !plan.capturesReceiver && isOnlyComparedByIdentity(context, site.value);
+        return isAccessArmForm(plan.form) || comparesMethod;
     });
     if (dispatch.arms.isEmpty())
         return std::nullopt;

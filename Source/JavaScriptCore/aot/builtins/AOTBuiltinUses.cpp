@@ -466,7 +466,10 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::None:
         return Effects();
     case BuiltinUseKind::Constant: {
-        Effects effects = declaredBoundOf(makeConstant(inputs.program, plan).opcode);
+        Value constant = makeConstant(inputs.program, plan);
+        Effects effects = declaredBoundOf(constant.opcode);
+        if (tryMakeInitializeBuiltin(inputs.program.builtins(), constant))
+            effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         effects.merge(nullishCheckEffects);
         return effects;
     }
@@ -634,10 +637,14 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     switch (plan.kind) {
     case BuiltinUseKind::None:
         RELEASE_ASSERT_NOT_REACHED();
-    case BuiltinUseKind::Constant:
+    case BuiltinUseKind::Constant: {
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
-        replaceKeepingOrigin(function.edit(rewrite.use), makeConstant(context.program, plan));
+        Value constant = makeConstant(context.program, plan);
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), constant))
+            insert(WTF::move(*initialization));
+        replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;
+    }
     case BuiltinUseKind::Undefined:
         replaceKeepingOrigin(function.edit(rewrite.use), IRBuilder::make(Opcode::Undefined));
         break;

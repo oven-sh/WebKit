@@ -37,7 +37,6 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
-#include "AOTValueFlowHeapTables.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -778,10 +777,6 @@ struct DeadCodeEliminator {
 
     bool staysUnused(ValueID id, const Value& value, const OpcodeRules& rules, Position position)
     {
-        // The host makes such a member when it is first read, with code of the library, and what that code does can be seen.
-        if (value.opcode == Opcode::Builtin && isMadeWithCodeOfLibrary(context.program.builtins(), value.builtin()))
-            return true;
-
         switch (rules.unusedValue) {
         case UnusedValueRule::IsRemoved:
             return false;
@@ -2158,6 +2153,11 @@ struct ControlFlowSimplifier {
     {
         const Block& block = function.at(id);
         if (!block.parameters.isEmpty() || !block.values.isEmpty() || block.isHandlerBlock() || block.terminator.kind != TerminatorKind::Jump)
+            return false;
+        // The block writes its arguments once. Led past it, every edge would write them.
+        size_t numberOfArguments = block.terminator.next().arguments.size();
+        size_t numberOfIncomingEdges = analyses.cfg().incomingEdges(id).size();
+        if (numberOfIncomingEdges * numberOfArguments > numberOfIncomingEdges + numberOfArguments)
             return false;
         BlockID target = block.terminator.next().block;
         BlockFrequency targetFrequency = function.at(target).frequency;

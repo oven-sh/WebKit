@@ -96,6 +96,7 @@ operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags, from P
 operation IsBuiltinLocationUnchanged (member: Builtin) -> natural(boolean) ; reads(NamedProperties) ; proves = MemberUnchanged ; branches = May ; interpreted = Test ; runtime = ArmBuiltinLocation
 operation IsFunctionOfBuiltin (value: Any/inspects, member: Builtin) -> natural(boolean) ; none ; proves = ExactFunction ; branches = May
 operation GetBuiltinValue (builtin: Builtin, overload: BuiltinOverload) -> declared(overload) ; unknownCode ; runtime = FillBuiltinValue ; replaces = PropGet
+operation InitializeBuiltin (builtin: Builtin) -> none ; CreatesConstant reads(ExternalState) writes(ExternalState) ; runtime = BuiltinCell ; replaces = PropGet
 
 family ExpandedIteration Prepared..Placed
 operation DestructureIterable (iterable: Any/Iterated, count: UInt32) -> results(unknown, ..) ; Allocates throws ; interpreted = List ; runtime = DestructureIterable ; replaces = IteratorOpen, IteratorResume, IteratorClose

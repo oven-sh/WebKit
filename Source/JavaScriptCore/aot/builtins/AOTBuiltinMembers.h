@@ -108,6 +108,8 @@ BuiltinID singleBuiltinCalleeOf(const Program&, const Function&, const Value& ca
 
 std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable&, BuiltinID member);
 std::optional<Value> tryMakeBuiltinConstant(const Program&, BuiltinID member);
+// The host creates some members when they are first read, with code of the library, and the program can see what that code does. Goes in front of the constant that replaces a read.
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable&, const Value& constant);
 
 } } } // namespace JSC::AOT::Typed
 

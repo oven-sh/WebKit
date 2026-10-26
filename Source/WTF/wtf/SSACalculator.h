@@ -427,8 +427,10 @@ private:
                 Node runner = predecessor;
                 while (runner && runner != idomBlock) {
                     auto& frontier = m_dominanceFrontiers[runner];
-                    if (frontier.isEmpty() || frontier.last() != block)
-                        frontier.append(block);
+                    // The walk from an earlier predecessor came through here and went on up to idomBlock.
+                    if (!frontier.isEmpty() && frontier.last() == block)
+                        break;
+                    frontier.append(block);
                     runner = dominators.idom(runner);
                 }
             }

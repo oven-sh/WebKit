@@ -89,6 +89,7 @@ void ObjectState::becomeCell()
     cellJoinedAt = { };
     lacksFieldsOnSomeWay = false;
     isMissingOnSomeWay = false;
+    isCellMissingOnSomeWay = false;
 }
 
 void ObjectState::normalize()
@@ -164,6 +165,10 @@ size_t SinkingState::weight() const
 
 bool SinkingState::canReach(VirtualObjectID from, VirtualObjectID to) const
 {
+    // Objects hold only objects of the state, and an allocation asks before its object is one.
+    if (from != to && !find(to))
+        return false;
+
     BitVector visited;
     Vector<VirtualObjectID, 4> worklist { from };
     while (!worklist.isEmpty()) {
@@ -336,6 +341,7 @@ static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualO
     target.keepAssumedTypesOf(source);
     target.lacksFieldsOnSomeWay |= source.lacksFieldsOnSomeWay;
     target.isMissingOnSomeWay |= source.isMissingOnSomeWay;
+    target.isCellMissingOnSomeWay |= source.isCellMissingOnSomeWay;
     if (becomesCell) {
         target.becomeCell();
         return target != before;
@@ -367,26 +373,24 @@ static bool mergeObjects(AllocationSinking& sinking, SinkingState& into, const S
 {
     bool changed = false;
     size_t index = 0;
-    auto isMissingInSource = [&](ObjectState& target) {
-        if (!target.isCell())
-            changed |= !std::exchange(target.isMissingOnSomeWay, true);
+    auto markAsMissingOnSomeWay = [&](ObjectState& state) {
+        changed |= !std::exchange(state.isCell() ? state.isCellMissingOnSomeWay : state.isMissingOnSomeWay, true);
     };
     for (const ObjectEntry& source : from.objects) {
         for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
-            isMissingInSource(into.objects[index].state);
+            markAsMissingOnSomeWay(into.objects[index].state);
         if (index < into.objects.size() && into.objects[index].object == source.object) {
             changed |= mergeObject(sinking, into, source.object, into.objects[index].state, source.state);
             ++index;
             continue;
         }
         into.objects.insert(index, source);
-        if (!source.state.isCell())
-            into.objects[index].state.isMissingOnSomeWay = true;
+        markAsMissingOnSomeWay(into.objects[index].state);
         ++index;
         changed = true;
     }
     for (; index < into.objects.size(); ++index)
-        isMissingInSource(into.objects[index].state);
+        markAsMissingOnSomeWay(into.objects[index].state);
     return changed;
 }
 
@@ -1117,7 +1121,7 @@ bool ObjectInterpreter::tryEnterPlainEdge(BlockID target)
     for (ObjectEntry& entry : m_state.objects) {
         ObjectState& state = entry.state;
         if (state.isCell()) {
-            if (canMeetOtherShapes && !m_sinking.at(entry.object).isJoin)
+            if (canMeetOtherShapes && !m_sinking.at(entry.object).isJoin && !state.isCellMissingOnSomeWay)
                 state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
             else
                 state.fieldsValidInCell.clearAll();
@@ -1303,7 +1307,7 @@ void ObjectInterpreter::makeFieldsOfCellsValid(const OutgoingEdge& outgoing, con
         if (isJoin || !state.isCell())
             continue;
         if (m_mode == SinkingMode::Analyze) {
-            if (canMeetOtherShapes)
+            if (canMeetOtherShapes && !state.isCellMissingOnSomeWay)
                 state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
             else
                 state.fieldsValidInCell.clearAll();

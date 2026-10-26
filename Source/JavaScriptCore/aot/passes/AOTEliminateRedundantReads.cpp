@@ -120,6 +120,16 @@ struct RedundantReadElimination {
         bool hasLookedForAllocation;
         // Behind the bits of the last class of the section with the same location.
         uint32_t endOfBitsAtLocation { 0 };
+        // Behind the bits of the last of the classes that follow one another in the same heap, and with the same base.
+        uint32_t endOfBitsInHeap { 0 };
+        uint32_t endOfBitsWithBase { 0 };
+    };
+
+    enum class Survival : uint8_t { None, OneClass, EveryClassWithBase };
+
+    struct PositionRange {
+        uint32_t first { std::numeric_limits<uint32_t>::max() };
+        uint32_t last { 0 };
     };
 
     struct Action {
@@ -173,6 +183,8 @@ struct RedundantReadElimination {
     Vector<AccessClass> m_classes { };
     uint32_t m_firstClobberableBit { 0 };
     Vector<uint32_t> m_lastPositionOfClass { };
+    // For each word of a row of the group: the least and the greatest of those positions among the classes with a bit in the word.
+    Vector<PositionRange> m_lastPositionsInWord { };
     // By position in the reverse postorder: a position that no block that the block may reach stands in front of. Empty where nothing leads back.
     Vector<uint32_t> m_firstPositionReachedFrom { };
     IndexRange m_group { };
@@ -397,6 +409,10 @@ struct RedundantReadElimination {
             AccessClass& accessClass = m_classes[index];
             bool isFollowedAtLocation = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].location == accessClass.location;
             accessClass.endOfBitsAtLocation = isFollowedAtLocation ? m_classes[index + 1].endOfBitsAtLocation : accessClass.bits.end;
+            bool isFollowedInHeap = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].location.heap() == accessClass.location.heap();
+            accessClass.endOfBitsInHeap = isFollowedInHeap ? m_classes[index + 1].endOfBitsInHeap : accessClass.bits.end;
+            bool isFollowedWithBase = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].base == accessClass.base;
+            accessClass.endOfBitsWithBase = isFollowedWithBase ? m_classes[index + 1].endOfBitsWithBase : accessClass.bits.end;
         }
     }
 
@@ -588,7 +604,7 @@ struct RedundantReadElimination {
         }
     }
 
-    void appendClearsOfWrites(const EffectsOnEdges& effects, std::span<const Word> row, ActionList& actions, NOESCAPE const Invocable<bool(AccessClass&)> auto& survives)
+    void appendClearsOfWrites(const EffectsOnEdges& effects, std::span<const Word> row, ActionList& actions, NOESCAPE const Invocable<Survival(AccessClass&)> auto& survives)
     {
         if (!effects.normal.writes.containsAny(accessedHeapSet) && !effects.handler.writes.containsAny(accessedHeapSet))
             return;
@@ -596,17 +612,20 @@ struct RedundantReadElimination {
         IndexRange bits = IndexRange { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }.clippedTo(m_group);
         if (bits.isEmpty())
             return;
-        // The classes of one location have one mask, so a location that is not written is passed over with all its classes.
+        // The classes of one location have one mask, so a location that is not written is passed over with all its classes, and so is a heap.
         size_t end = bits.end - m_group.first;
         for (size_t bit = findBit(row, bits.first - m_group.first); bit < end;) {
             AccessClass& accessClass = m_classes[m_bits[m_group.first + bit].accessClass];
             if (!writes.overlaps(accessClass.location.heap(), accessClass.mask)) {
-                bit = findBit(row, accessClass.endOfBitsAtLocation - m_group.first);
+                uint32_t endOfUnwrittenBits = writes.contains(accessClass.location.heap()) ? accessClass.endOfBitsAtLocation : accessClass.endOfBitsInHeap;
+                bit = findBit(row, endOfUnwrittenBits - m_group.first);
                 continue;
             }
-            if (!survives(accessClass) && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
+            Survival survival = survives(accessClass);
+            if (survival == Survival::None && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
                 appendClear(actions, accessClass.bits);
-            bit = findBit(row, accessClass.bits.end - m_group.first);
+            uint32_t endOfSettledBits = survival == Survival::EveryClassWithBase ? accessClass.endOfBitsWithBase : accessClass.bits.end;
+            bit = findBit(row, endOfSettledBits - m_group.first);
         }
     }
 
@@ -636,7 +655,22 @@ struct RedundantReadElimination {
                     writesThroughOperands->append({ operand, writes });
             });
         };
-        appendClearsOfWrites(effects, row, actions, [&](AccessClass& accessClass) {
+        // Whatever the value writes: nobody else holds the object yet, and no operand that is written through is the object.
+        auto isOutOfReach = [&](AccessClass& accessClass) {
+            if (!mayDefineAllocation(accessClass.base))
+                return false;
+            const EscapeAnalysis& escape = m_analyses.escape();
+            if (escape.gaveUp())
+                return false;
+            ObjectID allocation = allocationOf(accessClass);
+            if (!allocation || !isUncapturedBefore(allocation, after))
+                return false;
+            findWritesThroughOperands();
+            return std::ranges::none_of(*writesThroughOperands, [&](const auto& written) {
+                return escape.mayAlias(written.first, accessClass.base) && escape.pointsTo(written.first).objects.contains(allocation);
+            });
+        };
+        auto survives = [&](AccessClass& accessClass) {
             if (!accessClass.base)
                 return false;
             auto overlapsClass = [&](const LocationMasks& writes) {
@@ -674,6 +708,11 @@ struct RedundantReadElimination {
                 bool mayBeAllocation = !allocation || escape.pointsTo(written.first).objects.contains(allocation);
                 return mayBeAllocation || !isUncapturedBefore(allocation, after);
             });
+        };
+        appendClearsOfWrites(effects, row, actions, [&](AccessClass& accessClass) {
+            if (accessClass.base && accessClass.endOfBitsWithBase > accessClass.bits.end && isOutOfReach(accessClass))
+                return Survival::EveryClassWithBase;
+            return survives(accessClass) ? Survival::OneClass : Survival::None;
         });
     }
 
@@ -756,7 +795,7 @@ struct RedundantReadElimination {
             if (!isEmpty(walked.span())) {
                 ActionList actions;
                 appendClearsOfWrites(m_analyses.effectsOfTerminator(block), walked.span(), actions, [](AccessClass&) {
-                    return false;
+                    return Survival::None;
                 });
                 for (const Action& action : actions)
                     carryOut(action, walked.mutableSpan());
@@ -859,6 +898,24 @@ struct RedundantReadElimination {
         }
     }
 
+    void clearClassesLastAccessedBefore(uint32_t position, Row& row)
+    {
+        for (uint32_t wordIndex = 0; wordIndex < m_numberOfWords; ++wordIndex) {
+            PositionRange lastPositions = m_lastPositionsInWord[wordIndex];
+            if (!row[wordIndex] || lastPositions.first >= position)
+                continue;
+            if (lastPositions.last < position) {
+                row[wordIndex] = 0;
+                continue;
+            }
+            IndexRange bitsOfWord { m_group.first + wordIndex * 64, m_group.first + (wordIndex + 1) * 64 };
+            forEachClassWithBitIn(row.span(), bitsOfWord, [&](AccessClass& accessClass) {
+                if (m_lastPositionOfClass[&accessClass - m_classes.span().data()] < position)
+                    carryOut(Action { Action::Kind::Clears, accessClass.bits }, row.mutableSpan());
+            });
+        }
+    }
+
     void visit(BlockID block, uint32_t position)
     {
         StateOfBlock& state = m_states[block.index()];
@@ -878,10 +935,7 @@ struct RedundantReadElimination {
         std::ranges::copy(row, headOf(state).begin());
 
         uint32_t firstPositionReached = m_firstPositionReachedFrom.isEmpty() ? position : m_firstPositionReachedFrom[position];
-        forEachClassWithBitIn(row.span(), m_group, [&](AccessClass& accessClass) {
-            if (m_lastPositionOfClass[&accessClass - m_classes.span().data()] < firstPositionReached)
-                carryOut(Action { Action::Kind::Clears, accessClass.bits }, row.mutableSpan());
-        });
+        clearClassesLastAccessedBefore(firstPositionReached, row);
         Row rowForHandler = row;
         carryThrough(block, state, isFirstVisit, row, rowForHandler);
         if (!isFirstVisit && std::ranges::equal(row, tailOf(state)) && std::ranges::equal(rowForHandler, rowForHandlerOf(state)))
@@ -909,7 +963,12 @@ struct RedundantReadElimination {
         m_bitsOfClassInParts = bitsOfClassInParts;
         m_numberOfWords = (group.size() + 63) / 64;
 
+        m_lastPositionsInWord.fill(PositionRange { }, m_numberOfWords);
         for (uint32_t bit = group.first; bit < group.end; ++bit) {
+            PositionRange& lastPositions = m_lastPositionsInWord[(bit - group.first) / 64];
+            uint32_t lastPosition = m_lastPositionOfClass[m_bits[bit].accessClass];
+            lastPositions.first = std::min(lastPositions.first, lastPosition);
+            lastPositions.last = std::max(lastPositions.last, lastPosition);
             if (!m_isReplacedByValue.quickGet(bit))
                 markAsPending(accessOf(bit).point.block);
         }

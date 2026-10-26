@@ -241,12 +241,16 @@ static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyO
         return jsUndefined();
     };
 
-    if (propertyName.isPrivateName())
+    bool passesThrough = propertyName.passesThroughProxies();
+    if (propertyName.isPrivateName() && !passesThrough)
         return jsUndefined();
 
     JSValue handlerValue = proxyObject->handler();
     if (handlerValue.isNull())
         return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
+
+    if (passesThrough)
+        return performDefaultGet();
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -567,7 +571,8 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
         return false;
     }
 
-    if (propertyName.isPrivateName())
+    bool passesThrough = propertyName.passesThroughProxies();
+    if (propertyName.isPrivateName() && !passesThrough)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -576,11 +581,16 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
         return false;
     }
 
+    JSObject* target = this->target();
+    if (passesThrough) {
+        PutPropertySlot slot(thisValue == JSValue(this) ? JSValue(target) : thisValue, shouldThrow);
+        RELEASE_AND_RETURN(scope, target->methodTable()->put(target, globalObject, propertyName, putValue, slot));
+    }
+
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
     JSObject* setMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->set, HandlerTrap::Set);
     RETURN_IF_EXCEPTION(scope, false);
-    JSObject* target = this->target();
     if (!setMethod)
         RELEASE_AND_RETURN(scope, performDefaultPut());
 

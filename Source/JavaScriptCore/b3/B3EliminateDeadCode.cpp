@@ -100,12 +100,34 @@ static LiveValues markLiveValues(Procedure& proc)
         if (mayContainDeadValues)
             result.blocksWithPossiblyDeadValues.append(block);
     }
-    for (;;) {
+    constexpr unsigned maxScansOfAllUpsilons = 3;
+    for (unsigned numberOfScans = 0;; ++numberOfScans) {
         while (!stack.isEmpty()) {
             for (Value* child : stack.takeLast()->children())
                 markNeeded(child);
         }
-        
+
+        if (numberOfScans == maxScansOfAllUpsilons) {
+            // Visits an Upsilon when its Phi becomes live, so the work does not grow with the length of a chain of Phis.
+            auto indexOfPhi = [](UpsilonValue* upsilon) { return upsilon->phi()->index(); };
+            std::ranges::sort(upsilons, { }, indexOfPhi);
+            for (UpsilonValue* upsilon : upsilons) {
+                State phiState = states[upsilon->phi()->index()];
+                if (phiState == State::Needed || phiState == State::Live)
+                    markNeeded(upsilon);
+            }
+            while (!stack.isEmpty()) {
+                Value* value = stack.takeLast();
+                for (Value* child : value->children())
+                    markNeeded(child);
+                if (value->opcode() != Phi)
+                    continue;
+                for (UpsilonValue* upsilon : std::ranges::equal_range(upsilons, value->index(), { }, indexOfPhi))
+                    markNeeded(upsilon);
+            }
+            break;
+        }
+
         bool didPush = false;
         for (size_t upsilonIndex = 0; upsilonIndex < upsilons.size(); ++upsilonIndex) {
             UpsilonValue* upsilon = upsilons[upsilonIndex];

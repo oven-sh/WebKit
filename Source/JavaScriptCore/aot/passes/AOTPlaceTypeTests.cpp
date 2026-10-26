@@ -2111,6 +2111,7 @@ struct TestPlacer {
         rewriteUses();
         if (copy)
             copy->addWaysBack(changedValues.span(), GenericCopy::TypesTestedOnWayBack::Expected);
+        enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
         narrowValueTypes(TypePropagationInputs { context.program, context.id, function, analyses, types, context.build, &context.typingMemo }, changedValues.span());
@@ -3052,6 +3053,118 @@ struct TestPlacer {
         Value& use = function.edit(site.use, ValueEdit::Type);
         use.type = type;
         use.setExpected(expected);
+    }
+
+    // Nobody can tell that it ran, so nobody can tell that the copy runs it again.
+    bool canRunTwice(BlockID block)
+    {
+        auto canRunTwice = [](const EffectsOnEdges& effects) {
+            auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
+            return isUnseen(effects.normal) && isUnseen(effects.handler);
+        };
+        return canRunTwice(analyses.effectsOfTerminator(block)) && std::ranges::all_of(function.at(block).values, [&](ValueID value) { return canRunTwice(analyses.effectsOf(value)); });
+    }
+
+    std::optional<Target> findEntryOfCopyAt(BlockID block)
+    {
+        BlockID copyOfBlock = copy->copyOf(block);
+        if (!copyOfBlock)
+            return std::nullopt;
+        const auto& parameters = function.at(block).parameters;
+        const auto& parametersOfCopy = function.at(copyOfBlock).parameters;
+        if (parameters.size() < parametersOfCopy.size())
+            return std::nullopt;
+        Target entry { copyOfBlock, { }, { } };
+        for (uint32_t index = 0; index < parametersOfCopy.size(); ++index) {
+            if (copy->copyOf(parameters[index]) != parametersOfCopy[index])
+                return std::nullopt;
+            entry.arguments.append(parameters[index]);
+        }
+        return entry;
+    }
+
+    // A failing test enters the copy behind the test, and hands over every value that the tested code has made and the copy still reads.
+    // Where the code in front of the test can run twice, the copy can start in front of that code instead and make those values itself. Many tests that follow each other then share one entry.
+    void enterCopyBeforeRepeatableCode()
+    {
+        if (!copy || emittedTests.isEmpty())
+            return;
+
+        size_t numberOfBlocks = function.blocks.size();
+        Vector<uint32_t> numberOfIncomingEdges(FillWith { }, numberOfBlocks, 0u);
+        Vector<BlockID> predecessors(numberOfBlocks);
+        for (size_t index = 0; index < numberOfBlocks; ++index) {
+            function.at(BlockID(index)).forEachTarget([&](const Target& target) {
+                ++numberOfIncomingEdges[target.block.index()];
+                predecessors[target.block.index()] = BlockID(index);
+            });
+        }
+
+        BitVector isCopy(numberOfBlocks);
+        Vector<BlockID> originals(numberOfBlocks);
+        for (BlockID block : copy->plannedBlocks()) {
+            isCopy.quickSet(copy->copyOf(block).index());
+            originals[copy->copyOf(block).index()] = block;
+        }
+        // No block of the copy becomes an entry that is none. What fails a test of a type is known by that in the copy, so such a test keeps its entry to itself.
+        BitVector hasEntry(numberOfBlocks);
+        for (const EmittedTest& test : emittedTests) {
+            if (isCopy.quickGet(test.failed.index()))
+                hasEntry.quickSet(originals[test.failed.index()].index());
+        }
+
+        // The copy runs again what stands between its entry and the test, so the first tests in code that can run twice keep their own entries. The entry of the last of them serves every later test.
+        AOT_THRESHOLD(uint32_t, maxEntriesInRepeatableCode, 8);
+        struct EntriesAbove {
+            uint32_t count { 0 };
+            BlockID shared;
+        };
+        BitVector isKnown(numberOfBlocks);
+        Vector<EntriesAbove> entriesAbove(numberOfBlocks);
+        Vector<BlockID, 16> path;
+        auto sharedEntryAbove = [&](BlockID last) {
+            path.shrink(0);
+            BlockID block = last;
+            for (; !isKnown.quickGet(block.index()); block = predecessors[block.index()]) {
+                if (!canRunTwice(block) || function.at(block).isHandlerBlock()) {
+                    isKnown.quickSet(block.index());
+                    break;
+                }
+                path.append(block);
+                if (numberOfIncomingEdges[block.index()] != 1)
+                    break;
+            }
+            EntriesAbove entries = isKnown.quickGet(block.index()) ? entriesAbove[block.index()] : EntriesAbove { };
+            while (!path.isEmpty()) {
+                block = path.takeLast();
+                if (hasEntry.quickGet(block.index()) && findEntryOfCopyAt(block) && ++entries.count == maxEntriesInRepeatableCode)
+                    entries.shared = block;
+                isKnown.quickSet(block.index());
+                entriesAbove[block.index()] = entries;
+            }
+            return entriesAbove[last.index()].shared;
+        };
+
+        // What the entry takes is written once, however many tests lead there.
+        Vector<BlockID> blocksInFrontOfEntries(numberOfBlocks);
+        builder.setHandler(std::nullopt);
+        for (const EmittedTest& test : emittedTests) {
+            if (!isCopy.quickGet(test.failed.index()))
+                continue;
+            Edge failingEdge { test.block, 1 };
+            BlockID first = sharedEntryAbove(test.block);
+            if (!first)
+                continue;
+            BlockID& target = blocksInFrontOfEntries[first.index()];
+            if (!target) {
+                Target entry = *findEntryOfCopyAt(first);
+                builder.setOrigin(function.at(test.block).terminator.origin());
+                target = builder.addBlock(function.at(entry.block).frequency);
+                builder.moveToEndOf(target);
+                builder.emitJump(entry.block, WTF::move(entry.arguments));
+            }
+            builder.redirectEdge(failingEdge, Target { target, { }, { } });
+        }
     }
 
     void repairProofs()

@@ -1228,6 +1228,16 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
             auto cloner = makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function);
             cloner->cloneBlocks(region.span(), [](ValueID, Value&) { });
             Turn turn { cloner->cloneOf(header), cloner->cloneOf(step), arm.names[position], position };
+
+            // A turn is on no cycle of its own.
+            BitVector loopHints;
+            const BlockValues& values = function.at(turn.header).values;
+            for (uint32_t index = 0; values[index] != turn.step; ++index) {
+                if (function.at(values[index]).opcode == Opcode::LoopHint)
+                    loopHints.set(index);
+            }
+            builder.eraseValues(turn.header, loopHints);
+
             size_t positionIndex = function.at(turn.header).parameters.find(function.at(turn.step).positionOperand());
             for (BlockID block : cloner->clonedBlocks()) {
                 for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
@@ -1265,22 +1275,17 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
 
     // While the object is as the enumerator found it, the step answers with the name at its position. Otherwise the turn is taken by the loop as written, from the same position on.
     for (const Turn& turn : turns) {
+        // The repair splits a block that has a handler after each value that other blocks read, so the step may have left the header. A turn that no edge enters has no place.
+        ValueLocation placeOfStep = context.analyses.useLists().locationOf(turn.step);
+        if (placeOfStep.placement != ValuePlacement::InBlock)
+            continue;
+
         Arguments carriedValues(function.at(turn.header).parameters);
-
-        // A turn is on no cycle of its own.
-        BitVector loopHints;
-        const BlockValues& values = function.at(turn.header).values;
-        for (uint32_t index = 0; values[index] != turn.step; ++index) {
-            if (function.at(values[index]).opcode == Opcode::LoopHint)
-                loopHints.set(index);
-        }
-        builder.eraseValues(turn.header, loopHints);
-
         ValueID enumerator = function.at(turn.step).enumeratorOperand();
         ValueID object = function.at(turn.step).objectOperand();
         BlockFrequency frequency = function.at(turn.header).frequency;
         builder.setOrigin(function.at(turn.step).origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion({ turn.header, static_cast<uint32_t>(function.at(turn.header).values.find(turn.step)) });
+        IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
         builder.emitFailureOfPredictions(Target { header, Arguments(carriedValues), { } });
         ValueID position = builder.appendInteger(turn.position);
         ValueID isCurrent = builder.append(Opcode::IsEnumeratorCurrent, { enumerator, object, position });

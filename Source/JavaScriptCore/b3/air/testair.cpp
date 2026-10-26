@@ -50,6 +50,7 @@
 #include "PureNaN.h"
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
+#include "AirEliminateDeadCode.h"
 #include "AirArgInlines.h"
 #include "AirBitMatrixLiveness.h"
 #include "AirBlockEntryClobberSpecial.h"

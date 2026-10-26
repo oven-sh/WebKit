@@ -84,8 +84,10 @@ struct ObjectState {
     Vector<TypeID, 1> assumedTypes;
     bool lacksFieldsOnSomeWay { false };
     bool isMissingOnSomeWay { false };
+    // The same of an object that is a cell on the other ways: what stands for the cell may be an Unspecified value.
+    bool isCellMissingOnSomeWay { false };
 
-    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false }; }
+    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false, false }; }
 
     bool hasCell() const;
     bool isCell() const { return variants.size() == 1 && variants[0].shape == cellShape; }

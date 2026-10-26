@@ -733,6 +733,11 @@ void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
     defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()))), typeOf(value.id()));
 }
 
+void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)
+{
+    emitter<ConstantEmitter>().builtinCell(value, m_builtins.canonicalID(value->builtin()));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)
