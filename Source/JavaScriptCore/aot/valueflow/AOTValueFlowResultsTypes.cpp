@@ -319,6 +319,8 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
 void NumbersOfPositions::followPositions(const FlowResultTables& tables)
 {
     PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
+    for (size_t variable : m_inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks)
+        m_numbers[variable].integers = Range::full();
     choosePositions(tables);
     times.didFinish("numbers: positions chosen"_s);
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
@@ -1462,7 +1464,18 @@ static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResu
     return stored;
 }
 
-static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, const BitVector& variablesStoredUndefined, const NumbersOfPositions& numbers, ValueFlowPositions& positions, FlowVariableUpdate& update)
+static void takeStoredIntegers(const Type& declared, const ValueFlowNumbers* numbers, TypeArena& types, FlowPositionUpdate& update)
+{
+    Range stored = numbers ? numbers->integers : Range::full();
+    if (stored.isSubsetOf(declared.integers))
+        return;
+    Type held = update.type ? types.at(update.type) : declared;
+    held.primitives |= Primitive::Integer;
+    held.integers = stored;
+    update.type = types.intern(held);
+}
+
+static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, const BitVector& variablesStoredUndefined, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, FlowVariableUpdate& update)
 {
     if (update.flow.writers != WriterState::AllKnown)
         return;
@@ -1473,6 +1486,8 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
     else if (!everyReadSeesStore && startsWithoutValueInSolve(inputs.program, inputs.program.at(id)))
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
+    if (inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks.quickGet(id.index()))
+        takeStoredIntegers(inputs.program.at(inputs.program.at(id).declared.type), numbers.ofVariable(id), types, update.position);
 }
 
 using LayoutsCreatedBelowMembers = Vector<Vector<LayoutID, 2>>;
@@ -1764,7 +1779,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         if (task < firstFunctionTask) {
             forEachVariableOf(task, [&](uint32_t index) {
                 ValueFlowPositions positions(inputs, arena, counts, index, maker);
-                narrowVariable(inputs, VariableID(index), storedUndefined.variables, numbers, positions, application.variables[index]);
+                narrowVariable(inputs, VariableID(index), storedUndefined.variables, numbers, positions, arena, application.variables[index]);
             });
             return;
         }

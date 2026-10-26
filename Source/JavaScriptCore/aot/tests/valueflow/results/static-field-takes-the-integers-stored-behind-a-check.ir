@@ -1,0 +1,107 @@
+# class Inside { static held: i32 = 1 }    function putInside(v: i32) { Inside.held = v }      putInside(7)
+# class Outside { static held: i32 = 1 }   function putOutside(v: i32) { Outside.held = v }    putOutside(2147483648)
+# class Tag { static held: 1 = 1 }         function putTag(v: 1) { Tag.held = v }              putTag(7)
+# class Masked { static held: 1 | 2 = 1 }  function putMasked(v: number) { Masked.held = (v & 3) as 1 | 2 }   putMasked(Math.random())
+# Each setter checks its parameter, so what it stores rests on a check, and the type of such a value counts for nothing: the generic version stores whatever the check has turned away.
+# The variable of the static field holds the integers that arrive, whatever range its declaration names. A read is checked against the declaration where it stands.
+# RUN: valueflow-apply
+# CHECK: variable g0 module=m0 declared={type=int[1, 7]} owner=L0 flow={writers=AllKnown
+# CHECK: variable g1 module=m0 declared={type=int[1, 2147483648]} owner=L1 flow={writers=AllKnown
+# CHECK: variable g2 module=m0 declared={type=int[1, 7]} owner=L2 flow={writers=AllKnown
+# CHECK: variable g3 module=m0 declared={type=int[0, 3]} owner=L3 flow={writers=AllKnown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Inside" constructor=f1 staticFields=[{key="held" variable=g0}]
+layout L1 kind=Instance name="Outside" constructor=f2 staticFields=[{key="held" variable=g1}]
+layout L2 kind=Instance name="Tag" constructor=f3 staticFields=[{key="held" variable=g2}]
+layout L3 kind=Instance name="Masked" constructor=f4 staticFields=[{key="held" variable=g3}]
+variable g0 module=m0 declared={type=i32} owner=L0
+variable g1 module=m0 declared={type=i32} owner=L1
+variable g2 module=m0 declared={type=1} owner=L2
+variable g3 module=m0 declared={type=int[1, 2]} owner=L3
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    PutModuleVariable v0 variable=g0
+    v4 = FinishClass v2 layout=L0
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    PutModuleVariable v0 variable=g1
+    v8 = FinishClass v6 layout=L1
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L2
+    PutModuleVariable v0 variable=g2
+    v12 = FinishClass v10 layout=L2
+    v13 = NewClosure function=f4
+    v14 = NewClass v13 layout=L3
+    PutModuleVariable v0 variable=g3
+    v16 = FinishClass v14 layout=L3
+    v17 = Integer integer=7
+    v18 = Integer integer=2147483648
+    v19 = NewClosure function=f5
+    v20 = Call v19, -, v4, v17
+    v21 = NewClosure function=f6
+    v22 = Call v21, -, v8, v18
+    v23 = NewClosure function=f7
+    v24 = Call v23, -, v12, v17
+    v25 = NewClosure function=f8
+    v26 = Builtin builtin=MathRandom
+    v27 = Call v26
+    v28 = ToNumber v27
+    v29 = Call v25, -, v16, v28
+    v30 = PropGet v4 key="held"
+    v31 = PropGet v8 key="held"
+    v32 = PropGet v12 key="held"
+    v33 = PropGet v16 key="held"
+    v34 = NewArray v30, v31, v32, v33 contents=anything holes=[]
+    Return v34
+}
+function f1 name="Inside" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Outside" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="Tag" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2 {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f4 name="Masked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3 {
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 fields=[]
+    Return v2
+}
+function f5 name="putInside" parameters=[{type=anything}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Check v1 castType=i32
+    PropSet v0, v2 key="held" mode=Strict
+    Return
+}
+function f6 name="putOutside" parameters=[{type=anything}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Check v1 castType=i32
+    PropSet v0, v2 key="held" mode=Strict
+    Return
+}
+function f7 name="putTag" parameters=[{type=anything}, {type=1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Check v1 castType=1
+    PropSet v0, v2 key="held" mode=Strict
+    Return
+}
+function f8 name="putMasked" parameters=[{type=anything}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = Check v1 castType=number
+    v3 = Integer integer=3
+    v4 = BitAnd v2, v3
+    v5 = Check v4 castType=int[1, 2]
+    PropSet v0, v5 key="held" mode=Strict
+    Return
+}

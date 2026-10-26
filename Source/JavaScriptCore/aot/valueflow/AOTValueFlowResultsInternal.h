@@ -119,6 +119,7 @@ struct ValueFlowVariablesOnObjects {
     BitVector deletedStaticFields;
     BitVector redefinedStaticFields;
     BitVector staticFieldsStoredOtherTypes;
+    BitVector staticFieldsStoredIntegersBehindChecks;
     BitVector staticFieldsStoredByBuiltins;
     BitVector classObjectsStoredUnderStaticFieldsAlone;
 };

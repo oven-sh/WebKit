@@ -164,7 +164,8 @@ struct ValueFlowAccessesThroughObjects {
         return !ValueSets::isComplement(held) && sets.size(held) <= inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
     }
 
-    bool storesValueInside(const ValueFlowStatement& statement, VariableID variable) const
+    // The type of a value behind a check holds only where the check passes, and the generic version stores the value all the same.
+    bool storesValueInside(const ValueFlowStatement& statement, VariableID variable)
     {
         const DeclaredType& declared = inputs.program.at(variable).declared;
         if (declared.flags.contains(PositionFlags::IsExpected) || inputs.program.at(declared.type).isAnything())
@@ -174,12 +175,23 @@ struct ValueFlowAccessesThroughObjects {
             return false;
         const Function& function = inputs.program.at(statement.function);
         const Type& type = inputs.program.at(declared.type);
-        bool storesIntegersInside = type.primitives & Primitive::Integer && inputs.program.typeOf(function, function.at(statement.site).operand(*index)).integers.isSubsetOf(type.integers);
+        ValueID stored = function.at(statement.site).operand(*index);
+        const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(statement.function);
+        bool isBehindCheck = !valuesBehindChecks || valuesBehindChecks->get(stored.index());
+        bool takesStoredIntegers = type.primitives & Primitive::Integer && (isBehindCheck || inputs.program.typeOf(function, stored).integers.isSubsetOf(type.integers));
         bool isInside = true;
+        bool storesIntegersOfSomeRange = false;
         ValueFlowMembers members = forEachMemberOf(inputs, inputs.bodies().operandsOf(statement)[*index], [&](ValueFlowObjectID member) {
-            isInside &= sets.contains(valuesInsideType[variable.index()], member) || (storesIntegersInside && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer));
+            if (sets.contains(valuesInsideType[variable.index()], member))
+                return;
+            storesIntegersOfSomeRange |= member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
+            isInside &= takesStoredIntegers && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
         });
-        return isInside && members == ValueFlowMembers::Listed;
+        if (!isInside || members != ValueFlowMembers::Listed)
+            return false;
+        if (storesIntegersOfSomeRange && isBehindCheck)
+            setFlag(isStoredIntegersBehindChecks, variable.index());
+        return true;
     }
 
     void noteStore(const ValueFlowStatement* statement, ValueSetID storedThrough, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
@@ -380,7 +392,7 @@ struct ValueFlowAccessesThroughObjects {
     {
         const Program& program = inputs.program;
         results.namespaceUses.fill(NamespaceUse::Unknown, program.modules.size());
-        for (BitVector* ofVariables : { &results.staticFieldsInUnknownHands, &results.staticFieldsOfEscapedClassObjects, &results.deletedStaticFields, &results.redefinedStaticFields, &results.staticFieldsStoredOtherTypes, &results.staticFieldsStoredByBuiltins })
+        for (BitVector* ofVariables : { &results.staticFieldsInUnknownHands, &results.staticFieldsOfEscapedClassObjects, &results.deletedStaticFields, &results.redefinedStaticFields, &results.staticFieldsStoredOtherTypes, &results.staticFieldsStoredIntegersBehindChecks, &results.staticFieldsStoredByBuiltins })
             ofVariables->ensureSize(program.variables.size());
         results.classObjectsStoredUnderStaticFieldsAlone.ensureSize(program.layouts.size());
 
@@ -397,6 +409,7 @@ struct ValueFlowAccessesThroughObjects {
         lookupReachesFollowedObject.fill(0, solver.numberOfStatements() - solver.input().statements.size());
         isNamespaceReadUnderUnknownName.fill(0, program.modules.size());
         isStoredOtherType.fill(0, program.variables.size());
+        isStoredIntegersBehindChecks.fill(0, program.variables.size());
         isStoredByBuiltin.fill(0, program.variables.size());
         isClassObjectStoredUnderOtherName.fill(0, program.functions.size());
         valuesInsideType.fill(ValueSets::nothing, program.variables.size());
@@ -434,6 +447,7 @@ struct ValueFlowAccessesThroughObjects {
     Vector<uint8_t> lookupReachesFollowedObject;
     Vector<uint8_t> isNamespaceReadUnderUnknownName;
     Vector<uint8_t> isStoredOtherType;
+    Vector<uint8_t> isStoredIntegersBehindChecks;
     Vector<uint8_t> isStoredByBuiltin;
     Vector<uint8_t> isClassObjectStoredUnderOtherName;
     Vector<ValueSetID> valuesInsideType;
@@ -461,6 +475,7 @@ ValueFlowVariablesOnObjects computeVariablesOnObjects(const ValueFlowResultInput
     });
     for (uint32_t index = 0; index < inputs.program.variables.size(); ++index) {
         results.staticFieldsStoredOtherTypes.quickSet(index, collected.isStoredOtherType[index]);
+        results.staticFieldsStoredIntegersBehindChecks.quickSet(index, collected.isStoredIntegersBehindChecks[index]);
         results.staticFieldsStoredByBuiltins.quickSet(index, collected.isStoredByBuiltin[index]);
     }
     for (ValueFlowObjectID object : collected.objects) {
