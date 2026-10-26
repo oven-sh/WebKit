@@ -2157,13 +2157,17 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
     }
 #endif
 
+#if ASSERT_ENABLED
+    bool hadProperty = isValidOffset(structure()->get(vm, propertyName));
+#endif
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
     // (Refused, for an object with immutable properties: nothing was put, so there is nothing to record on the Structure.)
     if (!result) [[unlikely]]
         return false;
 
-    ASSERT(slot.type() == PutPropertySlot::NewProperty);
+    // The slot says nothing about an addition that no cache may keep (setStructureForAddedProperty()).
+    ASSERT(!hadProperty);
 
     Structure* structure = this->structure();
     if (attributes & PropertyAttribute::ReadOnly)

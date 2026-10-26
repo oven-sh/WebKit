@@ -712,12 +712,23 @@ struct ShortLoop {
 
 } // anonymous namespace
 
+// The header takes the counter as a parameter and ends by comparing it with a constant.
+static bool mayBeHeaderOfShortLoop(const Program& program, const Function& function, const Block& block)
+{
+    if (block.parameters.isEmpty() || !block.terminator.isConditionalBranch())
+        return false;
+    const Value& comparison = function.at(block.terminator.conditionOperand());
+    return relationalOperators.contains(comparison.opcode) && (integerConstantThroughCasts(program, function, comparison.operand(0)) || integerConstantThroughCasts(program, function, comparison.operand(1)));
+}
+
 static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
+    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop))
+        return std::nullopt;
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
-    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop) || !isHotLoop(context, loop))
+    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
         return std::nullopt;
 
     ShortLoop found { loop.header(), *numberOfTurns, { }, { }, { } };
@@ -770,6 +781,11 @@ static void unroll(FunctionPassContext& context, const ShortLoop& loop)
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
+    bool mayHaveShortLoop = std::ranges::any_of(context.function.blocks, [&](const Block& block) {
+        return mayBeHeaderOfShortLoop(context.program, context.function, block);
+    });
+    if (!mayHaveShortLoop)
+        return outcome;
     for (uint64_t unrolled = 0; unrolled < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++unrolled) {
         std::optional<ShortLoop> found;
         NaturalLoops& loops = context.analyses.naturalLoops();

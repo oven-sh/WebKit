@@ -1115,6 +1115,7 @@ void JSGlobalObject::init(VM& vm)
 
     m_debugger = nullptr;
     updateCanFastQueueMicrotask();
+    ++vm.m_numberOfRealmsInitialized;
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode())

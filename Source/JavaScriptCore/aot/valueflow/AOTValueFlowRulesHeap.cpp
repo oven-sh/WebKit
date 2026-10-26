@@ -121,6 +121,8 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers); holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
         readExportsOfListedHolders(object, receivers);
+        if ((holdsNamedBun(object) || holdsMarkOfLoadedBun(object.node)) && m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node))
+            add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
         // A read that a built-in makes for its caller, such as Reflect.get(), has no site.
@@ -351,8 +353,9 @@ void HeapRule::markDefinition(ClimbingSet receivers, const HeapKey& key, HeapPro
 
     bool redefines = part != HeapPropertyPart::Value || m_context.meet(receivers, m_universe.placeholdersAlone()) || mayHave(HeapPropertyPart::Getter) || mayHave(HeapPropertyPart::Setter);
     markStore(receivers, key);
-    if (redefines)
-        markRedefinition(receivers, key);
+    // A namespace has its exports from the start: what is defined on one is there already.
+    if (ClimbingSet redefined = redefines ? receivers : m_context.restrict(receivers, m_universe.namespaces()); redefines || holdsAnything(redefined))
+        markRedefinition(redefined, key);
 }
 
 void HeapRule::markRedefinition(ClimbingSet receivers, const HeapKey& key)

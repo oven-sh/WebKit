@@ -26,6 +26,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
@@ -656,6 +657,32 @@ void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSVa
         modulesOf(promise->realm())->resolveWithNamespace(promise, ModuleID(static_cast<uint32_t>(module.asInt32())));
 }
 
+// The jobs, one behind the other, in which the loader of `bun run` hands on the namespace object of a module that it has evaluated.
+static constexpr InternalMicrotask jobsOfImportOfEvaluatedModule[] = {
+    InternalMicrotask::ModuleLoadTopSettled,
+    InternalMicrotask::DynamicImportLoadSettled,
+    InternalMicrotask::DynamicImportEvaluateSettled,
+    InternalMicrotask::ModuleLoadCombinedStateSettled,
+    InternalMicrotask::PromiseFulfillWithoutHandlerJob,
+    InternalMicrotask::ModuleLoadTopRejected,
+    InternalMicrotask::ImportModuleNamespace,
+};
+
+static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft)
+{
+    JSGlobalObject* realm = importPromise->realm();
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, jsUndefined());
+}
+
+void runCompiledModuleImportStep(JSValue importPromise, JSValue module, uint8_t stepsLeft)
+{
+    auto* promise = uncheckedDowncast<JSPromise>(importPromise);
+    if (--stepsLeft)
+        queueStepOfImport(promise, module, stepsLeft);
+    else
+        modulesOf(promise->realm())->finishImportOfEvaluatedModule(promise, ModuleID(static_cast<uint32_t>(module.asInt32())));
+}
+
 std::optional<int64_t> Modules::asyncEvaluationOrder(ModuleID module) const
 {
     ModuleRecord* record = recordIfExists(module);
@@ -684,6 +711,13 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
 
     if (isImportedByLoader(module)) {
         VM& vm = *m_instance.vm;
+        if (loaderOnlyHandsOverNamespace(module)) {
+            JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
+            if (promise->isThenFastAndNonObservable()) [[likely]] {
+                queueStepOfImport(promise, jsNumber(module.index()), std::size(jobsOfImportOfEvaluatedModule));
+                return promise;
+            }
+        }
         // `bun run` has loaded a module with the graph that first came to it, and its loader knows the module from then on.
         if (data(module).kind == ModuleKind::SourceText && !isNotLoaded(module)) {
             ModuleRecord* record = registerWithLoader(module);
@@ -722,13 +756,50 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     return importPromise;
 }
 
+// The steps of the loader find nothing to load, to link or to run, and no other load meets them: the module has no step of its own left that a synchronous load could take over.
+bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
+{
+    if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->m_synchronousModuleQueue || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
+        return false;
+    // An import() of a module of a cycle settles as the evaluation of the root of the cycle does, which may wait or have failed behind an await when the module itself has run.
+    if (data(module).isSynchronous())
+        return true;
+    ModuleRecord* record = recordIfExists(module);
+    CyclicModuleRecord* root = record ? record->cycleRoot() : nullptr;
+    return root && root->status() == CyclicModuleRecord::Status::Evaluated && !root->evaluationError();
+}
+
+// The last step of the loader resolves its own promise, and the promise of the program follows that one.
+void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    JSPromise* loaded = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
+    loaded->markAsHandled();
+    resolveWithNamespace(loaded, module);
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, importPromise, jsUndefined());
+}
+
 // A load asks for the walk of its root when it begins and when it links.
 std::unique_ptr<ModuleLinkWalk> Modules::takeLinkWalk(ModuleID root)
 {
-    std::unique_ptr<ModuleLinkWalk> walk = std::exchange(m_linkWalkOfQueuedImport, nullptr);
-    if (!walk || walk->root() != root || !walk->stillHolds(*this))
+    std::unique_ptr<ModuleLinkWalk> walk;
+    size_t index = m_linkWalksOfLoads.findIf([&](const std::unique_ptr<ModuleLinkWalk>& kept) { return kept->root() == root; });
+    if (index != notFound) {
+        walk = WTF::move(m_linkWalksOfLoads[index]);
+        m_linkWalksOfLoads.removeAt(index);
+    }
+    if (!walk || !walk->stillHolds(*this))
         walk = makeUnique<ModuleLinkWalk>(*this, root);
     return walk;
+}
+
+// Several graphs are loaded at a time. A load that fails before it links leaves its walk behind.
+void Modules::keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&& walk)
+{
+    AOT_THRESHOLD(size_t, maxWalksKept, 8);
+    if (m_linkWalksOfLoads.size() == maxWalksKept)
+        m_linkWalksOfLoads.removeAt(0);
+    m_linkWalksOfLoads.append(WTF::move(walk));
 }
 
 void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
@@ -767,7 +838,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     if (didRunFile)
         m_importThatWaitsForQueuedJobs = importPromise;
     if (didRunModule || didRunFile) {
-        m_linkWalkOfQueuedImport = WTF::move(linkWalk);
+        keepLinkWalk(WTF::move(linkWalk));
         queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
         return;
     }
@@ -884,7 +955,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
         std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
         loadRuntimeModules(*linkWalk);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        m_linkWalkOfQueuedImport = WTF::move(linkWalk);
+        keepLinkWalk(WTF::move(linkWalk));
     }
     ModuleRecord* record = ensureRecord(module);
     record->retain();

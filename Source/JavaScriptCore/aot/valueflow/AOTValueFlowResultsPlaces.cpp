@@ -29,7 +29,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static Witness witnessAt(const Function& function, FunctionID id, ValueID value)
 {
-    return { id.index(), value.index(), function.locationOf(value) };
+    return { id.index(), value.index(), function.writtenLocationOf(value) };
 }
 
 static void keepEarlierPlace(Witness& current, const Witness& candidate)

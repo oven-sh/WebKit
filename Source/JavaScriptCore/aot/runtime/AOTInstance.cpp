@@ -328,10 +328,24 @@ static void* loopPollPage(Instance* instance)
 }
 #endif
 
+void makeCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
+{
+    StackManager::Mirror& limit = instance.callsByValue.limit.get();
+    if (!limit.isOnList())
+        return;
+    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime;
+    // No change of the limit of the stack reaches the word any more.
+    instance.vm->traps().unregisterMirror(limit);
+    *std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(&limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()) = std::numeric_limits<uintptr_t>::max();
+}
+
 static void registerStackMirror(Instance* instance, VM& vm)
 {
     vm.traps().registerMirror(instance->stackMirror.get());
     vm.traps().registerMirror(instance->jsonLevels.limit.get());
+    vm.traps().registerMirror(instance->callsByValue.limit.get());
+    if (FunctionTables* tables = vm.aotState().functionTables.get(); tables && tables->recordsCalleesOfCallsByValue())
+        makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
 #if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     Locker locker { loopPollPages.lock };
@@ -351,6 +365,8 @@ static void unregisterStackMirror(Instance* instance, VM& vm)
         loopPollPages.pages.removeFirst(loopPollPage(instance));
     }
 #endif
+    if (instance->callsByValue.limit.get().isOnList())
+        vm.traps().unregisterMirror(instance->callsByValue.limit.get());
     vm.traps().unregisterMirror(instance->jsonLevels.limit.get());
     vm.traps().unregisterMirror(instance->stackMirror.get());
 }

@@ -663,6 +663,8 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
             return Kind::BoxedOptionalInt32;
         if (from == SlotRepresentation::Int32 && to == SlotRepresentation::JSValue)
             return Kind::BoxedInt32;
+        if (from == SlotRepresentation::Int32 && to == SlotRepresentation::OptionalInt32)
+            return Kind::Int32AsOptionalInt32;
         if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::OptionalDouble)
             return Kind::OptionalInt32AsDouble;
         if (from == SlotRepresentation::Int32 && isDouble(to))
@@ -723,10 +725,8 @@ static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& t
         return false;
     if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
         return false;
-    // Where nobody lists the keys, the order word does not say that the cell holds no field.
-    bool cellMayHoldFields = target.layout().keysAreNeverEnumerated;
     for (const MappedCopy::Move& move : copy.moves) {
-        if (move.kind == MappedCopy::MoveKind::OtherForm || move.kind == MappedCopy::MoveKind::Tested || (cellMayHoldFields && !move.writesExtension))
+        if (move.kind == MappedCopy::MoveKind::OtherForm || move.kind == MappedCopy::MoveKind::Tested)
             return false;
     }
     if (copy.granuleBitsOfSource) {

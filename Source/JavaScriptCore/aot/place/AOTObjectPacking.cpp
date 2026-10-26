@@ -316,6 +316,7 @@ private:
     bool tryMoveOutOfLine(LayoutID, SlotRow, RowsOutOfLine&);
     bool mayExistWithoutStorage(LayoutID, SlotRow) const;
     void moveOutOfLine(LayoutID, SlotRow);
+    bool hasRoomForRowsThatCopiesFill(LayoutID) const;
     void chooseOutOfLineRows(LayoutID, RowsOutOfLine&);
     void claimExtensionWord(LayoutID);
     uint32_t bytesInCell(LayoutID) const;
@@ -581,6 +582,35 @@ void ObjectPacker::moveOutOfLine(LayoutID id, SlotRow row)
     slot.isFilledByConstructor = m_uses.rows[row].storesOfConstructorWithValue;
 }
 
+// The word for an Extension takes the room of a field or two: what a copy fills now and then stays in a cell that is no larger for it. The rows of a family lie where all its members have room.
+bool ObjectPacker::hasRoomForRowsThatCopiesFill(LayoutID id) const
+{
+    if (m_context.inheritedRows.isInFamily(id))
+        return false;
+    uint32_t hiddenWordWidth = widthOf(hiddenReferenceRepresentation(m_context.usesWideReferences));
+    uint32_t everything = offsetOfFirstField;
+    uint32_t required = offsetOfFirstField + hiddenWordWidth;
+    bool hasSuchRow = false;
+    bool hasRowsOutOfLine = false;
+    for (SlotRow row : rowsOf(m_context.rows, id)) {
+        const SlotClaim& claim = m_claims[row];
+        if (!claim.hasStorage)
+            continue;
+        if (claim.mayBeOutOfLine && !hasVisibleStore(id, row)) {
+            if (!m_uses.rows[row].isFilledBySomeCopy) {
+                hasRowsOutOfLine = true;
+                continue;
+            }
+            hasSuchRow = true;
+        }
+        uint32_t width = widthOf(claim.representation);
+        everything += width;
+        if (!claim.mayBeOutOfLine)
+            required += width;
+    }
+    return hasSuchRow && cellSizeFor(everything + (hasRowsOutOfLine ? hiddenWordWidth : 0)) <= cellSizeFor(required);
+}
+
 void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
 {
     uint32_t hiddenWordWidth = widthOf(hiddenReferenceRepresentation(m_context.usesWideReferences));
@@ -589,6 +619,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
     uint32_t bytesSetAtCreation = 0;
     bool hasRowsOutOfLine = false;
     Vector<SlotRow, 16> optionalRows;
+    bool keepsRowsThatCopiesFill = hasRoomForRowsThatCopiesFill(id);
     for (SlotRow row : rowsOf(m_context.rows, id)) {
         const SlotClaim& claim = m_claims[row];
         if (!claim.hasStorage)
@@ -600,7 +631,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
                 continue;
             }
             width = m_packed.slots[row].width();
-        } else if (claim.mayBeOutOfLine && !hasVisibleStore(id, row) && tryMoveOutOfLine(id, row, outOfLine)) {
+        } else if (claim.mayBeOutOfLine && !hasVisibleStore(id, row) && !(keepsRowsThatCopiesFill && m_uses.rows[row].isFilledBySomeCopy) && tryMoveOutOfLine(id, row, outOfLine)) {
             hasRowsOutOfLine = true;
             continue;
         } else if (claim.mayBeOutOfLine && m_rowsWithHeirs.quickGet(row) && isOnlyDeclaredByMakers(row) && tryMoveOutOfLine(id, row, outOfLine)) {

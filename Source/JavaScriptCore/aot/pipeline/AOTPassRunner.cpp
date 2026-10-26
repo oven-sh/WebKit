@@ -44,6 +44,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -207,6 +208,56 @@ static size_t findFixpointEnd(std::span<const ScheduleStep> steps, size_t begin)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+auto PassRunner::stepsInsideStepsOf(FunctionSchedule schedule) -> std::span<const StepsInside>
+{
+    using Table = std::array<Vector<StepsInside>, numberOfFunctionSchedules>;
+    static const NeverDestroyed<Table> table = [] {
+        Table result;
+        auto fill = [&](auto& fill, FunctionSchedule filled) -> void {
+            Vector<StepsInside>& rows = result[static_cast<unsigned>(filled)];
+            std::span<const ScheduleStep> steps = stepsOf(filled);
+            if (rows.size() == steps.size())
+                return;
+            rows.fill(StepsInside { }, steps.size());
+            // From the last step to the first: a fixpoint finds the rows of the steps that it holds.
+            for (size_t index = steps.size(); index--;) {
+                StepsInside& row = rows[index];
+                switch (steps[index].kind) {
+                case ScheduleStep::Kind::RunPass:
+                    row.passes.set(static_cast<unsigned>(steps[index].pass));
+                    row.mayBeLeftOutAtRest = !steps[index].isBehindRounds;
+                    break;
+                case ScheduleStep::Kind::RunSchedule: {
+                    fill(fill, steps[index].schedule);
+                    std::span<const StepsInside> included = result[static_cast<unsigned>(steps[index].schedule)].span();
+                    row.mayBeLeftOutAtRest = true;
+                    for (const StepsInside& inside : included.first(included.size() - !steps[index].compacts)) {
+                        row.passes.merge(inside.passes);
+                        row.mayBeLeftOutAtRest &= inside.mayBeLeftOutAtRest;
+                    }
+                    break;
+                }
+                case ScheduleStep::Kind::BeginFixpoint:
+                    row.numberOfStepsToEnd = findFixpointEnd(steps, index) - index;
+                    row.mayBeLeftOutAtRest = true;
+                    for (size_t inside = index + 1; inside < index + row.numberOfStepsToEnd; ++inside) {
+                        row.passes.merge(rows[inside].passes);
+                        row.mayBeLeftOutAtRest &= rows[inside].mayBeLeftOutAtRest;
+                    }
+                    break;
+                case ScheduleStep::Kind::EndFixpoint:
+                    row.mayBeLeftOutAtRest = true;
+                    break;
+                }
+            }
+        };
+        for (unsigned schedule = 0; schedule < numberOfFunctionSchedules; ++schedule)
+            fill(fill, static_cast<FunctionSchedule>(schedule));
+        return result;
+    }();
+    return table.get()[static_cast<unsigned>(schedule)].span();
+}
+
 static void invalidateAnalyses(FunctionAnalyses& analyses, InvalidatedAnalyses invalidated, AnalysisSet kept)
 {
     // What the cache of effects answers within a round depends on who has asked before, so no round outlives a run that has changed the function.
@@ -283,6 +334,11 @@ PassRunner::PassRunner(BuildContext& build, std::optional<PassID> stopAfter)
     , m_stopAfter(stopAfter)
     , m_isStopped(build.diagnostics().hasErrors())
 {
+    m_everyFixpointMayTakeRound = true;
+    for (unsigned schedule = 0; schedule < numberOfFunctionSchedules; ++schedule) {
+        for (const ScheduleStep& step : stepsOf(static_cast<FunctionSchedule>(schedule)))
+            m_everyFixpointMayTakeRound &= step.kind != ScheduleStep::Kind::BeginFixpoint || build.limit(step.limit);
+    }
 }
 
 PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context) const
@@ -345,7 +401,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
         RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
         run.setContents(*contents, function);
     }
-    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function))) {
+    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function, context.changes))) {
         run.contents = std::nullopt;
         ++run.numberOfChanges;
     }
@@ -353,7 +409,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     const bool entersTyped = program.form() == IRForm::Prepared && function.hasBody() && function.valuesAreTypedAsDefined();
     if (entersTyped)
         context.pendingTyping.didEnterScheduleTyped(context.changes);
-    runSteps(stepsOf(schedule), context, run, WhatFollows::Nothing);
+    runSteps(stepsOf(schedule), stepsInsideStepsOf(schedule), context, run, WhatFollows::Nothing);
     // The one schedule that does not end by typing what it has changed.
     if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
         runFunctionPass(PassID::RetypeValues, context, run);
@@ -445,7 +501,6 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::GuardTaintedPositions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::ElemGet, Opcode::PropHas } },
-    { PassID::InsertObjectCoercibleChecks, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::CallDirect, Opcode::Construct, Opcode::PropHas, Opcode::RequireObjectCoercible } },
     { PassID::RemoveUnusedParameters, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add } },
     { PassID::SimplifyCasts, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::RequireObject, Opcode::RequireObjectCoercible } },
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
@@ -712,30 +767,32 @@ static uint32_t numberOfRunsThatTimedRunStandsFor(FunctionID function, size_t nu
 
 PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
-    const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
+    const bool verifies = m_build.options().verifiesAfterEveryPass;
 
-    RELEASE_ASSERT(descriptor.scope == PassScope::Function);
     context.changes.settle();
-    const bool reachedFixpoint = std::exchange(run.reachedFixpoint[index], false);
+    const bool reachedFixpoint = run.reachedFixpoint.get(index);
+    run.reachedFixpoint.clear(index);
     if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
         if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
             // Leave the same state behind as the idle run that this skips.
             ++run.numberOfSkippedRuns;
             run.numberOfValuesWalked += context.function.values.size();
             const bool waits = run.passesThatWait.get(index);
-            if (!waits)
-                verifySkippedFunctionPass(descriptor, context, run);
+            if (verifies && !waits) [[unlikely]]
+                verifySkippedFunctionPass(descriptorOf(id), context, run);
             run.didLookAtFunction(id);
             if (waits)
                 run.passesThatWait.set(index);
         } else if (run.passesBehindChange.get(index)) {
             ++run.numberOfSkippedRuns;
-            if (!run.passesThatWait.get(index))
-                verifySkippedFunctionPass(descriptor, context, run);
+            if (verifies && !run.passesThatWait.get(index)) [[unlikely]]
+                verifySkippedFunctionPass(descriptorOf(id), context, run);
         }
         return PassOutcome::Unchanged;
     }
+    const PassDescriptor& descriptor = descriptorOf(id);
+    RELEASE_ASSERT(descriptor.scope == PassScope::Function);
     if (descriptor.necessity == PassNecessity::Optional && !m_build.isEnabled(id, run.functionAsRead))
         return PassOutcome::Unchanged;
     if (run.optionalPassesOfShortSchedule && descriptor.necessity == PassNecessity::Optional && !run.optionalPassesOfShortSchedule->contains(id))
@@ -743,13 +800,14 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     checkFormAndInputs(descriptor, context.program);
     RELEASE_ASSERT(!descriptor.derivesFunctions || context.inputs.derivedFunctions);
 
-    if (hasTriggers(id) && !run.mayFire(id, context.function)) {
+    if (hasTriggers(id) && !run.mayFire(id, context.function, context.changes)) {
         // All that later runs go by is as it is behind a run that has found nothing to do.
         if (run.notes) [[unlikely]]
             ++run.notes->runsWithoutTrigger[index];
         run.numberOfValuesWalked += context.function.values.size();
-        verifySkippedFunctionPass(descriptor, context, run);
-        run.passesThatRan.add(id);
+        if (verifies) [[unlikely]]
+            verifySkippedFunctionPass(descriptor, context, run);
+        run.didRun(id);
         run.didLookAtFunction(id);
         stopBehind(id, run);
         return PassOutcome::Unchanged;
@@ -845,19 +903,19 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         m_functionPassTotals[index].valuesAdded.fetch_add(static_cast<int64_t>(context.function.values.size()) - static_cast<int64_t>(numberOfValuesBefore), std::memory_order_relaxed);
     }
 
-    run.passesThatRan.add(id);
+    run.didRun(id);
     run.didLookAtFunction(id);
-    run.reachedFixpoint[index] = outcome == PassOutcome::Changed && context.reachedFixpoint;
+    run.reachedFixpoint.set(index, outcome == PassOutcome::Changed && context.reachedFixpoint);
     if (outcome == PassOutcome::Changed) {
         invalidateAnalyses(context.analyses, descriptor.invalidatedAnalyses, context.keptAnalyses);
         if (run.notes && !context.keptAnalyses.isEmpty()) [[unlikely]]
             ++run.notes->runsThatKeptAnalyses[index];
         run.contents = std::nullopt;
         run.didChange(id, context.passesLeftIdle, context.passesThatCanWait);
-        if (run.reachedFixpoint[index])
+        if (run.reachedFixpoint.get(index))
             run.didLookAtFunction(id);
         const bool mayLeaveCodeBehindNeverValues = !passesThatLeaveNoCodeBehindNeverValues.contains(id);
-        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && (mayLeaveCodeBehindNeverValues || m_build.options().verifiesAfterEveryPass) && cutCodeBehindNeverValues(context, run.contentsOf(context.function))) {
+        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && (mayLeaveCodeBehindNeverValues || m_build.options().verifiesAfterEveryPass) && cutCodeBehindNeverValues(context, run.contentsOf(context.function, context.changes))) {
             RELEASE_ASSERT(mayLeaveCodeBehindNeverValues);
             run.contents = std::nullopt;
             run.didChange(PassID::None);
@@ -977,8 +1035,11 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
     run.isStopped = true;
 }
 
-void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
+void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const StepsInside> stepsInside, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
 {
+    auto doNothing = [&](const StepsInside& inside) {
+        return m_everyFixpointMayTakeRound && inside.mayBeLeftOutAtRest && run.areAtRest(inside.passes);
+    };
     for (size_t index = 0; index < steps.size() && !run.isStopped; ++index) {
         const ScheduleStep& step = steps[index];
         WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
@@ -997,14 +1058,16 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
             context.isBehindRounds = false;
             break;
         case ScheduleStep::Kind::RunSchedule: {
+            if (doNothing(stepsInside[index]))
+                break;
             std::span<const ScheduleStep> included = stepsOf(step.schedule);
             if (!step.compacts)
                 included = included.first(included.size() - 1);
-            runSteps(included, context, run, whatFollowsStep);
+            runSteps(included, stepsInsideStepsOf(step.schedule).first(included.size()), context, run, whatFollowsStep);
             break;
         }
         case ScheduleStep::Kind::BeginFixpoint: {
-            size_t end = findFixpointEnd(steps, index);
+            size_t end = index + stepsInside[index].numberOfStepsToEnd;
             std::span<const ScheduleStep> body = steps.subspan(index + 1, end - index - 1);
             const uint64_t maxRounds = m_build.limit(step.limit);
             bool wasInRounds = std::exchange(context.isInRounds, true);
@@ -1020,8 +1083,10 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
                         m_build.gaveUp(LimitID::MaxOptimizationWork, context.subject());
                     break;
                 }
+                if (doNothing(stepsInside[index]))
+                    break;
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
-                runSteps(body, context, run);
+                runSteps(body, stepsInside.subspan(index + 1, end - index - 1), context, run);
                 if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
                     break;
             }

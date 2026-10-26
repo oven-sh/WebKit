@@ -70,6 +70,12 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
     }
     case Kind::BoxedInt32:
         return storeAlways(static_cast<uint64_t>(JSValue::encode(jsNumber(load(int32_t())))));
+    case Kind::Int32AsOptionalInt32: {
+        int32_t integer = load(int32_t());
+        if (integer < minInlineInt32) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(static_cast<uint32_t>(integer));
+    }
     case Kind::Int32AsDouble:
         return storeAlways(std::bit_cast<uint64_t>(static_cast<double>(load(int32_t()))));
     case Kind::WideNarrowReference: {

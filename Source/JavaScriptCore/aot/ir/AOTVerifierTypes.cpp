@@ -246,7 +246,8 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
     auto hasKind = [&] {
         switch (kind) {
         case OperandKind::Any:
-            return type.isJavaScriptValue();
+            // A pass may ask an environment that may be absent whether it is there.
+            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()));
         case OperandKind::Boolean:
             return type.hasOnlyPrimitives(Primitive::Boolean);
         case OperandKind::Integer:

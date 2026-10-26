@@ -18,6 +18,7 @@ namespace AOT {
 
 void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder);
 void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status);
+void runCompiledModuleImportStep(JSValue importPromise, JSValue module, uint8_t stepsLeft);
 
 } // namespace AOT
 } // namespace JSC

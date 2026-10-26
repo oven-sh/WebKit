@@ -390,6 +390,8 @@ struct AccessorForms {
     }
 };
 
+inline constexpr uint64_t noCopyLeavingOutKeys = UINT64_MAX;
+
 struct StoresIntoObjects {
     StoresUnderKeys underKey;
     ValueSetID underUnknownKey { ValueSets::nothing };
@@ -398,6 +400,8 @@ struct StoresIntoObjects {
     bool getsAccessorUnderUnknownKey { false };
     bool getsCopiedProperties { false };
     bool getsCopyWithoutComputedKey { false };
+    // `const { secret, ...visible } = record`: the names that every copy into such an object leaves out.
+    std::optional<Vector<PropertyKeyID, 2>> keysLeftOutOfEveryCopy;
     ValueSetID valueFromOperationsUnderUnknownKey { ValueSets::nothing };
     bool isGivenValueByOperationUnderUnknownKey { false };
     ValueSetID gettersUnderUnknownKey { ValueSets::nothing };
@@ -487,12 +491,13 @@ private:
         bool isWrittenByCallOfBuiltin;
         bool definesValue;
         bool leavesOutComputedKey;
+        uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
         ValueSetID value;
         ValueFlowNumbers numbers;
 
         ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
-        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData }; }
+        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys }; }
         uint32_t hashOfGroup() const
         {
             uint64_t hash = (static_cast<uint64_t>(payload) << 32 | set) * 0x9e3779b97f4a7c15ull;

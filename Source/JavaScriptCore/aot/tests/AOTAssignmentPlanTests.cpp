@@ -621,6 +621,30 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
 }
 
+static void testIntegersMoveIntoSlotsThatMayHoldNone()
+{
+    MappedCopy::Move move { };
+    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, false);
+    AOT_TEST_CHECK(move.kind == MappedCopy::MoveKind::Int32AsOptionalInt32);
+    auto moves = [&](int32_t integer) {
+        uint64_t stored = 0;
+        bool isLeftToOtherWay = false;
+        bool didMove = tryMove(0, move, reinterpret_cast<const uint8_t*>(&integer), [&](auto bits) {
+            static_assert(sizeof(bits) <= sizeof(uint64_t));
+            stored = bits;
+        }, [&] {
+            isLeftToOtherWay = true;
+            return false;
+        });
+        AOT_TEST_CHECK(didMove != isLeftToOtherWay && (!didMove || stored == static_cast<uint32_t>(integer)));
+        return didMove;
+    };
+    for (int32_t integer : { minInlineInt32, -1, 0, 1, INT32_MAX })
+        AOT_TEST_CHECK(moves(integer));
+    for (int32_t integer : { INT32_MIN, absentInt32, minInlineInt32 - 1 })
+        AOT_TEST_CHECK(!moves(integer));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -644,6 +668,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
+        { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
     };
     return tests;
 }

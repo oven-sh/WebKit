@@ -21,6 +21,7 @@
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <functional>
@@ -93,6 +94,14 @@ struct SlotUseCreation {
     bool isInLoop { false };
 };
 
+// `{ ...defaults, ...given }`, `const { secret, ...visible } = record`.
+struct CopyIntoNewObject {
+    LayoutID target;
+    LayoutSetID sources;
+    std::span<const PropertyKeyID> excludedKeys;
+    double heat { 0 };
+};
+
 struct SlotUseFreshObject {
     LayoutID layout;
     FunctionID maker;
@@ -109,6 +118,7 @@ struct FunctionUses {
     Vector<FunctionID> functionsCalledByNameInLoops;
     Vector<std::pair<SlotRow, double>> fills;
     Vector<FillBesideCreation> fillsBesideCreation;
+    Vector<CopyIntoNewObject> copiesIntoNewObjects;
     Vector<SourceOfResult, 1> sourcesOfResult;
     Vector<SlotAccessUse> accesses;
     Vector<StoreByNameUse> storesByName;
@@ -607,6 +617,14 @@ private:
         }
     }
 
+    void scanCopy(BlockID block, const Value& copy)
+    {
+        const Value& target = m_function.at(rootOf(copy.targetOperand()));
+        if (target.opcode != Opcode::NewObject || !m_inputs.context.isCompiledObject(target.layout()))
+            return;
+        m_uses.copiesIntoNewObjects.append({ target.layout(), m_program.expectedOrTypeOf(m_function, copy.sourceOperand()).layouts, copy.excludedKeys(), m_weights.heatOf(block) });
+    }
+
     void scanAllocation(BlockID block, const Value& allocation)
     {
         LayoutID layout = allocation.layout();
@@ -674,6 +692,8 @@ private:
         }
         if (allocationOpcodes.contains(opcode))
             scanAllocation(block, value);
+        if (opcode == Opcode::CopyDataProperties)
+            scanCopy(block, value);
         if (opcode == Opcode::NewClosure && value.isLent())
             m_uses.functionsWithLentClosures.append(value.function());
         if (opcode == Opcode::CallDirect)
@@ -952,7 +972,78 @@ static bool isOptionalWhereDeclared(const Program& program, FieldReference refer
     return !fieldAt(program, reference).flags.contains(FieldFlags::IsRequired);
 }
 
-static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std::span<const StoreByNameUse> stores, std::span<const StoreOfUndefined> storesOfUndefined)
+// The run time fills a field of the new object as often as what it copies has a property of that name. Only a field that most of the new objects get counts: what a few of them get is no better known than before.
+static void distributeCopies(const SlotPlanContext& context, SlotUses& uses, std::span<const FunctionUses> functions)
+{
+    AOT_THRESHOLD(size_t, mostSourcesLookedAt, 8);
+    AOT_THRESHOLD(unsigned, mostRoundsOverCopies, 4);
+    const Program& program = context.program;
+    bool hasCopies = std::ranges::any_of(functions, [](const FunctionUses& function) {
+        return !function.copiesIntoNewObjects.isEmpty();
+    });
+    if (!hasCopies)
+        return;
+
+    for (const FunctionUses& function : functions) {
+        for (const CopyIntoNewObject& copy : function.copiesIntoNewObjects) {
+            for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(copy.target); ++field) {
+                PropertyKeyID key = program.at(copy.target).fields[field].key;
+                if (key && !std::ranges::contains(copy.excludedKeys, key))
+                    uses.rows[context.rows.rowOf(copy.target, field)].isFilledBySomeCopy = true;
+            }
+        }
+    }
+
+    // A source may itself be put together from copies.
+    BitVector rowsFilledByCopies(uses.rows.size());
+    Vector<double> heatOfCopies(uses.rows.size());
+    for (unsigned round = 0; round < mostRoundsOverCopies; ++round) {
+        heatOfCopies.fill(0.0);
+        for (const FunctionUses& function : functions) {
+            for (const CopyIntoNewObject& copy : function.copiesIntoNewObjects) {
+                if (!copy.sources || !program.at(copy.sources).isComplete || program.at(copy.sources).hasMembersWithoutLayout)
+                    continue;
+                std::span<const LayoutID> sources = program.at(copy.sources).members.span();
+                double made = 0;
+                for (LayoutID source : sources)
+                    made += uses.layouts[source.index()].creationHeat;
+                bool knowsSources = made && sources.size() <= mostSourcesLookedAt && std::ranges::all_of(sources, [&](LayoutID source) {
+                    return context.isCompiledObject(source);
+                });
+                if (!knowsSources)
+                    continue;
+                for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(copy.target); ++field) {
+                    PropertyKeyID key = program.at(copy.target).fields[field].key;
+                    if (!key || std::ranges::contains(copy.excludedKeys, key))
+                        continue;
+                    double filled = 0;
+                    for (LayoutID source : sources) {
+                        std::optional<uint32_t> fieldOfSource = program.at(source).findField(key);
+                        if (!fieldOfSource)
+                            continue;
+                        SlotRow rowOfSource = context.rows.rowOf(source, *fieldOfSource);
+                        double madeOfSource = uses.layouts[source.index()].creationHeat;
+                        filled += rowsFilledByCopies.quickGet(rowOfSource) ? madeOfSource : std::min(madeOfSource, uses.rows[rowOfSource].fillHeat);
+                    }
+                    heatOfCopies[context.rows.rowOf(copy.target, field)] += copy.heat * (filled / made);
+                }
+            }
+        }
+        bool hasChanged = false;
+        for (size_t row = 0; row < heatOfCopies.size(); ++row) {
+            if (heatOfCopies[row] && heatOfCopies[row] >= uses.rows[row].holderHeat * 0.4999)
+                hasChanged |= !rowsFilledByCopies.quickSet(row);
+        }
+        if (!hasChanged)
+            break;
+    }
+    for (size_t row : rowsFilledByCopies) {
+        uses.rows[row].fillHeat += heatOfCopies[row];
+        uses.rows[row].heatFilledBesideCreation += heatOfCopies[row];
+    }
+}
+
+static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std::span<const FunctionUses> functions, std::span<const StoreByNameUse> stores, std::span<const StoreOfUndefined> storesOfUndefined)
 {
     const Program& program = context.program;
     const ParallelLoops& loops = context.build.parallelLoops();
@@ -966,8 +1057,6 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
             SlotRowUse& use = rows[context.rows.rowOf(id, field)];
             use.holderHeat = uses.layouts[index].creationHeat;
             use.hasHoldersMadeInLoop = uses.layouts[index].isMadeInLoop;
-            if (use.heatFilledBesideCreation && use.heatFilledBesideCreation >= use.holderHeat * 0.4999 && use.heatFilledBesideCreation <= use.holderHeat * 2)
-                ++use.storesOfConstructorWithValue;
             OptionSet<FieldFlags> flags = layout.fields[field].flags;
             use.isRequiredByDeclaringType = layout.isDerived() && flags.contains(FieldFlags::IsRequired) && !flags.contains(FieldFlags::IsInherited);
             use.isOptionalInTypeOfThis = !flags.contains(FieldFlags::IsInherited) && isOptionalWhereDeclared(program, { id, field });
@@ -978,6 +1067,12 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
         distributeFillHeat(context, uses, store.key, store.receivers, store.heat);
     for (const SlotAccessUse& use : uses.accesses)
         distributeFillHeat(context, uses, use.access.key, use.access.receivers, use.fillHeat);
+    distributeCopies(context, uses, functions);
+    forEachIndexInParallel(loops, rows.size(), [&](unsigned row) {
+        SlotRowUse& use = rows[row];
+        if (use.heatFilledBesideCreation && use.heatFilledBesideCreation >= use.holderHeat * 0.4999 && use.heatFilledBesideCreation <= use.holderHeat * 2)
+            ++use.storesOfConstructorWithValue;
+    });
     forEachIndexInParallel(loops, storesOfUndefined.size(), [&](unsigned index) {
         const StoreOfUndefined& store = storesOfUndefined[index];
         context.forEachHolder(store.key, store.receivers, [&](LayoutID, SlotRow row) {
@@ -1044,7 +1139,7 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
         },
         [&] { addUpFillsBesideCreation(context, functions, uses); },
     });
-    distributeToRows(context, uses, stores.span(), storesOfUndefined.span());
+    distributeToRows(context, uses, functions, stores.span(), storesOfUndefined.span());
     context.build.destroyLater(WTF::move(usesOfFunctions));
     return uses;
 }

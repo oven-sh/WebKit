@@ -758,7 +758,7 @@ private:
         }
         AOT::sort(universe.m_modulesWithBodies);
 
-        universe.m_firstBuiltin = ValueFlowUniverse::markOfMemberLeftOut().index() + 1;
+        universe.m_firstBuiltin = ValueFlowUniverse::markOfLoadedBun().index() + 1;
         universe.m_firstModuleBuiltin = universe.m_firstBuiltin + m_program.builtins().builtinCount();
         universe.m_firstNamespace = universe.m_firstModuleBuiltin + universe.m_moduleBuiltins.size();
         universe.m_firstLayoutObject = universe.m_firstNamespace + m_program.modules.size();
@@ -1023,9 +1023,10 @@ private:
         universe.m_untrackedObjectAlone = maker.of(ValueFlowUniverse::untrackedObject());
         universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
         universe.m_objects = ValueSets::complement(universe.m_primitives);
-        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.of(ValueFlowUniverse::markOfMemberLeftOut())))));
+        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.unite(maker.of(ValueFlowUniverse::markOfMemberLeftOut()), maker.of(ValueFlowUniverse::markOfLoadedBun()))))));
         universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
         universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
+        universe.m_namespaces = rangeOf(universe.m_firstNamespace, universe.m_firstLayoutObject);
         universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
 
         Vector<ValueFlowObjectID> symbolKeys;
@@ -1478,6 +1479,28 @@ ValueFlowBodies::ValueFlowBodies() = default;
 ValueFlowBodies::ValueFlowBodies(ValueFlowBodies&&) = default;
 ValueFlowBodies& ValueFlowBodies::operator=(ValueFlowBodies&&) = default;
 ValueFlowBodies::~ValueFlowBodies() = default;
+
+void ValueFlowBodies::addBytesTo(ValueFlowBytesByTable& bytes) const
+{
+    bytes.add("bodies: statements"_s, m_statements.sizeInBytes());
+    bytes.add("bodies: operands"_s, m_operands.sizeInBytes());
+    bytes.addList("bodies: edges"_s, m_edges);
+    bytes.addList("bodies: edges once reached"_s, m_edgesOnceReached);
+    bytes.addList("bodies: masks"_s, m_masks);
+    auto addRest = [&](const auto&... lists) {
+        (bytes.addList("bodies: the rest"_s, lists), ...);
+    };
+    addRest(m_seedsOnceReached, m_functionsEnteredOnceReached, m_observedValues, m_comparedValues, m_valuesAliveForComparisonsOnly, m_notedOperations, m_knowsValuesBehindChecks, m_ranges);
+    addRest(m_nodes.m_firstFieldOfLayout, m_nodes.m_firstNodeOfFunction, m_nodes.m_firstResultOfFunction, m_nodes.m_thrownOfFunction, m_nodes.m_resultSummaries);
+    bytes.addList("bodies: values behind checks"_s, m_valuesBehindChecks);
+    for (const BitVector& values : m_valuesBehindChecks)
+        bytes.add("bodies: values behind checks"_s, values.size() > 63 ? values.size() / 8 : 0);
+    bytes.addList("universe: sites"_s, m_universe.m_sites);
+    auto addObjects = [&](const auto&... lists) {
+        (bytes.addList("universe: objects of sites, functions, layouts"_s, lists), ...);
+    };
+    addObjects(m_universe.m_firstSiteOfFunction, m_universe.m_objectOfSite, m_universe.m_siteOfObject, m_universe.m_functionOfSiteObject, m_universe.m_classOfCoroutineResult, m_universe.m_objectsOfLayout);
+}
 
 ValueFlowNotedOperations notedOperationsOf(const Function& function)
 {

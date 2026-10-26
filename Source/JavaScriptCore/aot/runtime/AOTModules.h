@@ -90,7 +90,7 @@ public:
 
     Instance& instance() { return m_instance; }
     const ModuleTable& table() const { return m_table; }
-    // Moves on when a link finishes and when the exports of a file are captured again: a walk made before may pass over what has work now.
+    // Moves on when the entry point is linked and when the exports of a file are captured again: a walk made before may pass over what has work now.
     unsigned linkEpoch() const { return m_linkEpoch; }
     // No link has anything left to do with the module.
     bool isSettledForLinks(ModuleID module) const { return (m_modulesSettledForLinks[module.index() / 64] >> (module.index() % 64) & 1) || checkIsSettledForLinks(module); }
@@ -184,6 +184,8 @@ public:
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     bool isNotLoaded(ModuleID);
+    // An ES module of the program whose status stands in the table and says that it is linked, at the least.
+    bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
     bool wasLoadedWithGraphBeingEvaluated(ModuleID);
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
@@ -209,6 +211,7 @@ public:
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
+    void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID);
 
     ModuleRecord* exposeRecord(ModuleID);
     AbstractModuleRecord* uncompiledRecord(ModuleID);
@@ -329,6 +332,7 @@ private:
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
+    bool loaderOnlyHandsOverNamespace(ModuleID) const;
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
     ModuleRecord* registerWithLoader(ModuleID);
     const Identifier& resolvedKey(ModuleID);
@@ -344,7 +348,8 @@ private:
     mutable ModuleID m_moduleOfLoadedFoundLast;
     RememberedSlotSet m_storedReferences;
     std::unique_ptr<ModuleLinkWalk> takeLinkWalk(ModuleID root);
-    std::unique_ptr<ModuleLinkWalk> m_linkWalkOfQueuedImport;
+    void keepLinkWalk(std::unique_ptr<ModuleLinkWalk>&&);
+    Vector<std::unique_ptr<ModuleLinkWalk>, 2> m_linkWalksOfLoads;
     bool checkIsSettledForLinks(ModuleID) const;
     unsigned m_linkEpoch { 0 };
     mutable Vector<uint64_t> m_modulesSettledForLinks;
@@ -455,6 +460,15 @@ ALWAYS_INLINE auto Modules::loadedIfExists(ModuleID module) const -> LoadedModul
         m_moduleOfLoadedFoundLast = module;
     }
     return loaded;
+}
+
+ALWAYS_INLINE bool Modules::isLoadedModuleWithoutRecord(ModuleID module) const
+{
+    StoredModuleStatus stored = storedStatus(module);
+    if (stored == StoredModuleStatus::Unlinked || stored == StoredModuleStatus::InRecord)
+        return false;
+    const ModuleData& moduleData = data(module);
+    return moduleData.kind == ModuleKind::SourceText && !moduleData.isOfLibrary() && !moduleData.isFaceOfFile();
 }
 
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const

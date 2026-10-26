@@ -244,7 +244,7 @@ void BodyDecoder::decodeValue(Block& block)
         return;
 
     auto head = nextRecord<Wire::ValueHead>();
-    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~Wire::WrittenPositionFollows);
+    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~(Wire::WrittenPositionFollows | Wire::StandsInTailPosition));
     adoptCheckerFailure();
     if (opcode == Opcode::Parameter)
         fail(InternalErrorKind::EngineOnlyOnWire);
@@ -253,6 +253,7 @@ void BodyDecoder::decodeValue(Block& block)
 
     Value& value = appendValue(id, opcode);
     value.position = head.position;
+    value.isTailCall = !!(head.opcode & Wire::StandsInTailPosition);
     if (uint16_t wireFlags = wireFlagsOf(opcode))
         value.flags = nextFlags(wireFlags, declaredFlagsOf(opcode));
     decodeFields(*this, value);

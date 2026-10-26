@@ -173,11 +173,12 @@ public:
 
     enum class Predecessors : bool { AreReleased, AreKept };
     void releaseSolvingState(Predecessors);
-    void removeFromEveryNode(ValueFlowObjectID lowMember);
+    void removeFromEveryNode(std::initializer_list<ValueFlowObjectID> lowMembers);
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
     void addBytesTo(ValueFlowBytesByTable&) const;
+    void giveBackMostRoomOfListsOfOneRound();
 
 private:
     class Team;
@@ -264,6 +265,7 @@ private:
         bool add(ValueFlowEdge);
         bool contains(ValueFlowEdge) const;
         void prefetch(ValueFlowEdge) const;
+        size_t bytesInUse() const { return m_size * sizeof(uint64_t); }
         size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
 
     private:
@@ -361,6 +363,7 @@ private:
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
     void giveBackLargeBuffers();
+    static void forEachListOfOneRound(auto& graph, NOESCAPE const auto& functor);
 
     ALWAYS_INLINE void willUse(uint32_t node) const
     {

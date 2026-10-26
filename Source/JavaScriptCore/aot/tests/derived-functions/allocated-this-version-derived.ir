@@ -94,7 +94,7 @@ function f7 name="BelowCached" kind=DerivedConstructor flags=[HasNewTarget, Take
 # CHECK-NEXT: Return [[relinkableUndefined]]
 # CHECK-NEXT: [[startsOver]]() frequency=Rare:
 # CHECK-NEXT: [[constructed]]:{{*}}= CallDirect [[relinkableCallee]], [[relinkableNewTarget]], [[relinkableX]] function=f4 [isConstruction]
-# CHECK-NEXT: Return [[constructed]]
+# CHECK-NEXT: ReturnCall [[constructed]] requirement=Allowed
 
 # CHECK: function [[unlinkedVersion]] name="Unlinked" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
 # CHECK-NOT: CallDirect

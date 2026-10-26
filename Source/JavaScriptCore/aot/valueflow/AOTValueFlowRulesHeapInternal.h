@@ -259,6 +259,7 @@ private:
     // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
     ClimbingSet findListedBun(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node) : ClimbingSet(); }
     bool holdsNamedBun(const ValueFlowOperand& object) { return object.node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), object.node); }
+    bool holdsMarkOfLoadedBun(ValueFlowNodeID node) { return node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfLoadedBun())), node); }
     ValueSetID allButBunUnlessNamed(const ValueFlowOperand& object) { return holdsNamedBun(object) ? ValueSets::anything : ValueSets::complement(only(m_universe.objectOf(Builtins::Bun))); }
     ClimbingSet hostObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_tables.holdersOfMembersThatHostMakes(), allButBunUnlessNamed(object))), object.node) : ClimbingSet(); }
     bool isInProgramCode();

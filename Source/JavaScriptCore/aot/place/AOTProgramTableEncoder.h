@@ -27,6 +27,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -314,6 +315,24 @@ struct TableEncoder {
     Vector<std::optional<uint32_t>> tablesInImage;
     // By the index of a class: the classes whose assumed base it is, ascending.
     Vector<Vector<uint32_t>> subclasses;
+    // By the index of a set of guards: where the list of its members lies, once it is written.
+    Vector<uint32_t> memberListsOfGuardSets;
+};
+
+// A part of the tables that names no identifier: the run that finds the names leaves it out.
+class PartWithoutNames {
+public:
+    explicit PartWithoutNames(TableEncoder& encoder)
+        : m_isWritten(encoder.writesTables())
+        , m_mayNameIdentifiers(encoder.mayNameIdentifiers, false)
+    {
+    }
+
+    bool isWritten() const { return m_isWritten; }
+
+private:
+    bool m_isWritten;
+    SetForScope<bool> m_mayNameIdentifiers;
 };
 
 // Every table but the header, in the order in which they lie in the image. Ends behind the first group that reports an error.

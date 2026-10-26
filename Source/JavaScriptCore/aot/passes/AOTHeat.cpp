@@ -2032,12 +2032,21 @@ OutliningSiteFinder::OutliningSiteFinder(const Program& program, const Optimizat
 
 OutliningSiteFinder::~OutliningSiteFinder() = default;
 
+AnalysisContext OutliningSiteFinder::contextOf(FunctionID id) const
+{
+    return { m_state->build, m_state->program, &m_state->inputs.flow, &m_state->inputs.effects, id };
+}
+
 bool OutliningSiteFinder::findIn(FunctionID id)
 {
-    const Function& function = m_state->program.at(id);
-    if (!function.hasBody() || !m_state->build.isEnabled(PassID::OutlineColdOperations, id))
+    FunctionAnalyses analyses(contextOf(id), m_state->program.at(id));
+    return findIn(id, analyses);
+}
+
+bool OutliningSiteFinder::findIn(FunctionID id, FunctionAnalyses& analyses)
+{
+    if (!analyses.function().hasBody() || !m_state->build.isEnabled(PassID::OutlineColdOperations, id))
         return false;
-    FunctionAnalyses analyses({ m_state->build, m_state->program, &m_state->inputs.flow, &m_state->inputs.effects, id }, function);
     BitVector coldBlocks = findColdBlocks(*m_state, analyses);
     if (coldBlocks.isEmpty())
         return false;

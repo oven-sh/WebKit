@@ -128,6 +128,17 @@ public:
         m_size = size;
     }
 
+    void shrinkCapacity(size_t size)
+    {
+        ASSERT(size >= m_size);
+        if (size >= capacity())
+            return;
+        if (size)
+            m_elements.realloc(size * sizeof(T));
+        else
+            m_elements = { };
+    }
+
 private:
     MallocSpan<T> m_elements;
     size_t m_size { 0 };
@@ -201,12 +212,61 @@ public:
     bool add(uint32_t first, uint32_t second);
     bool contains(uint32_t first, uint32_t second) const;
     void prefetch(uint32_t first, uint32_t second) const;
+    size_t bytesInUse() const { return m_size * sizeof(uint64_t); }
     size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
 
 private:
     void grow();
 
     MallocSpan<uint64_t> m_slots;
+    size_t m_size { 0 };
+};
+
+// From 64-bit keys, none of them all ones, to 32-bit numbers. A slot takes twelve bytes.
+class ValueFlowNumbersByKey {
+public:
+    struct Added {
+        uint32_t& number;
+        bool isNew;
+    };
+
+    Added add(uint64_t key, uint32_t number);
+    const uint32_t* find(uint64_t key) const
+    {
+        if (!m_slots)
+            return nullptr;
+        size_t mask = m_slots.span().size() - 1;
+        for (size_t position = firstPositionOf(key + 1, mask);; position = (position + 1) & mask) {
+            const Slot& slot = m_slots[position];
+            if (slot.keyPlusOne() == key + 1)
+                return &slot.number;
+            if (!slot.keyPlusOne())
+                return nullptr;
+        }
+    }
+    size_t bytesInUse() const { return m_size * sizeof(Slot); }
+    size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
+    // The most slots that a search for an absent key looks at.
+    size_t longestRunOfSlotsInUse() const;
+
+private:
+    struct Slot {
+        uint64_t keyPlusOne() const { return static_cast<uint64_t>(highHalfOfKeyPlusOne) << 32 | lowHalfOfKeyPlusOne; }
+
+        uint32_t lowHalfOfKeyPlusOne;
+        uint32_t highHalfOfKeyPlusOne;
+        uint32_t number;
+    };
+
+    // The keys of one table may have been picked by the high bits of one product.
+    static size_t firstPositionOf(uint64_t keyPlusOne, size_t mask)
+    {
+        uint64_t hash = keyPlusOne * 0x9e3779b97f4a7c15ull;
+        return (hash ^ hash >> 32) * 0xbf58476d1ce4e5b9ull >> std::countl_zero(mask);
+    }
+    void grow();
+
+    MallocSpan<Slot> m_slots;
     size_t m_size { 0 };
 };
 
@@ -445,10 +505,14 @@ private:
         ValueFlowNodeID node;
     };
 
+    // There are hundreds of thousands of these lists, and most hold one or two elements.
+    template<typename T>
+    using ShortList = Vector<T, 0, CrashOnOverflow, 2>;
+
     struct NodesOfName {
-        Vector<NodeOfSet> ofFewObjects;
-        Vector<NodeOfSet> ofManyObjects;
-        Vector<NodeOfSet> ofVeryManyObjects;
+        ShortList<NodeOfSet> ofFewObjects;
+        ShortList<NodeOfSet> ofManyObjects;
+        ShortList<NodeOfSet> ofVeryManyObjects;
     };
 
     struct Name {
@@ -498,8 +562,8 @@ private:
         if (ValueFlowRoundLog::isNumberedByLog(node))
             return false;
         const WatchShard& shard = m_watchShards[watchShardOf(node, within)];
-        auto watch = shard.watchOfPart.find(static_cast<uint64_t>(node.index()) << 32 | within.index());
-        return watch != shard.watchOfPart.end() && shard.knownWatchers.contains(watch->value, statement.index());
+        const uint32_t* watch = shard.watchOfPart.find(static_cast<uint64_t>(node.index()) << 32 | within.index());
+        return watch && shard.knownWatchers.contains(*watch, statement.index());
     }
     uint32_t numberOfName(ValueFlowName name) const
     {
@@ -583,7 +647,7 @@ private:
     void numberNamesWatched();
     void noteNamesWatched(unsigned shard, ValueSetMaker&);
     void wakeWatchersOfNamesWrittenOnMoreObjects(unsigned shard, ValueSetMaker&);
-    void removeNodesAtRestFrom(Vector<NodeOfSet>&);
+    void removeNodesAtRestFrom(ShortList<NodeOfSet>&);
     void linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask);
     void noteReaders(unsigned shard, ValueSetMaker&);
     size_t numberOfReaders() const;
@@ -640,6 +704,11 @@ private:
     Subject subjectOf(ValueFlowNodeID) const;
     void report();
     void dumpBytesByTable() const;
+    static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
+    // The lists that each round fills anew keep the room that the largest round took. The rounds are largest in the middle of a solve, and the tables at its end.
+    void giveBackRoomOfLargerRounds(uint64_t sizeOfRound);
+    std::array<uint64_t, 8> m_sizesOfLatestRounds { };
+    uint64_t m_sizeOfRoundThatListsHaveRoomFor { 0 };
 
     const ValueFlowSolverInput& m_input;
     ValueSets& m_sets;
@@ -736,6 +805,7 @@ private:
             ASCIILiteral name;
             Seconds wall;
             Seconds cpuOfThisThread;
+            Seconds cpuOutsideParallelLoops;
         };
 
         void begin();
@@ -745,6 +815,7 @@ private:
         bool isOn { false };
         MonotonicTime startOfStep;
         Seconds cpuAtStartOfStep;
+        Seconds cpuInParallelLoopsAtStartOfStep;
         Vector<Step> steps;
         Seconds busyOnAllThreads;
         Seconds busiestThreadOfTurn;
@@ -824,8 +895,8 @@ private:
     struct WatchedNode {
         ValueFlowNodeID node;
         ValueSetID seen;
-        Vector<uint32_t> watches;
-        Vector<uint32_t> watchesOfManyObjects;
+        ShortList<uint32_t> watches;
+        ShortList<uint32_t> watchesOfManyObjects;
         bool holdsWhatPlaceholderCovers { false };
         bool hasChainsByMember { false };
     };
@@ -842,11 +913,11 @@ private:
     struct WatchShard {
         Vector<Reader> readers;
         Vector<Watch> watches;
-        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> watchOfPart;
+        ValueFlowNumbersByKey watchOfPart;
         ValueFlowPairSet knownWatchers;
         Vector<WatchedNode> watchedNodes;
         HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> watchedNodeOfNode;
-        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWatchOfMember;
+        ValueFlowNumbersByKey firstWatchOfMember;
         Vector<ChainedWatch> watchesOfMembers;
         HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberOfSetWatchedForCover;
         Vector<Vector<uint32_t, 2>> watchesOfSetWatchedForCover;
@@ -930,13 +1001,13 @@ private:
         VeryMany,
     };
     struct NodesOfMembers {
-        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> first;
+        ValueFlowNumbersByKey first;
         Vector<ChainedNode> chained;
     };
     struct Linked {
         Vector<ValueFlowEdge> edges;
         uint64_t testsWhetherSetsMeet { 0 };
-        Vector<Vector<NodeOfSet>*> listsMostlyAtRest;
+        Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
     };
     struct PartOfNameWatched {
         ValueFlowStatementID statement;

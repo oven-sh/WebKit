@@ -177,7 +177,7 @@ uint32_t ValueSets::InternedRuns::intern(Room& room, std::span<const uint64_t> w
         return found;
     }
     table.slots()[position].store(static_cast<uint64_t>(hash) << 32 | number, std::memory_order_release);
-    if (static_cast<size_t>(++shard.size) * 2 > table.numberOfSlots())
+    if (static_cast<size_t>(++shard.size) * 3 > table.numberOfSlots() * 2)
         grow(shard);
     return number;
 }
@@ -202,9 +202,9 @@ void ValueFlowBytesByTable::add(ASCIILiteral table, size_t bytesInUse, size_t by
     m_rows.append(Row { table, bytesInUse, bytesHeld });
 }
 
-void ValueFlowBytesByTable::dump() const
+void ValueFlowBytesByTable::dump(ASCIILiteral nameOfSum) const
 {
-    Row all { "all tables"_s };
+    Row all { nameOfSum };
     auto dumpRow = [](const Row& row) {
         dataLogLn("AOT flow bytes | ", row.table, " | in use ", row.bytesInUse / KB, " KB | held ", row.bytesHeld / KB, " KB");
     };

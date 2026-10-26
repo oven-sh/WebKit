@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTIRTestSupport.h"
 #include "AOTPredictedValues.h"
 #include "AOTProvisionalFunctions.h"
@@ -636,6 +637,75 @@ static void logHoldsOneEntryForWhatWasAddedUntilItIsShown()
     function.detach(log);
 }
 
+static void countedContentsFollowLog()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    BlockID middle = addBlock(function);
+    BlockID exit = addBlock(function);
+    ValueID first = addValue(function, entry, Opcode::Undefined);
+    ValueID second = addValue(function, entry, Opcode::Null);
+    ValueID third = addValue(function, middle, Opcode::Null);
+    for (ValueID id : { first, second, third })
+        function.edit(id).type = TypeTable::boolean;
+    jump(function, entry, middle, { });
+    jump(function, middle, exit, { });
+
+    ChangeLog log;
+    function.attach(log);
+    CountedContents counted;
+    auto isUpToDate = [&] {
+        return counted.bringUpToDate(function, log) == contentsOf(function);
+    };
+    // The first question reads the body, the second counts it, and the later ones read what the log names.
+    AOT_TEST_CHECK(isUpToDate());
+    AOT_TEST_CHECK(isUpToDate());
+    AOT_TEST_CHECK(isUpToDate());
+
+    function.edit(first, ValueEdit::Definition).become(Opcode::Integer);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Undefined));
+    function.edit(first, ValueEdit::Type).type = TypeTable::never;
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).traits.contains(BodyTrait::NeverValues));
+    function.edit(first, ValueEdit::Type).type = TypeTable::boolean;
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).traits.contains(BodyTrait::NeverValues));
+
+    // One of two goes, then the other.
+    function.edit(entry, BlockEdit::Values).values.removeLast();
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).opcodes.contains(Opcode::Null));
+    function.edit(second, ValueEdit::Definition).become(Opcode::Boolean);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Boolean));
+    function.edit(middle, BlockEdit::Values).values.removeLast();
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Null));
+
+    // From one list into another, and edited there.
+    function.edit(entry, BlockEdit::Values).values.removeLast();
+    function.edit(exit, BlockEdit::Values).values.append(first);
+    function.edit(exit, BlockEdit::Values).values.append(third);
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(first, ValueEdit::Definition).become(Opcode::Undefined);
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).opcodes.contains(Opcode::Undefined));
+
+    ValueID added = function.add(Value(Opcode::Boolean));
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Boolean));
+    BlockID handler = function.addBlock();
+    function.edit(handler, BlockEdit::Values).values.append(added);
+    function.edit(handler, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.become(TerminatorKind::Unreachable);
+    function.edit(entry, BlockEdit::Edges).handler = Target { handler, { }, { } };
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).traits.contains(BodyTrait::Handlers) && contentsOf(function).terminators.contains(TerminatorKind::Unreachable));
+    function.edit(handler, BlockEdit::Values).values.removeLast();
+    function.edit(entry, BlockEdit::Edges).handler = std::nullopt;
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).traits.contains(BodyTrait::Handlers));
+
+    function.edit(third, ValueEdit::Definition).become(Opcode::Integer);
+    log.forget();
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(third, ValueEdit::Definition).become(Opcode::Null);
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(third, ValueEdit::Definition).become(Opcode::Integer);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Null));
+    function.detach(log);
+}
+
 static void editOfWhatWasAddedTakesItsPromiseBack()
 {
     ChangeLog log;
@@ -675,7 +745,7 @@ static void valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck()
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
     v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
-    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(editOfWhatWasAddedTakesItsPromiseBack) \
+    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(countedContentsFollowLog) v(editOfWhatWasAddedTakesItsPromiseBack) \
     v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck)
 
 std::span<const NativeTest> irFunctionTests()

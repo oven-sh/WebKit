@@ -151,6 +151,7 @@ struct SlotRowUse {
     uint32_t storesIntoFilledSlots { 0 };
     uint32_t storesIntoNewObjects { 0 };
     uint32_t privateDefinitionsByName { 0 };
+    bool isFilledBySomeCopy { false };
 };
 
 struct LayoutUse {

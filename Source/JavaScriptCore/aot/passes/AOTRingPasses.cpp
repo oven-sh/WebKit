@@ -3025,14 +3025,24 @@ static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block
     rewrite.later([&rewrite, id] { rewrite.builder().removeHandler(id); });
 }
 
+static bool takesValueAlone(const Function& function, const Block& handler)
+{
+    return handler.role == BlockRole::CatchHandler && std::ranges::none_of(handler.values.span().first(indexAfterCaughtValues(function, handler)), [&](ValueID value) {
+        return function.at(value).opcode == Opcode::CatchException;
+    });
+}
+
 static bool onlyRethrows(Rewrite& rewrite, BlockID id, const Block& block)
 {
     if (!block.isHandlerBlock() || !block.parameters.isEmpty() || block.values.isEmpty())
         return false;
     ValueID caught = block.values[0];
     const Terminator& terminator = block.terminator;
-    // A `catch` of the program that throws the value again begins another throw, which has frames of its own.
-    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught && block.role != BlockRole::CatchHandler)
+    // A `catch` of the program that throws the value again begins another throw, which has frames of its own. Nobody lists them where a `catch` of the function takes the value and ends that throw.
+    auto beginsThrowWhoseFramesMayBeListed = [&] {
+        return block.role == BlockRole::CatchHandler && !(block.handler && takesValueAlone(rewrite.function, rewrite.at(block.handler->block)));
+    };
+    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught && !beginsThrowWhoseFramesMayBeListed())
         || (rewrite.at(caught).opcode == Opcode::CatchException && terminator.kind == TerminatorKind::Rethrow && terminator.exceptionOperand() == caught);
     if (!rethrowsCaughtValue || !std::ranges::all_of(block.values.span().subspan(1), [&](ValueID value) { return rewrite.analyses.isRemovableWhenUnused(value); }))
         return false;

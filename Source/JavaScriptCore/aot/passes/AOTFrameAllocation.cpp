@@ -76,7 +76,7 @@ static bool keepsEveryCellOnHeapByForm(const Program& program, const FlowResults
             return false;
         if (arrayAllocationsWithStorage.contains(allocation.opcode))
             hasArrays = true;
-        else if (!staysOnHeapByForm(program, flow, build, allocation))
+        else if (!staysOnHeapByForm(program, flow, build, function, allocation))
             return false;
     }
     return !hasArrays || (findArraysThatMayLieInFrame(program, build, function).size() <= maxFollowedArrays && !mayPutSomeArrayInFrame(program, flow, build, function));

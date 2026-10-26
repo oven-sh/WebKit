@@ -31,6 +31,7 @@
 #include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVirtualObject.h"
 #include <algorithm>
 #include <bit>
 #include <limits>
@@ -1308,7 +1309,9 @@ static PassOutcome dropRepeatedMapSets(FunctionPassContext& context)
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 {
-    PassOutcome outcome = RedundantReadElimination { context }.run();
+    PassOutcome outcome = PassOutcome::Unchanged;
+    if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
+        outcome = RedundantReadElimination { context }.run();
     return outcome | dropRepeatedMapSets(context);
 }
 
@@ -2223,6 +2226,40 @@ struct LoopPathSeparator : LoopEditor {
         return typeWithoutLeavingPaths;
     }
 
+    // Whether the parameter is one object that the likely paths make but for what a leaving path passes: by itself the object need not be made.
+    bool isAllocationButForLeavingPaths(BlockID block, size_t position, const BitVector& leaves)
+    {
+        constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
+        ValueID passedOnLikelyPaths;
+        bool isPassedByLeavingPath = false;
+        for (Edge edge : m_analyses.cfg().incomingEdges(block)) {
+            const Arguments& arguments = targetOf(m_function, edge).arguments;
+            if (edge.isHandlerEdge() || position >= arguments.size())
+                return false;
+            if (leaves.get(edge.from.index())) {
+                isPassedByLeavingPath = true;
+                continue;
+            }
+            if (passedOnLikelyPaths && passedOnLikelyPaths != arguments[position])
+                return false;
+            passedOnLikelyPaths = arguments[position];
+        }
+        return isPassedByLeavingPath && passedOnLikelyPaths && allocations.contains(m_function.at(passedOnLikelyPaths).opcode);
+    }
+
+    bool leavesAllocationAlone(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        for (size_t index : isInLoop) {
+            if (leaves.get(index))
+                continue;
+            for (size_t position = 0; position < m_function.blocks[index].parameters.size(); ++position) {
+                if (isAllocationButForLeavingPaths(BlockID(index), position, leaves))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
     bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
     {
@@ -2327,7 +2364,7 @@ struct LoopPathSeparator : LoopEditor {
         return isMadeOfNarrowedParameter;
     }
 
-    // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes.
+    // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes, or is an object of theirs but for that.
     BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BitVector isUnlikely = findUnlikelyBlocks(loop);
@@ -2349,6 +2386,8 @@ struct LoopPathSeparator : LoopEditor {
                         continue;
                     const std::optional<Type>& passed = typeOnLikelyPaths[target.arguments[position].index()];
                     if (mayGetNarrower.get(parameters[position].index()) || !(passed ? *passed : typeOf(target.arguments[position])).isSubsetOf(*likely, m_program))
+                        return true;
+                    if (isAllocationButForLeavingPaths(target.block, position, isUnlikely))
                         return true;
                 }
                 return false;
@@ -2387,7 +2426,8 @@ struct LoopPathSeparator : LoopEditor {
                 bytesOfLikelyPaths += bytesOfBlock;
         }
         // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
-        if (!isHot && bytesOfLikelyPaths > m_context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8)
+        bool isShort = bytesOfLikelyPaths <= m_context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8;
+        if (!isHot && !isShort)
             return std::nullopt;
 
         BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute);
@@ -2403,7 +2443,7 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
+        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves)) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());

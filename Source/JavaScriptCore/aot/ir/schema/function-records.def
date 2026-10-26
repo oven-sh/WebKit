@@ -1,6 +1,6 @@
 flags FunctionCapabilities {
     | engine MayChangeSignature MayBeCloned MayBeInlined HasOrdinaryFrame HasOnlyDirectCallers IsNeverCalledByHost IsHiddenInStackTraces
-    ClosuresAreReadWithoutCode RecordsCallee NotesLooksForName
+    ClosuresAreReadWithoutCode RecordsCallee RecordsCalleeOnceRenamed NotesLooksForName
 }
 enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgumentArea: Bool, record: Name, capabilities: FunctionCapabilities
     | engine isWrapperOrWorker: Bool, isEnteredOnlyByCalls: Bool, showsSourceText: Bool, hasClosureWord: Bool) {

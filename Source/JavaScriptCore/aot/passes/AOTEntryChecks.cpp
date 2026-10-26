@@ -1067,7 +1067,7 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
         emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
-        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee)) {
+        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) {
             Value record = IRBuilder::make(Opcode::RecordCallee);
             record.setClosureOperand(closure);
             builder.append(WTF::move(record));

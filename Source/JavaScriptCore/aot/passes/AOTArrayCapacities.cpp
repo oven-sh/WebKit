@@ -13,14 +13,18 @@
 #include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDTypes.h"
+#include "AOTCodeSizeEstimate.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTKnownValue.h"
+#include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
 #include "AOTSort.h"
@@ -1360,6 +1364,251 @@ static void findConversionsEndingProofs(FunctionPassContext& context, Vector<Fai
     }
 }
 
+// Each copy costs a look at the whole function.
+AOT_THRESHOLD(size_t, maxStorageTestsWithCopiedReads, 32);
+AOT_THRESHOLD(size_t, maxReadsBehindStorageTest, 64);
+
+struct ReadsBehindStorageTest {
+    BlockID passed;
+    ValueID guard;
+    Vector<ValueID, 8> proofs;
+    Vector<ValueID, 8> reads;
+    Vector<BlockID, 8> region;
+};
+
+static bool isBranchedOnIn(const Function& function, BlockID block, ValueID test)
+{
+    const Terminator& terminator = function.at(block).terminator;
+    return terminator.isConditionalBranch() && terminator.conditionOperand() == test;
+}
+
+// The proof of the test, the proofs made from it, and the reads that rely on them. Nothing else may: a store has other forms.
+static bool collectReadsRelyingOn(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    struct PassedProof {
+        BlockID block;
+        uint32_t index;
+    };
+    Vector<PassedProof, 4> passedProofs;
+    found.proofs.append(found.guard);
+    for (size_t next = 0; next < found.proofs.size(); ++next) {
+        if (found.proofs.size() + found.reads.size() > maxReadsBehindStorageTest)
+            return false;
+        for (const Use& use : useLists.usesOf(found.proofs[next])) {
+            if (use.kind == Use::Kind::EdgeArgument) {
+                BlockID target = targetOf(function, use.edge()).block;
+                ValueID parameter = function.at(target).parameters[use.operandIndex];
+                if (!found.proofs.contains(parameter)) {
+                    found.proofs.append(parameter);
+                    passedProofs.append({ target, use.operandIndex });
+                }
+                continue;
+            }
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(use.user);
+            if (user.opcode == Opcode::AllGuards) {
+                if (!found.proofs.contains(use.user))
+                    found.proofs.append(use.user);
+                continue;
+            }
+            if (!readsNamingArrayStorage.contains(user.opcode) || user.arrayOperand() != test.arrayOperand() || user.arrayStorage() != test.arrayStorage())
+                return false;
+            if (found.reads.contains(use.user))
+                continue;
+            found.reads.append(use.user);
+            if (user.opcode != Opcode::IsElementPresent)
+                continue;
+            for (const Use& useOfTest : useLists.usesOf(use.user)) {
+                if (useOfTest.kind != Use::Kind::TerminatorOperand)
+                    continue;
+                if (!isBranchedOnIn(function, useOfTest.block, use.user) || numberOfEdgeResults(function, useOfTest.block, 0) > 1 || numberOfEdgeResults(function, useOfTest.block, 1))
+                    return false;
+                if (numberOfEdgeResults(function, useOfTest.block, 0))
+                    found.proofs.append(function.at(function.at(useOfTest.block).terminator.taken().block).parameters.last());
+            }
+        }
+    }
+    // A proof that is handed on is joined with nothing but these.
+    bool joinsTheseAlone = std::ranges::all_of(passedProofs, [&](const PassedProof& passed) {
+        return std::ranges::all_of(context.analyses.cfg().incomingEdges(passed.block), [&](Edge edge) {
+            return !edge.isHandlerEdge() && found.proofs.contains(targetOf(function, edge).arguments[passed.index]);
+        });
+    });
+    return joinsTheseAlone && !found.reads.isEmpty();
+}
+
+// An element that is no number leaves where an absent one does: nothing has happened since that test.
+static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBehindStorageTest& found, ValueID id)
+{
+    const Function& function = context.function;
+    const Value& read = function.at(id);
+    ValueLocation location = context.analyses.useLists().locationOf(id);
+    std::span<const BlockID> predecessors = context.analyses.cfg().predecessors(location.block);
+    bool isDense = pristineAspectsProvenBy(context.program.typeOf(function, read.arrayOperand()), BuiltinClasses::Array).contains(PristineAspects::Dense);
+    if (predecessors.size() != 1 || !(read.isPresent() || (read.isInBounds() && isDense && !read.readsHoleAsNaN())))
+        return false;
+    const Terminator& terminator = function.at(predecessors.front()).terminator;
+    if (!terminator.isConditionalBranch() || terminator.taken().block != location.block || terminator.notTaken().block == location.block || numberOfEdgeResults(function, predecessors.front(), 1))
+        return false;
+    const Value& test = function.at(terminator.conditionOperand());
+    if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
+        return false;
+    return std::ranges::all_of(function.at(location.block).values.span().first(location.index), [&](ValueID earlier) {
+        return found.proofs.contains(earlier);
+    });
+}
+
+// The blocks between the passed test and the last use of its proof. A block that nothing of the kind follows is cut behind its last use.
+static bool cutOutRegionOfReads(FunctionPassContext& context, IRBuilder& builder, ReadsBehindStorageTest& found)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    BitVector isInRegion(function.blocks.size());
+    Vector<uint32_t> endOfUses(FillWith { }, function.blocks.size(), 0u);
+    Vector<BlockID, 8> worklist;
+    auto add = [&](BlockID block) {
+        if (!isInRegion.set(block.index())) {
+            worklist.append(block);
+            found.region.append(block);
+        }
+    };
+    bool isRepeated = false;
+    auto addUse = [&](ValueID value) {
+        ValueLocation location = useLists.locationOf(value);
+        add(location.block);
+        if (location.placement == ValuePlacement::InBlock)
+            endOfUses[location.block.index()] = std::max(endOfUses[location.block.index()], location.index + 1);
+        const NaturalLoop* loop = isRepeated ? nullptr : context.analyses.naturalLoops().innerMostLoopOf(location.block);
+        isRepeated = isRepeated || (loop && isHotLoop(context, *loop));
+    };
+    std::ranges::for_each(found.proofs, addUse);
+    std::ranges::for_each(found.reads, addUse);
+    if (!isRepeated)
+        return false;
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (block == found.passed)
+            continue;
+        for (BlockID predecessor : cfg.predecessors(block)) {
+            if (!context.analyses.dominators().dominates(found.passed, predecessor))
+                return false;
+            add(predecessor);
+        }
+    }
+    if (!isInRegion.get(found.passed.index()))
+        return false;
+
+    struct Cut {
+        BlockID block;
+        uint32_t index;
+    };
+    Vector<Cut, 4> cuts;
+    for (BlockID block : found.region) {
+        bool goesOn = std::ranges::any_of(cfg.successors(block), [&](BlockID successor) {
+            return isInRegion.get(successor.index());
+        }) || std::ranges::any_of(found.reads, [&](ValueID read) {
+            return isBranchedOnIn(function, block, read);
+        });
+        if (!goesOn)
+            cuts.append({ block, endOfUses[block.index()] });
+    }
+    for (const Cut& cut : cuts)
+        builder.splitBlock(ProgramPoint { cut.block, cut.index });
+    // The proof is a parameter of the first block, and the copy has a proof of its own.
+    BlockID first = builder.splitBlock(ProgramPoint { found.passed, 0 });
+    *std::ranges::find(found.region, found.passed) = first;
+    std::swap(found.region.first(), *std::ranges::find(found.region, first));
+    return true;
+}
+
+// General code makes a list of numbers with storage for any value, a list that has held a NaN keeps such storage, and a list that is written as numbers has Double storage. One reader meets them all.
+// What reads the list behind the test for one kind is copied for the other, as far as the proof of the test goes. Out of storage for any value each element is asked whether it is a number.
+// `failing` is the edge that an array of another kind goes along. Answers the block that asks for the second kind.
+static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& builder, BlockID tested, Edge failing)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Value test = *findStorageTestBranchedOnBy(function, tested);
+    ArrayStorage other = test.arrayStorage() == ArrayStorage::Double ? ArrayStorage::Contiguous : ArrayStorage::Double;
+    ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { } };
+    if (numberOfEdgeResults(function, tested, 0) != 1 || analyses.cfg().predecessors(found.passed).size() != 1)
+        return { };
+    found.guard = function.at(found.passed).parameters.last();
+    if (!collectReadsRelyingOn(context, test, found))
+        return { };
+    // Double storage is asked for where numbers are expected.
+    auto fitsOtherStorage = [&](ValueID read) {
+        if (other == ArrayStorage::Contiguous)
+            return standsBehindPresenceTest(context, found, read);
+        TypeID predicted = function.at(read).expected().predicted();
+        const Type& type = predicted ? context.types.at(predicted) : context.program.typeOf(function, read);
+        return type.withoutPrimitives(Primitive::Undefined).isNumber();
+    };
+    unsigned numberOfElementReads = 0;
+    for (ValueID read : found.reads) {
+        if (function.at(read).opcode != Opcode::GetArrayElement)
+            continue;
+        if (!fitsOtherStorage(read))
+            return { };
+        ++numberOfElementReads;
+    }
+    if (!numberOfElementReads || !cutOutRegionOfReads(context, builder, found))
+        return { };
+    uint64_t bytes = 0;
+    for (BlockID block : found.region)
+        bytes += estimatedCodeBytes(context.program, function, function.at(block));
+    if (bytes > context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8 || RegionCloner::checkCanDuplicate(analyses, found.region.span(), found.region.span().first(1)) != CloneCheck::CanClone)
+        return { };
+
+    builder.setOrigin(test.origin());
+    builder.setHandler(function.at(failing.from).handler);
+    BlockID asksForOther = builder.addBlock(rarerOf(function.at(failing.from).frequency, BlockFrequency::Unlikely));
+    builder.moveToEndOf(asksForOther);
+    IRBuilder::ProvenBranch isOfOther = builder.emitBranchWithProof(builder.append(makeArrayStorageTest(test.arrayOperand(), other)), 0, BlockFrequency::Unlikely, BlockFrequency::Rare, { BlockID(), Target(targetOf(function, failing)) });
+    builder.redirectEdge(failing, asksForOther, { });
+
+    RegionCloner cloner(builder, function);
+    cloner.mapValue(found.guard, isOfOther.provenOnTaken);
+    cloner.cloneBlocks(found.region.span(), [&](ValueID original, Value& clone) {
+        if (found.reads.contains(original))
+            clone.setArrayStorage(other);
+    });
+    for (BlockID block : cloner.clonedBlocks()) {
+        Block& clone = function.edit(block, BlockEdit::Rest);
+        clone.frequency = rarerOf(clone.frequency, BlockFrequency::Unlikely);
+    }
+    builder.moveToEndOf(isOfOther.taken);
+    builder.emitJump(cloner.cloneOf(found.region.first()));
+    cloner.repairSSA(analyses);
+
+    // What a read gives follows its kind of storage.
+    for (ValueID original : found.reads) {
+        if (function.at(original).opcode != Opcode::GetArrayElement)
+            continue;
+        ValueLocation location = analyses.useLists().locationOf(cloner.cloneOf(original));
+        Target whenAbsent = function.at(analyses.cfg().predecessors(location.block).front()).terminator.targets.last();
+        Value read = function.at(cloner.cloneOf(original));
+        read.setExpected({ });
+        builder.setOrigin(read.origin());
+        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
+        ValueID element = builder.append(WTF::move(read));
+        if (other == ArrayStorage::Double) {
+            builder.endExpansion(expansion, element);
+            continue;
+        }
+        IRBuilder::ProvenBranch isNumber = builder.emitBranchWithProof(builder.appendTypeTest(element, TypeTable::number), 0, BlockFrequency::Unlikely, BlockFrequency::Rare);
+        builder.moveToEndOf(isNumber.taken);
+        builder.endExpansion(expansion, isNumber.provenOnTaken);
+        builder.moveToEndOf(isNumber.notTaken);
+        builder.emitJump(whenAbsent.block, WTF::move(whenAbsent.arguments));
+    }
+    return asksForOther;
+}
+
 // An array of whole numbers that fails a test for Double storage is converted on the failing edge, so that it passes the test from then on.
 static PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext& context)
 {
@@ -1416,6 +1665,61 @@ static PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext& co
     return PassOutcome::Changed;
 }
 
+static PassOutcome readListsOfNumbersInEitherStorage(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::HasArrayStorage))
+        return PassOutcome::Unchanged;
+    Vector<BlockID, 4> tests;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const Value* test = findStorageTestBranchedOnBy(function, block);
+        if (!test || (test->arrayStorage() != ArrayStorage::Double && test->arrayStorage() != ArrayStorage::Contiguous))
+            continue;
+        if (context.analyses.blockFrequencies().classOf(block) != BlockFrequency::Normal || isCold(heatClassOf(context, block)))
+            continue;
+        const Value* nextTest = findStorageTestBranchedOnBy(function, function.at(block).terminator.notTaken().block);
+        if (!nextTest || nextTest->arrayOperand() != test->arrayOperand())
+            tests.append(block);
+        if (tests.size() == maxStorageTestsWithCopiedReads)
+            break;
+    }
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    bool didChange = false;
+    Vector<FailedStorageTest, 4> converted;
+    for (BlockID block : tests) {
+        // An earlier copy may have cut the block.
+        const Value* test = findStorageTestBranchedOnBy(function, block);
+        if (!test)
+            continue;
+        ValueID array = test->arrayOperand();
+        Origin origin = test->origin();
+        BlockID whenFailed = function.at(block).terminator.notTaken().block;
+        // A list that is converted is read as fast as any from then on, so the conversion stays in front. The copy of an earlier test may hold a copy of this one, which fails into the same block.
+        bool convertsFirst = convertsAtHead(function, whenFailed, array);
+        if (convertsFirst && (function.at(whenFailed).values.size() != 1 || function.at(whenFailed).terminator.kind != TerminatorKind::Jump || context.analyses.cfg().predecessors(whenFailed).size() != 1))
+            continue;
+        BlockID asksForOther = addReadsOfOtherStorage(context, builder, block, convertsFirst ? Edge { whenFailed, 0 } : Edge { block, 1 });
+        if (!asksForOther)
+            continue;
+        didChange = true;
+        if (convertsFirst)
+            converted.append(FailedStorageTest { Edge { asksForOther, 1 }, array, origin, { }, { }, ProgramPoint::atHeadOf(whenFailed) });
+    }
+    // The copy comes back into code that relies on proofs. Where the conversion in front of it may end one, there is no copy.
+    findConversionsEndingProofs(context, converted);
+    bool didRemoveCopy = false;
+    for (const FailedStorageTest& failed : converted) {
+        if (!failed.mayEndProof)
+            continue;
+        builder.convertBranchToJump(failed.edge.from, failed.edge.targetIndex);
+        didRemoveCopy = true;
+    }
+    if (didRemoveCopy)
+        builder.emptyUnreachableBlocks();
+    return didChange ? PassOutcome::Changed : PassOutcome::Unchanged;
+}
+
 PassOutcome planCollectionCapacities(FunctionPassContext& context)
 {
     unsigned planned = applyGrowthPlans(context, CapacityPlanner { context }.collectCollectionGrowthPlans());
@@ -1433,6 +1737,9 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
 
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
     unsigned constructed = chooseStorageOfConstructedArrays(context);
+    // Behind the choice, which goes by the kind that the readers expect.
+    if (readListsOfNumbersInEitherStorage(context) == PassOutcome::Changed)
+        converted = PassOutcome::Changed;
     Vector<CapacityPlan, 4> plans = CapacityPlanner { context }.collectPlans();
     if (unsigned planned = applyCapacityPlans(context, plans))
         context.build.statistics().count(StatisticID::ArrayCapacitiesPlanned, planned);

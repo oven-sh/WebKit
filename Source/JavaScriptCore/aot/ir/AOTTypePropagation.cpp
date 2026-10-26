@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTFieldValueNarrowing.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTObservableOperations.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTSort.h"
 #include "AOTValueSubstitution.h"
@@ -959,6 +960,8 @@ void TypePropagation::cutAfterNeverValues()
             return;
         }
         Origin origin = isNeverEntered ? block.terminator.origin() : function.at(block.values[index]).origin();
+        for (ValueID value : block.values.span().subspan(index + keepsValue))
+            explainOperationThatGoes(function, value, InPlaceOfOperation::NothingBecauseNothingComesHere);
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
         // A handler sees the parameters of the block that it covers. Nothing is left here that throws.

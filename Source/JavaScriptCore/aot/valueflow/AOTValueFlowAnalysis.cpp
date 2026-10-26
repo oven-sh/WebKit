@@ -483,6 +483,11 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
+    if (build.options().logging.logsPhaseTimes) {
+        ValueFlowBytesByTable bytes;
+        m_bodies.addBytesTo(bytes);
+        bytes.dump("all of the bodies"_s);
+    }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
 }

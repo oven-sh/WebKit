@@ -454,10 +454,14 @@ static AllocationHeapCause checkClosureForm(const Program& program, const Value&
 }
 
 // Without captures one closure of a function does what any other does, and the function does not get hold of the closure it is entered through.
+static bool isHeldByClosureTableWhereOnlyCalled(const Program& program, const Value& allocation)
+{
+    return allocation.opcode == Opcode::NewClosure && allocation.capturesOperands().empty() && checkClosureForm(program, allocation) == AllocationHeapCause::None;
+}
+
 bool FramePlanner::isOnlyCalled(ObjectID closure) const
 {
-    const Value& definition = definitionOf(closure);
-    if (definition.opcode != Opcode::NewClosure || !definition.capturesOperands().empty() || checkClosureForm(m_program, definition) != AllocationHeapCause::None)
+    if (!isHeldByClosureTableWhereOnlyCalled(m_program, definitionOf(closure)))
         return false;
     if (m_escape.at(closure).state != EscapeState::DoesNotEscape || hasUntrackedAlias(closure))
         return false;
@@ -630,9 +634,12 @@ void FramePlanner::checkCellForms()
 }
 
 // checkCellForms() gives up on an object that does not fit, which is recorded, and checkUses() moves every other object that may change its form.
-bool staysOnHeapByForm(const Program& program, const FlowResults& flow, const BuildContext& build, const Value& allocation)
+bool staysOnHeapByForm(const Program& program, const FlowResults& flow, const BuildContext& build, const Function& maker, const Value& allocation)
 {
     RELEASE_ASSERT(allocation.opcode == Opcode::NewClosure || allocation.opcode == Opcode::NewObject);
+    // isOnlyCalled() goes by the uses.
+    if (isHeldByClosureTableWhereOnlyCalled(program, allocation) && !isLikeEveryClosureOfItsFunction(program, &flow, maker, allocation))
+        return false;
     return checkCellForm(program, allocation) != AllocationHeapCause::None || (fitsInFrame(program, build, allocation) && mayChangeForm(program, &flow, allocation));
 }
 

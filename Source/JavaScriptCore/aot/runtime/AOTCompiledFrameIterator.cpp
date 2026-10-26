@@ -532,7 +532,7 @@ bool CompiledFrameIterator::isConstructCall()
 JSObject* CompiledFrameIterator::recordedCallee()
 {
     FunctionTables& tables = FunctionTables::of(*m_vm);
-    if (!tables.hasRecordedCallees()) [[likely]]
+    if (!tables.hasRecordedCallees() && !tables.recordsCalleesOfCallsByValue()) [[likely]]
         return nullptr;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
@@ -559,6 +559,12 @@ JSObject* CompiledFrameIterator::recordedCallee()
     }
     if (runEnd.resumesSavedFrame)
         return nullptr;
+    // Who enters compiled code from outside comes by no stub that records, and has the function object in his own frame.
+    if (runEnd.adapterFrame && tables.recordsCalleesOf(source)) {
+        JSObject* callee = runEnd.adapterFrame->jsCallee();
+        std::optional<FunctionID> function = functionOf(callee);
+        return function && sourceFunctionOf(*function) == source ? callee : nullptr;
+    }
 
     JSObject* closure = tables.recordedCalleeOfCallFrom(stackPointer);
     return closure && sourceFunctionOf(*functionOf(closure)) == source ? closure : nullptr;

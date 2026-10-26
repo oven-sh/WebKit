@@ -95,6 +95,8 @@ public:
     static constexpr ValueFlowObjectID markOfNamedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 2); }
     // Goes with the answer of a read under a key nobody knows of what a built-in module answers, where the read left out a member that lets in unseen code, along the same edges. A read that names the member finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
     static constexpr ValueFlowObjectID markOfMemberLeftOut() { return ValueFlowObjectID(numberOfPrimitiveKinds + 3); }
+    // Goes beside Bun from a load of "bun" under a constant name, and with the answer of a read under a key nobody knows of a Bun that was so loaded or named, along the same edges. A read that names a member of Bun finds it where its answer holds the mark.
+    static constexpr ValueFlowObjectID markOfLoadedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 4); }
     ValueFlowObjectID objectOf(BuiltinID builtin) const { return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index()); }
     ValueFlowObjectID objectOf(BuiltinID, ModuleID) const;
     void appendObjectsOf(BuiltinID, Vector<ValueFlowObjectID, 32>&) const;
@@ -137,6 +139,7 @@ public:
     ValueSetID objects() const { return m_objects; }
     ValueSetID knownObjects() const { return m_knownObjects; }
     ValueSetID builtinObjects() const { return m_builtinObjects; }
+    ValueSetID namespaces() const { return m_namespaces; }
     ValueSetID objectsOfRealm() const { return m_objectsOfRealm; }
     ValueSetID lockedObjects() const { return m_lockedObjects; }
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
@@ -181,6 +184,7 @@ public:
     const ValueFlowBuiltinTables& builtinTables() const LIFETIME_BOUND { return *m_builtinTables; }
 
 private:
+    friend class ValueFlowBodies;
     friend class ValueFlowLinker;
 
     struct ModuleBuiltin {
@@ -255,6 +259,7 @@ private:
     ValueSetID m_embeddedFilePaths;
     ValueSetID m_knownObjects;
     ValueSetID m_builtinObjects;
+    ValueSetID m_namespaces;
     ValueSetID m_objectsOfRealm;
     ValueSetID m_lockedObjects;
     ValueSetID m_objectsWithLockedPrototypeLink;
@@ -386,6 +391,7 @@ public:
     FunctionID functionOf(ValueFlowNodeID) const;
 
 private:
+    friend class ValueFlowBodies;
     friend class ValueFlowLinker;
 
     uint32_t m_firstVariable { 2 };
@@ -661,6 +667,7 @@ public:
     const ValueFlowBodiesTimes& times() const { return m_times; }
     const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
+    void addBytesTo(ValueFlowBytesByTable&) const;
 
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
     uint32_t hostBody() const { return numberOfBodies() - 1; }

@@ -51,6 +51,32 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
+// The limit that sends a call here lies above every frame once calls by value record their callees.
+static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
+{
+    FunctionTables& tables = FunctionTables::of(*instance->vm);
+    if (!tables.recordsCalleesOfCallsByValue())
+        return false;
+    tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
+    return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller))
+{
+    if (recordCalleeInsteadOfPolling(instance, callee, stackPointerOfCaller))
+        return ExceptionOperationImplicitResult<void> { nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
+    vm.traps().handleTraps(VMTraps::AsyncEvents);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    vm.throwTerminationExceptionIfNeeded();
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);

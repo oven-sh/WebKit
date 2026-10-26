@@ -232,8 +232,13 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     constexpr uint32_t worthOfConversion = 64;
     uint32_t& lookedAtInVain = instance->arrays.elementsLookedAtInVain;
     // The place has said which it is.
+    uint8_t& shortYoungArraysConverted = instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain) {
+        shortYoungArraysConverted = ArrayWords::maxShortYoungArraysConverted;
+        return;
+    }
     if (array->cellState() != CellState::PossiblyBlack && array->butterfly()->publicLength() < ArrayWords::minLengthThatPaysAtOnce)
-        ++instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+        ++shortYoungArraysConverted;
 
     Structure* structure = array->structure();
     bool isPlainArray = structure == globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous) && !isCopyOnWrite(array->indexingMode()) && !structure->outOfLineCapacity();

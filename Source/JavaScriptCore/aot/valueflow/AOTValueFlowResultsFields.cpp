@@ -153,13 +153,16 @@ struct CopyAtBirth {
 struct SourceOfCopyAtBirth {
     ValueSetID objects { ValueSets::nothing };
     bool isAssigned { false };
+    std::span<const PropertyKeyID> excludedKeys;
 };
 
-// `{ ...defaults, ...options }` and `Object.assign({}, defaults, options)`: nothing but the copies can reach the object until they are over.
+// `{ ...defaults, ...options }`, `Object.assign({}, defaults, options)` and `{ a: first(), b: second() }`: nothing but the copies and the definitions can reach the object until they are over.
 struct BirthWithCopies {
     FunctionID function;
     ValueID allocation;
     LayoutID layout;
+    bool definesKeysLeftOutByAllocation { false };
+    bool hasOnlyNamedData { true };
     Vector<PropertyKeyID, 8> definedKeys;
     Vector<CopyAtBirth, 2> copies;
     Vector<SourceOfCopyAtBirth, 2> sources;
@@ -317,13 +320,13 @@ struct FieldResults {
     {
         const Function& function = program.at(id);
         const BuiltinTable& builtins = program.builtins();
-        bool copiesIntoLiteral = false;
+        bool hasPieces = false;
         bool namesAssign = false;
         for (const Value& value : function.values) {
-            copiesIntoLiteral |= value.opcode == Opcode::CopyDataProperties;
+            hasPieces |= value.opcode == Opcode::CopyDataProperties || value.opcode == Opcode::PropDefine;
             namesAssign |= value.opcode == Opcode::Builtin && builtins.canonicalID(value.builtin()) == Builtins::ObjectAssign;
         }
-        if (!copiesIntoLiteral && !namesAssign)
+        if (!hasPieces && !namesAssign)
             return;
 
         constexpr uint32_t none = UINT32_MAX;
@@ -342,16 +345,22 @@ struct FieldResults {
                     if (open == none)
                         continue;
                     BirthWithCopies& birth = born[open].birth;
-                    bool isPiece = isPieceOfLiteral(value, operand) && std::ranges::count(value.operands(), operand) == 1;
-                    if (!isPiece) {
+                    bool isNamedOnce = std::ranges::count(value.operands(), operand) == 1;
+                    // A store to a data property that the object has of its own runs no code.
+                    if (value.opcode == Opcode::PropSet && isNamedOnce && value.operand(OperandIndex::PropSet::object) == operand && birth.hasOnlyNamedData && value.key() && birth.definedKeys.contains(value.key()))
+                        continue;
+                    if (!isPieceOfLiteral(value, operand) || !isNamedOnce) {
                         if (value.opcode == Opcode::FinishObject)
                             born[open].object = valueID;
                         openBirthOf[operand.index()] = none;
                         continue;
                     }
-                    if (value.opcode == Opcode::PropDefine && value.key())
+                    if (value.opcode == Opcode::PropDefine && value.key()) {
+                        birth.definesKeysLeftOutByAllocation |= !birth.definedKeys.contains(value.key());
                         birth.definedKeys.append(value.key());
-                    if (value.opcode == Opcode::CopyDataProperties && value.excludedOperands().empty() && value.excludedKeys().empty())
+                    } else
+                        birth.hasOnlyNamedData = false;
+                    if (value.opcode == Opcode::CopyDataProperties && value.excludedOperands().empty())
                         birth.copies.append({ valueID, OperandIndex::CopyDataProperties::source, false });
                 }
                 if (value.opcode == Opcode::NewObject && canBeBornWithCopies(value.layout())) {
@@ -410,7 +419,7 @@ struct FieldResults {
                 birth.copies.append({ user, OperandIndex::Call::arguments + 1, true });
                 object = user;
             }
-            if (!birth.copies.isEmpty())
+            if (!birth.copies.isEmpty() || birth.definesKeysLeftOutByAllocation)
                 births.append(WTF::move(birth));
         }
         if (births.isEmpty() || births.last().function != id)
@@ -441,8 +450,15 @@ struct FieldResults {
             const CopyAtBirth& copy = birth.copies[found->copy];
             std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
             uint32_t end = copy.assigns ? operands.size() : copy.firstSource + 1;
-            for (uint32_t operand = copy.firstSource; operand < end && operand < operands.size(); ++operand)
-                birth.sources.append({ heap.possibleValuesOf(maker.get(), operands[operand]), copy.assigns });
+            std::span<const PropertyKeyID> excludedKeys = copy.assigns ? std::span<const PropertyKeyID>() : function.at(copy.operation).excludedKeys();
+            // A pattern has thrown for undefined and null before it copies the rest.
+            bool mayBeNullish = copy.assigns || program.typeOf(function, function.at(copy.operation).sourceOperand()).mayBeUndefinedOrNull();
+            for (uint32_t operand = copy.firstSource; operand < end && operand < operands.size(); ++operand) {
+                ValueSetID objects = heap.possibleValuesOf(maker.get(), operands[operand]);
+                if (!mayBeNullish)
+                    objects = maker.get().intersect(objects, ValueSets::complement(maker.get().of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) })));
+                birth.sources.append({ objects, copy.assigns, excludedKeys });
+            }
         }
     }
 
@@ -510,7 +526,7 @@ struct FieldResults {
         isBornWithCopies = BitVector(numberOfLayouts);
         Vector<BirthWithCopies> births = collectInParallel<BirthWithCopies>(loops, program.functions.size(), [&](unsigned index, Vector<BirthWithCopies>& found) {
             FunctionID function(index);
-            if (inputs.isReached(function) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data })) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::PieceOutsideSlots, ValueFlowNotedOperation::Builtin })))
+            if (inputs.isReached(function) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data })) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::PieceOutsideSlots, ValueFlowNotedOperation::FinishObject, ValueFlowNotedOperation::Builtin })))
                 collectBirthsWithCopiesIn(function, found);
         });
         if (births.isEmpty())
@@ -584,6 +600,8 @@ struct FieldResults {
                 Vector<PropertyKeyID> keys(birth.definedKeys.span());
                 for (const SourceOfCopyAtBirth& source : round ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
                     for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
+                        if (std::ranges::contains(source.excludedKeys, key))
+                            continue;
                         if (!source.isAssigned || inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[birth.layout.index()], key))
                             keys.append(key);
                     }

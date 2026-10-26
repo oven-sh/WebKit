@@ -669,6 +669,10 @@ static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleCont
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
     connect(context, requiredValueOf(context, module), statement.result);
+    const BuiltinTable& builtins = context.program().builtins();
+    RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
+    if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
+        context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 

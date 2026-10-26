@@ -37,7 +37,7 @@ public:
     template<typename Map>
     void addMap(ASCIILiteral table, const Map& map) { add(table, map.size() * sizeof(typename Map::KeyValuePairType), map.capacity() * sizeof(typename Map::KeyValuePairType)); }
     void addBits(ASCIILiteral table, const auto& bits) { add(table, bits.size() / 8); }
-    void dump() const;
+    void dump(ASCIILiteral nameOfSum) const;
 
 private:
     struct Row {
@@ -47,6 +47,12 @@ private:
     };
     Vector<Row> m_rows;
 };
+
+// The list keeps what it holds and at most a quarter of its room.
+void giveBackMostRoomOf(auto& list)
+{
+    list.shrinkCapacity(std::max<size_t>(list.size(), list.capacity() / 4));
+}
 
 class ValueSets {
     WTF_MAKE_NONCOPYABLE(ValueSets);

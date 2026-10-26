@@ -153,6 +153,8 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
     BitVector hasBody(program.functions.size());
     BitVector hasForm(program.functions.size());
     BitVector hasSeveralForms(program.functions.size());
+    BitVector recordsFromTheStart(program.functions.size());
+    Vector<FunctionID> marked;
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (!program.functions[index].hasBody())
             continue;
@@ -183,6 +185,17 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         editor.at(id).capabilities.add(FunctionCapabilities::RecordsCallee);
         editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
+        marked.append(id);
+        if (!flow.closuresMayBeRenamedOnlyWhereNobodySees(id) || namedBySeveralKeys.quickGet(written.index()))
+            recordsFromTheStart.quickSet(written.index());
+    }
+    // The run time sees the write that renames such a function object, and has the calls by value record their callees from then on.
+    for (FunctionID id : marked) {
+        FunctionID written = writtenFunctionOf(id);
+        if (recordsFromTheStart.quickGet(written.index()))
+            continue;
+        editor.at(id).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
+        editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
     }
 }
 

@@ -461,6 +461,40 @@ static PropertyKeyID keyOfMemberCalledOnItsHolder(const Program& program, const 
     return definitionThroughTests(function, read.objectOperand()) == definitionThroughTests(function, receiver) ? read.key() : PropertyKeyID();
 }
 
+static bool readsCalleeFromReceiverUnderComputedKey(const Program& program, const ValueFlowStatement& statement)
+{
+    if (constructs(statement.opcode))
+        return false;
+    const Function& function = program.at(statement.function);
+    const Value& call = function.at(statement.site);
+    ValueID receiver = call.thisValueOperand();
+    if (!receiver || call.calleeKey())
+        return false;
+    const Value& read = function.at(definitionThroughTests(function, call.calleeOperand()));
+    return read.opcode == Opcode::ElemGet && definitionThroughTests(function, read.objectOperand()) == definitionThroughTests(function, receiver);
+}
+
+// module[key](..): the read leaves out createRequire, which loads nothing by itself. The call finds it on its own receiver.
+static ClimbingSet membersLeftOutOfComputedRead(ValueFlowRuleContext& context, const ValueFlowStatement& statement)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowHeapTables& heap = universe.builtinTables().heap();
+    ValueSetID membersThatLoadNothingThemselves = context.maker().intersect(heap.objectsThatLetInUnseenCode(), ValueSets::complement(heap.objectsThatLetInUnseenCodeWhenCalled()));
+    if (!readsCalleeFromReceiverUnderComputedKey(context.program(), statement) || !context.holdsAnyOf(ClimbingSet(membersThatLoadNothingThemselves), context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
+        return { };
+    const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
+    // Beside the unknown object the value leaves out what has escaped. The node lists it.
+    ClimbingSet receivers = context.restrict(context.valueOf(receiver), universe.knownObjects());
+    if (receiver.node)
+        receivers = context.unite(receivers, context.valueWithin(ClimbingSet(universe.knownObjects()), receiver.node));
+    ClimbingSet holders = withSourcesOfCopies(context, receivers);
+    ValueSetID members = ValueSets::nothing;
+    context.forEachMember(context.restrict(holders, heap.objectsOfPublicModules()), [&](ValueFlowObjectID holder) {
+        members = context.maker().unite(members, heap.membersOf(universe.builtinOf(holder)).leftOut);
+    });
+    return ClimbingSet(context.maker().intersect(members, membersThatLoadNothingThemselves));
+}
+
 static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures)
 {
     const Program& program = context.program();
@@ -696,6 +730,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (context.meet(receivers, ValueSets::anything))
             listedCallees = context.unite(callees, context.valueWithin(ClimbingSet(universe.builtinFunctions()), context.lookup(receivers, ValueFlowName::property(key))));
     }
+    listedCallees = context.unite(listedCallees, membersLeftOutOfComputedRead(context, statement));
     callListedBuiltins(statement, context, listedCallees, kind);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
         const Function& function = context.program().at(statement.function);

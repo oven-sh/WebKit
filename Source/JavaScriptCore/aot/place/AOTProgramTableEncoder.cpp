@@ -514,6 +514,9 @@ void encodeTypeTables(TableEncoder& encoder)
 {
     encodeTypes(encoder, encodeLayoutSets(encoder));
 
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     Vector<TypeSiteData> sites;
     if (describesTypes(encoder)) {
         sites.reserveInitialCapacity(encoder.inputs.bodyFacts.usedTypeSites.bitCount());
@@ -981,6 +984,9 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
 
         FieldData& data = fields[*slot.indexInLayoutRecord];
         data.name = declaration.key ? encoder.identifierNumber(declaration.key, "a field in the record of"_s, id) : 0;
+        PartWithoutNames rest(encoder);
+        if (!rest.isWritten())
+            continue;
         data.isFilledAtBirth = isFilledAtBirth(program, reference);
         data.holdsRawValueFromBirth = holdsRawValueFromBirth(program, reference);
         data.keepsStateOfBirth = keepsStateOfBirth(program, reference);
@@ -1012,6 +1018,9 @@ static uint32_t appendReferences(TableEncoder& encoder, LayoutID id)
 {
     enum { WideValues, WideCells, Narrow, WideOutOfLine, NarrowOutOfLine, NumberOfLists };
     static_assert(numberOfInlineReferenceCounts == WideOutOfLine && numberOfExtensionHeaderWords == 7);
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     const PlannedLayout& planned = encoder.slots.layout(id);
     Vector<uint32_t> offsets[NumberOfLists];
     for (FieldIndex row = 0; row < planned.slots.size(); ++row) {
@@ -1054,6 +1063,9 @@ static int32_t distanceFromRecord(uint32_t recordOffset, uint32_t targetOffset)
 
 static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     Vector<uint32_t> orders;
     for (const Vector<FieldIndex>& order : encoder.placement.keyOrders().of(id)) {
         Vector<uint16_t> list { static_cast<uint16_t>(order.size()) };
@@ -1071,6 +1083,9 @@ static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
 
 static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t shape)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     const Layout& layout = encoder.program.at(id);
     const PlannedLayout& planned = encoder.slots.layout(id);
     RELEASE_ASSERT(layout.isEnvironment());
@@ -1104,24 +1119,31 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
 // A list says how many members the set has, then their numbers. The writer keeps one copy of equal lists, so every member names the same one.
 static MemberGuardAggregates appendAggregatesOf(TableEncoder& encoder, GuardBitID guard)
 {
+    PartWithoutNames part(encoder);
     const GuardBitTable& table = encoder.placement.guardBits();
     std::span<const GuardBitID> sets = table.setsContaining(guard);
-    if (sets.empty())
+    if (sets.empty() || !part.isWritten())
         return { 0, 0 };
     Vector<uint32_t, 8> words;
     for (GuardBitID set : sets) {
         const PlacedGuardBit& placed = encoder.placement.guardBit(set);
         words.append(numberInStaticsOf(placed) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
     }
+    if (encoder.memberListsOfGuardSets.isEmpty())
+        encoder.memberListsOfGuardSets.fill(0, table.bits.size());
     for (GuardBitID set : sets) {
-        Vector<uint32_t, 8> list { static_cast<uint32_t>(table.membersOf(set).size()) };
-        for (GuardBitID member : table.membersOf(set)) {
-            const PlacedGuardBit& placed = encoder.placement.guardBit(member);
-            uint32_t number = numberInStaticsOf(placed);
-            RELEASE_ASSERT(MemberGuardAggregates::numberInListEntry(number) == number);
-            list.append(number | (isAwaitedBeforeClassExists(encoder.program, placed) ? MemberGuardAggregates::isAwaitedBeforeClassExists : 0) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
+        uint32_t& listOffset = encoder.memberListsOfGuardSets[set.index()];
+        if (!listOffset) {
+            Vector<uint32_t, 8> list { static_cast<uint32_t>(table.membersOf(set).size()) };
+            for (GuardBitID member : table.membersOf(set)) {
+                const PlacedGuardBit& placed = encoder.placement.guardBit(member);
+                uint32_t number = numberInStaticsOf(placed);
+                RELEASE_ASSERT(MemberGuardAggregates::numberInListEntry(number) == number);
+                list.append(number | (isAwaitedBeforeClassExists(encoder.program, placed) ? MemberGuardAggregates::isAwaitedBeforeClassExists : 0) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
+            }
+            listOffset = encoder.writer.append(list);
         }
-        words.append(encoder.writer.append(list));
+        words.append(listOffset);
     }
     return { encoder.writer.append(words), static_cast<uint32_t>(sets.size()) };
 }
@@ -1157,6 +1179,9 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
             MemberCreation memberCreation = index < creation.members.size() ? creation.members[index] : MemberCreation::AtDefinition;
             MethodData method { };
             method.name = member.key ? encoder.identifierNumber(member.key, "a member in the record of the class"_s, id) : 0;
+            PartWithoutNames rest(encoder);
+            if (!rest.isWritten())
+                continue;
             method.kindBits = static_cast<uint32_t>(member.kind);
             method.flags = (member.key ? 0 : methodHasComputedName) | (program.at(member.function).captures.isEmpty() ? 0 : methodTakesEnvironment) | (memberCreation == MemberCreation::AtDefinition ? methodIsCreatedAtDefinition : 0);
             method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function, "a member that the run time creates for the class"_s, id) : indexOrNone(encoder.findEntrypoint(member.function));
@@ -1188,6 +1213,9 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
         data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     }
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return parts;
     AOT::sort(guards, { }, [](const auto& entry) {
         const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
@@ -1292,6 +1320,9 @@ static uint32_t appendObjectLayout(TableEncoder& encoder, LayoutID id, uint32_t 
         const Layout& classLayout = layout.isDerived() ? program.at(declaredLayoutOf(program, layout.flow.base)) : layout;
         data.evaluationBits = static_cast<uint32_t>(isEvaluatedOnce(program, classLayout) ? EvaluationState::ProvenOnce : EvaluationState::PredictedOnce);
     }
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return 0;
     data.kindBits = static_cast<uint32_t>(layout.kind);
     data.isDerived = layout.isDerived();
     data.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
@@ -1358,8 +1389,8 @@ static void encodeLayoutRecords(TableEncoder& encoder)
     auto isClassInUse = [&](uint32_t index) {
         return program.layouts[index].kind == LayoutKind::Instance && encoder.placement.isInUse(LayoutID(index));
     };
-    encoder.subclasses = Vector<Vector<uint32_t>>(program.layouts.size());
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+    encoder.subclasses = Vector<Vector<uint32_t>>(encoder.writesTables() ? program.layouts.size() : 0);
+    for (uint32_t index = 0; index < encoder.subclasses.size(); ++index) {
         LayoutID assumedBase = isClassInUse(index) ? expectedBaseOf(program.layouts[index]) : LayoutID();
         if (assumedBase && program.at(assumedBase).kind == LayoutKind::Instance)
             encoder.subclasses[assumedBase.index()].append(index);
@@ -1379,6 +1410,9 @@ static void encodeLayoutRecords(TableEncoder& encoder)
         if (isClassInUse(index))
             classes[index] = shapes.shapesOf(id).isEmpty() ? appendObjectLayout(encoder, id, 0) : layouts[shapes.generalShapeOf(id)];
     }
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     encoder.count(StatisticID::LayoutRecordsEmitted, std::ranges::count_if(layouts, std::identity { }));
     encoder.setTable(ProgramTableIndex::layouts, layouts);
 
@@ -1601,6 +1635,9 @@ static void encodeBoundFunctions(TableEncoder& encoder)
 void encodeLayoutTables(TableEncoder& encoder)
 {
     encodeLayoutRecords(encoder);
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     encodeRemovedFields(encoder);
     encodeAddedNames(encoder);
     encodeClassPrototypeNames(encoder);
@@ -2552,6 +2589,9 @@ void encodeModuleTables(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     ModuleLists lists = collectModuleLists(encoder);
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     markFacesOfFiles(encoder, lists);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());
     for (size_t index = 0; index < program.modules.size(); ++index)
@@ -2679,17 +2719,28 @@ static void encodeIdentifierTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::identifiersOfEngineSymbols, engineSymbols);
 }
 
-void encodeConstantTables(TableEncoder& encoder)
+static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return;
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::builtinCells, encoder.placement.builtinCells(), &BuiltinCellKey::encoded);
     encoder.setTable(ProgramTableIndex::eagerBuiltinCells, encoder.placement.eagerBuiltinCells());
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::constantBuiltinMembers, constantBuiltinMembersToLock(encoder.program, encoder.flow), &BuiltinID::index);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::bigIntConstants, encoder.placement.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });
+}
+
+void encodeConstantTables(TableEncoder& encoder)
+{
+    encodeBuiltinAndBigIntTables(encoder);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::keyCellIdentifiers, encoder.placement.keyCells(), [&](PropertyKeyID key) {
         return encoder.identifierNumber(key, "a key that code holds as a cell"_s);
     });
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     encodeLiteralStrings(encoder);
     encodeIdentifierTables(encoder);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::entryPoints, encoder.program.entries, [](const Entry& entry) {

@@ -1593,11 +1593,46 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
     }
 }
 
+static void numbersByKeyAgreeWithAHashMap()
+{
+    // The second kind of key is picked as a shard of watches picks its sets: by the high bits of a product with the golden ratio.
+    for (bool arePickedByHighBitsOfProduct : { false, true }) {
+        WeakRandom random(7);
+        ValueFlowNumbersByKey numbers;
+        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> expected;
+        AOT_TEST_CHECK(!numbers.find(0));
+        uint32_t next = 0;
+        while (expected.size() < 50000) {
+            uint32_t low = arePickedByHighBitsOfProduct ? next++ : random.getUint32();
+            if (arePickedByHighBitsOfProduct && low * 0x9E3779B1u >> 28 != 5)
+                continue;
+            uint64_t key = static_cast<uint64_t>(arePickedByHighBitsOfProduct ? 3 : random.getUint32(1000)) << 32 | low;
+            uint32_t number = expected.size();
+            auto added = numbers.add(key, number);
+            auto addedToExpected = expected.add(key, number);
+            AOT_TEST_CHECK(added.isNew == addedToExpected.isNewEntry);
+            AOT_TEST_CHECK(added.number == addedToExpected.iterator->value);
+            if (!(number % 3)) {
+                added.number += 7;
+                addedToExpected.iterator->value += 7;
+            }
+        }
+        for (auto [key, number] : expected) {
+            const uint32_t* found = numbers.find(key);
+            AOT_TEST_CHECK(found && *found == number);
+            AOT_TEST_CHECK(!!numbers.find(key + 1) == expected.contains(key + 1));
+        }
+        AOT_TEST_CHECK(numbers.bytesInUse() == expected.size() * 12);
+        AOT_TEST_CHECK(numbers.memoryInBytes() <= numbers.bytesInUse() * 3 + 12);
+        AOT_TEST_CHECK(numbers.longestRunOfSlotsInUse() < 256);
+    }
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue)
+    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

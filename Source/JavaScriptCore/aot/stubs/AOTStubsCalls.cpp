@@ -184,7 +184,7 @@ static Jump branchIfTopByteRefusesCount(StubAssembler& jit, ptrdiff_t offsetOfWo
 static void emitEnterCodeOfWordAt(StubAssembler& jit, const CallRegisters& registers, ptrdiff_t offsetOfWord, unsigned count)
 {
     static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
-    jit.checkStackBeforeEntering();
+    jit.checkStackBeforeEnteringCallee();
     jit.move(TrustedImm32(count), countGPR);
     jit.load32(Address(calleeGPR, offsetOfWord), registers.word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), registers.word);
@@ -969,7 +969,7 @@ void generateResolveCallValue(StubAssembler& jit)
     hasWord.link(&jit);
     jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), scratch);
     isResolvedAtEachCall.append(jit.branch64(CCallHelpers::LessThan, word, scratch));
-    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
+    isResolvedAtEachCall.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::limitOfCallsByValue()));
     toCodeAddress(jit, word, scratch, StackIsTested::Yes);
     jit.returnToCaller();
 

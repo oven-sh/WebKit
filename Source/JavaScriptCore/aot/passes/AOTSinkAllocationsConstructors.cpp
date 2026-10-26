@@ -393,7 +393,9 @@ static void returnWhatSourceConstructs(IRBuilder& builder, ValueID thisParameter
     call.setFunction(source);
     call.setArgumentsOperands(arguments.span());
     call.setIsConstruction(true);
-    builder.emitReturn(builder.append(WTF::move(call)));
+    Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { builder.append(WTF::move(call)) });
+    terminator.setRequirement(tailCallRequirementOf(builder.context().program.at(source)));
+    builder.emitTerminator(WTF::move(terminator));
 }
 
 static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& inputs, const ValueSite& site, ValueID thisParameter)

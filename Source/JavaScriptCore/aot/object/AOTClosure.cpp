@@ -717,6 +717,8 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
         didChangePrototypeProperty(closure);
     if (name == vm.propertyNames->displayName) [[unlikely]]
         didChangeDisplayName(vm, closure);
+    if (result && name == vm.propertyNames->name) [[unlikely]]
+        didDeleteNameProperty(vm, closure);
     return result;
 }
 
@@ -1047,6 +1049,10 @@ bool ReifiedSlimClosure::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     if (name == vm.propertyNames->displayName) [[unlikely]] {
         slot.disableCaching();
         didChangeDisplayName(vm, asObject(cell));
+    }
+    if (isDeleted && name == vm.propertyNames->name) [[unlikely]] {
+        slot.disableCaching();
+        didDeleteNameProperty(vm, asObject(cell));
     }
     return isDeleted;
 }

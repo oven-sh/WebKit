@@ -268,6 +268,47 @@ void VM::computeCanUseJIT()
 #endif
 }
 
+class VM::HostFunctionExecutables final : public WeakHandleOwner {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HostFunctionExecutables);
+public:
+    using Key = std::tuple<uintptr_t, uintptr_t, uint64_t, String>;
+
+    static Key keyFor(TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, unsigned length, const String& name)
+    {
+        return { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), static_cast<uint64_t>(length) << 16 | static_cast<uint64_t>(intrinsic) << 8 | static_cast<uint64_t>(implementationVisibility), name };
+    }
+
+    NativeExecutable* get(const Key& key) const
+    {
+        auto found = m_executables.find(key);
+        return found == m_executables.end() ? nullptr : found->value.get();
+    }
+
+    void set(const Key& key, NativeExecutable* executable, Intrinsic intrinsic)
+    {
+        m_executables.set(key, Weak<NativeExecutable>(executable, this, reinterpret_cast<void*>(static_cast<uintptr_t>(intrinsic))));
+    }
+
+private:
+    struct KeyHash {
+        static unsigned hash(const Key& key)
+        {
+            const String& name = std::get<3>(key);
+            return pairIntHash(intHash(std::get<0>(key)), name.isNull() ? 0 : name.hash());
+        }
+        static bool equal(const Key& a, const Key& b) { return a == b; }
+        static constexpr bool safeToCompareToEmptyOrDeleted = true;
+    };
+
+    void finalize(Handle<Unknown> handle, void* context) final
+    {
+        auto& executable = *static_cast<NativeExecutable*>(handle.get().asCell());
+        m_executables.remove(keyFor(executable.function(), executable.constructor(), executable.implementationVisibility(), static_cast<Intrinsic>(reinterpret_cast<uintptr_t>(context)), executable.length(), executable.name()));
+    }
+
+    UncheckedKeyHashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
+};
+
 static bool vmCreationShouldCrash = false;
 
 VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
@@ -1108,16 +1149,16 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
     auto create = [&] {
         return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
     };
-    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. There are as many as there are functions in C++.
-    if (!name.isNull() || intrinsic != NoIntrinsic || length > 0xffff)
+    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. One with a name is made once for a realm.
+    if (!name.isNull() && m_numberOfRealmsInitialized < 2)
         return create();
-    std::tuple<uintptr_t, uintptr_t, unsigned> key { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), length << 8 | static_cast<unsigned>(implementationVisibility) };
-    if (auto found = m_executablesOfNamelessHostFunctions.find(key); found != m_executablesOfNamelessHostFunctions.end()) {
-        if (NativeExecutable* executable = found->value.get())
-            return executable;
-    }
+    if (!m_hostFunctionExecutables)
+        m_hostFunctionExecutables = makeUnique<HostFunctionExecutables>();
+    auto key = HostFunctionExecutables::keyFor(toTagged(function), toTagged(constructor), implementationVisibility, intrinsic, length, name);
+    if (NativeExecutable* executable = m_hostFunctionExecutables->get(key))
+        return executable;
     NativeExecutable* executable = create();
-    m_executablesOfNamelessHostFunctions.set(key, Weak<NativeExecutable>(executable));
+    m_hostFunctionExecutables->set(key, executable, intrinsic);
     return executable;
 }
 

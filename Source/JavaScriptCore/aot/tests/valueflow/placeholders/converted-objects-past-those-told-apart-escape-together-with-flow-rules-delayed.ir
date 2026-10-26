@@ -1,0 +1,47 @@
+# `${onlyConverted}`; plain = { held }; plain + 1; odd = { valueOf: somethingNoTableLists, given }; odd + 1
+# one-converted-object-with-an-unknown-method-escapes-alone.ir with more objects in the hub than the analysis tells apart: it tells one apart here, the plain object, which has the first layout.
+# The loss is what lies past the limit and no more. The odd object and the closure come together: a function nobody knows is found on one of them, and both are handed to it.
+# The plain object is still looked at by itself: it stays in the program, and nobody enters what it holds.
+# converted-objects-past-those-told-apart-escape-together.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules
+# OPTIONS: limit=MaxValueFlowMembersToldApart:1
+# LOSS: MaxValueFlowMembersToldApart
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK-NOT: unreached f3
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped=f3
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Odd" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="given" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = ToString v0
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    v8 = NewClosure function=f3
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = Add v9, v4
+    Return
+}
+function f1 name="onlyConverted" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="given" kind=Arrow results=[{type=anything}] {
+    Return
+}

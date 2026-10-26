@@ -339,6 +339,12 @@ bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
 }
 
+bool FlowResults::closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees.get(analyzed.index());
+}
+
 bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
 {
     FunctionID analyzed = findAnalyzedFunction(closureFunction);

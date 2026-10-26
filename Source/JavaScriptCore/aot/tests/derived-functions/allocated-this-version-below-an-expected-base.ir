@@ -42,7 +42,7 @@ function f3 name="Nameless" kind=DerivedConstructor flags=[HasNewTarget, TakesCa
 # CHECK-NOT: SuperConstruct
 # CHECK: [[startsOver]]() frequency=Rare:
 # CHECK-NEXT: [[constructed]]:{{*}}= CallDirect [[callee]], [[newTarget]], [[x]] function=f2 [isConstruction]
-# CHECK-NEXT: Return [[constructed]]
+# CHECK-NEXT: ReturnCall [[constructed]] requirement=Allowed
 # CHECK: function [[namelessVersion]] name="Nameless" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
 # CHECK-NOT: CallDirect
 # CHECK: = SuperConstruct {{*}}layout=L2

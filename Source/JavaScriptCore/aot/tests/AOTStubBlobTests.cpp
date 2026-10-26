@@ -383,7 +383,7 @@ static void checkResumptionReferences(const StubCatalog& catalog)
 
 static void checkExceptionReferences(const StubCatalog& catalog)
 {
-    for (StubKey from : { throwStackOverflow(false), handleExceptionAtPrologue(), pollBeforeEntering() })
+    for (StubKey from : { throwStackOverflow(false), handleExceptionAtPrologue(), pollBeforeEntering(PollBeforeEnteringForm::Plain), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject) })
         AOT_TEST_CHECK(refersToBody(catalog, from, bodyOf(handleException(false))));
 }
 

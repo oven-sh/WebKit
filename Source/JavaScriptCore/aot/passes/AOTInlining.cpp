@@ -400,6 +400,12 @@ static bool isSlowPath(const Function& function, const Block& block)
     return block.frequency == BlockFrequency::Rare && function.at(entryBlock).frequency != BlockFrequency::Rare;
 }
 
+// `catch (e) { throw e; }` does no work of the program. Under a `catch` of the caller the copy loses it, and its throw is a jump.
+static bool onlyThrowsCaughtValueAgain(const Function& function, const Block& block)
+{
+    return block.isHandlerBlock() && block.values.size() == 1 && function.at(block.values[0]).opcode == Opcode::CatchValue && block.terminator.kind == TerminatorKind::Throw && block.terminator.valueOperand() == block.values[0];
+}
+
 enum class FeasibleSuccessors : uint8_t { All, HandlerOnly, None };
 
 static bool isFeasibleEdge(Edge edge, FeasibleSuccessors feasibleSuccessors)
@@ -901,7 +907,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
 
     blockBytes.fill(0, function.blocks.size());
     for (BlockID id : cfg.reversePostOrder()) {
-        if (isSlowPath(function, function.at(id)))
+        if (isSlowPath(function, function.at(id)) || onlyThrowsCaughtValueAgain(function, function.at(id)))
             continue;
         blockBytes[id.index()] = estimatedCodeBytes(program, function, function.at(id));
     }
@@ -1119,16 +1125,19 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
 }
 
+// No program writes a construction in tail position. One that stands there begins the construction of the frame again, in place of the frame.
 void keepFrameBelowTailCalls(Function& function, std::span<const BlockID> blocks, uint32_t frame)
 {
     for (BlockID block : blocks) {
         for (ValueID id : function.at(block).values) {
-            if (function.at(id).inlineFrame == frame && function.at(id).isTailCall)
+            const Value& value = function.at(id);
+            bool beginsAgain = value.opcode == Opcode::CallDirect && value.isConstruction();
+            if (value.inlineFrame == frame && value.isTailCall && !beginsAgain)
                 function.edit(id, ValueEdit::Definition).isTailCall = false;
         }
     }
     for (size_t index = 1; index < function.inlineFrames.size(); ++index) {
-        if (function.inlineFrames[index].parent == frame)
+        if (function.inlineFrames[index].parent == frame && !function.inlineFrames[index].isConstruction)
             function.inlineFrames[index].isTailCall = false;
     }
 }

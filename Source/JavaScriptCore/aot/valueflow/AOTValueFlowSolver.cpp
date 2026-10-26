@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <tuple>
 #include <wtf/CPUTime.h>
+#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -139,6 +140,50 @@ void ValueFlowPairSet::grow()
     }
 }
 
+ValueFlowNumbersByKey::Added ValueFlowNumbersByKey::add(uint64_t key, uint32_t number)
+{
+    if ((m_size + 1) * 3 > m_slots.span().size() * 2)
+        grow();
+    size_t mask = m_slots.span().size() - 1;
+    for (size_t position = firstPositionOf(key + 1, mask);; position = (position + 1) & mask) {
+        Slot& slot = m_slots[position];
+        if (slot.keyPlusOne() == key + 1)
+            return { slot.number, false };
+        if (!slot.keyPlusOne()) {
+            slot = { static_cast<uint32_t>(key + 1), static_cast<uint32_t>((key + 1) >> 32), number };
+            ++m_size;
+            return { slot.number, true };
+        }
+    }
+}
+
+size_t ValueFlowNumbersByKey::longestRunOfSlotsInUse() const
+{
+    size_t longest = 0;
+    size_t current = 0;
+    for (const Slot& slot : m_slots.span()) {
+        current = slot.keyPlusOne() ? current + 1 : 0;
+        longest = std::max(longest, current);
+    }
+    return longest;
+}
+
+void ValueFlowNumbersByKey::grow()
+{
+    size_t size = std::max<size_t>(m_slots.span().size() * 2, 64);
+    MallocSpan<Slot> previous = std::exchange(m_slots, MallocSpan<Slot>::malloc(size * sizeof(Slot)));
+    zeroSpan(m_slots.mutableSpan());
+    size_t mask = size - 1;
+    for (const Slot& slot : previous.span()) {
+        if (!slot.keyPlusOne())
+            continue;
+        size_t position = firstPositionOf(slot.keyPlusOne(), mask);
+        while (m_slots[position].keyPlusOne())
+            position = (position + 1) & mask;
+        m_slots[position] = slot;
+    }
+}
+
 struct ValueFlowSolver::Thread {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Thread);
 
@@ -219,7 +264,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     m_listenersOfNode.reserveCapacity(7 * static_cast<size_t>(m_input.numberOfNodes) / 2);
     m_madeStatements.reserveCapacity(m_input.statements.size() / 2);
     m_madeNodesOfStatement.reserveCapacity(m_input.statements.size() / 2);
-    m_fewestSlotsOfIndexOfMadeNodes = std::max<size_t>(64, roundUpToPowerOfTwo(4 * static_cast<size_t>(m_input.numberOfNodes) / numberOfIndicesOfMadeNodes));
+    m_fewestSlotsOfIndexOfMadeNodes = std::max<size_t>(64, roundUpToPowerOfTwo(2 * static_cast<size_t>(m_input.numberOfNodes) / numberOfIndicesOfMadeNodes));
 
     ValueSetMaker& maker = *m_makers[0];
     const ValueFlowPlaceholders& placeholders = m_input.placeholders;
@@ -263,7 +308,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         ValueSetID takenByRetiredNodes = maker.unite(m_objectsLookedForBesideUnknownObject, m_objectsAlwaysFollowed);
         ValueSetID keptOutOfNodesMadeForUnknownObject = m_objectsLookedForBesideUnknownObject;
         if (m_input.program && m_input.universe) {
-            ValueSetID marks = maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.of(ValueFlowUniverse::markOfMemberLeftOut()));
+            ValueSetID marks = maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.unite(maker.of(ValueFlowUniverse::markOfMemberLeftOut()), maker.of(ValueFlowUniverse::markOfLoadedBun())));
             m_allButMarks = ValueSets::complement(marks);
             takenByRetiredNodes = maker.unite(takenByRetiredNodes, marks);
             if (m_input.program->builtins().contains(Builtins::Bun))
@@ -455,7 +500,7 @@ void ValueFlowSolver::IndexOfMadeNodes::add(std::atomic<Table>& current, uint32_
             index = (index + 1) & mask;
         slots[index].store(slot, std::memory_order_release);
     };
-    if (tables.isEmpty() || (size + 1) * 2 > tables.last().numberOfSlots()) {
+    if (tables.isEmpty() || (size + 1) * 3 > tables.last().numberOfSlots() * 2) {
         size_t numberOfSlots = tables.isEmpty() ? fewestSlots : tables.last().numberOfSlots() * 2;
         Table larger { static_cast<Slot*>(fastAlignedMalloc(64, numberOfSlots * sizeof(Slot))), static_cast<unsigned>(std::countr_zero(numberOfSlots)) };
         zeroSpan(slotsOf(larger));
@@ -615,6 +660,7 @@ void ValueFlowSolver::StepTimes::begin()
         return;
     startOfStep = MonotonicTime::now();
     cpuAtStartOfStep = CPUTime::forCurrentThread();
+    cpuInParallelLoopsAtStartOfStep = ParallelRegionScope::cpuTimeOfCurrentThread();
 }
 
 void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
@@ -625,14 +671,17 @@ void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
     Seconds wall = now - std::exchange(startOfStep, now);
     Seconds cpuNow = CPUTime::forCurrentThread();
     Seconds cpu = cpuNow - std::exchange(cpuAtStartOfStep, cpuNow);
+    Seconds cpuInParallelLoopsNow = ParallelRegionScope::cpuTimeOfCurrentThread();
+    Seconds cpuOutsideParallelLoops = cpu - (cpuInParallelLoopsNow - std::exchange(cpuInParallelLoopsAtStartOfStep, cpuInParallelLoopsNow));
     for (Step& step : steps) {
         if (step.name.characters() == name.characters()) {
             step.wall += wall;
             step.cpuOfThisThread += cpu;
+            step.cpuOutsideParallelLoops += cpuOutsideParallelLoops;
             return;
         }
     }
-    steps.append(Step { name, wall, cpu });
+    steps.append(Step { name, wall, cpu, cpuOutsideParallelLoops });
 }
 
 void ValueFlowSolver::StepTimes::dump() const
@@ -640,7 +689,7 @@ void ValueFlowSolver::StepTimes::dump() const
     if (!isOn)
         return;
     for (const Step& step : steps)
-        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms");
+        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms | outside parallel loops ", step.cpuOutsideParallelLoops.milliseconds(), " ms");
     dataLogLn("AOT flow loop over due statements | busy on all threads ", busyOnAllThreads.milliseconds(), " ms | the busiest thread of each turn ", busiestThreadOfTurn.milliseconds(), " ms | the longest share of each turn ", longestShareOfTurn.milliseconds(), " ms");
 }
 
@@ -2075,7 +2124,7 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
             linked.edges.append(isRead ? ValueFlowEdge { other, node.node } : ValueFlowEdge { node.node, other });
     };
     ValueFlowObjectID onlyObject = m_sets.onlyMember(node.set);
-    auto connectWhereSetsMeet = [&](Vector<NodeOfSet>& list) {
+    auto connectWhereSetsMeet = [&](ShortList<NodeOfSet>& list) {
         size_t numberAtRest = 0;
         m_sets.forEachSetMeeting(node.set, list.size(), [&](size_t index) {
             if (m_graph.isAtRest(list[index].node)) {
@@ -2095,10 +2144,10 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
         uint64_t table = tableOfMembers(numberOfName, !isRead, hasFew);
         const NodesOfMembers& nodesOfMembers = m_linkShards[linkShardOf(numberOfName)].nodesOfMembers[!isRead];
         m_sets.forEachMember(node.set, [&](ValueFlowObjectID member) {
-            auto first = nodesOfMembers.first.find(table | member.index());
-            if (first == nodesOfMembers.first.end())
+            const uint32_t* first = nodesOfMembers.first.find(table | member.index());
+            if (!first)
                 return;
-            for (uint32_t entry = first->value; entry != noSolverIndex; entry = nodesOfMembers.chained[entry].next)
+            for (uint32_t entry = *first; entry != noSolverIndex; entry = nodesOfMembers.chained[entry].next)
                 connect(nodesOfMembers.chained[entry].node);
         });
     };
@@ -2114,7 +2163,7 @@ void ValueFlowSolver::link(const NodeOfSet& node, bool isRead, NodesOfName& othe
         connectByMembers(true);
 }
 
-void ValueFlowSolver::removeNodesAtRestFrom(Vector<NodeOfSet>& list)
+void ValueFlowSolver::removeNodesAtRestFrom(ShortList<NodeOfSet>& list)
 {
     list.removeAllMatching([&](const NodeOfSet& other) {
         if (!m_graph.isAtRest(other.node))
@@ -2159,7 +2208,7 @@ void ValueFlowSolver::noteNamesWatched(unsigned numberOfShard, ValueSetMaker& ma
             Vector<ValueSetID, 16> written { m_input.universe->placeholdersAlone() };
             if (name.name.kind == ValueFlowNameKind::Property)
                 written.append(m_input.universe->builtinTables().heap().objectsDeclaringField(PropertyKeyID(name.name.payload)));
-            for (const Vector<NodeOfSet>* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
+            for (const ShortList<NodeOfSet>* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
                 for (const NodeOfSet& node : *list)
                     written.append(node.set);
             }
@@ -2220,7 +2269,7 @@ void ValueFlowSolver::insertNode(const NodeToLink& toLink, bool isRead)
     uint64_t table = tableOfMembers(toLink.numberOfName, isRead, hasFew);
     NodesOfMembers& nodesOfMembers = m_linkShards[linkShardOf(toLink.numberOfName)].nodesOfMembers[isRead];
     auto add = [&](ValueFlowObjectID member) {
-        uint32_t& first = nodesOfMembers.first.add(table | member.index(), noSolverIndex).iterator->value;
+        uint32_t& first = nodesOfMembers.first.add(table | member.index(), noSolverIndex).number;
         nodesOfMembers.chained.append(ChainedNode { node.node, first });
         first = nodesOfMembers.chained.size() - 1;
     };
@@ -2237,7 +2286,7 @@ void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead, ValueS
         if (linkShardOf(toLink.numberOfName) != numberOfShard || m_graph.isAtRest(toLink.node.node))
             continue;
         linkNode(toLink, isRead, linked);
-        for (Vector<NodeOfSet>* list : linked.listsMostlyAtRest)
+        for (ShortList<NodeOfSet>* list : linked.listsMostlyAtRest)
             removeNodesAtRestFrom(*list);
         linked.listsMostlyAtRest.shrink(0);
         insertNode(toLink, isRead);
@@ -2288,7 +2337,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
         }
     });
 
-    Vector<Vector<NodeOfSet>*> listsMostlyAtRest;
+    Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
     for (const Linked& linked : linkedOfWorker) {
         m_edgesOfRound.appendVector(linked.edges);
         m_counters.testsWhetherSetsMeet += linked.testsWhetherSetsMeet;
@@ -2296,7 +2345,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
     }
     AOT::sort(listsMostlyAtRest);
     removeRepeatedElements(listsMostlyAtRest);
-    for (Vector<NodeOfSet>* list : listsMostlyAtRest)
+    for (ShortList<NodeOfSet>* list : listsMostlyAtRest)
         removeNodesAtRestFrom(*list);
 
     for (size_t index = 0; index < toLink.size(); ++index) {
@@ -2427,7 +2476,7 @@ void ValueFlowSolver::chainByMember(WatchShard& shard, uint32_t watchedNode, uin
         return;
     }
     m_sets.forEachMember(within, [&](ValueFlowObjectID member) {
-        uint32_t& first = shard.firstWatchOfMember.add(static_cast<uint64_t>(watchedNode) << 32 | member.index(), noSolverIndex).iterator->value;
+        uint32_t& first = shard.firstWatchOfMember.add(static_cast<uint64_t>(watchedNode) << 32 | member.index(), noSolverIndex).number;
         shard.watchesOfMembers.append(ChainedWatch { number, first });
         first = shard.watchesOfMembers.size() - 1;
     });
@@ -2436,8 +2485,8 @@ void ValueFlowSolver::chainByMember(WatchShard& shard, uint32_t watchedNode, uin
 void ValueFlowSolver::watch(WatchShard& shard, ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement, bool isAskedLast)
 {
     auto added = shard.watchOfPart.add(static_cast<uint64_t>(node.index()) << 32 | within.index(), shard.watches.size());
-    uint32_t number = added.iterator->value;
-    if (added.isNewEntry) {
+    uint32_t number = added.number;
+    if (added.isNew) {
         shard.watches.append(Watch { within, noSolverIndex, noSolverIndex, 0 });
         uint32_t watchedNode = shard.watchedNodeOfNode.ensure(node.index(), [&] {
             bool holdsWhatPlaceholderCovers = this->holdsWhatPlaceholderCovers(node);
@@ -3266,7 +3315,7 @@ ValueSetID ValueFlowSolver::withoutMarks(ValueSetID value, ValueSetMaker& maker)
 {
     if (m_allButMarks == ValueSets::anything)
         return value;
-    return m_sets.contains(value, ValueFlowUniverse::markOfNamedBun()) || m_sets.contains(value, ValueFlowUniverse::markOfMemberLeftOut()) ? maker.intersect(value, m_allButMarks) : value;
+    return m_sets.contains(value, ValueFlowUniverse::markOfNamedBun()) || m_sets.contains(value, ValueFlowUniverse::markOfMemberLeftOut()) || m_sets.contains(value, ValueFlowUniverse::markOfLoadedBun()) ? maker.intersect(value, m_allButMarks) : value;
 }
 
 ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueSetID value, ValueSetMaker& maker) const
@@ -3382,10 +3431,10 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
                 continue;
             }
             const WatchShard& shard = m_watchShards[newMembers[index].shard];
-            auto first = shard.firstWatchOfMember.find(static_cast<uint64_t>(newMembers[index].watchedNode) << 32 | newMembers[index].member.index());
-            if (first == shard.firstWatchOfMember.end())
+            const uint32_t* first = shard.firstWatchOfMember.find(static_cast<uint64_t>(newMembers[index].watchedNode) << 32 | newMembers[index].member.index());
+            if (!first)
                 continue;
-            for (uint32_t entry = first->value; entry != noSolverIndex; entry = shard.watchesOfMembers[entry].next)
+            for (uint32_t entry = *first; entry != noSolverIndex; entry = shard.watchesOfMembers[entry].next)
                 listReadersOfWatch(shard, shard.watchesOfMembers[entry].watch, m_readersOfWorker[worker]);
         }
     });
@@ -3860,6 +3909,8 @@ bool ValueFlowSolver::solve()
 {
     if (m_input.build)
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules);
+    m_stepTimes.isOn = m_input.build && m_input.build->options().logging.logsPhaseTimes;
+    m_stepTimes.begin();
     m_graph.addNodes(m_input.numberOfNodes);
     runTasksInParallel(m_loops, {
         [&] {
@@ -3914,7 +3965,7 @@ bool ValueFlowSolver::solve()
 
     Vector<ValueFlowNodeID> moved;
     bool isFullRound = m_rounds == Rounds::Full;
-    m_stepTimes.isOn = m_input.build && m_input.build->options().logging.logsPhaseTimes;
+    m_stepTimes.didFinish("in front of the rounds"_s);
     for (;;) {
         ++m_counters.rounds;
         m_counters.fullRounds += isFullRound;
@@ -3991,6 +4042,7 @@ bool ValueFlowSolver::solve()
             static_cast<uint32_t>(m_graph.counters().waves - graphBefore.waves),
             static_cast<uint32_t>(m_graph.counters().evaluations - graphBefore.evaluations),
         });
+        giveBackRoomOfLargerRounds(m_roundsDone.last().statementRuns + static_cast<uint64_t>(m_roundsDone.last().edgesAdded) + m_roundsDone.last().evaluations);
 
         bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueBehindLongRows.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
         if (isQuiet && isFullRound && m_rounds == Rounds::Due && !m_usesGeneralRulesOnly) {
@@ -4024,20 +4076,30 @@ bool ValueFlowSolver::solve()
         for (size_t index = 0; index < m_usesOfBuiltin.size(); ++index)
             m_addedByGeneralRules.builtinsUsedMore += index < usesAtRest.size() ? m_usesOfBuiltin[index] != usesAtRest[index] : !m_usesOfBuiltin[index].isEmpty();
     }
-    m_stepTimes.dump();
     if (m_stepTimes.isOn)
         dumpBytesByTable();
+    m_stepTimes.begin();
     fillNumbersThatNobodyGave();
+    m_stepTimes.didFinish("behind the rounds: numbers that nobody gave"_s);
     if (m_allButMarks != ValueSets::anything) {
-        m_graph.removeFromEveryNode(ValueFlowUniverse::markOfNamedBun());
-        m_graph.removeFromEveryNode(ValueFlowUniverse::markOfMemberLeftOut());
+        m_graph.removeFromEveryNode({ ValueFlowUniverse::markOfNamedBun(), ValueFlowUniverse::markOfMemberLeftOut(), ValueFlowUniverse::markOfLoadedBun() });
     }
+    m_stepTimes.didFinish("behind the rounds: marks removed from every node"_s);
     m_graph.releaseRows();
+    m_stepTimes.didFinish("behind the rounds: rows released"_s);
     if (m_input.leavesOutWhatIsCovered)
         leaveOutWhatIsCoveredInTheEnd();
+    m_stepTimes.didFinish("behind the rounds: what is covered left out"_s);
     spreadMarks();
+    m_stepTimes.didFinish("behind the rounds: marks spread"_s);
     findObjectsOutsideFamilies();
+    m_stepTimes.didFinish("behind the rounds: objects outside families"_s);
     findClosuresFollowedToConstructions();
+    m_stepTimes.didFinish("behind the rounds: closures followed to constructions"_s);
+    auto dumpStepTimes = makeScopeExit([&] {
+        m_stepTimes.didFinish("behind the rounds: unknown sources, beside the release of the solving state"_s);
+        m_stepTimes.dump();
+    });
     findUnknownSources([&] {
         report();
         m_graph.releaseSolvingState(m_input.isAskedHowValuesCame || m_input.remembersWhoLoggedEachEdge ? ValueFlowGraph::Predecessors::AreKept : ValueFlowGraph::Predecessors::AreReleased);
@@ -4109,29 +4171,28 @@ void ValueFlowSolver::dumpBytesByTable() const
     bytes.addList("readers: listeners of node"_s, m_listenersOfNode);
     for (const ReaderShard& shard : m_readerShards) {
         bytes.addList("readers: chained"_s, shard.readers);
-        bytes.add("readers: known pairs"_s, shard.known.memoryInBytes());
-        bytes.add("readers: known to wait for something"_s, shard.knownToWaitForSomething.memoryInBytes());
+        bytes.add("readers: known pairs"_s, shard.known.bytesInUse(), shard.known.memoryInBytes());
+        bytes.add("readers: known to wait for something"_s, shard.knownToWaitForSomething.bytesInUse(), shard.knownToWaitForSomething.memoryInBytes());
         bytes.addMap("readers: known to wait for something"_s, shard.firstReaderWaitingForSomething);
     }
     for (const WatchShard& shard : m_watchShards) {
         bytes.addList("watches: readers chained"_s, shard.readers);
         bytes.addList("watches: watches"_s, shard.watches);
-        bytes.addMap("watches: watch of part"_s, shard.watchOfPart);
-        bytes.add("watches: known watchers"_s, shard.knownWatchers.memoryInBytes());
+        bytes.add("watches: watch of part"_s, shard.watchOfPart.bytesInUse(), shard.watchOfPart.memoryInBytes());
+        bytes.add("watches: known watchers"_s, shard.knownWatchers.bytesInUse(), shard.knownWatchers.memoryInBytes());
         bytes.addList("watches: watched nodes"_s, shard.watchedNodes);
         for (const WatchedNode& node : shard.watchedNodes) {
             bytes.addList("watches: watches of watched nodes"_s, node.watches);
             bytes.addList("watches: watches of watched nodes"_s, node.watchesOfManyObjects);
         }
         bytes.addMap("watches: watched node of node"_s, shard.watchedNodeOfNode);
-        bytes.addMap("watches: first watch of member"_s, shard.firstWatchOfMember);
+        bytes.add("watches: first watch of member"_s, shard.firstWatchOfMember.bytesInUse(), shard.firstWatchOfMember.memoryInBytes());
         bytes.addList("watches: watches of members"_s, shard.watchesOfMembers);
         constexpr ASCIILiteral cover = "watches: sets watched for cover"_s;
         bytes.addMap(cover, shard.numberOfSetWatchedForCover);
         bytes.addList(cover, shard.watchesOfSetWatchedForCover);
         for (const auto& watches : shard.watchesOfSetWatchedForCover)
             bytes.add(cover, 0, watches.capacity() > 2 ? watches.capacity() * sizeof(uint32_t) : 0);
-        bytes.addLists(cover, shard.membersToChain);
     }
     bytes.addList("watches: sets watched for cover"_s, m_firstSetWatchedForCoverOfMember);
     bytes.addLists("watches: sets watched for cover"_s, m_setsWatchedForCoverOfMembers);
@@ -4154,23 +4215,12 @@ void ValueFlowSolver::dumpBytesByTable() const
     }
     for (const LinkShard& shard : m_linkShards) {
         for (const NodesOfMembers& nodesOfMembers : shard.nodesOfMembers) {
-            bytes.addMap("names: first node of member"_s, nodesOfMembers.first);
+            bytes.add("names: first node of member"_s, nodesOfMembers.first.bytesInUse(), nodesOfMembers.first.memoryInBytes());
             bytes.addList("names: nodes of members chained"_s, nodesOfMembers.chained);
         }
         bytes.addList("names: parts watched"_s, shard.partsWatched);
         bytes.addMap("names: parts watched"_s, shard.partWatchedOf);
-        constexpr ASCIILiteral linksOfRound = "names: links of one round"_s;
-        bytes.addList(linksOfRound, shard.linked.edges);
-        bytes.addList(linksOfRound, shard.linked.listsMostlyAtRest);
-        bytes.addList(linksOfRound, shard.namesWatchedInRound);
-        bytes.addList(linksOfRound, shard.writtenUnderWatchedNames);
-        bytes.addList(linksOfRound, shard.woken);
     }
-    auto addLinksOfRound = [&](const auto&... lists) {
-        (bytes.addList("names: links of one round"_s, lists), ...);
-    };
-    addLinksOfRound(m_readToLink, m_writtenToLink, m_readToInsert, m_edgesOfRound, m_edgesInFrontOfLinks, m_placeholdersStopped);
-    bytes.addLists("names: links of one round"_s, m_nodesToInsertOfShards);
 
     constexpr ASCIILiteral members = "members: layout or callee, counts, marks"_s;
     bytes.addList(members, m_layoutOrCalleeOfMember);
@@ -4180,32 +4230,65 @@ void ValueFlowSolver::dumpBytesByTable() const
     bytes.addBits(members, m_isSaturated);
     bytes.addMap(members, m_familyObjectsOfMask);
 
-    constexpr ASCIILiteral wakers = "readers: lists of one round"_s;
-    bytes.addLists(wakers, m_readersOfWorker);
-    bytes.addLists(wakers, m_newMembersOfWorker);
-    bytes.addLists(wakers, m_watchesToTestOfWorker);
-    bytes.addList(wakers, m_newMembers);
+    bytes.add("logs: threads"_s, m_threads.size() * sizeof(Thread));
+    forEachListOfOneRound(*this, [&](ASCIILiteral table, const auto& list) {
+        bytes.addList(table, list);
+    });
+    bytes.dump("all tables of the solver"_s);
+}
 
-    for (const std::unique_ptr<Thread>& thread : m_threads) {
-        const ValueFlowRoundLog& log = thread->log;
-        bytes.addList("logs: runs"_s, log.runs);
-        bytes.addList("logs: edges"_s, log.edges);
-        bytes.addList("logs: edges"_s, log.edgesOfMadeNodes);
-        bytes.addList("logs: nodes read"_s, log.nodesRead);
-        bytes.addList("logs: records asked for"_s, log.madeNodesAskedFor);
-        bytes.addList("logs: parts watched"_s, log.partsWatched);
-        bytes.addList("logs: parts watched"_s, log.partsWatchedLast);
-        auto addRest = [&](const auto&... lists) {
-            (bytes.addList("logs: the rest"_s, lists), ...);
-        };
-        addRest(log.made, log.madeWhereAskedFor, log.madeWithStatementToRun, log.askedForAtRest, log.recordsOfRunsWhereMade, log.whoReached, log.rememberedByStatementsRunWhereMade, log.partsOfMadeNodes, log.reached, log.uses, log.statementsWithMembersNotToldApart, log.functionsAsked, log.valuesShown, log.nodesAskedWhetherEmpty, log.namesWatched);
-        addRest(thread->thrownOfStatementsThatWait, thread->statementsFound, thread->dueInNextTurn, thread->bodiesReached, thread->namesWatched, thread->numberOfMadeNode);
-        bytes.addLists("logs: sorted by shard"_s, thread->partsWatchedOfShard);
-        bytes.addLists("logs: sorted by shard"_s, thread->nodesReadOfShard);
-        bytes.addLists("logs: sorted by shard"_s, thread->nodesAskedWhetherEmptyOfShard);
-        bytes.add("logs: threads"_s, sizeof(Thread));
+void ValueFlowSolver::forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor)
+{
+    auto visit = [&](ASCIILiteral table, auto&... lists) {
+        (functor(table, lists), ...);
+    };
+    auto visitEach = [&](ASCIILiteral table, auto& lists) {
+        for (auto& list : lists)
+            functor(table, list);
+    };
+    constexpr ASCIILiteral links = "names: links of one round"_s;
+    for (auto& shard : solver.m_linkShards)
+        visit(links, shard.linked.edges, shard.linked.listsMostlyAtRest, shard.namesWatchedInRound, shard.writtenUnderWatchedNames, shard.woken);
+    visit(links, solver.m_readToLink, solver.m_writtenToLink, solver.m_readToInsert, solver.m_edgesOfRound, solver.m_edgesInFrontOfLinks, solver.m_placeholdersStopped);
+    visitEach(links, solver.m_nodesToInsertOfShards);
+
+    for (auto& shard : solver.m_watchShards)
+        visitEach("watches: members to chain in one round"_s, shard.membersToChain);
+
+    constexpr ASCIILiteral wakers = "readers: lists of one round"_s;
+    visitEach(wakers, solver.m_readersOfWorker);
+    visitEach(wakers, solver.m_newMembersOfWorker);
+    visitEach(wakers, solver.m_watchesToTestOfWorker);
+    visit(wakers, solver.m_newMembers);
+
+    for (auto& thread : solver.m_threads) {
+        auto& log = thread->log;
+        visit("logs: runs"_s, log.runs);
+        visit("logs: edges"_s, log.edges, log.edgesOfMadeNodes);
+        visit("logs: nodes read"_s, log.nodesRead);
+        visit("logs: records asked for"_s, log.madeNodesAskedFor);
+        visit("logs: parts watched"_s, log.partsWatched, log.partsWatchedLast);
+        visit("logs: the rest"_s, log.made, log.madeWhereAskedFor, log.madeWithStatementToRun, log.askedForAtRest, log.recordsOfRunsWhereMade, log.whoReached, log.rememberedByStatementsRunWhereMade, log.partsOfMadeNodes, log.reached, log.uses, log.statementsWithMembersNotToldApart, log.functionsAsked, log.valuesShown, log.nodesAskedWhetherEmpty, log.namesWatched);
+        visit("logs: the rest"_s, thread->thrownOfStatementsThatWait, thread->statementsFound, thread->dueInNextTurn, thread->bodiesReached, thread->namesWatched, thread->numberOfMadeNode);
+        constexpr ASCIILiteral sorted = "logs: sorted by shard"_s;
+        visitEach(sorted, thread->partsWatchedOfShard);
+        visitEach(sorted, thread->nodesReadOfShard);
+        visitEach(sorted, thread->nodesAskedWhetherEmptyOfShard);
     }
-    bytes.dump();
+}
+
+void ValueFlowSolver::giveBackRoomOfLargerRounds(uint64_t sizeOfRound)
+{
+    m_sizesOfLatestRounds[m_counters.rounds % m_sizesOfLatestRounds.size()] = sizeOfRound;
+    uint64_t largestOfLatest = std::ranges::max(m_sizesOfLatestRounds);
+    m_sizeOfRoundThatListsHaveRoomFor = std::max(m_sizeOfRoundThatListsHaveRoomFor, largestOfLatest);
+    if (largestOfLatest * 4 > m_sizeOfRoundThatListsHaveRoomFor)
+        return;
+    m_sizeOfRoundThatListsHaveRoomFor = largestOfLatest;
+    forEachListOfOneRound(*this, [](ASCIILiteral, auto& list) {
+        giveBackMostRoomOf(list);
+    });
+    m_graph.giveBackMostRoomOfListsOfOneRound();
 }
 
 } } } // namespace JSC::AOT::Typed

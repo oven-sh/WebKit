@@ -186,7 +186,12 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         return;
 
     ModuleNumbers requests = table.allLinkRequests();
-    BitVector seen;
+    // What was found to be settled when the walk began, and what the walk has come to: several modules of a graph request the same module.
+    Vector<uint64_t> passedOver;
+    std::span<const uint64_t> modulesPassedOver = modules.modulesSettledForLinks();
+    auto passOverFromNowOn = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
+        passedOver[module.index() / 64] |= 1ull << (module.index() % 64);
+    };
     while (!path.isEmpty()) {
         Frame& frame = path.last();
         uint32_t next = frame.nextRequest;
@@ -194,17 +199,19 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         size_t depth = path.size();
         while (true) {
             // Most of what a root of a large program reaches was linked with an earlier graph.
-            next = static_cast<uint32_t>(requests.findFirstOutside(modules.modulesSettledForLinks(), next, end));
+            next = static_cast<uint32_t>(requests.findFirstOutside(modulesPassedOver, next, end));
             if (next == end)
                 break;
             ModuleID target(requests[next++]);
-            if (modules.isSettledForLinks(target))
-                continue;
-            if (seen.size() < table.size()) {
-                seen.ensureSize(table.size());
-                seen.quickSet(root.index());
+            if (passedOver.isEmpty()) {
+                passedOver = modulesPassedOver;
+                modulesPassedOver = passedOver.span();
+                passOverFromNowOn(root);
+                if (target == root)
+                    continue;
             }
-            if (seen.quickSet(target.index()))
+            passOverFromNowOn(target);
+            if (modules.isSettledForLinks(target))
                 continue;
             // record() may move the frames.
             path[depth - 1].nextRequest = next;
@@ -223,6 +230,7 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     }
 }
 
+// A link that has finished since leaves the walk as it is unless it has linked a module that the walk enters. What has no work left by now has a step that does nothing.
 bool ModuleLinkWalk::stillHolds(const Modules& modules) const
 {
     if (m_linkEpoch != modules.linkEpoch())
@@ -305,7 +313,7 @@ void Modules::captureSyntheticExports(ModuleID root, VisitedModuleRecords& visit
     std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
     captureSyntheticExports(*walk, visited);
     RETURN_IF_EXCEPTION(scope, void());
-    m_linkWalkOfQueuedImport = WTF::move(walk);
+    keepLinkWalk(WTF::move(walk));
 }
 
 void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleRecords& visited)
@@ -375,7 +383,6 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    ++m_linkEpoch;
 
     auto isUnlinked = [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;

@@ -1006,7 +1006,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     bool mayAnswerMemberLeftOut = holdsMarkOfMemberLeftOut(m_statement.result) || holdsMarkOfMemberLeftOut(object.node);
     HeapChain chain = chainFrom(m_context.valueOf(object), key);
     ClimbingSet found = m_context.restrict(chain.objects, holders);
-    if (holdsNamedBun(object))
+    if (holdsNamedBun(object) || holdsMarkOfLoadedBun(m_statement.result))
         found = m_context.unite(found, m_context.restrict(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), holders));
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);

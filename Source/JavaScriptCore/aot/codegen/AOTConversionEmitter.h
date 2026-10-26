@@ -81,6 +81,7 @@ public:
 private:
     struct ExactInteger;
     std::optional<ExactInteger> findExactIntegerBehind(LValue number);
+    Word32 toInt32OfAnyNumber(Number);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
     Number numberPartOf(Operand, const Type&);

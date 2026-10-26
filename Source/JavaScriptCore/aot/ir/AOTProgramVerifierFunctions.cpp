@@ -28,6 +28,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::IsHiddenInStackTraces,
     FunctionCapabilities::ClosuresAreReadWithoutCode,
     FunctionCapabilities::RecordsCallee,
+    FunctionCapabilities::RecordsCalleeOnceRenamed,
     FunctionCapabilities::NotesLooksForName,
 };
 

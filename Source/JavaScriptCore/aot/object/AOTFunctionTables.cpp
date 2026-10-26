@@ -191,6 +191,7 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
 }
 
 // The frames of a generator, and of an async function that may wait, run under a function object of their own.
+// So is a frame without a record of a function that records its callees only once one of them was renamed.
 static bool isNamedInFramesByFunction(FunctionID closureFunction)
 {
     FunctionDescription description(closureFunction);
@@ -279,6 +280,51 @@ void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* cl
     }
 }
 
+bool FunctionTables::framesAreNamedByCallee(FunctionID function)
+{
+    return recordsCalleesOf(function) || FunctionDescription(function).recordsCallee();
+}
+
+void FunctionTables::recordCalleesOf(VM& vm, FunctionID sourceFunction)
+{
+    if (recordsCalleesOf(sourceFunction))
+        return;
+    {
+        Locker locker { namesLock };
+        size_t numberOfFunctions = programTables().numberOfFunctions();
+        if (functionsRenamedAtRunTime.isEmpty())
+            functionsRenamedAtRunTime.fill(0, numberOfFunctions);
+        for (size_t index = 0; index < numberOfFunctions; ++index) {
+            if (sourceFunctionOf(FunctionID(index)) == sourceFunction)
+                functionsRenamedAtRunTime[index] = 1;
+        }
+        if (isRenamedAtRunTime.exchange(functionsRenamedAtRunTime.span().data(), std::memory_order_release))
+            return;
+    }
+    VMState& state = vm.aotState();
+    Locker locker { state.instancesLock };
+    for (Instance* instance : state.instances)
+        makeCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+}
+
+void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer, JSObject* closure)
+{
+    std::optional<FunctionID> function = functionOf(closure);
+    if (!function || !recordsCalleesOf(*function))
+        return;
+    // Nobody has seen a closure that lies in a frame, so it has the name of its function. The collector visits what is recorded.
+    if (Thread::currentSingleton().stack().contains(closure)) {
+        Locker locker { recordedCalleesLock };
+        if (hasRecordedCallees()) {
+            RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), std::bit_cast<uintptr_t>(stackPointer));
+            if (entry.stackPointerOfCaller == std::bit_cast<uintptr_t>(stackPointer))
+                entry = { 0, nullptr };
+        }
+        return;
+    }
+    recordCallee(vm, stackPointer, closure);
+}
+
 JSObject* FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer)
 {
     if (!hasRecordedCallees())
@@ -365,10 +411,12 @@ static String ownTextProperty(JSObject* closure, const Identifier& name)
 void didChangeDisplayName(VM& vm, JSObject* closure)
 {
     FunctionID closureFunction = *functionOf(closure);
-    if (!isNamedInFramesByFunction(closureFunction))
-        return;
     FunctionTables& tables = FunctionTables::of(vm);
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
+    if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed())
+        tables.recordCalleesOf(vm, sourceFunction);
+    if (!isNamedInFramesByFunction(closureFunction))
+        return;
     auto* classObject = dynamicDowncast<Closure>(closure);
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownTextProperty(closure, vm.propertyNames->displayName);
@@ -508,6 +556,15 @@ void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
     Locker locker { tables.namesLock };
     tables.namesSetAtRunTime.set(sourceFunctionOf(function), name);
     tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
+}
+
+void didDeleteNameProperty(VM& vm, JSObject* closure)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire))
+        return;
+    Locker locker { tables.namesLock };
+    tables.namesSetAtRunTime.remove(sourceFunctionOf(*functionOf(closure)));
 }
 
 void didLookForNameProperty(VM& vm, JSObject* closure)

@@ -233,6 +233,7 @@ struct MappedCopy {
         Byte,
         BoxedOptionalInt32,
         BoxedInt32,
+        Int32AsOptionalInt32,
         OptionalInt32AsDouble,
         Int32AsDouble,
         WideNarrowReference,

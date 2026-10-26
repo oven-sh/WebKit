@@ -132,13 +132,12 @@ namespace {
 
 class SiteScanner {
 public:
-    SiteScanner(const PlacementContext& context, FunctionID id)
+    SiteScanner(const PlacementContext& context, FunctionID id, FunctionAnalyses* analyses)
         : m_context(context)
         , m_program(context.program)
         , m_id(id)
         , m_function(m_program.at(id))
-        , m_analyses({ context.build, m_program, &context.inputs.flow, nullptr, id }, m_function)
-        , m_weights(m_program, context.inputs.heat, id, m_analyses)
+        , m_weights(m_program, context.inputs.heat, id, analyses ? *analyses : m_ownAnalyses.emplace(AnalysisContext { context.build, m_program, &context.inputs.flow, nullptr, id }, m_function))
         , m_source(firstSourceOf(m_program, id))
     {
     }
@@ -517,7 +516,7 @@ private:
     const Program& m_program;
     FunctionID m_id;
     const Function& m_function;
-    FunctionAnalyses m_analyses;
+    std::optional<FunctionAnalyses> m_ownAnalyses;
     FunctionSiteWeights m_weights;
     FunctionID m_source;
     PlacedFunctionSites* m_sites { nullptr };
@@ -761,10 +760,10 @@ BodyScansForPlacement::BodyScansForPlacement(const Program& program, const Place
 
 BodyScansForPlacement::~BodyScansForPlacement() = default;
 
-void BodyScansForPlacement::scan(FunctionID id)
+void BodyScansForPlacement::scan(FunctionID id, FunctionAnalyses* analyses)
 {
     auto scan = makeUnique<PlacedFunctionSites>();
-    SiteScanner(m_state->context, id).run(*scan);
+    SiteScanner(m_state->context, id, analyses).run(*scan);
     m_state->scans[id.index()] = WTF::move(scan);
 }
 

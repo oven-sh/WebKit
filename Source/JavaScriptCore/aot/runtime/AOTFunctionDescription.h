@@ -46,6 +46,7 @@ public:
     bool isNakedConstructor() const;
     bool isNamedByComputedKey() const;
     bool recordsCallee() const;
+    bool recordsCalleeOnceRenamed() const;
     JS_EXPORT_PRIVATE bool isAsync() const;
     JS_EXPORT_PRIVATE bool isNamedByOwner() const;
     JS_EXPORT_PRIVATE bool isInRuntimeModule() const;

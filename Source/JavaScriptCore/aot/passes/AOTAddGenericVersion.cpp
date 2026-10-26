@@ -948,10 +948,7 @@ static std::optional<Position> storedPosition(const Program& program, FunctionID
     }
 }
 
-static constexpr OpcodeSet readsOfPositions { Opcode::CallDirect, Opcode::Call, Opcode::ResultAt, Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
-static constexpr OpcodeSet readsByName { Opcode::PropGet, Opcode::PrivateGet };
-
-static std::optional<Position> variableReadBy(const Value& read)
+static ALWAYS_INLINE std::optional<Position> variableReadBy(const Value& read)
 {
     if (read.opcode == Opcode::GetModuleVariable)
         return Position { Position::Kind::Variable, read.variable().index(), 0 };
@@ -960,7 +957,7 @@ static std::optional<Position> variableReadBy(const Value& read)
     return std::nullopt;
 }
 
-static std::optional<Position> readPosition(const Program& program, const Function& function, const Value& read)
+static ALWAYS_INLINE std::optional<Position> readPosition(const Program& program, const Function& function, const Value& read)
 {
     FunctionID callee;
     uint32_t resultIndex = 0;
@@ -986,7 +983,7 @@ static std::optional<Position> readPosition(const Program& program, const Functi
 }
 
 // After flow a read by name through a proven receiver has the type of the fields that it may find. None for any other operation.
-static std::optional<PropertyKeyID> keyOfTypedReadByName(const Program& program, const Value& read)
+static ALWAYS_INLINE std::optional<PropertyKeyID> keyOfTypedReadByName(const Program& program, const Value& read)
 {
     if ((read.opcode != Opcode::PropGet && read.opcode != Opcode::PrivateGet) || program.at(read.type).isAnything())
         return std::nullopt;
@@ -1937,11 +1934,9 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
     ReadsOfBody reads { .isListed = true };
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
-            const Value& value = function.at(id);
-            if (readsOfPositions.contains(value.opcode)) {
-                if (std::optional<Position> position = readPosition(program, function, value))
-                    reads.positions.append(*position);
-            } else if (readsByName.contains(value.opcode) && keyOfTypedReadByName(program, value))
+            if (std::optional<Position> position = readPosition(program, function, function.at(id)))
+                reads.positions.append(*position);
+            else if (keyOfTypedReadByName(program, function.at(id)))
                 reads.typedReadsByName.append(id);
         }
     }
@@ -2011,12 +2006,10 @@ static Vector<GuardedRead> collectGuardedReads(const Program& program, FunctionI
         addReadIfMarked(entryParameters[index], { Position::Kind::EntryParameter, id.index(), index });
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
-            const Value& read = function.at(value);
-            if (readsOfPositions.contains(read.opcode)) {
-                if (std::optional<Position> position = readPosition(program, function, read))
-                    addReadIfMarked(value, *position);
-            } else if (readsByName.contains(read.opcode) && readsMarkedFieldByName(program, function, read, marked))
-                addRead(value, DeclaredType(ExpectedType(read.type)));
+            if (std::optional<Position> position = readPosition(program, function, function.at(value)))
+                addReadIfMarked(value, *position);
+            else if (keyOfTypedReadByName(program, function.at(value)) && readsMarkedFieldByName(program, function, function.at(value), marked))
+                addRead(value, DeclaredType(ExpectedType(function.at(value).type)));
         }
     }
     return reads;

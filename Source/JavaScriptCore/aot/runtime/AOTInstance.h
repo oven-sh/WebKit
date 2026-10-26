@@ -73,6 +73,13 @@ struct JSONLevelWords {
     ZeroedStorage<StackManager::Mirror> limit;
 };
 
+// A stub that is about to jump into the code of a function object compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame from the time on that such calls record their callees.
+struct CallByValueWords {
+    ZeroedStorage<StackManager::Mirror> limit;
+    // FunctionTables::isRenamedAtRunTime.
+    const uint8_t* isRenamedAtRunTime;
+};
+
 // On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
     int64_t minInt64;
@@ -289,7 +296,8 @@ struct NumberWords {
     writtenOnce(stubs, StubWords) \
     v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \
-    v(lazyStrings, LazyStringWords)
+    v(lazyStrings, LazyStringWords) \
+    v(callsByValue, CallByValueWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {
@@ -444,6 +452,8 @@ static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
+// From now on every stub that is about to jump into the code of a function object polls first.
+void makeCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
 
 } } // namespace JSC::AOT
 

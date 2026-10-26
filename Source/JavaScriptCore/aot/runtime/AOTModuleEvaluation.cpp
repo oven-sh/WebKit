@@ -818,10 +818,16 @@ bool Modules::comesToLoadInFlight(ModuleID required)
         // The loader asks a module that it has loaded for no requests.
         if (!isNotLoaded)
             continue;
-        for (const ModuleRequestData& request : m_table.imports(module)) {
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (request.isHoisted || request.isRequire)
+                continue;
             ModuleID target = request.targetModule();
-            if (!request.isHoisted && !seen.quickSet(target.index()))
-                modules.append(target);
+            if (seen.quickSet(target.index()))
+                continue;
+            // Most of what a module of a large program imports is an ES module that has begun: it is loaded, and only as a root is it in the hands of the loader.
+            if (isLoadedModuleWithoutRecord(target) && !rootsThatWait.contains(target))
+                continue;
+            modules.append(target);
         }
     }
     return false;
@@ -844,7 +850,7 @@ void Modules::markModulesBelowWalkedRoot(ModuleID root)
             continue;
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = request.targetModule();
-            if (request.isHoisted || m_modulesBelowWalkedRoots.quickGet(target.index()))
+            if (request.isHoisted || m_modulesBelowWalkedRoots.quickGet(target.index()) || isLoadedModuleWithoutRecord(target))
                 continue;
             if (isNotLoaded(target)) {
                 m_modulesBelowWalkedRoots.quickSet(target.index());
@@ -946,6 +952,9 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     };
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
+    // What is found is what lies below the root and is not loaded.
+    m_modulesBelowWalkedRoots.ensureSize(m_table.size());
+    m_modulesBelowWalkedRoots.quickSet(root.index());
     Vector<Level, 8> levels(1);
     levels[0].modules.append(Found { root, 0, 0 });
     while (true) {
@@ -953,17 +962,37 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         uint32_t place = 0;
         const Level& level = levels.last();
         for (uint32_t importer = 0; importer < level.modules.size(); ++importer) {
-            for (const ModuleRequestData& request : m_table.imports(level.modules[importer].module)) {
+            for (const ModuleRequestData& request : m_table.requests(level.modules[importer].module)) {
+                if (request.isHoisted || request.isRequire)
+                    continue;
                 ModuleID target = request.targetModule();
-                if (request.isHoisted || seen.quickSet(target.index()) || wasLoadedWithEarlierGraph(target) || isLeftAsLoaded(target))
+                if (seen.quickSet(target.index()))
+                    continue;
+                // Most requests of a large graph lead to an ES module without a record: it is loaded if it has a status, and no load has come to it if it has none.
+                const ModuleData& targetData = data(target);
+                if (isLoadedModuleWithoutRecord(target))
+                    continue;
+                if (storedStatus(target) == StoredModuleStatus::Unlinked && targetData.kind == ModuleKind::SourceText && !targetData.isOfLibrary() && !targetData.isFaceOfFile()) {
+                    if (!isNotLoaded(target))
+                        continue;
+                    if (!m_levelsOfLoads.isEmpty() && m_levelsOfLoads.contains(target))
+                        return false;
+                    next.modules.append(Found { target, importer, place++ });
+                    m_modulesBelowWalkedRoots.quickSet(target.index());
+                    continue;
+                }
+                if (wasLoadedWithEarlierGraph(target) || isLeftAsLoaded(target))
                     continue;
                 // Another graph that is being loaded has come to the module, or will.
                 if (isInHandsOfLoader(target))
                     return false;
-                if (isCommonJSFileOrFace(target) || data(target).kind == ModuleKind::Data)
+                if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data)
                     next.files.append(Found { target, importer, place++ });
                 else if (isFileOfProgram(target))
                     next.modules.append(Found { target, importer, place++ });
+                else
+                    continue;
+                m_modulesBelowWalkedRoots.quickSet(target.index());
             }
         }
         if (next.modules.isEmpty() && next.files.isEmpty())
@@ -1000,6 +1029,8 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         below = onWay.module;
         position = onWay.importer;
     }
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.hasMarksBelowRoot |= load.root == root;
     return true;
 }
 

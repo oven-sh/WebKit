@@ -239,7 +239,7 @@ constexpr std::array rows {
     functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
-    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
+    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(PlanCollectionCapacities, planCollectionCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(FoldConstantRegExps, foldConstantRegExps, Optional, Prepared, { Flow }, everything),
     functionPass(ShareRegExpLiterals, shareRegExpLiterals, Optional, Prepared, { Flow }, values),
@@ -1595,20 +1595,17 @@ void Pipeline::runSelectStage()
         auto observe = [&](FunctionID id) {
             observer.observe(id);
         };
-        auto findOutliningSites = [&](FunctionID id) {
+        auto findOutliningSitesOrReadFinishedFunction = [&](FunctionID id) {
+            FunctionAnalyses analyses(finder.contextOf(id), std::as_const(m_program).at(id));
             if (findsOutliningSites)
-                finder.findIn(id);
+                finder.findIn(id, analyses);
+            if (hasOutliningSites[id.index()])
+                return;
+            facts.readReferences(id);
+            facts.scansForPlacement().scan(id, &analyses);
         };
-        auto readReferences = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.readReferences(id);
-        };
-        auto scanForPlacement = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.scansForPlacement().scan(id);
-        };
-        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSites, readReferences, scanForPlacement };
-        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1], &readers1[2], &readers1[3] };
+        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSitesOrReadFinishedFunction };
+        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
         advanceTo(IRForm::Selected, wasRunning);
         if (!m_runner.isStopped())

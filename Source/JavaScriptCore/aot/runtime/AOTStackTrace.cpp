@@ -70,7 +70,7 @@ static constexpr FunctionTraceData traceOfCalledBuiltin {
     .implementsBuiltin = false,
     .isNamedByComputedKey = false,
     .recordsCallee = false,
-    .unused = 0,
+    .recordsCalleeOnceRenamed = false,
 };
 
 static String nameOfBuiltin(VM& vm, BuiltinID builtin)
@@ -112,6 +112,7 @@ AOT_DEFINE_FLAG_OF_TRACE_RECORD(isConstructor)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNakedConstructor)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedByComputedKey)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(recordsCallee)
+AOT_DEFINE_FLAG_OF_TRACE_RECORD(recordsCalleeOnceRenamed)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isAsync)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedByOwner)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(rejectsOnThrow)
@@ -366,7 +367,7 @@ static NEVER_INLINE void countLogicalFrames(const Image& image, const CallSiteCa
     }
 }
 
-static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered, bool hasRecordedCallees)
+static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered, bool hasRecordedCallees)
 {
     using Trace = ReturnAddressTrace;
     ASSERT(!walk.isAtEnd());
@@ -381,7 +382,7 @@ static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSC
         if (site.site.isConstruct() && !run.returnAddresses.isEmpty())
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         outermostCode = site.code;
-        if (hasRecordedCallees && FunctionDescription(walk.image().rootFunctionOf(site.code.index())).recordsCallee()) [[unlikely]] {
+        if (hasRecordedCallees && FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index()))) [[unlikely]] {
             run.hasFrameNamedByCallee = true;
             return;
         }
@@ -506,7 +507,7 @@ void forEachCallThatRecordsCallee(VM& vm, const void* outermost, const ScopedLam
                     const void* stackPointerOfCaller = frames.callerStackPointer();
                     if (stackPointerOfCaller > outermost)
                         return IterationStatus::Done;
-                    if (FunctionDescription(image.rootFunctionOf(frames.callSite().code.index())).recordsCallee())
+                    if (FunctionTables::of(vm).framesAreNamedByCallee(image.rootFunctionOf(frames.callSite().code.index())))
                         functor(stackPointerOfCaller);
                 }
                 return IterationStatus::Continue;
@@ -571,7 +572,7 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
         framesAbove = { results.size(), true };
     }
     // A return address does not say which function object runs in the frame.
-    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCallees();
+    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCallees() || FunctionTables::of(vm).recordsCalleesOfCallsByValue();
     Instance* instance = findInstance(vm, *start);
     if (!instance)
         return nullptr;
@@ -580,7 +581,7 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     if (walk.isAtEnd())
         return nullptr;
     CapturedRun run;
-    captureRun(walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered, hasRecordedCallees);
+    captureRun(vm, walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered, hasRecordedCallees);
     if (run.hasFrameNamedByCallee || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
         return nullptr;
 

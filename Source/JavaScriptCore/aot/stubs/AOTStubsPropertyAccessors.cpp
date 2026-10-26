@@ -69,7 +69,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     jit.load32(Address(getter, offsetOfClosureEntry), scratch);
 
     hasOffsetOfCode.link(&jit);
-    jit.checkStackBeforeEntering();
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
@@ -99,7 +99,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
 
     hasWord.link(&jit);
-    jit.checkStackBeforeEntering();
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });

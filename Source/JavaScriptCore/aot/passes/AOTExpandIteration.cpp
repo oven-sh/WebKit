@@ -2818,10 +2818,11 @@ static std::optional<DerivedFunctionKey> findOutlinedLoop(FunctionPassContext& p
 static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& builder, const SpreadLoop& loop)
 {
     Function& function = pass.function;
-    RELEASE_ASSERT(function.at(loop.entry).values.size() == 1 && function.at(loop.entry).values[0] == loop.open);
+    uint32_t numberOfValues = function.at(loop.entry).values.size();
+    RELEASE_ASSERT(numberOfValues && function.at(loop.entry).values.last() == loop.open);
     ValueID source = function.at(loop.open).iterableOperand();
     BlockFrequency frequency = function.at(loop.entry).frequency;
-    builder.beginExpansion(ProgramPoint::atHeadOf(loop.entry));
+    builder.beginExpansion(ProgramPoint { loop.entry, numberOfValues - 1 });
 
     if (pass.program.typeOf(function, source).mayBeUndefinedOrNull()) {
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::nullish), OperandIndex::TypeTest::value, BlockFrequency::Rare, frequency);

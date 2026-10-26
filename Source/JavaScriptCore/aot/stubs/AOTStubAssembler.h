@@ -154,6 +154,9 @@ public:
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
+    // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
+    void checkStackBeforeEnteringCallee();
+    static Address limitOfCallsByValue();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
     void returnFlags32(RelationalCondition, GPRReg, TrustedImm32);
@@ -309,6 +312,7 @@ private:
 
     void emitStackAlignmentCheck();
     void emitStubCall(StubKey);
+    void pollIfBelow(Address limit, StubKey poll);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
     void checkReturnsFlags(RelationalCondition) const;

@@ -24,6 +24,14 @@ using ObjectAccessKind = ValueFlowAccessThroughObjectKind;
 static constexpr EnumSet<ValueFlowNameKind> namesOfValues { ValueFlowNameKind::Property, ValueFlowNameKind::Elements, ValueFlowNameKind::UnknownKey, ValueFlowNameKind::EveryProperty };
 static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
 
+static constexpr EnumSet<ValueFlowNameKind> namesOfRemovalsAndRedefinitions { ValueFlowNameKind::DeletedMember, ValueFlowNameKind::DeletedMemberUnderUnknownKey, ValueFlowNameKind::RedefinedMember, ValueFlowNameKind::RedefinedMemberUnderUnknownKey };
+
+static ValueFlowName propertyChangedUnder(ValueFlowName written)
+{
+    bool namesProperty = written.kind == ValueFlowNameKind::DeletedMember || written.kind == ValueFlowNameKind::RedefinedMember;
+    return namesProperty ? ValueFlowName { ValueFlowNameKind::Property, written.payload } : everyPropertyName;
+}
+
 static bool testsProperty(const BuiltinPropertyAction& action)
 {
     return action.kind == BuiltinPropertyActionKind::TestsByKey || action.kind == BuiltinPropertyActionKind::ReadsGetter || action.kind == BuiltinPropertyActionKind::ReadsSetter;
@@ -132,18 +140,32 @@ struct ValueFlowAccessesThroughObjects {
             lookupReachesFollowedObject[index] = 1;
     }
 
+    void noteLookInto(ValueFlowObjectID object, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
+    {
+        if (isNamespace(object) && name.kind != ValueFlowNameKind::Property) {
+            setFlag(isNamespaceReadUnderUnknownName, inputs.universe().moduleOf(object).index());
+            return;
+        }
+        for (const VariableOnObject& variable : variablesOn(object)) {
+            access.variable = variable.variable;
+            if (variable.mayBeNamedBy(name))
+                found.append(access);
+        }
+    }
+
     void noteLook(ValueSetID lookedInto, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
     {
         forEachObjectIn(lookedInto, [&](ValueFlowObjectID object) {
-            if (isNamespace(object) && name.kind != ValueFlowNameKind::Property) {
-                setFlag(isNamespaceReadUnderUnknownName, inputs.universe().moduleOf(object).index());
-                return;
-            }
-            for (const VariableOnObject& variable : variablesOn(object)) {
-                access.variable = variable.variable;
-                if (variable.mayBeNamedBy(name))
-                    found.append(access);
-            }
+            noteLookInto(object, name, access, found);
+        });
+    }
+
+    // A namespace never changes. Whether it accepts a removal or a definition depends on the export of that name and on its value.
+    void noteChangeAskedOfNamespaces(ValueSetID asked, ValueFlowName written, ObjectAccess access, Vector<ObjectAccess>& found)
+    {
+        forEachObjectIn(asked, [&](ValueFlowObjectID object) {
+            if (isNamespace(object))
+                noteLookInto(object, propertyChangedUnder(written), access, found);
         });
     }
 
@@ -257,6 +279,8 @@ struct ValueFlowAccessesThroughObjects {
                 noteLook(key.set, key.name(), accessOf(ObjectAccessKind::Observation), found);
             if (key.kind == ValueFlowMadeNodeKind::Written && namesOfValuesAndAccessors.contains(kind))
                 noteStore(isOperation ? &statement : nullptr, key.set, key.name(), accessOf(ObjectAccessKind::Store), found);
+            if (key.kind == ValueFlowMadeNodeKind::Written && namesOfRemovalsAndRedefinitions.contains(kind))
+                noteChangeAskedOfNamespaces(key.set, key.name(), accessOf(ObjectAccessKind::Observation), found);
             if (key.kind != ValueFlowMadeNodeKind::Lookup || !made || isLookupOfCalleeByCall(inputs, statement, key))
                 return;
             if (kind == ValueFlowNameKind::PrototypeLink) {
@@ -344,7 +368,11 @@ struct ValueFlowAccessesThroughObjects {
             }
             bool isInUnknownHands = inputs.hasEscaped(namespaceObject) || inputs.isLost(namespaceObject) || inputs.isHeldByNativeCode(namespaceObject)
                 || markedMutationsOf(inputs, namespaceObject).containsAny({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
-            if (isInUnknownHands || commonJsModuleCapturedBy(program, module))
+            // What is asked under an index names no export.
+            bool hasExportUnderIndex = std::ranges::any_of(module.exports, [&](const ModuleExport& entry) {
+                return mayBeElementKey(program.strings.nameClass(entry.name));
+            });
+            if (isInUnknownHands || hasExportUnderIndex || commonJsModuleCapturedBy(program, module))
                 continue;
             objects.append(namespaceObject);
             for (uint32_t position = 0; position < module.exports.size(); ++position) {

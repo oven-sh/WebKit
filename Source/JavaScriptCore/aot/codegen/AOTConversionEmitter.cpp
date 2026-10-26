@@ -490,6 +490,8 @@ struct ConversionEmitter::ExactInteger {
     bool mayBeRounded { false };
     int64_t largestSumOfOtherTerms { 0 };
     std::optional<Word32> word { };
+    // Where it is set, the range holds only while it does: each integer behind the number whose size nothing bounds is an int32.
+    Condition holdsWhile { };
 };
 
 // What is added to a product that may be rounded stays far below the 2^53 from which on it is.
@@ -518,11 +520,18 @@ static int64_t largestMagnitudeIn(Range range)
 
 std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactIntegerBehind(LValue number)
 {
-    auto converted = [&](LValue source) -> std::optional<ExactInteger> {
+    auto whileBoth = [&](Condition first, Condition second) {
+        return first && second ? logicalAnd(first, second) : first ? first : second;
+    };
+    auto converted = [&](LValue source, bool mayBeTested = false) -> std::optional<ExactInteger> {
         B3::IntRange known = B3::rangeFor(m_proc, source);
         Range range { known.min(), known.max() };
-        if (!range.isSubsetOf(neverRounded))
-            return std::nullopt;
+        if (!range.isSubsetOf(neverRounded)) {
+            if (!mayBeTested || source->type() != B3::Int64)
+                return std::nullopt;
+            Integer wide(source);
+            return ExactInteger { .value = wide, .range = Range::int32(), .holdsWhile = equal(signExtended(low32(wide)), wide) };
+        }
         if (source->type() != B3::Int32)
             return ExactInteger { Integer(source), range };
         return ExactInteger { .value = widen(Word32(source), range), .range = range, .word = Word32(source) };
@@ -537,7 +546,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         return ExactInteger { integer(whole), Range::one(whole) };
     }
     case B3::IToD:
-        return converted(number->child(0));
+        return converted(number->child(0), true);
     case B3::Patchpoint: {
         const std::optional<B3::PureFunction>& function = number->as<B3::PatchpointValue>()->pureFunction;
         if (!function || !isRemainderThatIsNeverNaN(*function))
@@ -548,7 +557,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         std::optional<ExactInteger> operand = findExactIntegerBehind(number->child(0));
         if (!operand || operand->mayBeRounded)
             return std::nullopt;
-        return ExactInteger { sub(integer(0), operand->value), Range { -operand->range.maximum, -operand->range.minimum } };
+        return ExactInteger { .value = sub(integer(0), operand->value), .range = Range { -operand->range.maximum, -operand->range.minimum }, .holdsWhile = operand->holdsWhile };
     }
     case B3::Mul: {
         std::optional<ExactInteger> left = findExactIntegerBehind(number->child(0));
@@ -562,7 +571,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         auto factor = [&](const ExactInteger& operand) {
             return operand.word ? signExtended(*operand.word) : operand.value;
         };
-        return ExactInteger { mul(factor(*left), factor(*right)), *range, !range->isSubsetOf(neverRounded) };
+        return ExactInteger { .value = mul(factor(*left), factor(*right)), .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile) };
     }
     case B3::Add:
     case B3::Sub: {
@@ -575,6 +584,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
             .value = isSum ? add(left->value, right->value) : sub(left->value, right->value),
             .range = isSum ? Range { left->range.minimum + right->range.minimum, left->range.maximum + right->range.maximum } : Range { left->range.minimum - right->range.maximum, left->range.maximum - right->range.minimum },
             .mayBeRounded = left->mayBeRounded || right->mayBeRounded,
+            .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile),
         };
         if (!result.mayBeRounded)
             return result.range.isSubsetOf(neverRounded) ? std::optional(result) : std::nullopt;
@@ -593,7 +603,7 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
 std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
 {
     std::optional<ExactInteger> exact = findExactIntegerBehind(number.value());
-    if (!exact)
+    if (!exact || exact->holdsWhile)
         return std::nullopt;
     build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
     return exact->value;
@@ -608,7 +618,8 @@ Word32 ConversionEmitter::toInt32(Number value)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
-    if (std::optional<ExactInteger> exact = findExactIntegerBehind(value.value())) {
+    std::optional<ExactInteger> exact = findExactIntegerBehind(value.value());
+    if (exact && !exact->holdsWhile) {
         build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
         if (!exact->mayBeRounded)
             return low32(exact->value);
@@ -619,6 +630,22 @@ Word32 ConversionEmitter::toInt32(Number value)
             return low32(toInteger(value));
         });
     }
+    if (exact) {
+        build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
+        Condition isExact = exact->holdsWhile;
+        if (exact->mayBeRounded)
+            isExact = logicalAnd(isExact, equal(signExtended(low32(exact->value)), exact->value));
+        return either<Word32>(isExact, [&] {
+            return low32(exact->value);
+        }, [&] {
+            return toInt32OfAnyNumber(value);
+        });
+    }
+    return toInt32OfAnyNumber(value);
+}
+
+Word32 ConversionEmitter::toInt32OfAnyNumber(Number value)
+{
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
         B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int32, value, pureFunction(PureOperation::ToInt32, 0, true));

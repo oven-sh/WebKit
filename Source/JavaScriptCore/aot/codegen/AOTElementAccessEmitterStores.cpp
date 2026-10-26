@@ -383,9 +383,6 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         LBasicBlock holdsAnyValue = newBlock();
         LBasicBlock liesInFrame = newBlock();
         LBasicBlock isOnHeap = newBlock();
-        LBasicBlock mayHoldNumbers = newBlock();
-        LBasicBlock isYoung = newBlock();
-        LBasicBlock isShort = newBlock();
         branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
@@ -406,15 +403,6 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         m_out.jump(continuation);
 
         m_out.appendTo(isOnHeap);
-        branch(below(loadMutable32(AOT_INSTANCE_OFFSET(arrays.elementsLookedAtInVain)), word32(ArrayWords::maxElementsLookedAtInVain)), { normalEdge(mayHoldNumbers), normalEdge(continuation) });
-
-        m_out.appendTo(mayHoldNumbers);
-        branch(equal(state, word32(static_cast<int32_t>(CellState::PossiblyBlack))), { rareEdge(converts), normalEdge(isYoung) });
-
-        m_out.appendTo(isYoung);
-        branch(below(publicLength(elementsOf(array)), integer(ArrayWords::minLengthThatPaysAtOnce)), { normalEdge(isShort), rareEdge(converts) });
-
-        m_out.appendTo(isShort);
         m_out.store32(word32(static_cast<int32_t>(numberOfPlace)).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
         m_out.jump(converts);
     } else

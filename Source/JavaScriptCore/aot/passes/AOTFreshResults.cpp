@@ -638,7 +638,7 @@ static Function createResultWrapper(const AnalysisContext& context, FunctionID w
     wrapper.inlineFrames.clear();
     wrapper.role = FunctionRole::ResultWrapper;
     wrapper.creator = CreatorRecord::ResultWrapper { .worker = worker, .nullish = nullish, .layout = numberOfVariantsWithLayout == 1 ? layout : LayoutID() };
-    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, original.capabilities, FunctionCapabilities::RecordsCallee);
+    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, original.capabilities, { FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed });
 
     IRBuilder builder(context, wrapper, types);
     builder.setOrigin({ original.position, 0 });

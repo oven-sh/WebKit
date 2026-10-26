@@ -280,6 +280,8 @@ void StoresByLayout::followCopiedProperties()
             }
             for (LayoutID source : *sources) {
                 for (PropertyKeyID key : keysStoredInto(source)) {
+                    if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
+                        continue;
                     ValueSetID value = storedUnder(source, key);
                     ValueFlowNumbers numbers = numbersStoredUnder(source, key);
                     // A copy reads the field, and a read of an int32 slot says no more than that: what it delivers goes into the target without a test.
@@ -793,6 +795,8 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
     if (holdsNumber && !store.numbers)
         store.numbers = numbersStoredBy(writer, name);
     ValueFlowNumbers numbers = holdsNumber ? *store.numbers : ValueFlowNumbers { };
+    bool isCopyIntoLiteral = name.kind == ValueFlowNameKind::CopiedFrom && isOperation && statement.opcode == Opcode::CopyDataProperties;
+    bool leavesOutKeys = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedKeys().empty();
     bool fillsResult = fillsTypedResult(m_inputs, m_heap, maker, writer, key.set);
     bool isNamedByOperation = !fillsResult && store.spellsKey;
     return {
@@ -810,7 +814,8 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .givesValueItself = isOperation && statement.opcode != Opcode::Call,
         .isWrittenByCallOfBuiltin = isOperation && statement.opcode == Opcode::Call,
         .definesValue = store.definesValue,
-        .leavesOutComputedKey = name.kind == ValueFlowNameKind::CopiedFrom && isOperation && statement.opcode == Opcode::CopyDataProperties && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
+        .leavesOutComputedKey = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
+        .copyLeavingOutKeys = leavesOutKeys ? static_cast<uint64_t>(statement.function.index()) << 32 | statement.site.index() : noCopyLeavingOutKeys,
         .accessorForms = store.accessorForms,
         .value = value,
         .numbers = numbers,
@@ -913,6 +918,18 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         return;
     note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
+    if (name.kind == ValueFlowNameKind::CopiedFrom) {
+        std::span<const PropertyKeyID> leftOut;
+        if (writes.copyLeavingOutKeys != noCopyLeavingOutKeys)
+            leftOut = m_inputs.program.at(FunctionID(writes.copyLeavingOutKeys >> 32)).at(ValueID(static_cast<uint32_t>(writes.copyLeavingOutKeys))).excludedKeys();
+        if (!stores.keysLeftOutOfEveryCopy)
+            stores.keysLeftOutOfEveryCopy.emplace(leftOut);
+        else {
+            stores.keysLeftOutOfEveryCopy->removeAllMatching([&](PropertyKeyID key) {
+                return !std::ranges::contains(leftOut, key);
+            });
+        }
+    }
     noteNumbers(stores, name, writes.createsData ? numbersInData(layout, name) : writes.numbers);
     if (writes.isStoredByConstructor && name.kind == ValueFlowNameKind::Property)
         stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.isStoredByConstructor = true;

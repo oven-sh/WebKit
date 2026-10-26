@@ -1418,21 +1418,28 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
     m_counters.waving += MonotonicTime::now() - afterRows;
 }
 
-void ValueFlowGraph::removeFromEveryNode(ValueFlowObjectID lowMember)
+void ValueFlowGraph::removeFromEveryNode(std::initializer_list<ValueFlowObjectID> lowMembers)
 {
-    RELEASE_ASSERT(lowMember.index() < numberOfLowMembers);
-    ValueSetMaker& maker = *m_makers[0];
-    uint64_t bit = 1ull << lowMember.index();
-    ValueSetID others = ValueSets::complement(maker.of(lowMember));
-    for (uint32_t node = 0; node < m_numberOfNodes; ++node) {
-        Row& row = m_rows[node];
-        if (!(row.low & bit))
-            continue;
-        row.low &= ~bit;
-        if (row.set)
-            row.set = maker.intersect(ValueSetID(row.set), others).index();
-        m_value[node] = maker.intersect(m_value[node], others);
+    uint64_t bits = 0;
+    for (ValueFlowObjectID lowMember : lowMembers) {
+        RELEASE_ASSERT(lowMember.index() < numberOfLowMembers);
+        bits |= 1ull << lowMember.index();
     }
+    Vector<ValueFlowObjectID, 2> members(lowMembers);
+    ValueSetID others = ValueSets::complement(m_makers[0]->of(members.span()));
+    constexpr uint32_t nodesPerShare = 1 << 14;
+    m_team->run((m_numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned worker) {
+        ValueSetMaker& maker = *m_makers[worker];
+        for (uint32_t node = share * nodesPerShare; node < std::min<uint64_t>(m_numberOfNodes, static_cast<uint64_t>(share + 1) * nodesPerShare); ++node) {
+            Row& row = m_rows[node];
+            if (!(row.low & bits))
+                continue;
+            row.low &= ~bits;
+            if (row.set)
+                row.set = maker.intersect(ValueSetID(row.set), others).index();
+            m_value[node] = maker.intersect(m_value[node], others);
+        }
+    });
 }
 
 void ValueFlowGraph::releaseRows()
@@ -1518,42 +1525,54 @@ void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
     }
     bytes.add("graph: successors of nodes, blocks"_s, wordsOfSuccessors * sizeof(uint32_t), 0);
     bytes.add("graph: predecessors of nodes, blocks"_s, wordsOfPredecessors * sizeof(uint32_t), 0);
-    constexpr ASCIILiteral edgesOfRound = "graph: edges of one round"_s;
-    constexpr ASCIILiteral waves = "graph: messages and arrivals of waves"_s;
-    bytes.addList(edgesOfRound, m_isNewEdge);
-    bytes.addList(edgesOfRound, m_edgesNotInLists);
-    bytes.addList(edgesOfRound, m_edgesOfSolve);
-    bytes.addLists(edgesOfRound, m_indicesBySource);
-    bytes.addLists(edgesOfRound, m_edgesByTarget);
-    bytes.addLists(edgesOfRound, m_edgesOnlyToLink);
-    bytes.addLists(waves, m_messages);
-    bytes.addList(waves, m_arrivals.nodes);
-    bytes.addList(waves, m_arrivals.list);
-    bytes.addList(waves, m_nodesWoken);
-    bytes.addList(waves, m_found);
-    bytes.addLists(waves, m_foundInShare);
-    for (const Covering& covering : m_coverings) {
-        bytes.addList(waves, covering.nodesJustRetired);
-        bytes.addList(waves, covering.nodesToLookAt);
-    }
-    for (const std::unique_ptr<Worker>& worker : m_workers) {
-        bytes.addList(waves, worker->movedNodes);
+    for (const std::unique_ptr<Worker>& worker : m_workers)
         bytes.addMap("graph: sets of low members"_s, worker->setsOfLowMembers);
-    }
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         bytes.add("graph: successors of nodes, blocks"_s, 0, shard->blocksOfSuccessors.memoryInBytes());
         bytes.add("graph: predecessors of nodes, blocks"_s, 0, shard->blocksOfPredecessors.memoryInBytes());
-        bytes.add("graph: edges of nodes with many successors"_s, shard->edgesOfNodesWithManySuccessors.memoryInBytes());
-        bytes.add("graph: edges out of constants into nodes with many predecessors"_s, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes());
+        bytes.add("graph: edges of nodes with many successors"_s, shard->edgesOfNodesWithManySuccessors.bytesInUse(), shard->edgesOfNodesWithManySuccessors.memoryInBytes());
+        bytes.add("graph: edges out of constants into nodes with many predecessors"_s, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.bytesInUse(), shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes());
         bytes.addList("graph: listed edges out of constants"_s, shard->listedEdgesOutOfConstants);
-        bytes.addList(waves, shard->arrivals.nodes);
-        bytes.addList(waves, shard->arrivals.list);
-        for (const auto& messagesOfWave : shard->messages)
-            bytes.addLists(waves, messagesOfWave);
-        bytes.addList(waves, shard->nodesWithRecentSuccessors);
-        bytes.addList(waves, shard->nodesWithRecentPredecessors);
-        bytes.addList(waves, shard->placeholdersStopped);
     }
+    forEachListOfOneRound(*this, [&](ASCIILiteral table, const auto& list) {
+        bytes.addList(table, list);
+    });
+}
+
+void ValueFlowGraph::forEachListOfOneRound(auto& graph, NOESCAPE const auto& functor)
+{
+    auto visit = [&](ASCIILiteral table, auto&... lists) {
+        (functor(table, lists), ...);
+    };
+    auto visitEach = [&](ASCIILiteral table, auto& lists) {
+        for (auto& list : lists)
+            functor(table, list);
+    };
+    constexpr ASCIILiteral edgesOfRound = "graph: edges of one round"_s;
+    constexpr ASCIILiteral waves = "graph: messages and arrivals of waves"_s;
+    visit(edgesOfRound, graph.m_isNewEdge, graph.m_edgesNotInLists, graph.m_edgesOfSolve);
+    visitEach(edgesOfRound, graph.m_indicesBySource);
+    visitEach(edgesOfRound, graph.m_edgesByTarget);
+    visitEach(edgesOfRound, graph.m_edgesOnlyToLink);
+    visitEach(waves, graph.m_messages);
+    visit(waves, graph.m_arrivals.nodes, graph.m_arrivals.list, graph.m_nodesWoken, graph.m_found);
+    visitEach(waves, graph.m_foundInShare);
+    for (auto& covering : graph.m_coverings)
+        visit(waves, covering.nodesJustRetired, covering.nodesToLookAt);
+    for (auto& worker : graph.m_workers)
+        visit(waves, worker->movedNodes);
+    for (auto& shard : graph.m_shards) {
+        visit(waves, shard->arrivals.nodes, shard->arrivals.list, shard->nodesWithRecentSuccessors, shard->nodesWithRecentPredecessors, shard->placeholdersStopped);
+        for (auto& messagesOfWave : shard->messages)
+            visitEach(waves, messagesOfWave);
+    }
+}
+
+void ValueFlowGraph::giveBackMostRoomOfListsOfOneRound()
+{
+    forEachListOfOneRound(*this, [](ASCIILiteral, auto& list) {
+        giveBackMostRoomOf(list);
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

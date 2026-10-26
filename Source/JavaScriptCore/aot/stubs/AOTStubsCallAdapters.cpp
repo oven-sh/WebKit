@@ -471,6 +471,8 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     extractBits(jit, word, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
     loadKindOfClosureFunction(jit, function, kind);
     isNotPlainFunction.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(nonPlainFunctionKindMask())));
+    // The call below comes by no stub that records its callee.
+    isNotPlainFunction.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
 
     jit.subPtr(TrustedImm32(static_cast<int32_t>(-offsetOfCount)), sp);
     jit.store64(calleeGPR, Address(fp, offsetOfCallee));

@@ -440,8 +440,8 @@ public:
     BodyScansForPlacement(const Program&, const PlacementInputs&, BuildContext&);
     ~BodyScansForPlacement();
 
-    // From any thread, no two for one function at a time. A later scan of a function replaces an earlier one.
-    void scan(FunctionID);
+    // From any thread, no two for one function at a time. A later scan of a function replaces an earlier one. With analyses: of the function as it is now.
+    void scan(FunctionID, FunctionAnalyses* = nullptr);
     // By one thread, while nobody scans: the program has got functions.
     void didAddFunctions();
     // In the functions that had a body when the sites were taken: no more site caches are asked for than that.

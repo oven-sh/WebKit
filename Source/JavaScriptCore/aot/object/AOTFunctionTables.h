@@ -130,6 +130,18 @@ struct FunctionTables {
     // Where compiled code finds an entry from further out. The table grows until every call that may not have returned has a place of its own.
     void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
     bool hasRecordedCallees() const { return !recordedCalleeStorage.isEmpty(); }
+    // A function whose function objects nobody is seen to rename pays nothing for its frames until the run time sees one of them get a displayName. From then on every call by value comes by the run time, which records the callees that are function objects of such a function.
+    // A frame that was entered before has no record.
+    void recordCalleesOf(VM&, FunctionID sourceFunction);
+    bool recordsCalleesOfCallsByValue() const { return !!isRenamedAtRunTime.load(std::memory_order_acquire); }
+    bool recordsCalleesOf(FunctionID function) const
+    {
+        const uint8_t* isRenamed = isRenamedAtRunTime.load(std::memory_order_acquire);
+        return isRenamed && isRenamed[function.index()];
+    }
+    void recordCalleeOfCallByValue(VM&, const void* stackPointerOfCaller, JSObject* closure);
+    // Its frames are named by the function object that runs in them.
+    bool framesAreNamedByCallee(FunctionID);
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
     // Null unless the last call made from there recorded its callee.
     JSObject* recordedCalleeOfCallFrom(const void* stackPointerOfCaller);
@@ -140,6 +152,9 @@ struct FunctionTables {
     // While the thread of the VM runs only it changes them: compiled code writes an entry, the run time moves the table.
     Lock recordedCalleesLock;
     Vector<RecordedCallee> recordedCalleeStorage;
+    // A byte for each function of the image, once there is such a function. It is set for every function that was made from the renamed one too.
+    Vector<uint8_t> functionsRenamedAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
+    std::atomic<const uint8_t*> isRenamedAtRunTime { nullptr };
     TextsByFunction sourceTexts;
 };
 

@@ -64,7 +64,8 @@ struct FunctionTraceData {
     uint16_t isNamedByComputedKey : 1;
     // Its frames are named by the function object that runs in them.
     uint16_t recordsCallee : 1;
-    uint16_t unused : 1;
+    // They are from the first time on that the run time sees a function object of the function get a displayName.
+    uint16_t recordsCalleeOnceRenamed : 1;
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
     StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }
