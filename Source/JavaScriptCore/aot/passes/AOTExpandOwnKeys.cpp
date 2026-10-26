@@ -811,19 +811,16 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     bool isAssign = site.walk == OwnKeyWalk::Assign;
     std::span<const PropertyKeyID> excludedKeys = site.walk == OwnKeyWalk::Spread ? original.excludedKeys() : std::span<const PropertyKeyID>();
 
+    // A copy gets its properties in the order in which the source got them, names and symbols alike.
     Vector<uint32_t, 8> walkedFields;
-    Vector<uint32_t, 8> fieldsWithSymbolKeys;
     for (uint32_t index : arm.order) {
         const Field& field = fields[index];
         RELEASE_ASSERT(!field.computedKey);
         if (std::ranges::contains(excludedKeys, field.key))
             continue;
-        if (isEnumerableStringField(program, field))
+        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind)))
             walkedFields.append(index);
-        else if (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind))
-            fieldsWithSymbolKeys.append(index);
     }
-    walkedFields.appendVector(fieldsWithSymbolKeys);
 
     auto appendName = [&](uint32_t field) {
         return emission.appendString(program.at(fields[field].key).text);

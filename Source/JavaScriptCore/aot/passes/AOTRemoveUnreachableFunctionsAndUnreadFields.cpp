@@ -331,35 +331,14 @@ public:
         if (!depth)
             return true;
         const Value& definition = m_function.at(stored);
-        switch (definition.opcode) {
-        case Opcode::NewClosure:
-            if (definition.isMadeOnDemand() || (!m_flow.closuresGoUnnoticed(definition.function()) && useLists().useCount(stored) != 1))
-                return true;
-            return std::ranges::any_of(definition.capturesOperands(), [&](ValueID capture) {
-                return keepsObjectAlive(capture, holder, depth - 1) && !isEnvironmentHeldBy(holder, capture);
-            });
-        case Opcode::FinishObject:
-            return useLists().useCount(stored) != 1 || !isSeenOnlyByItsMaker(definition.operand(OperandIndex::FinishObject::object), stored, depth);
-        case Opcode::NewObject:
-            return !isSeenOnlyByItsMaker(stored, ValueID(), depth);
-        case Opcode::NewArray:
-            return useLists().useCount(stored) != 1 || std::ranges::any_of(definition.elementsOperands(), [&](ValueID element) {
-                return keepsObjectAlive(element, holder, depth - 1);
-            });
-        case Opcode::Data:
-        case Opcode::NewMapFromData:
-        case Opcode::NewSetFromData:
-        case Opcode::NewRegExp:
-            return useLists().useCount(stored) != 1;
-        case Opcode::Call:
-        case Opcode::Construct:
-            // The annotation says that the call may go when nobody uses its answer.
-            return !definition.isAnnotatedPure() || useLists().useCount(stored) != 1;
-        case Opcode::CallDirect:
-            return definition.isConstruction() || useLists().useCount(stored) != 1 || !returnsOnlyFreshData(definition.function());
-        default:
-            return !isCastWithoutTest(definition.opcode) || useLists().useCount(stored) != 1 || keepsObjectAlive(definition.valueOperand(), holder, depth - 1);
-        }
+        // Flow knows more of a closure than that it is new.
+        if (definition.opcode == Opcode::NewClosure)
+            return closureKeepsObjectAlive(stored, holder, depth);
+        if (isCastWithoutTest(definition.opcode))
+            return useLists().useCount(stored) != 1 || keepsObjectAlive(definition.operand(0), holder, depth);
+        if (effectRuleOf(definition.opcode) == EffectRule::Call)
+            return useLists().useCount(stored) != 1 || !answersWithWhatNobodyHolds(definition);
+        return !isSeenOnlyByItsMaker(stored, depth);
     }
 
 private:
@@ -372,36 +351,64 @@ private:
         return *m_useLists;
     }
 
-    // Nothing but the function that made the object has had it in hand, and all it did was to fill it with what holds no object. One use is the store that is asked about, unless the finished object has that.
-    bool isSeenOnlyByItsMaker(ValueID object, ValueID finished, unsigned depth)
+    bool closureKeepsObjectAlive(ValueID stored, ValueID holder, unsigned depth)
+    {
+        const Value& closure = m_function.at(stored);
+        if (closure.isMadeOnDemand() || (!m_flow.closuresGoUnnoticed(closure.function()) && useLists().useCount(stored) != 1))
+            return true;
+        return std::ranges::any_of(closure.capturesOperands(), [&](ValueID capture) {
+            return keepsObjectAlive(capture, holder, depth - 1) && !isEnvironmentHeldBy(holder, capture);
+        });
+    }
+
+    // The annotation says that the call may go when nobody uses its answer.
+    bool answersWithWhatNobodyHolds(const Value& call)
+    {
+        if (Value::opcodesWithIsAnnotatedPure.contains(call.opcode))
+            return call.isAnnotatedPure();
+        return Value::opcodesWithIsConstruction.contains(call.opcode) && !call.isConstruction() && returnsOnlyFreshData(call.function());
+    }
+
+    // The operation made the object, nothing but the function that holds the operation has had it in hand, and all it did was to fill it with what holds no object. One use is the store that is asked about, or what hands the object on to that store.
+    bool isSeenOnlyByItsMaker(ValueID object, unsigned depth)
     {
         const Value& allocation = m_function.at(object);
-        if (!m_effects || allocation.opcode != Opcode::NewObject || allocation.operand(OperandIndex::NewObject::prototype))
+        if (!m_effects)
             return false;
-        LayoutKind kind = m_program.at(allocation.layout()).kind;
-        if (kind != LayoutKind::Record && kind != LayoutKind::Container)
+        bool isDeclaredAllocation = interpretedOf(allocation.opcode) == Interpretation::Allocation && effectRuleOf(allocation.opcode) == EffectRule::Declared;
+        if (!isDeclaredAllocation && freshnessOf(EffectContext { m_program, *m_effects }, m_function, allocation) != ResultFreshness::Fresh)
             return false;
+        bool hasLayout = Value::opcodesWithLayout.contains(allocation.opcode);
+        if (hasLayout) {
+            LayoutKind kind = m_program.at(allocation.layout()).kind;
+            if (kind != LayoutKind::Record && kind != LayoutKind::Container)
+                return false;
+        }
         auto holdsNoObject = [&](ValueID value) {
             return !keepsObjectAlive(value, object, depth - 1);
         };
-        if (!std::ranges::all_of(allocation.variadicOperands(), holdsNoObject))
+        bool isBornWithoutObjects = true;
+        allocation.forEachOperand([&](ValueID operand, uint32_t) {
+            isBornWithoutObjects &= holdsNoObject(operand);
+        });
+        if (!isBornWithoutObjects)
             return false;
         constexpr OperandUses fillingUses { OperandUse::Inspects, OperandUse::StoresByKey };
-        unsigned numberOfOwners = finished ? 1 : 0;
+        unsigned numberOfOwners = 0;
         for (const Use& use : useLists().usesOf(object)) {
             if (use.kind != Use::Kind::Operand)
                 return false;
-            if (use.user == finished)
-                continue;
             const Value& user = m_function.at(use.user);
             OperandUses uses = summarizeOperand(EffectContext { m_program, *m_effects }, m_function, user, use.operandIndex).uses;
-            // Defining a property of a new ordinary object runs no code of the program, and neither does a store to a data property that the object has had since its creation.
-            if (receiverOf(user.opcode) == use.operandIndex && (user.opcode == Opcode::PropDefine || user.opcode == Opcode::ElemDefine))
-                uses.remove(OperandUse::PassesToUserCode);
-            else if (user.opcode == Opcode::PropSet && use.operandIndex == OperandIndex::PropSet::object) {
-                auto field = findField(m_program, allocation.layout(), user.key(), BaseChain::Proven);
-                if (field && field->layout == allocation.layout() && std::ranges::contains(allocation.fields(), field->field) && !fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
+            // Defining a property of a new ordinary object runs no code of the program, and neither does a store to a data property that the object has had since its creation. An assignment has a mode, a definition has none.
+            if (hasLayout && receiverOf(user.opcode) == use.operandIndex && interpretedOf(user.opcode) == Interpretation::Store) {
+                if (!Value::opcodesWithMode.contains(user.opcode))
                     uses.remove(OperandUse::PassesToUserCode);
+                else if (Value::opcodesWithKey.contains(user.opcode) && Value::opcodesWithFields.contains(allocation.opcode)) {
+                    auto field = findField(m_program, allocation.layout(), user.key(), BaseChain::Proven);
+                    if (field && field->layout == allocation.layout() && std::ranges::contains(allocation.fields(), field->field) && !fieldAt(m_program, *field).form.contains(FieldForm::IsAccessor))
+                        uses.remove(OperandUse::PassesToUserCode);
+                }
             }
             if (!fillingUses.containsAll(uses)) {
                 if (++numberOfOwners > 1)
@@ -431,14 +438,9 @@ private:
         if (answer) {
             StoresOfObjects stores(m_program, m_flow, m_effects, callee, m_freshDataFunctions, callDepth);
             answer = std::ranges::none_of(function.blocks, [&](const Block& block) {
-                switch (block.terminator.kind) {
-                case TerminatorKind::Return:
+                if (block.terminator.kind == TerminatorKind::Return)
                     return !block.terminator.valueOperand() || stores.keepsObjectAlive(block.terminator.valueOperand(), ValueID());
-                case TerminatorKind::ReturnCall:
-                    return stores.keepsObjectAlive(block.terminator.callOperand(), ValueID());
-                default:
-                    return false;
-                }
+                return block.terminator.kind == TerminatorKind::ReturnCall && stores.keepsObjectAlive(block.terminator.callOperand(), ValueID());
             });
         }
         m_freshDataFunctions->set(callee, callDepth, answer);
@@ -969,9 +971,10 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
     const ParallelLoops& loops = build.parallelLoops();
     using FunctionStores = std::pair<FunctionID, Vector<VariableID, 4>>;
     Vector<uint8_t> mayHoldObjects(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
+    EffectSummaries unknownSummaries;
     Vector<FunctionStores> stores = collectInParallel<FunctionStores>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionStores>& found) {
         Vector<VariableID, 4> storedVariables;
-        StoresOfObjects storesOfObjects(program, flow, nullptr, FunctionID(index));
+        StoresOfObjects storesOfObjects(program, flow, &unknownSummaries, FunctionID(index));
         forEachListedValue(program, FunctionID(index), { Opcode::PutModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
             if (!unreadVariables.get(value.variable().index()))
                 return;

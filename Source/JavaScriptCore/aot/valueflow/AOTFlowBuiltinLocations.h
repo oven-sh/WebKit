@@ -57,11 +57,6 @@ inline bool mayBeReplaced(const Program& program, const FlowResults& flow, Built
     return flow.builtinLocation(builtin) != BuiltinLocationState::Constant;
 }
 
-inline bool isWritten(const BuiltinLocationFlow& record)
-{
-    return hasFunction(record.witness);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

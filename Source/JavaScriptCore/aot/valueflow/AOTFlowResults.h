@@ -185,6 +185,8 @@ struct FlowSiteTables {
 
 struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
+    // One record for each place in the source that writes a location, by holder, key and place.
+    Vector<BuiltinLocationFlow> writesOfLocations;
     BitVector constantMembers;
     BitVector intactHolders;
     // An operation that lists own keys is handed one of these, by canonical ID.
@@ -291,6 +293,7 @@ public:
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
+    std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }
     std::span<const AllocationSite> allocationSites() const LIFETIME_BOUND { return m_tables.sites.allocationSites.span(); }

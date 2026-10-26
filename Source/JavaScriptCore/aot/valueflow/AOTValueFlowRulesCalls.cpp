@@ -669,7 +669,20 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         const Function& function = context.program().at(statement.function);
         ValueID callee = function.at(statement.site).operand(0);
         BuiltinID named = callee ? entryNamedByOperations(context.program(), function, callee) : BuiltinID();
-        if (named && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)))
+        const BuiltinTable& builtins = context.program().builtins();
+        // Behind a built-in of the engine only a Bun that the program named is looked for.
+        auto mayHandOnNamedBun = [&] {
+            ClimbingSet mark = only(context, ValueFlowUniverse::markOfNamedBun());
+            if (!context.holdsAnyOf(mark, ValueFlowProgramNodes::escaped()))
+                return false;
+            BuiltinID holder = builtins.at(named).holder;
+            if (builtins.canonicalID(named) == Builtins::Promise || (holder && builtins.canonicalID(holder) == Builtins::Promise))
+                return true;
+            return std::ranges::any_of(context.operandsOf(statement).subspan(1), [&](const ValueFlowOperand& operand) {
+                return operand.node && context.holdsAnyOf(mark, operand.node);
+            });
+        };
+        if (named && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)) && (builtins.at(named).origin == BuiltinOrigin::Host || mayHandOnNamedBun()))
             applyBuiltin(named, kind, statement, context);
     }
     for (ValueFlowObjectID placeholder : { ValueFlowUniverse::untrackedObject(), ValueFlowUniverse::unknownObject() }) {

@@ -289,11 +289,8 @@ struct LiteralOrderSolver {
                 for (const KeyOrder& order : orders) {
                     KeyOrder extended = order;
                     for (PropertyKeyID key : sourceOrder) {
-                        if (kindOfKey[key.index()] == PropertyKeyKind::Text && isCopied(source, key, copy))
-                            appendIfAbsent(extended, key);
-                    }
-                    for (PropertyKeyID key : sourceOrder) {
-                        if (isSymbolKind(kindOfKey[key.index()]) && isCopied(source, key, copy))
+                        PropertyKeyKind kind = kindOfKey[key.index()];
+                        if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
                             appendIfAbsent(extended, key);
                     }
                     appendIfAbsent(result, WTF::move(extended));

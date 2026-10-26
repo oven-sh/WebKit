@@ -1,4 +1,4 @@
-# Object.assign to an unchanged literal reads every slot of the source, then stores by name
+# Object.assign to an unchanged literal reads every slot of the source, then stores by name, names and symbols in the order of the source
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
@@ -25,12 +25,12 @@ function f0 name="unchangedLiteral" parameters=[{type=object}] results=[{type=an
 # CHECK: = HasNoExtraProperties v0,
 # CHECK-NOT: PropSet
 # CHECK: [[all0]]: guard = AllGuards
+# CHECK-NEXT: [[iterator0]]: anything = GetSlot v0, [[all0]] key=@@iterator receivers=[L1] level=Expected
 # CHECK-NEXT: [[a0]]: undefined|null|number ~ number = GetSlot v0, [[all0]] key="a" receivers=[L1] level=Expected
 # CHECK-NEXT: [[b0]]: string = GetSlot v0, [[all0]] key="b" receivers=[L1] level=Expected
-# CHECK-NEXT: [[iterator0]]: anything = GetSlot v0, [[all0]] key=@@iterator receivers=[L1] level=Expected
+# CHECK-NEXT: PropSet v1, [[iterator0]] key=@@iterator
 # CHECK-NEXT: PropSet v1, [[a0]] key="a"
 # CHECK-NEXT: PropSet v1, [[b0]] key="b"
-# CHECK-NEXT: PropSet v1, [[iterator0]] key=@@iterator
 # CHECK-NEXT: Jump -> next [[done0]](v1)
 # CHECK-NOT: GetSlot
 # CHECK-NOT: PropSet

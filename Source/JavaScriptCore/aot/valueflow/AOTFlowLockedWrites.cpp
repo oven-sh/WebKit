@@ -336,16 +336,17 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
 
 void checkLockedBuiltinWrites(const Program& program, const FlowResults& results, BuildContext& build)
 {
-    auto isLockedWrite = [](const BuiltinLocationFlow& record) {
-        return isWritten(record) && record.state == BuiltinLocationState::Constant;
+    auto isLockedWrite = [&](const BuiltinLocationFlow& write) {
+        const BuiltinLocationFlow* location = results.findBuiltinLocation(write.holder, write.key);
+        return location && location->state == BuiltinLocationState::Constant;
     };
-    if (std::ranges::none_of(results.builtinLocations(), isLockedWrite))
+    if (std::ranges::none_of(results.writesOfBuiltinLocations(), isLockedWrite))
         return;
 
     BitVector alwaysEvaluatedModules = findAlwaysEvaluatedModules(program);
-    for (const BuiltinLocationFlow& record : results.builtinLocations()) {
-        if (isLockedWrite(record))
-            reportWrite(program, results, build, alwaysEvaluatedModules, record);
+    for (const BuiltinLocationFlow& write : results.writesOfBuiltinLocations()) {
+        if (isLockedWrite(write))
+            reportWrite(program, results, build, alwaysEvaluatedModules, write);
     }
 }
 

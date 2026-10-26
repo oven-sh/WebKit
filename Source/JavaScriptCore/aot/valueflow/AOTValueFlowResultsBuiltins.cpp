@@ -595,8 +595,20 @@ static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs,
     return isLockedAtStartUp ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown;
 }
 
-static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations)
+static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations, Vector<BuiltinLocationFlow>& writes)
 {
+    auto placeOfWrite = [](const BuiltinLocationFlow& write) {
+        return std::tuple(write.holder, write.key, write.witness.function, write.witness.location.module, write.witness.location.position);
+    };
+    for (const BuiltinLocationFlow& location : locations) {
+        if (hasFunction(location.witness))
+            writes.append(location);
+    }
+    AOT::sort(writes, { }, [&](const BuiltinLocationFlow& write) {
+        return std::tuple(placeOfWrite(write), write.witness.value);
+    });
+    writes.shrink(writes.size() - std::ranges::unique(writes, { }, placeOfWrite).size());
+
     auto orderOf = [](const BuiltinLocationFlow& location) {
         return std::tuple(location.holder, location.key);
     };
@@ -854,7 +866,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
             tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Unknown, noWitness });
     });
     Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, tables.locations);
-    sortAndMergeLocations(tables.locations);
+    sortAndMergeLocations(tables.locations, tables.writesOfLocations);
     return underNewNames;
 }
 
@@ -867,7 +879,7 @@ void recordLockedWritesUnderNewNames(const Program& program, TypeTable& types, s
         if (isLockedLocation(program, write.holder, key))
             tables.builtins.locations.append(BuiltinLocationFlow { write.holder, key, BuiltinLocationState::Constant, write.witness });
     }
-    sortAndMergeLocations(tables.builtins.locations);
+    sortAndMergeLocations(tables.builtins.locations, tables.builtins.writesOfLocations);
 }
 
 static ProgramInstances countProgramInstances(const ValueFlowResultInputs& inputs)

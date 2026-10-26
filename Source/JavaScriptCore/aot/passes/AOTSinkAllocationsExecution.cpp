@@ -232,7 +232,7 @@ void ObjectInterpreter::execute(ValueID id)
 
 static bool mayHoldObject(const Type& type)
 {
-    return type.anyObject || type.anyFunction || type.layouts || type.environment || !type.classes.isEmpty() || !type.functions.isEmpty() || type.primitives & Primitive::Symbol;
+    return type.isJavaScriptValue() && (type.hasObjects() || type.primitives & Primitive::Symbol);
 }
 
 void ObjectInterpreter::keepMembersAlive(ValueID usedObject)

@@ -356,9 +356,13 @@ bool ValueFlowSolver::mayBeComputedKey(ValueFlowName name) const
     case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return false;
-    default:
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
         return true;
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 ALWAYS_INLINE ValueFlowNodeID ValueFlowSolver::nodeAwaitedBy(ValueFlowStatementID id, const ValueFlowStatement& statement) const
