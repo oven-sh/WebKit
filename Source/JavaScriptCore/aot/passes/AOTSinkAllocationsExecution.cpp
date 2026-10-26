@@ -14,6 +14,7 @@
 #include "AOTFlowApply.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
+#include "MathCommon.h"
 #include "PageCount.h"
 #include "TypedArrayType.h"
 #include <algorithm>

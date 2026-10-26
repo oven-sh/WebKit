@@ -33,6 +33,7 @@
 #include "CodeSpecializationKind.h"
 #include "FunctionRareData.h"
 #include "JSCJSValueInlines.h"
+#include "MathCommon.h"
 #include "NativeExecutable.h"
 #include "PageCount.h"
 
