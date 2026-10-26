@@ -387,6 +387,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_startsOfLookups = ValueSets::complement(maker.unite(maker.unite(placeholders, universe.keys()), kindsOf(maker, Primitive::UndefinedOrNull | Primitive::Absent)));
     m_keysNobodyKnows = ValueSets::complement(maker.unite(universe.keys(), m_numberKinds));
     m_symbolsUsedOnlyAsKeys = findLibrarySymbolsUsedOnlyAsKeys(program);
+    m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program);
     m_accessors = maker.unite(maker.unite(universe.callables(), builtinObjects), placeholders);
     m_undescribedNativeCode = universe.objectOf(Builtins::UndeclaredNativeCode);
     if (BuiltinMemberLookup found = builtins.findMember(Builtins::ObjectPrototype, BuiltinNames::__proto__); found.outcome == BuiltinMemberLookup::Outcome::Found)
@@ -430,12 +431,16 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         }
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
+        Vector<ValueFlowObjectID, 32> objectsOfPublicModules;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
             const RuntimeModuleData& module = builtins.at(RuntimeModuleID(index));
+            if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic))
+                objectsOfPublicModules.append(universe.objectOf(module.namespaceObject));
             if (module.namespaceObject && module.flags.contains(RuntimeModuleFlag::IsPublic) && !module.flags.contains(RuntimeModuleFlag::HasSource) && !builtins.at(builtins.canonicalID(module.namespaceObject)).holder)
                 objectsOfNativeModules.append(universe.objectOf(module.namespaceObject));
         }
         m_objectsOfNativeModules = maker.of(objectsOfNativeModules.span());
+        m_objectsOfPublicModules = maker.of(objectsOfPublicModules.span());
 
         Vector<EntryBelow> entriesBelowEntries = listEntriesBelowEntries(builtins);
         Objects prototypeObjects;

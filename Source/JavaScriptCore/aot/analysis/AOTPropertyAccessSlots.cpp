@@ -179,7 +179,7 @@ static bool mayFindSlotEmpty(const PropertyAccessContext& context, const Propert
 {
     if (!state.isAlwaysFilled)
         return true;
-    if (!state.hasConstructor || query.isListedByAllocation)
+    if ((!state.hasConstructor && !state.isLeftOutAtConstruction) || query.isListedByAllocation)
         return false;
     return mayStoreIntoUnfinishedObject(context, query);
 }

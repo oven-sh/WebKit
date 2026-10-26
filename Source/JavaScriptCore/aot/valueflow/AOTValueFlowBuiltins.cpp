@@ -34,7 +34,6 @@ namespace {
 
 constexpr ValueFlowName everySetter = ValueFlowName::of(ValueFlowNameKind::EverySetter);
 constexpr ValueFlowName iteratedValues = ValueFlowName::of(ValueFlowNameKind::IteratedValues);
-constexpr ValueFlowName describedObjectName = ValueFlowName::of(ValueFlowNameKind::InternalFields);
 
 constexpr ValueFlowOperand operandHolding(ValueSetID constant)
 {

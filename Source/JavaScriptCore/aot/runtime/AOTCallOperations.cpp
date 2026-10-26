@@ -610,7 +610,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         JSValue thrown = JSValue::decode(std::exchange(exceptions.thrownValue, 0));
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStack)));
+        auto action = Exception::StackCaptureAction::DoNotCaptureStack;
+        if (!stackIsUnobserved && !rethrownException)
+            action = stackCaptureActionOfThrow(vm, *instance, frameRecord, frames && frames->isAtEnd() ? &*frames : nullptr);
+        Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             exceptions.thrownValue = JSValue::encode(thrownException);

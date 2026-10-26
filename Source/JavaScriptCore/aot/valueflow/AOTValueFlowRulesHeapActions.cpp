@@ -176,7 +176,7 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     }
     ValueFlowNodeID found = m_context.lookup(receivers, foundName(key, part));
     connect(m_context.masked(found, m_universe.callables()), m_statement.result);
-    bool mayFindAccessorOfTable = m_context.meet(m_context.valueOf(found), m_universe.builtinObjects());
+    bool mayFindAccessorOfTable = m_context.meet(accessorsFoundFrom(receivers, key, part), m_universe.builtinObjects());
     if (mayFindAccessorOfArguments || mayFindAccessorOfTable)
         addFunctionNobodyFollows();
     if (mayFindAccessorOfTable && part == HeapPropertyPart::Getter && key.mayNameNonEnumerable(m_program.keyOf(BuiltinNames::__proto__)))

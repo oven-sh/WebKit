@@ -90,7 +90,12 @@ public:
 
     Instance& instance() { return m_instance; }
     const ModuleTable& table() const { return m_table; }
-    unsigned numberOfLinks() const { return m_numberOfLinks; }
+    // Moves on when a link finishes and when the exports of a file are captured again: a walk made before may pass over what has work now.
+    unsigned linkEpoch() const { return m_linkEpoch; }
+    // No link has anything left to do with the module.
+    bool isSettledForLinks(ModuleID module) const { return (m_modulesSettledForLinks[module.index() / 64] >> (module.index() % 64) & 1) || checkIsSettledForLinks(module); }
+    // A bit for each module that was found to be settled.
+    std::span<const uint64_t> modulesSettledForLinks() const { return m_modulesSettledForLinks.span(); }
     const ModuleData& data(ModuleID module) const { return m_table.data(module); }
     const ModuleHost& host() const;
     Identifier identifier(uint32_t number) const;
@@ -170,8 +175,9 @@ public:
     bool setIsWalkingRequests(bool isWalkingRequests) { return std::exchange(m_isWalkingRequests, isWalkingRequests); }
     // A graph is being loaded until its root is linked.
     unsigned numberOfGraphsBeingLoaded();
-    bool loaderGoesThroughGraph();
-    bool comesToRootOfLoadInFlight(ModuleID required);
+    bool comesToLoadInFlight(ModuleID required);
+    bool hasNotBegunAsFile(ModuleID) const;
+    void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     bool isNotLoaded(ModuleID);
@@ -268,7 +274,7 @@ private:
     void retireRecord(ModuleRecord*);
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
-    LoadedModule* loadedIfExists(ModuleID module) const { return m_loaded.get(module); }
+    LoadedModule* loadedIfExists(ModuleID) const;
     void throwEvaluationError(ModuleID);
     static JSPromise* rejectedPromiseWithPendingException(JSGlobalObject*, ThrowScope&);
     Identifier moduleKey(ModuleID);
@@ -330,10 +336,15 @@ private:
     std::span<uint8_t> m_storedStatuses;
     UncheckedKeyHashMap<ModuleID, ModuleRecord*> m_records;
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
+    // Whoever asks for one asks for it several times in a row. None is ever removed.
+    mutable LoadedModule* m_loadedFoundLast { nullptr };
+    mutable ModuleID m_moduleOfLoadedFoundLast;
     RememberedSlotSet m_storedReferences;
     std::unique_ptr<ModuleLinkWalk> takeLinkWalk(ModuleID root);
     std::unique_ptr<ModuleLinkWalk> m_linkWalkOfQueuedImport;
-    unsigned m_numberOfLinks { 0 };
+    bool checkIsSettledForLinks(ModuleID) const;
+    unsigned m_linkEpoch { 0 };
+    mutable Vector<uint64_t> m_modulesSettledForLinks;
     // Compared, never followed: its job holds the promise.
     JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
@@ -359,6 +370,7 @@ private:
         bool isLoaded { false };
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;
+    BitVector m_modulesBelowWalkedRoots;
     // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:
     // when it comes to the module of a level on that way, the files of the level that stand in front of the module run. It comes to the first file behind the module too, and those behind that one run with it.
     struct LevelOfLoad {
@@ -427,6 +439,18 @@ ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const
         return statusInRecord(module);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+ALWAYS_INLINE auto Modules::loadedIfExists(ModuleID module) const -> LoadedModule*
+{
+    if (m_loadedFoundLast && m_moduleOfLoadedFoundLast == module)
+        return m_loadedFoundLast;
+    LoadedModule* loaded = m_loaded.get(module);
+    if (loaded) {
+        m_loadedFoundLast = loaded;
+        m_moduleOfLoadedFoundLast = module;
+    }
+    return loaded;
 }
 
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const

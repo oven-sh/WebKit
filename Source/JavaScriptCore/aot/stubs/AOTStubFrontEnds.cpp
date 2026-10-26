@@ -39,6 +39,7 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTStringToLowerCase, emitToLowerCasePrelude },
         { Entry::operationAOTStringToUpperCase, emitToUpperCasePrelude },
         { Entry::operationAOTThrow, emitThrowPrelude },
+        { Entry::operationAOTThrowAfterCleanup, emitThrowAfterCleanupPrelude },
     };
     return preludes;
 }

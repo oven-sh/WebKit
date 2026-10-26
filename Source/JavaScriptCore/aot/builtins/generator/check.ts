@@ -684,6 +684,7 @@ function needsText(role: OperandRole): boolean {
     case "ReplacesContents":
     case "MembersAreOnlyInspected":
     case "KeysAreNotListed":
+    case "OwnValuesAreReadByKeyOnly":
     case "MembersAreOfObjectsOnly":
     case "FunctionsAreConvertedUnderNamesOnly":
     case "OnlyBoxedPrimitivesAreConverted":

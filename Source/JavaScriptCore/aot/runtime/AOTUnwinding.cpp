@@ -14,6 +14,7 @@
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTSavedFrame.h"
+#include "AOTState.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCallFrames.h"
@@ -210,7 +211,7 @@ void unwindBeyondCompiledFrames(VM& vm, CallFrame* frameRecord, CompiledUnwindSt
 }
 
 // True spares the Exception its stack trace, which looks at no more frames than the limit. A longer search costs more than it can save, and false is always right.
-bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
+static bool findCatchInRun(CompiledFrameIterator& frames)
 {
     Instance* instance = nullptr;
     CallFrame* lastFrame = nullptr;
@@ -233,6 +234,43 @@ bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
     // The body of a generator throws on to whoever resumed it.
     SavedFrame* saved = SavedFrame::forFrame(*instance, std::bit_cast<const uint64_t*>(lastFrame));
     return !saved || saved->kind() == CoroutineKind::AsyncFunction;
+}
+
+bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
+{
+    return findCatchInRun(frames);
+}
+
+// Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
+static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
+{
+    for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
+        if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
+            return false;
+        std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, exit.callFrame, exit.entryFrame);
+        if (!frames || frames->isAtEnd())
+            return false;
+        if (findCatchInRun(*frames))
+            return true;
+        if (!frames->isAtEnd())
+            return false;
+        exit = frames->exit();
+    }
+    return false;
+}
+
+NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, const CallerFrameAndPC* frameRecordOfOperation, const CompiledFrameIterator* framesAtEndOfRun)
+{
+    using Action = Exception::StackCaptureAction;
+    // The program threw the value somewhere else, and an Error keeps the stack that it holds.
+    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup)
+        return Action::CaptureStack;
+    if (!framesAtEndOfRun || needsExceptionForEveryThrow(instance))
+        return Action::CaptureStackOfThrow;
+    // The promise of the handler is rejected with the value.
+    if (framesAtEndOfRun->runEnd().hasCalledHandlerOfJob && instance.coroutines.promiseOfEnteredHandler)
+        return Action::DoNotCaptureStack;
+    return isCaughtByCallersOfNativeCode(vm, framesAtEndOfRun->exit()) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
 // Asked before every error of a throw site is created.

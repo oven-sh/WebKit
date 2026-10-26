@@ -134,18 +134,6 @@ static bool spellOneText(std::span<const StringView> first, std::span<const Stri
     }
 }
 
-std::optional<ModuleID> ModuleTable::fileBehindFace(ModuleID module) const
-{
-    const ModuleData& face = data(module);
-    std::span<const ModuleRequestData> requestsOfFace = requests(module);
-    if (face.kind != ModuleKind::SourceText || requestsOfFace.empty() || !requestsOfFace.front().isRequire)
-        return std::nullopt;
-    ModuleID file = requestsOfFace.front().targetModule();
-    if (data(file).kind != ModuleKind::CommonJs || !spellOneText(piecesOfDisplayPath(file), piecesOfDisplayPath(module)))
-        return std::nullopt;
-    return file;
-}
-
 // The further modules of a file follow the file.
 std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
 {

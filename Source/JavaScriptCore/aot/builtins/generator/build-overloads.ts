@@ -62,6 +62,7 @@ const entryFlagsByRole: Readonly<Record<OperandRole, BuiltinFlag | null>> = {
   ReplacesContents: null,
   MembersAreOnlyInspected: null,
   KeysAreNotListed: null,
+  OwnValuesAreReadByKeyOnly: null,
   MembersAreOfObjectsOnly: null,
   FunctionsAreConvertedUnderNamesOnly: null,
   OnlyBoxedPrimitivesAreConverted: null,

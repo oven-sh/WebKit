@@ -64,10 +64,30 @@ static bool isStepByOne(Opcode opcode)
 
 namespace {
 
-class IntegerArithmeticEmitter final : public OperationEmitter {
+class InlineMathEmitter : public OperationEmitter {
+protected:
+    using OperationEmitter::OperationEmitter;
+
+    // An invalid operation produces a NaN with the sign bit set on x86-64 and clear on ARM64. A C library function may pick either.
+    static bool matchesHardwareNaN(double libraryNaN) { return std::signbit(libraryNaN) == isX86_64(); }
+
+    Number callLibraryIfNaN(Number inlineResult, RuntimeOperation function, Number left, Number right)
+    {
+        LBasicBlock isNaN = newBlock();
+        Join<Number> join(m_out);
+        branchUnless(equal(inlineResult, inlineResult), isNaN);
+        join.add(inlineResult);
+
+        m_out.appendTo(isNaN);
+        join.add(callLeaf<Number>(function, { left, right }));
+        return join.finish();
+    }
+};
+
+class IntegerArithmeticEmitter final : public InlineMathEmitter {
 public:
     explicit IntegerArithmeticEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
+        : InlineMathEmitter(generator)
     {
     }
 
@@ -161,7 +181,11 @@ public:
         std::optional<double> constantDivisor = constantNumberOf(divisor.value());
         if (constantDivisor && std::abs(*constantDivisor) == 1) {
             Number fraction = sub(dividend, trunc(dividend));
-            return select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
+            Number result = select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
+            constexpr double infinity = std::numeric_limits<double>::infinity();
+            if (matchesHardwareNaN(Math::fmodDouble(infinity, *constantDivisor)) && matchesHardwareNaN(Math::fmodDouble(-infinity, *constantDivisor)))
+                return result;
+            return callLibraryIfNaN(result, RuntimeOperation::Fmod, dividend, divisor);
         }
         std::optional<int64_t> constantWholeDivisor = constantDivisor ? positiveWholeNumberOf(*constantDivisor) : std::nullopt;
         if (constantDivisor && !constantWholeDivisor)
@@ -334,10 +358,10 @@ private:
     }
 };
 
-class PowerEmitter final : public OperationEmitter {
+class PowerEmitter final : public InlineMathEmitter {
 public:
     explicit PowerEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
+        : InlineMathEmitter(generator)
     {
     }
 
@@ -361,9 +385,12 @@ private:
             Number magnitude = abs(base);
             Number zero = number(0);
             Number infinity = number(std::numeric_limits<double>::infinity());
-            if (exponent > 0)
-                return select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)));
-            return select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
+            Number result = exponent > 0
+                ? select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)))
+                : select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
+            if (matchesHardwareNaN(operationMathPow(-1, exponent)))
+                return result;
+            return callLibraryIfNaN(result, RuntimeOperation::Pow, base, number(exponent));
         }
         if (!(exponent >= 0 && exponent <= maxExponentForIntegerMathPow) || exponent != std::trunc(exponent))
             return std::nullopt;

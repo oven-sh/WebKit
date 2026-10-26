@@ -68,7 +68,7 @@ void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
 
 void EngineIntrinsicEmitter::generateThrowNewError(const ValueContext& value)
 {
-    emitter<ThrowEmitter>().throwError(value, value->errorKind(), value->message());
+    emitter<ThrowEmitter>().throwError(value, value->errorKind(), value->message(), value->throwPosition());
 }
 
 void EngineIntrinsicEmitter::generateResumeGenerator(const ValueContext& value)

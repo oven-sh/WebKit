@@ -2494,6 +2494,23 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
 }
 
+// A face has the display path of its file.
+static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
+{
+    const Program& program = encoder.program;
+    auto shownPath = [&](const Module& module) {
+        return module.displayPath && !encoder.obfuscates() ? program.string(module.displayPath) : std::span<const uint8_t>();
+    };
+    for (size_t index = 0; index < program.modules.size(); ++index) {
+        ModuleData& face = lists.modules[index];
+        uint32_t firstRequest = face.firstRequest;
+        if (face.kind != ModuleKind::SourceText || firstRequest == lists.modules[index + 1].firstRequest || !lists.requests[firstRequest].isRequire)
+            continue;
+        uint32_t file = lists.requests[firstRequest].target();
+        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+    }
+}
+
 static ContractedModuleRequests contractRequestLists(TableEncoder& encoder, ModuleLists& lists)
 {
     BitVector modulesNamedByRequire(encoder.program.modules.size());
@@ -2535,6 +2552,7 @@ void encodeModuleTables(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     ModuleLists lists = collectModuleLists(encoder);
+    markFacesOfFiles(encoder, lists);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());
     for (size_t index = 0; index < program.modules.size(); ++index)
         setPublicPath(encoder, program.modules[index], lists, lists.modules[index]);

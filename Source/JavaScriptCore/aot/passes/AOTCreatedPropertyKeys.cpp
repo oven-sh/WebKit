@@ -14,8 +14,10 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
+#include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTNameCreatedSymbols.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTStringBuilderAnalysis.h"
 #include "AOTThreads.h"
@@ -281,6 +283,39 @@ static VariableID findOnlyVariableStoredWith(const Function& function, const Use
     if (isCast(user.opcode))
         return findOnlyVariableStoredWith(function, useLists, uses[0].user);
     return user.opcode == Opcode::PutModuleVariable ? user.variable() : VariableID();
+}
+
+static MethodKind methodKindOf(FunctionKind kind)
+{
+    return kind == FunctionKind::Getter ? MethodKind::Getter : kind == FunctionKind::Setter ? MethodKind::Setter : MethodKind::Method;
+}
+
+BitVector findFunctionsNamedAtOneOperation(const Program& program)
+{
+    BitVector named(program.functions.size());
+    BitVector namedOtherwise(program.functions.size());
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::SetFunctionName }))
+            continue;
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& operation = function.at(id);
+                if (operation.opcode != Opcode::SetFunctionName)
+                    continue;
+                const Value& closure = function.at(sameObjectThroughCasts(function, operation.operand(OperandIndex::SetFunctionName::function)));
+                if (closure.opcode != Opcode::NewClosure)
+                    continue;
+                const Function& made = program.at(closure.function());
+                uint32_t written = firstSourceOf(program, closure.function()).index();
+                if (named.get(written) || made.derivation.source || made.constructedClass || methodKindOf(made.kind) != operation.methodKind())
+                    namedOtherwise.set(written);
+                named.set(written);
+            }
+        }
+    }
+    named.exclude(namedOtherwise);
+    return named;
 }
 
 BitVector findLibrarySymbolsUsedOnlyAsKeys(const Program& program)

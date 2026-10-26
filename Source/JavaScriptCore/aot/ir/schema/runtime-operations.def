@@ -160,7 +160,7 @@ runtime PromiseThen : void (JSCell* promise, EncodedJSValue onFulfilled, Encoded
 runtime PromiseCatch : JSCell* (JSCell* promise, EncodedJSValue onRejected) ; unknownCode
 runtime PromiseAll : JSCell* (uint32_t count, const EncodedJSValue* elements, uint32_t directCalls) ; unknownCode
 
-runtime Throw, ThrowToHandlerInFunction : void (EncodedJSValue value) ; reads(all) throws
+runtime Throw, ThrowToHandlerInFunction, ThrowAfterCleanup : void (EncodedJSValue value) ; reads(all) throws
 runtime Catch, CatchException : EncodedJSValue () ; reads(all) writes(RuntimeState)
 runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; reads(all) throws collects
 runtime ThrowStackOverflowError : void () ; reads(all) throws

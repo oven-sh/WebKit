@@ -130,6 +130,8 @@ struct State {
     std::unique_ptr<AllocationCounts> allocationCounts;
     // What registerWrittenAtFaults held at the last null check that faulted. The handler may run on another thread than the one that faulted.
     uint64_t registerBeforeFault { 0 };
+    // Where the last Throw at the end of a cleanup returns to. No other throw returns there.
+    const void* returnAddressOfThrowAfterCleanup { nullptr };
 
 private:
     explicit State(Instance&);

@@ -674,6 +674,24 @@ static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite
     return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
 }
 
+// `{ ...source, ..`: the first thing that a new object without a property gets.
+static bool fillsEmptyLiteral(const Function& function, const OwnKeyWalkSite& site)
+{
+    if (site.walk != OwnKeyWalk::Spread)
+        return false;
+    const Value& target = function.at(site.target);
+    if (target.opcode != Opcode::NewObject || !target.fields().empty())
+        return false;
+    const BlockValues& values = function.at(site.block).values;
+    for (uint32_t index = site.index; index--;) {
+        if (values[index] == site.target)
+            return true;
+        if (std::ranges::contains(function.at(values[index]).operands(), site.target))
+            return false;
+    }
+    return false;
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
@@ -688,7 +706,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
                 continue;
             HeatClass heat = heatClassOf(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site))
+            if (!isCold(heat) && ((site->walk != OwnKeyWalk::Copy && !fillsEmptyLiteral(function, *site)) || isHot(heat)) && !isListThatLivesOn(context, *site))
                 sites.append(WTF::move(*site));
         }
     }

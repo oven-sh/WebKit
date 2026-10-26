@@ -9,6 +9,7 @@
 
 #include "AOTCompiledFrame.h"
 #include "AOTInstance.h"
+#include "Exception.h"
 #include "VM.h"
 
 namespace JSC {
@@ -49,6 +50,8 @@ CompiledUnwindResult unwindCompiledFrames(VM&, CompiledFrameIterator&, VMEntryRe
 // For a throw in compiled code, after unwindCompiledFrames() has found no handler in the frames from findCompiledCallers(). The exception is pending.
 void unwindBeyondCompiledFrames(VM&, CallFrame* frameRecord, CompiledUnwindStatus);
 bool isCaughtByCompiledCode(VM&, CompiledFrameIterator);
+// For what a `throw` of the program throws out of a run of compiled frames. The frames are walked only if somebody may list them.
+Exception::StackCaptureAction stackCaptureActionOfThrow(VM&, const Instance&, const CallerFrameAndPC* frameRecordOfOperation, const CompiledFrameIterator* framesAtEndOfRun);
 bool nearestHandlerIgnoresValue(VM&, const Instance&, CallFrame* stubFrame);
 
 inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;

@@ -213,6 +213,7 @@ public:
         CallFrame* adapterFrame { nullptr };
         bool isConstruct { false };
         bool resumesSavedFrame { false };
+        bool hasCalledHandlerOfJob { false };
     };
 
     enum class OperationState : bool { MayNotHaveCalled, HasCalled };

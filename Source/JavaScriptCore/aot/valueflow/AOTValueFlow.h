@@ -208,6 +208,7 @@ inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot,
 inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
 inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
 inline constexpr ValueFlowName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
+inline constexpr ValueFlowName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);

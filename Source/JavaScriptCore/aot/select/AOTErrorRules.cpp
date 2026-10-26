@@ -24,6 +24,7 @@ struct ThrownError {
     SelectionGroup group;
     ErrorKind errorKind;
     StringID message;
+    std::optional<uint32_t> throwPosition;
 };
 
 } // anonymous namespace
@@ -37,20 +38,25 @@ static ErrorKind errorKindOf(const BuiltinOverload& overload)
     return static_cast<ErrorKind>(errorKind);
 }
 
-static bool isThrownAtCreation(SelectionContext& context, ValueID call)
+static const Terminator* findThrowAtCreation(SelectionContext& context, ValueID call)
 {
     const UseLists& useLists = context.analyses().useLists();
     ValueLocation location = useLists.locationOf(call);
     if (location.placement != ValuePlacement::InBlock)
-        return false;
+        return nullptr;
 
     const Block& block = context.function().at(location.block);
     // A Throw reaches a catch handler of its own function by a jump, and ThrowNewError would reach it by unwinding.
     if (block.handler)
-        return false;
+        return nullptr;
 
     const Terminator& terminator = block.terminator;
-    return terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == call && location.index + 1 == block.values.size() && useLists.useCount(call) == 1;
+    if (terminator.kind != TerminatorKind::Throw || terminator.valueOperand() != call || location.index + 1 != block.values.size() || useLists.useCount(call) != 1)
+        return nullptr;
+    // One call site has one list of frames.
+    if (terminator.inlineFrame != context.function().at(call).inlineFrame)
+        return nullptr;
+    return &terminator;
 }
 
 static bool canBeTopFrameOfStackTrace(const Program& program, const Function& function, const Value& call)
@@ -73,10 +79,14 @@ static std::optional<ThrownError> findThrownError(SelectionContext& context, Val
     if (message.kind() != KnownValue::Kind::String)
         return std::nullopt;
 
-    if (!isThrownAtCreation(context, id) || !canBeTopFrameOfStackTrace(program, function, call))
+    const Terminator* thrower = findThrowAtCreation(context, id);
+    if (!thrower || !canBeTopFrameOfStackTrace(program, function, call))
         return std::nullopt;
 
-    return ThrownError { groupOfOne(id), errorKindOf(overloadOf(program, call)), message.asString() };
+    std::optional<uint32_t> throwPosition;
+    if (thrower->hasPosition() && thrower->position != call.position)
+        throwPosition = thrower->position;
+    return ThrownError { groupOfOne(id), errorKindOf(overloadOf(program, call)), message.asString(), throwPosition };
 }
 
 void selectThrowNewError(SelectionContext& context)
@@ -92,6 +102,7 @@ void selectThrowNewError(SelectionContext& context)
         Value& root = rewriter.replaceRoot(Opcode::ThrowNewError);
         root.setErrorKind(match.errorKind);
         root.setMessage(match.message);
+        root.setThrowPosition(match.throwPosition);
         rewriter.endBlockAsUnreachable();
     });
 }

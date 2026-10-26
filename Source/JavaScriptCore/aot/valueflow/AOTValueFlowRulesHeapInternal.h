@@ -204,7 +204,7 @@ private:
     bool m_namesFunctionWhereItIsMade { false };
     bool isNameThatTableDoesNotListOnGlobalObject(const HeapKey&) const;
     bool namesObjectOfAccess() const;
-    ClimbingSet settersFoundFrom(ClimbingSet start, const HeapKey&);
+    ClimbingSet accessorsFoundFrom(ClimbingSet start, const HeapKey&, HeapPropertyPart);
     bool holdsGlobalObjectOnlyWhatStatementsHaveStored() { return !doesUnseenCodeRun() && !m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::ProcessDlopen))), m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)); }
     bool answers(BuiltinID member) const;
     bool answersWithMember(ValueFlowObjectID holder, PropertyKeyID name) const { return answers(memberUnder(m_universe.builtinOf(holder), name)); }

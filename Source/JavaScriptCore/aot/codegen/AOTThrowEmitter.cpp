@@ -58,6 +58,8 @@ struct ThrowSiteCode {
     Representation representation;
     unsigned registerNumberWithoutOperand;
     uint32_t callSite;
+    // The stub makes an Error at one position and throws it at another, as a stub that reads twice reads at two.
+    OptionalIndex siteOfNewError { };
 };
 
 } // anonymous namespace
@@ -111,10 +113,10 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     if (source == ThrowSiteSource::WordInRegister) {
         ArgumentMoves moves;
         appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0]);
-        records.stubCalls.call(jit, key, std::nullopt, OptionalIndex { code.callSite }, moves);
+        records.stubCalls.call(jit, key, std::nullopt, OptionalIndex { code.callSite }, moves, code.siteOfNewError);
         return;
     }
-    records.stubCalls.call(jit, key, OptionalIndex { code.callSite });
+    records.stubCalls.callForTwoReads(jit, key, code.siteOfNewError, OptionalIndex { code.callSite });
     CCallHelpers::Label begin = jit.labelIgnoringWatchpoints();
     for (uint32_t word : words) {
 #if CPU(X86_64)
@@ -203,7 +205,12 @@ Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, O
     return undefined();
 }
 
-void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand, std::optional<ErrorKind> errorKind)
+void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand)
+{
+    throwAt(context, site, operand, std::nullopt);
+}
+
+void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand, std::optional<NewError> newError)
 {
     RELEASE_ASSERT(!generator().isInitializingCell());
     operand = withoutUndefinedConstant(operand);
@@ -227,7 +234,14 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
     LBasicBlock siteBlock = m_out.m_block;
     if (operand)
         patchpoint->append(B3::ConstrainedValue(operand->value, B3::ValueRep::SomeRegister));
-    ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), errorKind ? static_cast<unsigned>(*errorKind) : 0, calls.addSite(context) };
+    ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), newError ? static_cast<unsigned>(newError->kind) : 0, 0 };
+    if (newError && newError->throwPosition) {
+        Origin throwOrigin = context.origin();
+        throwOrigin.position = *newError->throwPosition;
+        code.siteOfNewError = { calls.addSite(context) };
+        code.callSite = calls.addSite(context, { .origin = throwOrigin });
+    } else
+        code.callSite = calls.addSite(context);
     patchpoint->setGenerator(generatorOf(m_records, code));
     calls.finishCallPatchpoint(context, patchpoint, code.callSite, request);
     if (m_out.m_block == siteBlock)
@@ -278,9 +292,9 @@ RefPtr<B3::StackmapGenerator> ThrowEmitter::generatorOfCheckedThrowSite(const Op
     return generator;
 }
 
-void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message)
+void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message, std::optional<uint32_t> throwPosition)
 {
-    throwAt(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, kind);
+    throwAt(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, NewError { kind, throwPosition });
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)

@@ -784,7 +784,8 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
             builder.addParameter(block, type);
         Value error = IRBuilder::make(Opcode::NewRuntimeError);
         error.setRuntimeError(RuntimeErrorKind::LeftOutOfExecutable);
-        error.setName(entrypoint.name);
+        if (!build.options().obfuscates())
+            error.setName(entrypoint.name);
         builder.emitThrow(builder.append(WTF::move(error)));
     });
     build.statistics().count(StatisticID::UnreachableFunctionsRemoved, entrypoints.size());

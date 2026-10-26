@@ -27,8 +27,6 @@ public:
     ModuleLinkWalk(const Modules&, ModuleID root);
 
     ModuleID root() const { return m_root; }
-    // What the walk passes over hangs on which modules were linked when it was made.
-    unsigned numberOfLinksBefore() const { return m_numberOfLinksBefore; }
     // Whether a walk made now would be this walk: no module that it enters has been linked or has run since.
     bool stillHolds(const Modules&) const;
     // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
@@ -54,7 +52,7 @@ private:
     void append(ModuleID, StepKind, bool resolvesNames = false);
 
     ModuleID m_root;
-    unsigned m_numberOfLinksBefore;
+    unsigned m_linkEpoch;
     std::span<const LinkPlanStepData> m_plan;
     std::optional<ModuleID> m_memberOfCycle;
     Vector<Step, 64> m_steps;

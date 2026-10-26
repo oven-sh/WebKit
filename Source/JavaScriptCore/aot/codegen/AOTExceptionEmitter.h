@@ -57,10 +57,12 @@ private:
     void setCaughtVariable(BlockID handler, LValue);
     void jumpToHandler(const Target& handler, LValue caught);
     void throwByOperation(const TerminatorContext&, RuntimeOperation, Boxed thrown);
+    void findValuesCaughtByCleanups();
     LValue caughtWord(const ValueContext&);
     Boxed valueOfException(CellPointer exception);
 
     BitVector m_handlersEnteredByJump;
+    BitVector m_valuesCaughtByCleanups;
     BlockMap<B3::Variable*> m_caughtVariables;
     BlockMap<LValue> m_caughtWords;
     BlockMap<Vector<LandingPad, 2>> m_landingPads;

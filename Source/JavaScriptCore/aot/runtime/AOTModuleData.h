@@ -85,7 +85,8 @@ struct ModuleData {
     Number24 firstEvaluationRequest;
     uint8_t hasInstalledPositions : 1;
     uint8_t loadedByLoader : 1;
-    uint8_t unusedBits : 6;
+    uint8_t faceOfFile : 1;
+    uint8_t unusedBits : 5;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -105,6 +106,8 @@ struct ModuleData {
     // Its body evaluates what the module requests, runs the code of the module and stores the status, all of it once.
     bool evaluatesItself() const { return has(Flag::EvaluatesItself); }
     bool isLoadedByLoader() const { return loadedByLoader; }
+    // Its first request is the CommonJS file that it stands for where ES modules import the file.
+    bool isFaceOfFile() const { return faceOfFile; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.
@@ -250,6 +253,24 @@ public:
                 return true;
         }
         return false;
+    }
+    // The place of the first number from `start` on that has no bit in the set, or `end`.
+    size_t findFirstOutside(std::span<const uint64_t> set, size_t start, size_t end) const
+    {
+        auto isOutside = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
+            return !(set[number / 64] >> (number % 64) & 1);
+        };
+        if (m_hasTwoWords) [[unlikely]] {
+            while (start != end && !isOutside((*this)[start]))
+                ++start;
+            return start;
+        }
+        for (uint16_t number : m_words.subspan(start, end - start)) {
+            if (isOutside(number))
+                break;
+            ++start;
+        }
+        return start;
     }
     constexpr Iterator begin() const LIFETIME_BOUND { return { this, 0 }; }
     constexpr Iterator end() const LIFETIME_BOUND { return { this, size() }; }

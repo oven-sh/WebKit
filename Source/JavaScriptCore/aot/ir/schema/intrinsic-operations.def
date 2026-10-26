@@ -11,7 +11,7 @@ operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(
 operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis ; flow = Copies ; flowRule = Heap
 operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty ; flow = Copies ; flowRule = Heap
 operation ToLength (value: Any/Converted) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToLength ; flow = TableProves
-operation ThrowNewError (errorKind: ErrorKind, message: String) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowAtSite ; replaces = CallBuiltin, Throw ; flow = TableProves
+operation ThrowNewError (errorKind: ErrorKind, message: String, engine throwPosition?: UInt32) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowAtSite ; replaces = CallBuiltin, Throw ; flow = TableProves
 operation ResumeGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains) -> unknown ; unknownCode ; runtime = ResumeGenerator ; flow = Copies ; flowRule = Generator
 operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains, check: GeneratorStepCheck) -> results(StepGeneratorResult: unknown, natural(GeneratorStepStatus)) ; unknownCode ; flow = Copies ; flowRule = Generator
 operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart ; flow = TableProves

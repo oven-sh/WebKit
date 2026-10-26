@@ -84,8 +84,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowToHandlerInFunction);
     DeferGCForAWhile deferGC(vm);
-    throwException(globalObject, scope, JSValue::decode(value));
+    bool stackIsUnobserved = !needsExceptionForEveryThrow(*instance) && vm.interpreter.isExceptionCaughtByUserCatchClause();
+    throwException(globalObject, scope, Exception::create(vm, JSValue::decode(value), stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStackOfThrow));
     OPERATION_RETURN(scope);
+}
+
+// The program threw the value somewhere else, and a cleanup that took the value throws it on. An Error keeps the stack that it holds.
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAfterCleanup);
+    if (vm.exceptionForInspection()) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        throwException(globalObject, scope, JSValue::decode(value));
+        OPERATION_RETURN(scope);
+    }
+    instance->runtime.exceptions.thrownValue = value;
+    instance->state->returnAddressOfThrowAfterCleanup = removeCodePtrTag(callFrame->rawReturnPC());
+    return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))

@@ -48,7 +48,9 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+        // Walks the frames even where the value is an Error that holds a stack of its own.
+        CaptureStackOfThrow,
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
     // Walks no frame. Null unless the value is an Error that still holds the return addresses of its own stack.
@@ -99,7 +101,7 @@ public:
 private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
-    bool tryRetainReturnAddresses(VM&);
+    bool tryRetainReturnAddresses(VM&, StackCaptureAction);
     void retainReturnAddresses(VM&, AOT::ReturnAddressTrace*, Vector<StackFrame>&& otherFrames);
     static ErrorInstance* errorToTakeStackFrom(VM&, JSValue thrownValue);
     void takeStackFrom(VM&, ErrorInstance&);

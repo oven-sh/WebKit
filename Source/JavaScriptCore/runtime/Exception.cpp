@@ -118,7 +118,7 @@ void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAdd
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-// Two readers tell the stack of the Error from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+// An Error that native code throws was made on the spot. Two readers still tell its stack from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
 ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
 {
     auto* error = dynamicDowncast<ErrorInstance>(thrownValue);
@@ -149,9 +149,9 @@ Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue)
     return result;
 }
 
-NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm)
+NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm, StackCaptureAction action)
 {
-    if (ErrorInstance* error = errorToTakeStackFrom(vm, value())) {
+    if (ErrorInstance* error = action == StackCaptureAction::CaptureStack ? errorToTakeStackFrom(vm, value()) : nullptr) {
         takeStackFrom(vm, *error);
         return true;
     }
@@ -169,11 +169,11 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     Base::finishCreation(vm);
 
 #if ENABLE(AOT)
-    if (action == StackCaptureAction::CaptureStack && vm.hasCompiledCode() && tryRetainReturnAddresses(vm))
+    if (action != StackCaptureAction::DoNotCaptureStack && vm.hasCompiledCode() && tryRetainReturnAddresses(vm, action))
         return;
 #endif
     Vector<StackFrame> stackTrace;
-    if (action == StackCaptureAction::CaptureStack)
+    if (action != StackCaptureAction::DoNotCaptureStack)
         vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
 
     m_stack = WTF::move(stackTrace);

@@ -144,7 +144,7 @@ ALWAYS_INLINE void ModuleLinkWalk::append(ModuleID module, StepKind kind, bool r
 
 ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     : m_root(root)
-    , m_numberOfLinksBefore(modules.numberOfLinks())
+    , m_linkEpoch(modules.linkEpoch())
 {
     struct Frame {
         uint32_t enter;
@@ -168,8 +168,6 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     Vector<Frame, 64> path;
     auto record = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
         const ModuleData& moduleData = table.data(module);
-        if (!moduleData.needsLink())
-            return;
         if (linkFollowsRequestsOf(moduleData) && modules.status(module) == ModuleStatus::Unlinked) {
             path.append(Frame { static_cast<uint32_t>(m_steps.size()), moduleData.firstLinkRequest, table.endOfLinkRequests(module) });
             append(module, StepKind::Enter);
@@ -181,25 +179,38 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
             append(module, StepKind::IsUncompiled);
     };
 
+    if (modules.isSettledForLinks(root))
+        return;
     record(root);
     if (path.isEmpty())
         return;
 
     ModuleNumbers requests = table.allLinkRequests();
-    BitVector seen(table.size());
-    seen.quickSet(root.index());
+    BitVector seen;
     while (!path.isEmpty()) {
         Frame& frame = path.last();
         uint32_t next = frame.nextRequest;
         uint32_t end = frame.endOfRequests;
         size_t depth = path.size();
-        while (next != end && path.size() == depth) {
+        while (true) {
+            // Most of what a root of a large program reaches was linked with an earlier graph.
+            next = static_cast<uint32_t>(requests.findFirstOutside(modules.modulesSettledForLinks(), next, end));
+            if (next == end)
+                break;
             ModuleID target(requests[next++]);
+            if (modules.isSettledForLinks(target))
+                continue;
+            if (seen.size() < table.size()) {
+                seen.ensureSize(table.size());
+                seen.quickSet(root.index());
+            }
             if (seen.quickSet(target.index()))
                 continue;
             // record() may move the frames.
             path[depth - 1].nextRequest = next;
             record(target);
+            if (path.size() != depth)
+                break;
         }
         if (path.size() != depth)
             continue;
@@ -214,13 +225,28 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
 
 bool ModuleLinkWalk::stillHolds(const Modules& modules) const
 {
-    if (m_numberOfLinksBefore != modules.numberOfLinks())
+    if (m_linkEpoch != modules.linkEpoch())
         return false;
     if (hasPlan())
         return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
     return std::ranges::all_of(m_steps, [&](const Step& step) {
         return static_cast<StepKind>(step.kind) != StepKind::Enter || modules.status(ModuleID(step.module)) == ModuleStatus::Unlinked;
     });
+}
+
+// A module that follows requests is never unlinked again. One that captures exports has work until it is evaluated and its importers read what was captured last.
+bool Modules::checkIsSettledForLinks(ModuleID module) const
+{
+    const ModuleData& moduleData = data(module);
+    bool isSettled = !moduleData.needsLink();
+    if (!isSettled && moduleData.capturesExports()) {
+        LoadedModule* loaded = status(module) == ModuleStatus::Evaluated ? loadedIfExists(module) : nullptr;
+        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture;
+    } else if (!isSettled)
+        isSettled = !moduleData.isUncompiledCode() && status(module) != ModuleStatus::Unlinked;
+    if (isSettled)
+        m_modulesSettledForLinks[module.index() / 64] |= 1ull << (module.index() % 64);
+    return isSettled;
 }
 
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
@@ -349,7 +375,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    ++m_numberOfLinks;
+    ++m_linkEpoch;
 
     auto isUnlinked = [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
@@ -515,6 +541,8 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
     loaded.capturedStars.set(*this, nullptr);
     loaded.sourceOfCapturedFields.set(*this, nullptr);
     loaded.bindsEarlierCapture = true;
+    m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+    ++m_linkEpoch;
     if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
         if (data(module).holdsNamespaceInValue())
             m_modulesWithEarlierNamespaceInValue.set(module.index());

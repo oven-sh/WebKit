@@ -151,6 +151,7 @@ export const operandRoles = [
   "ReplacesContents",
   "MembersAreOnlyInspected",
   "KeysAreNotListed",
+  "OwnValuesAreReadByKeyOnly",
   "MembersAreOfObjectsOnly",
   "FunctionsAreConvertedUnderNamesOnly",
   "OnlyBoxedPrimitivesAreConverted",

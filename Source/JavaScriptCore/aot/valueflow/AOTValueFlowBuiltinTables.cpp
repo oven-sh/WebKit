@@ -172,7 +172,10 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
         return intern({ protocols, isTransitive, namedMembers, calledMembers });
     };
     auto add = [&](const BuiltinParameter& parameter) {
-        if (ValueFlowBehaviorID behavior = behaviorFor(parameter.uses, parameter.protocols, parameter.namedMembers, parameter.calledMembers))
+        Protocols protocols = parameter.protocols;
+        if (parameter.roles.contains(BuiltinOperandRole::OwnValuesAreReadByKeyOnly))
+            protocols.remove(Protocol::OwnValues);
+        if (ValueFlowBehaviorID behavior = behaviorFor(parameter.uses, protocols, parameter.namedMembers, parameter.calledMembers))
             m_behaviorOfParameter.add(&parameter, behavior);
     };
     for (uint32_t index = 0; index < builtins.overloadCount(); ++index) {

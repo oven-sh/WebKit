@@ -508,28 +508,22 @@ bool isSuspension(const Inst& inst)
     return stackmap && stackmap->isSuspension();
 }
 
-void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bool hasTooManySlotsForLiveness)
+struct StackSlotRowsOfSuspendingBlocks : StackSlotRows {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    StackSlotRowsOfSuspendingBlocks(const StackSlotActions& actions, const BitVector& suspendingBlocks)
+        : StackSlotRows(actions)
+        , suspendingBlocks(suspendingBlocks)
+    {
+    }
+
+    bool needsLiveAtTail(BasicBlock* block) const { return suspendingBlocks.get(block->index()); }
+
+    const BitVector& suspendingBlocks;
+};
+
+void recordSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, const StackSlotActions& actions, auto& liveness, std::span<BasicBlock* const> suspendingBlocks)
 {
-    if (code.calleeSavesClobberedAtSuspensions().isEmpty())
-        return;
-
-    Vector<BasicBlock*, 8> suspendingBlocks;
-    for (BasicBlock* block : code) {
-        if (std::ranges::any_of(*block, isSuspension))
-            suspendingBlocks.append(block);
-    }
-    if (suspendingBlocks.isEmpty())
-        return;
-
-    CompilerTimingScope timingScope("Air"_s, "StackAllocator::suspensions"_s);
-    coloring.hasSuspensions = true;
-    if (hasTooManySlotsForLiveness) {
-        for (StackSlot* slot : code.stackSlots())
-            coloring.spillSlotsLiveAcrossSuspensions.set(slot->index());
-        return;
-    }
-    StackSlotActions actions(code, false);
-    StackSlotLiveness liveness(code, actions);
     auto workset = liveness.makeWorkset();
     auto addUses = [&](std::span<const StackSlotActions::Action> group) {
         StackSlotLivenessAdapter::forEachUseInGroup(group, [&](unsigned slotIndex) {
@@ -567,6 +561,40 @@ void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bo
             removeDefs(groupBehind);
         }
     }
+}
+
+void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bool hasTooManySlotsForLiveness)
+{
+    if (code.calleeSavesClobberedAtSuspensions().isEmpty())
+        return;
+
+    Vector<BasicBlock*, 8> suspendingBlocks;
+    BitVector isSuspendingBlock;
+    for (BasicBlock* block : code) {
+        if (std::ranges::any_of(*block, isSuspension)) {
+            suspendingBlocks.append(block);
+            isSuspendingBlock.set(block->index());
+        }
+    }
+    if (suspendingBlocks.isEmpty())
+        return;
+
+    CompilerTimingScope timingScope("Air"_s, "StackAllocator::suspensions"_s);
+    coloring.hasSuspensions = true;
+    if (hasTooManySlotsForLiveness) {
+        for (StackSlot* slot : code.stackSlots())
+            coloring.spillSlotsLiveAcrossSuspensions.set(slot->index());
+        return;
+    }
+    StackSlotActions actions(code, false);
+    BitMatrixLiveness<StackSlotRowsOfSuspendingBlocks> livenessInWords(code, actions, isSuspendingBlock);
+    livenessInWords.compute();
+    if (livenessInWords.status() == BitMatrixLivenessStatus::Solved) {
+        recordSpillSlotsLiveAcrossSuspensions(code, coloring, actions, livenessInWords, suspendingBlocks.span());
+        return;
+    }
+    StackSlotLiveness liveness(code, actions);
+    recordSpillSlotsLiveAcrossSuspensions(code, coloring, actions, liveness, suspendingBlocks.span());
 }
 
 template<typename InterferenceGraph, typename SlotLiveness>

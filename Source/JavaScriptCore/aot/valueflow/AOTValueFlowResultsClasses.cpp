@@ -186,8 +186,8 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
             continue;
         }
 
-        Vector<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
-        keysOfMembers = findKeysOfMembers(inputs, FunctionID(index), maker);
+        tables.application->bodies[index].keysOfMembers = findKeysOfMembers(inputs, FunctionID(index), maker);
+        const Vector<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
         CFG cfg(function);
         std::optional<UseLists> useLists;
         std::optional<BlockCycles> cycles;
@@ -983,51 +983,30 @@ static void dropLinkedBasesInCycles(const Program& program, std::span<const Layo
     }
 }
 
-static MethodKind methodKindOf(FunctionKind kind)
-{
-    return kind == FunctionKind::Getter ? MethodKind::Getter : kind == FunctionKind::Setter ? MethodKind::Setter : MethodKind::Method;
-}
-
-// A function that takes its name from a computed key which is one key whenever the function is made has that name as if it were written.
+// A function whose objects take their name at one operation, from a computed key that is one key whenever it runs, has that name as if it were written.
 static void nameFunctionsUnderOneKey(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueSetMaker& maker)
 {
-    struct NameTaken {
-        FunctionID named;
-        PropertyKeyID key;
-        FunctionID definer;
-        ValueID operation;
-    };
     const Program& program = inputs.program;
-    Vector<NameTaken> names;
+    const ValueFlowHeapTables& heapTables = inputs.universe().builtinTables().heap();
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         FunctionID id(index);
-        if (!mayHoldValueWith(program, id, { Opcode::SetFunctionName }) || !inputs.isReached(id) || isUnsolvedCode(inputs, tables, id))
+        if (!mayHoldValueWith(program, id, { Opcode::SetFunctionName }) || !inputs.isReached(id))
             continue;
         const Function& function = program.at(id);
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetFunctionName)
                 continue;
-            const Value& operation = function.at(statement.site);
-            const Value& closure = function.at(sameObjectThroughCasts(function, operation.operand(OperandIndex::SetFunctionName::function)));
+            const Value& closure = function.at(sameObjectThroughCasts(function, function.at(statement.site).operand(OperandIndex::SetFunctionName::function)));
+            if (closure.opcode != Opcode::NewClosure || !heapTables.isNamedAtOneOperation(closure.function()))
+                continue;
             ValueFlowObjectID only = inputs.sets().onlyMember(possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetFunctionName::computedKey], maker));
             PropertyKeyID key = only ? inputs.universe().keyOf(only) : PropertyKeyID();
-            if (key && tellsNameOfFunction(program.at(key)) && closure.opcode == Opcode::NewClosure && !program.at(closure.function()).constructedClass && methodKindOf(program.at(closure.function()).kind) == operation.methodKind())
-                names.append({ closure.function(), key, id, statement.site });
+            if (!key || !tellsNameOfFunction(program.at(key)))
+                continue;
+            tables.application->signatures[closure.function().index()].keyThatNamesFunction = key;
+            tables.application->bodies[index].namesTakenFromOneKey.append(statement.site);
         }
-    }
-    AOT::sort(names, { }, &NameTaken::named);
-    Vector<NameTaken> namesOfFunctionsNamedOnce;
-    for (size_t index = 0; index < names.size(); ++index) {
-        bool isNamedTwice = (index && names[index - 1].named == names[index].named) || (index + 1 < names.size() && names[index + 1].named == names[index].named);
-        if (!isNamedTwice)
-            namesOfFunctionsNamedOnce.append(names[index]);
-    }
-    AOT::sort(namesOfFunctionsNamedOnce, { }, [](const NameTaken& name) {
-        return std::pair { name.definer, name.operation };
-    });
-    for (const NameTaken& name : namesOfFunctionsNamedOnce) {
-        tables.application->signatures[name.named.index()].keyThatNamesFunction = name.key;
-        tables.application->bodies[name.definer.index()].namesTakenFromOneKey.append(name.operation);
+        AOT::sort(tables.application->bodies[index].namesTakenFromOneKey);
     }
 }
 

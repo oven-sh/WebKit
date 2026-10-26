@@ -144,6 +144,27 @@ struct AllocatingOperation {
     bool getsMoreFields { false };
 };
 
+struct CopyAtBirth {
+    ValueID operation;
+    uint32_t firstSource { 0 };
+    bool assigns { false };
+};
+
+struct SourceOfCopyAtBirth {
+    ValueSetID objects { ValueSets::nothing };
+    bool isAssigned { false };
+};
+
+// `{ ...defaults, ...options }` and `Object.assign({}, defaults, options)`: nothing but the copies can reach the object until they are over.
+struct BirthWithCopies {
+    FunctionID function;
+    ValueID allocation;
+    LayoutID layout;
+    Vector<PropertyKeyID, 8> definedKeys;
+    Vector<CopyAtBirth, 2> copies;
+    Vector<SourceOfCopyAtBirth, 2> sources;
+};
+
 enum class FieldFact : uint8_t {
     HasObjects = 1 << 0,
     IsMissingAtCreation = 1 << 1,
@@ -206,6 +227,9 @@ struct FieldResults {
     uint32_t numberOfLayouts { static_cast<uint32_t>(program.layouts.size()) };
     Vector<Vector<LayoutID>> layoutsDirectlyBelow { };
     mutable Lock lockOfChainsBuiltByProgram { };
+    // For the layouts of literals that are born with copies: the keys that every object holds once its birth is over, sorted.
+    KeysByLayout keysHeldSinceBirth { };
+    BitVector isBornWithCopies { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
@@ -279,11 +303,313 @@ struct FieldResults {
         });
     }
 
+    bool holdsSinceBirth(LayoutID id, PropertyKeyID key) const
+    {
+        return key && isBornWithCopies.get(id.index()) && std::ranges::binary_search(keysHeldSinceBirth[id.index()], key);
+    }
+
+    bool canBeBornWithCopies(LayoutID id) const
+    {
+        return program.at(id).kind == LayoutKind::Record && !program.at(id).isDerived();
+    }
+
+    void collectBirthsWithCopiesIn(FunctionID id, Vector<BirthWithCopies>& births) const
+    {
+        constexpr OpcodeSet piecesOfLiterals { Opcode::PropDefine, Opcode::ElemDefine, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::CopyDataProperties };
+        static_assert(!OperandIndex::PropDefine::object && !OperandIndex::ElemDefine::object && !OperandIndex::DefineGetter::object && !OperandIndex::DefineSetter::object);
+        static_assert(!OperandIndex::CopyDataProperties::target && !OperandIndex::FinishObject::object);
+        const Function& function = program.at(id);
+        const BuiltinTable& builtins = program.builtins();
+        bool copiesIntoLiteral = false;
+        bool namesAssign = false;
+        for (const Value& value : function.values) {
+            copiesIntoLiteral |= value.opcode == Opcode::CopyDataProperties;
+            namesAssign |= value.opcode == Opcode::Builtin && builtins.canonicalID(value.builtin()) == Builtins::ObjectAssign;
+        }
+        if (!copiesIntoLiteral && !namesAssign)
+            return;
+
+        constexpr uint32_t none = UINT32_MAX;
+        struct BornObject {
+            BirthWithCopies birth;
+            ValueID object;
+        };
+        Vector<BornObject, 8> born;
+        Vector<uint32_t> openBirthOf(FillWith { }, function.values.size(), none);
+        Vector<ValueID, 8> openInBlock;
+        for (const Block& block : function.blocks) {
+            for (ValueID valueID : block.values) {
+                const Value& value = function.at(valueID);
+                for (ValueID operand : value.operands()) {
+                    uint32_t open = operand ? openBirthOf[operand.index()] : none;
+                    if (open == none)
+                        continue;
+                    BirthWithCopies& birth = born[open].birth;
+                    bool isPiece = piecesOfLiterals.contains(value.opcode) && value.operand(0) == operand && std::ranges::count(value.operands(), operand) == 1;
+                    if (!isPiece) {
+                        if (value.opcode == Opcode::FinishObject)
+                            born[open].object = valueID;
+                        openBirthOf[operand.index()] = none;
+                        continue;
+                    }
+                    if (value.opcode == Opcode::PropDefine && value.key())
+                        birth.definedKeys.append(value.key());
+                    if (value.opcode == Opcode::CopyDataProperties && value.excludedOperands().empty() && value.excludedKeys().empty())
+                        birth.copies.append({ valueID, OperandIndex::CopyDataProperties::source, false });
+                }
+                if (value.opcode == Opcode::NewObject && canBeBornWithCopies(value.layout())) {
+                    BirthWithCopies birth { .function = id, .allocation = valueID, .layout = value.layout() };
+                    for (uint32_t field : value.fields()) {
+                        if (PropertyKeyID key = program.at(birth.layout).fields[field].key)
+                            birth.definedKeys.append(key);
+                    }
+                    openBirthOf[valueID.index()] = born.size();
+                    openInBlock.append(valueID);
+                    born.append({ WTF::move(birth), valueID });
+                } else if (value.opcode == Opcode::Data && namesAssign) {
+                    const DataNode::Object* root = program.at(value.data()).root.tryAs<DataNode::Object>();
+                    if (!root || !root->layout || !canBeBornWithCopies(root->layout))
+                        continue;
+                    BirthWithCopies birth { .function = id, .allocation = valueID, .layout = root->layout };
+                    for (uint32_t field : fieldsFilledBy(program, program.at(birth.layout), *root))
+                        birth.definedKeys.append(program.at(birth.layout).fields[field].key);
+                    born.append({ WTF::move(birth), valueID });
+                }
+            }
+            for (ValueID open : openInBlock)
+                openBirthOf[open.index()] = none;
+            openInBlock.shrink(0);
+        }
+
+        Vector<uint32_t> numberOfUses;
+        Vector<ValueID> userOf;
+        if (namesAssign) {
+            numberOfUses.fill(0, function.values.size());
+            userOf.fill(ValueID(), function.values.size());
+            for (const Block& block : function.blocks) {
+                for (ValueID user : block.values) {
+                    for (ValueID operand : function.at(user).operands()) {
+                        if (!operand)
+                            continue;
+                        ++numberOfUses[operand.index()];
+                        userOf[operand.index()] = user;
+                    }
+                }
+                block.forEachChildOutsideValues([&](ValueID operand) {
+                    if (operand)
+                        numberOfUses[operand.index()] += 2;
+                });
+            }
+        }
+        for (auto& [birth, object] : born) {
+            while (namesAssign && numberOfUses[object.index()] == 1) {
+                ValueID user = userOf[object.index()];
+                const Value& call = function.at(user);
+                if (call.opcode != Opcode::Call || call.numberOfOperands() <= OperandIndex::Call::arguments + 1 || call.operand(OperandIndex::Call::arguments) != object)
+                    break;
+                const Value& callee = function.at(call.operand(OperandIndex::Call::callee));
+                if (callee.opcode != Opcode::Builtin || builtins.canonicalID(callee.builtin()) != Builtins::ObjectAssign)
+                    break;
+                birth.copies.append({ user, OperandIndex::Call::arguments + 1, true });
+                object = user;
+            }
+            if (!birth.copies.isEmpty())
+                births.append(WTF::move(birth));
+        }
+        if (births.isEmpty() || births.last().function != id)
+            return;
+
+        size_t first = births.size();
+        while (first && births[first - 1].function == id)
+            --first;
+        struct CopyOfBirth {
+            ValueID operation;
+            uint32_t birth;
+            uint32_t copy;
+        };
+        Vector<CopyOfBirth, 8> copies;
+        for (size_t birth = first; birth < births.size(); ++birth) {
+            for (uint32_t copy = 0; copy < births[birth].copies.size(); ++copy)
+                copies.append({ births[birth].copies[copy].operation, static_cast<uint32_t>(birth), copy });
+        }
+        AOT::sort(copies, { }, &CopyOfBirth::operation);
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+            if (statement.kind != ValueFlowStatementKind::Operation)
+                continue;
+            auto found = std::ranges::lower_bound(copies, statement.site, { }, &CopyOfBirth::operation);
+            if (found == copies.end() || found->operation != statement.site)
+                continue;
+            BirthWithCopies& birth = births[found->birth];
+            const CopyAtBirth& copy = birth.copies[found->copy];
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            uint32_t end = copy.assigns ? operands.size() : copy.firstSource + 1;
+            for (uint32_t operand = copy.firstSource; operand < end && operand < operands.size(); ++operand)
+                birth.sources.append({ heap.possibleValuesOf(maker.get(), operands[operand]), copy.assigns });
+        }
+    }
+
+    // The own enumerable data properties that no object with the layout is ever without, once it is born.
+    Vector<PropertyKeyID> keysKeptByObjectsWith(ValueSetMaker& maker, const BitVector& hasOtherSites, LayoutID id) const
+    {
+        Vector<PropertyKeyID> keys;
+        LayoutKind kind = program.at(id).kind;
+        if ((kind != LayoutKind::Record && kind != LayoutKind::Instance) || !hasObjects(id) || stores.getsCopiedProperties(id) || stores.hasObjectOfCodeWithoutSolve(id))
+            return keys;
+        if (possibleMutationsOf(id).containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript }))
+            return keys;
+        if (kind == LayoutKind::Record ? hasOtherSites.quickGet(id.index()) : !constructions.isFollowed(id))
+            return keys;
+
+        bool isBornHere = isBornWithCopies.get(id.index());
+        if (isBornHere)
+            keys = keysHeldSinceBirth[id.index()];
+        Vector<PropertyKeyID> keysOfOtherForms;
+        forEachFieldOfObjectsWith(program, application, id, [&](FieldReference declaration, const Field& field) {
+            if (!field.key)
+                return;
+            if (field.computedKey || field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsHidden }) || field.form.containsAny({ FieldForm::IsNotEnumerable, FieldForm::IsAccessor }))
+                keysOfOtherForms.append(field.key);
+            else if (!isBornHere && (kind == LayoutKind::Record ? constructions.isStoredAtBirth(id, field.key, declaration) : constructions.isStoredBeforeObjectLeaks(id, field.key, declaration)))
+                keys.append(field.key);
+        });
+        AOT::sort(keys);
+        removeRepeatedElements(keys);
+        AOT::sort(keysOfOtherForms);
+        keys.removeAllMatching([&](PropertyKeyID key) {
+            return std::ranges::binary_search(keysOfOtherForms, key) || stores.mayGetAccessorUnder(id, key) || stores.accessorDefinedUnder(maker, id, key).isAccessor();
+        });
+        return keys;
+    }
+
+    Vector<PropertyKeyID> keysSurelyCopiedFrom(ValueSetMaker& maker, const BitVector& hasOtherSites, ValueSetID objects) const
+    {
+        AOT_THRESHOLD(uint32_t, mostSourcesOfOneCopy, 8);
+        const ValueFlowUniverse& universe = inputs.universe();
+        if (ValueSets::isComplement(objects) || sets.isEmpty(objects) || sets.size(objects) > mostSourcesOfOneCopy || sets.meet(objects, universe.placeholdersAlone()) || sets.meet(objects, universe.primitives()))
+            return { };
+        std::optional<Vector<PropertyKeyID>> keys;
+        sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+            bool hasLayout = false;
+            layoutsOfObjects.forEachLayoutOf(object, [&](LayoutID layout) {
+                hasLayout = true;
+                Vector<PropertyKeyID> kept = keysKeptByObjectsWith(maker, hasOtherSites, layout);
+                if (!keys) {
+                    keys = WTF::move(kept);
+                    return;
+                }
+                keys->removeAllMatching([&](PropertyKeyID key) {
+                    return !std::ranges::binary_search(kept, key);
+                });
+            });
+            if (!hasLayout || inputs.classOf(object))
+                keys = Vector<PropertyKeyID>();
+        });
+        return keys.value_or(Vector<PropertyKeyID>());
+    }
+
+    void followCopiesAtBirth(std::span<const AllocatingOperation> operations)
+    {
+        isBornWithCopies = BitVector(numberOfLayouts);
+        Vector<BirthWithCopies> births = collectInParallel<BirthWithCopies>(loops, program.functions.size(), [&](unsigned index, Vector<BirthWithCopies>& found) {
+            FunctionID function(index);
+            if (inputs.isReached(function) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data })) && inputs.bodies().holdsAnyOf(function, notedOperations({ ValueFlowNotedOperation::PieceOutsideSlots, ValueFlowNotedOperation::Builtin })))
+                collectBirthsWithCopiesIn(function, found);
+        });
+        if (births.isEmpty())
+            return;
+
+        BitVector hasOtherSites(numberOfLayouts);
+        for (LayoutID layout : layoutsOfOtherSites([](ValueFlowObjectID, const ValueFlowSite&) { return true; })) {
+            hasOtherSites.quickSet(layout.index());
+            hasOtherSites.quickSet(declaredLayoutOf(program, layout).index());
+        }
+        births.removeAllMatching([&](const BirthWithCopies& birth) {
+            return !hasObjects(birth.layout) || hasOtherSites.quickGet(birth.layout.index()) || stores.hasObjectOfCodeWithoutSolve(birth.layout) || !build.isEnabled(FlowResultKind::Initialization, birth.layout.index());
+        });
+        keysHeldSinceBirth = KeysByLayout(numberOfLayouts);
+        for (BirthWithCopies& birth : births) {
+            isBornWithCopies.quickSet(birth.layout.index());
+            AOT::sort(birth.definedKeys);
+            removeRepeatedElements(birth.definedKeys);
+        }
+
+        // What the other allocations of those layouts list bounds what every object holds.
+        Vector<std::optional<Vector<PropertyKeyID>>> keysOfOtherBirths(numberOfLayouts);
+        auto keepCommonKeys = [](std::optional<Vector<PropertyKeyID>>& common, const auto& keys) {
+            if (!common) {
+                common = Vector<PropertyKeyID>(keys.span());
+                return;
+            }
+            common->removeAllMatching([&](PropertyKeyID key) {
+                return !std::ranges::binary_search(keys, key);
+            });
+        };
+        auto isListed = [&](FunctionID function, ValueID allocation) {
+            auto found = std::ranges::lower_bound(births, std::pair { function, allocation }, { }, [](const BirthWithCopies& birth) {
+                return std::pair { birth.function, birth.allocation };
+            });
+            return found != births.end() && found->function == function && found->allocation == allocation;
+        };
+        AOT::sort(births, { }, [](const BirthWithCopies& birth) {
+            return std::pair { birth.function, birth.allocation };
+        });
+        auto noteOtherBirth = [&](LayoutID layout, std::span<const uint32_t> fields) {
+            Vector<PropertyKeyID, 8> keys;
+            for (uint32_t field : fields) {
+                if (PropertyKeyID key = program.at(layout).fields[field].key)
+                    keys.append(key);
+            }
+            AOT::sort(keys);
+            keepCommonKeys(keysOfOtherBirths[layout.index()], keys);
+        };
+        for (const AllocatingOperation& operation : operations) {
+            const Value& value = program.at(operation.function).at(operation.value);
+            if (value.opcode == Opcode::NewObject) {
+                if (isBornWithCopies.get(value.layout().index()) && !isListed(operation.function, operation.value))
+                    noteOtherBirth(value.layout(), value.fields());
+                continue;
+            }
+            forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t position, const DataNode& node) {
+                const DataNode::Object* object = node.tryAs<DataNode::Object>();
+                if (object && object->layout && isBornWithCopies.get(object->layout.index()) && (position || !isListed(operation.function, operation.value)))
+                    noteOtherBirth(object->layout, fieldsFilledBy(program, program.at(object->layout), *object).span());
+            });
+        }
+
+        AOT_THRESHOLD(unsigned, mostRoundsOverCopies, 4);
+        BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+        ValueSetMaker& maker = borrowedMaker.get();
+        Vector<ValueSetID> objectsAboveLayout(FillWith { }, numberOfLayouts, ValueSetID());
+        for (unsigned round = 0; round <= mostRoundsOverCopies; ++round) {
+            Vector<std::optional<Vector<PropertyKeyID>>> held = keysOfOtherBirths;
+            for (const BirthWithCopies& birth : births) {
+                Vector<PropertyKeyID> keys(birth.definedKeys.span());
+                for (const SourceOfCopyAtBirth& source : round ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
+                    for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
+                        if (!source.isAssigned || inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[birth.layout.index()], key))
+                            keys.append(key);
+                    }
+                }
+                AOT::sort(keys);
+                removeRepeatedElements(keys);
+                keepCommonKeys(held[birth.layout.index()], keys);
+            }
+            bool hasChanged = false;
+            for (size_t layout : isBornWithCopies) {
+                hasChanged |= keysHeldSinceBirth[layout] != *held[layout];
+                keysHeldSinceBirth[layout] = WTF::move(*held[layout]);
+            }
+            if (round && !hasChanged)
+                break;
+        }
+    }
+
     Vector<FieldReference> findFieldsMissingAtCreation(std::span<const AllocatingOperation> operations) const
     {
         auto appendFieldsNotAmong = [&](std::span<const uint32_t> listed, LayoutID id, Vector<FieldReference>& found) {
             for (uint32_t field = 0; field < program.at(id).fields.size(); ++field) {
-                if (!std::ranges::contains(listed, field))
+                if (!std::ranges::contains(listed, field) && !holdsSinceBirth(id, program.at(id).fields[field].key))
                     found.append(declarationOf(program, { id, field }));
             }
         };
@@ -856,7 +1182,7 @@ struct FieldResults {
                     possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : possibleMutationsOf(below));
                     stored = maker.unite(stored, stores.storedUnder(maker, below, key));
                     storedNumbers.unite(stores.numbersStoredUnder(below, key));
-                    isStoredBeforeObjectsLeak &= constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { });
+                    isStoredBeforeObjectsLeak &= holdsSinceBirth(below, key) || (constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { }));
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
                 noteWhatNeverHappens(field.flow, index, possible, !sets.isEmpty(stored), isStoredBeforeObjectsLeak);
@@ -938,7 +1264,7 @@ struct FieldResults {
     {
         const Layout& layout = program.at(id);
         bool hasListedOrders = layout.kind == LayoutKind::Record ? !layoutsOfObjectsWithoutListedOrder.quickGet(id.index()) : layout.kind == LayoutKind::Instance && constructions.createsFieldsOnlyInListedOrders(id);
-        if (!hasListedOrders || possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !application.layouts[id.index()].appendedFields.isEmpty())
+        if (!hasListedOrders || possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !application.layouts[id.index()].appendedFields.isEmpty() || isBornWithCopies.get(id.index()))
             return false;
         for (uint32_t index = 0; index < layout.fields.size(); ++index) {
             const Field& field = layout.fields[index];
@@ -1247,6 +1573,8 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
         },
     });
     times.didFinish("fields: the rest of the initial orders"_s);
+    results.followCopiesAtBirth(allocatingOperations.span());
+    times.didFinish("fields: copies at birth"_s);
     ValueFlowFieldContents contents = results.computeDeclaredFields(allocatingOperations.span());
     allocatingOperations.clear();
     times.didFinish("fields: declared fields"_s);

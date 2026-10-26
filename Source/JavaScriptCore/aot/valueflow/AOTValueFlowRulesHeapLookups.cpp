@@ -930,6 +930,14 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     if (!holdsAnything(holders))
         return;
     m_context.lookup(holders, ValueFlowName::of(ValueFlowNameKind::EveryMemberRead));
+    auto leaveOut = [&](ValueFlowObjectID holder) {
+        ValueSetID members = m_tables.membersOf(m_universe.builtinOf(holder)).leftOut;
+        if (members == ValueSets::nothing || !m_context.contains(start, holder))
+            return;
+        add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), members);
+        if (m_context.sets().contains(m_tables.objectsOfPublicModules(), holder))
+            add(result, only(ValueFlowUniverse::markOfMemberLeftOut()));
+    };
     m_context.forEachMember(holders, [&](ValueFlowObjectID holder) {
         if (key.namesEnumerableProperty && !hasMemberOfHost(holder))
             return;
@@ -949,8 +957,7 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
         add(result, members.values);
         if (hasMemberOfHost(holder))
             add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), m_context.maker().intersect(members.values, m_universe.builtinFunctions()));
-        if (m_context.contains(start, holder))
-            add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), members.leftOut);
+        leaveOut(holder);
         if (members.hasNativeBinding)
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
         m_context.sets().forEachMember(members.accessors, [&](ValueFlowObjectID accessor) {
@@ -983,6 +990,8 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
+        if (object.node)
+            above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(holders, m_tables.objectsOfPublicModules()), allButBunUnlessNamed(object))), object.node));
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
             found = m_context.unite(found, m_context.restrict(above, holders));
             if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
@@ -997,6 +1006,13 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         if (m_tables.letsInUnseenCode(member))
             readMember(member, module, m_statement.result, getters);
     });
+    if (m_statement.result && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfMemberLeftOut())), m_statement.result)) {
+        ClimbingSet leftOut = m_context.valueWithin(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed));
+        forEachMemberUnder(ClimbingSet(m_context.maker().intersect(holders, m_tables.objectsOfPublicModules())), key, [&](BuiltinID member, ModuleID module) {
+            if (m_tables.letsInUnseenCode(member) && m_context.contains(leftOut, objectOfMember(member, module)))
+                readMember(member, module, m_statement.result, getters);
+        });
+    }
     callAccessors(ClimbingSet(m_context.maker().of(getters.span())), ValueFlowCallKind::Get, { &object, { } }, nullptr, m_statement.result);
 }
 

@@ -414,19 +414,19 @@ void HeapRule::convertStoredValue(ClimbingSet receivers, const HeapKey& key, con
         connect(value, m_context.hub(m_universe.builtinTables().conversionToPrimitive()));
 }
 
-ClimbingSet HeapRule::settersFoundFrom(ClimbingSet start, const HeapKey& key)
+ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, HeapPropertyPart part)
 {
-    ValueFlowName name = foundName(key, HeapPropertyPart::Setter);
+    ValueFlowName name = foundName(key, part);
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
     if (!namesObjectOfAccess() || !isNameThatTableDoesNotListOnGlobalObject(key) || !m_context.contains(start, globalObject))
         return m_context.valueOf(m_context.lookup(start, name));
 
     ClimbingSet alone(only(globalObject));
-    ClimbingSet setters = m_context.valueOf(m_context.lookup(alone, name));
+    ClimbingSet accessors = m_context.valueOf(m_context.lookup(alone, name));
     if (!mayHoldUndeclaredProperty(chainFrom(alone, key).objects, key))
-        setters = m_context.restrict(setters, ValueSets::complement(only(m_tables.undescribedNativeCode())));
+        accessors = m_context.restrict(accessors, ValueSets::complement(only(m_tables.undescribedNativeCode())));
     ClimbingSet others = m_context.restrict(start, ValueSets::complement(only(globalObject)));
-    return holdsAnything(others) ? m_context.unite(setters, m_context.valueOf(m_context.lookup(others, name))) : setters;
+    return holdsAnything(others) ? m_context.unite(accessors, m_context.valueOf(m_context.lookup(others, name))) : accessors;
 }
 
 bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey& key, PropertySearch search, const ValueFlowOperand* value, bool isGivenAnyValue)
@@ -453,7 +453,7 @@ bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, cons
 
 void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, const ValueFlowOperand& value)
 {
-    ClimbingSet setters = settersFoundFrom(start, key);
+    ClimbingSet setters = accessorsFoundFrom(start, key, HeapPropertyPart::Setter);
     HeapReceiver receiver { nullptr, start };
     if (mayBeAccessorNobodyKnows(setters))
         receiver.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chainFrom(start, key).start, key, HeapPropertyPart::Setter);
@@ -778,7 +778,7 @@ void HeapRule::runOperation()
         return;
     case Opcode::SetFunctionName: {
         ValueFlowOperand text { { }, m_universe.strings(), { } };
-        // One key names a function that is no class from the start, as a name that is written does.
+        // One key names a function whose objects take their name here alone from the start, as a name that is written does.
         ClimbingSet keys = m_context.valueOf(operand(At::SetFunctionName::computedKey));
         ClimbingSet named = m_context.valueOf(operand(At::SetFunctionName::function));
         bool isNamedByOneKey = (!holdsAnything(keys) || m_context.holdsOneMember(keys)) && (!holdsAnything(named) || m_context.holdsOneMember(named));
@@ -788,7 +788,7 @@ void HeapRule::runOperation()
         });
         m_context.forEachMember(isNamedByOneKey ? named : ClimbingSet(), [&](ValueFlowObjectID member) {
             FunctionID function = m_universe.closureFunction(member);
-            isNamedByOneKey = function && !m_program.at(function).constructedClass;
+            isNamedByOneKey = function && m_tables.isNamedAtOneOperation(function);
         });
         if (isNamedByOneKey) {
             write(named, writtenName(keyNamed(m_program.keyOf(BuiltinNames::name)), HeapPropertyPart::Value), text);
@@ -900,7 +900,7 @@ void HeapRule::runOperation()
             define(receiver, key, HeapPropertyPart::Value, value);
             ClimbingSet setters;
             forEachStartOfLookup(bases, [&](ClimbingSet start) {
-                setters = m_context.unite(setters, settersFoundFrom(start, key));
+                setters = m_context.unite(setters, accessorsFoundFrom(start, key, HeapPropertyPart::Setter));
             });
             callAccessors(setters, ValueFlowCallKind::Set, { &receiver, { }, { }, false }, &value, { });
         });

@@ -84,6 +84,7 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
     macro(ValueSetID, holdersThatAnswerUnderSomeKey) \
     macro(ValueSetID, objectsThatLetInUnseenCode) \
     macro(ValueSetID, objectsOfNativeModules) \
+    macro(ValueSetID, objectsOfPublicModules) \
     macro(ValueSetID, holdersWithMembers) \
     macro(ValueSetID, holdersWithMembersUnderNumericNames) \
     macro(ValueSetID, holdersOfMembersThatHostMakes) \
@@ -162,6 +163,7 @@ public:
     std::span<const ValueFlowPropertyKeptForLife> propertiesKeptForLife() const LIFETIME_BOUND { return m_propertiesKeptForLife.span(); }
     std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
     bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
+    bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
 
     static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
@@ -255,6 +257,7 @@ private:
     Vector<ValueFlowPropertyKeptForLife, 4> m_propertiesKeptForLife;
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     BitVector m_symbolsUsedOnlyAsKeys;
+    BitVector m_functionsNamedAtOneOperation;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesAtCreation;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };

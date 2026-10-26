@@ -26,14 +26,21 @@ class ThrowEmitter final : public OperationEmitter {
 public:
     explicit ThrowEmitter(CodeGenerator&);
 
-    void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>, std::optional<ErrorKind> = std::nullopt);
+    void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>);
     void requireOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
-    void throwError(const OperationContext&, ErrorKind, StringID message);
+    // The stack of the Error begins at the position of the context.
+    void throwError(const OperationContext&, ErrorKind, StringID message, std::optional<uint32_t> throwPosition);
 
     void requireNotNullish(const OperationContext&, Operand, const Type&, NullishAccess, StringID name);
     void requireInitialized(const OperationContext&, Operand, const Type&, StringID name);
 
 private:
+    struct NewError {
+        ErrorKind kind;
+        std::optional<uint32_t> throwPosition;
+    };
+
+    void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>, std::optional<NewError>);
     Operand inFormNamedByThrowWords(const OperationContext&, Operand);
     RefPtr<B3::StackmapGenerator> generatorOfCheckedThrowSite(const OperationContext&, const ThrowSite&, Representation);
     bool canTrapAt(const OperationContext&);

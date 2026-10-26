@@ -1775,7 +1775,8 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         };
         if (value && givesTheSameWheneverDone(item.value) && !variableHolding[item.value.index()]) {
             states[index] = State::IsRepeated;
-            return;
+            // It is also left where it stands, with what it casts.
+            return stay();
         }
         if (block.handler || block.isHandlerBlock() || item.endsBody() || analyses.executionCountOf(item.block) != ExecutionCount::AtMostOnce)
             return stay();

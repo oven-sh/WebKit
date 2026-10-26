@@ -147,6 +147,7 @@ constexpr StubKey throwAtSite(ThrowSiteSource source, CallerFrame callerFrame)
 
 PreludeExit emitCatchPrelude(StubAssembler&);
 PreludeExit emitThrowPrelude(StubAssembler&);
+PreludeExit emitThrowAfterCleanupPrelude(StubAssembler&);
 
 static_assert(std::size(operationCallShapes) == descriptorOf(StubFamily::CallOperation).numberOfForms);
 static_assert(std::size(preservingCallShapes) == descriptorOf(StubFamily::CallOperationPreservingRegisters).numberOfForms);

@@ -38,6 +38,45 @@ ExceptionEmitter::ExceptionEmitter(CodeGenerator& generator)
         if (kind == TerminatorKind::Rethrow || (kind == TerminatorKind::Throw && handlerTypeOf(handler) != HandlerType::Finally))
             m_handlersEnteredByJump.set(handler.index());
     }
+    findValuesCaughtByCleanups();
+}
+
+// A cleanup that takes the value hands it from block to block, to the Throw at its end.
+void ExceptionEmitter::findValuesCaughtByCleanups()
+{
+    Vector<ValueID, 4> worklist;
+    for (const Block& block : m_function.blocks) {
+        if (!block.isHandlerBlock() || block.role == BlockRole::CatchHandler)
+            continue;
+        for (ValueID id : block.values) {
+            if (m_function.at(id).opcode == Opcode::CatchValue)
+                worklist.append(id);
+        }
+    }
+    if (worklist.isEmpty())
+        return;
+
+    struct Edge {
+        ValueID argument;
+        ValueID parameter;
+    };
+    Vector<Edge> edges;
+    for (const Block& block : m_function.blocks) {
+        block.forEachTarget([&](const Target& target) {
+            const auto& parameters = m_function.at(target.block).parameters;
+            for (size_t i = 0; i < target.arguments.size() && i < parameters.size(); ++i)
+                edges.append({ target.arguments[i], parameters[i] });
+        });
+    }
+    AOT::sort(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
+    while (!worklist.isEmpty()) {
+        ValueID caught = worklist.takeLast();
+        if (m_valuesCaughtByCleanups.set(caught.index()))
+            continue;
+        auto first = std::ranges::lower_bound(edges, caught.index(), { }, [](const Edge& edge) { return edge.argument.index(); });
+        for (; first != edges.end() && first->argument == caught; ++first)
+            worklist.append(first->parameter);
+    }
 }
 
 HandlerType ExceptionEmitter::handlerTypeOf(BlockID handler) const
@@ -264,8 +303,9 @@ void ExceptionEmitter::throwByOperation(const TerminatorContext& terminator, Run
 void ExceptionEmitter::throwValue(const TerminatorContext& terminator, Boxed thrown)
 {
     const Target* handler = terminator.handler();
+    bool endsCleanup = m_valuesCaughtByCleanups.get(terminator->valueOperand().index());
     if (!handler) {
-        throwByOperation(terminator, RuntimeOperation::Throw, thrown);
+        throwByOperation(terminator, endsCleanup ? RuntimeOperation::ThrowAfterCleanup : RuntimeOperation::Throw, thrown);
         return;
     }
     switch (handlerTypeOf(handler->block)) {
@@ -274,7 +314,7 @@ void ExceptionEmitter::throwValue(const TerminatorContext& terminator, Boxed thr
         jumpToHandler(*handler, thrown.value());
         return;
     case HandlerType::Finally:
-        throwByOperation(terminator, RuntimeOperation::ThrowToHandlerInFunction, thrown);
+        throwByOperation(terminator, endsCleanup ? RuntimeOperation::ThrowAfterCleanup : RuntimeOperation::ThrowToHandlerInFunction, thrown);
         return;
     case HandlerType::SynthesizedFinally:
         break;
