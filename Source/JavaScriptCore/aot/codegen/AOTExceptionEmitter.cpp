@@ -97,42 +97,48 @@ void ExceptionEmitter::findCleanupsThatKeepException()
 {
     if (m_function.role == FunctionRole::CoroutineBody)
         return;
+    struct ThrowOfCleanup {
+        BlockID cleanup;
+        BlockID handler;
+    };
     BitVector throwsOn;
-    Vector<BlockID, 4> cleanups;
+    Vector<ThrowOfCleanup, 4> throws;
     for (const Block& block : m_function.blocks) {
         if (block.terminator.kind != TerminatorKind::Throw)
             continue;
         BlockID cleanup = m_valuesCaughtByCleanups.get(block.terminator.valueOperand());
-        if (cleanup && handlerTypeByOperations(cleanup) == HandlerType::Catch && !throwsOn.set(cleanup.index()))
-            cleanups.append(cleanup);
+        if (!cleanup || handlerTypeByOperations(cleanup) != HandlerType::Catch)
+            continue;
+        throwsOn.set(cleanup.index());
+        throws.append({ cleanup, block.handler ? block.handler->block : BlockID() });
     }
-    BitVector isDecided;
-    BitVector leavesFunction;
-    Vector<BlockID, 8> chain;
-    for (BlockID cleanup : cleanups) {
-        bool leaves = true;
-        for (BlockID handler = cleanup; ; handler = m_function.at(handler).handler->block) {
-            if (isDecided.get(handler.index())) {
-                leaves = leavesFunction.get(handler.index());
+
+    // What a cleanup throws on leaves the function, is ended by a handler of the function, or goes to another cleanup that throws it on.
+    Vector<BlockID, 4> worklist;
+    Vector<ThrowOfCleanup, 4> throwsIntoCleanups;
+    for (ThrowOfCleanup thrown : throws) {
+        for (BlockID handler = thrown.handler; ; handler = m_function.at(handler).handler ? m_function.at(handler).handler->block : BlockID()) {
+            if (!handler) {
+                if (!m_cleanupsThatKeepException.set(thrown.cleanup.index()))
+                    worklist.append(thrown.cleanup);
                 break;
             }
-            HandlerType type = handlerTypeByOperations(handler);
-            if (type == HandlerType::SynthesizedCatch || (type == HandlerType::Catch && !throwsOn.get(handler.index()))) {
-                leaves = false;
+            if (throwsOn.get(handler.index())) {
+                throwsIntoCleanups.append({ thrown.cleanup, handler });
                 break;
             }
-            chain.append(handler);
-            if (!m_function.at(handler).handler)
+            if (handlerTypeByOperations(handler) != HandlerType::Finally)
                 break;
         }
-        for (BlockID handler : chain) {
-            isDecided.set(handler.index());
-            if (leaves)
-                leavesFunction.set(handler.index());
+    }
+    AOT::sort(throwsIntoCleanups, { }, [](const ThrowOfCleanup& thrown) { return thrown.handler.index(); });
+    while (!worklist.isEmpty()) {
+        BlockID outer = worklist.takeLast();
+        auto first = std::ranges::lower_bound(throwsIntoCleanups, outer.index(), { }, [](const ThrowOfCleanup& thrown) { return thrown.handler.index(); });
+        for (; first != throwsIntoCleanups.end() && first->handler == outer; ++first) {
+            if (!m_cleanupsThatKeepException.set(first->cleanup.index()))
+                worklist.append(first->cleanup);
         }
-        chain.shrink(0);
-        if (leaves)
-            m_cleanupsThatKeepException.set(cleanup.index());
     }
 }
 

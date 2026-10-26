@@ -273,11 +273,12 @@ public:
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
+    void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
+
 private:
     JSModuleLoader(VM&, Structure*, JSScope* moduleScope);
     void finishCreation(JSGlobalObject*, VM&);
 
-    void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 #if USE(BUN_JSC_ADDITIONS)
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);

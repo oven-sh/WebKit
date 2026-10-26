@@ -145,7 +145,10 @@ private:
     void typeComponent(uint32_t component);
 
     void willTypeValues();
+    void willMarkRestartedValues();
     void willRestartValues();
+    const UseLists& uses();
+    ValueLocation locationForRule(ValueID) const;
     void rememberState(ValueID);
     bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
@@ -210,6 +213,7 @@ private:
     BitVector m_isRestarted;
     Vector<ValueID, 64> m_restartedValuesFromLastToFirst;
 
+    bool m_marksRestartedValues { false };
     bool m_didListRestartedValues { false };
     bool m_didMarkSourcesOfUnreachableValues { false };
     bool m_everyOtherValueIsAsTyped { false };

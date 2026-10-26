@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleNamespace.h"
 #include "AOTObject.h"
@@ -430,9 +431,9 @@ static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
     return { numberPlusOne, instance->tables().propertyRunRow(numberPlusOne - 1).subspan(1) };
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+static NEVER_INLINE ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
+    AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, Entry::operationAOTCopyDataProperties);
     if (!hasOwnPropertiesToCopy(JSValue::decode(source)))
         OPERATION_RETURN(scope);
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTCopyDataProperties);
@@ -452,6 +453,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
     scope.release();
     copyDataPropertiesExcluding(instance, globalObject, vm, object, JSValue::decode(source), excluded);
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+{
+    if (count)
+        return copyDataPropertiesInFrame(AOT_OPERATION_FRAME_RECORD(), instance, target, source, excludedRun, count, excludedKeys);
+    if (tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
+        return { nullptr };
+    return copyDataPropertiesInFrame(AOT_OPERATION_FRAME_RECORD(), instance, target, source, excludedRun, 0, nullptr);
 }
 
 static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)

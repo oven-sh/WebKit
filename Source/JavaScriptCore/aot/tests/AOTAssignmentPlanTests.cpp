@@ -10,6 +10,7 @@
 #include "AOTAssignmentPlans.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
@@ -22,6 +23,7 @@
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include <array>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -575,6 +577,50 @@ static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& prog
     }
 }
 
+static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    SetForScope withoutValidation(vm.aotState().validatesRuntime, false);
+    auto tryCopy = [&](Object* target, Object* source) {
+        return tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(source), 0);
+    };
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        Object* source = createPoint(program, 1, 2);
+        Object* first = allocate(program, "Pair"_s);
+        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
+        AOT_TEST_CHECK(!place && !tryCopy(first, source) && enumerableKeysOf(program, first).isEmpty());
+        RepeatedCopy way = tryRepeatAssignment(vm, program.state(), first, source, 0);
+        AOT_TEST_CHECK(way == RepeatedCopy::ByMap || way == RepeatedCopy::ByMapForTheFirstTime);
+        AOT_TEST_CHECK(hasKeys(program, first, { "x"_s, "y"_s }) && holdsPropertiesOf(program, first, source));
+        AOT_TEST_CHECK(place && place->takesNoFrame);
+
+        Object* second = allocate(program, "Pair"_s);
+        AOT_TEST_CHECK(tryCopy(second, createPoint(program, 3, 4)) && hasKeys(program, second, { "x"_s, "y"_s }));
+        AOT_TEST_CHECK(second->orderWord() == first->orderWord() && holdsPropertiesOf(program, second, createPoint(program, 3, 4)));
+
+        AOT_TEST_CHECK(!tryCopy(second, source) && holdsPropertiesOf(program, second, createPoint(program, 3, 4)));
+        Object* withOneField = allocate(program, "Pair"_s);
+        put(program, withOneField, "y"_s, 5);
+        AOT_TEST_CHECK(!tryCopy(withOneField, source) && hasKeys(program, withOneField, { "y"_s }));
+        Object* frozenSource = createPoint(program, 6, 7);
+        objectConstructorFreeze(program.realm(), frozenSource);
+        AOT_TEST_CHECK(!tryCopy(allocate(program, "Pair"_s), frozenSource));
+        AOT_TEST_CHECK(!tryCopy(allocate(program, "Tail"_s), source) && !tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(source), 1));
+        AOT_TEST_CHECK(!tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(jsNumber(1)), 0) && !tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(constructEmptyObject(program.realm())), 0));
+
+        vm.heap.collectSync(scope);
+        AOT_TEST_CHECK(!place);
+    }
+
+    Object* source = createPoint(program, 1, 2);
+    AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), allocate(program, "Pair"_s), source, 0) == RepeatedCopy::ByMap);
+    Object* prototype = allocate(program, "Pair"_s);
+    AOT_TEST_CHECK(tryCopy(allocate(program, "Pair"_s), source));
+    prototype->didBecomePrototype(vm);
+    AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -597,6 +643,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
+        { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
     };
     return tests;
 }

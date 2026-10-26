@@ -187,9 +187,8 @@ class AsyncGeneratorStepInProgress {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(AsyncGeneratorStepInProgress);
 public:
-    AsyncGeneratorStepInProgress(Instance& instance, JSObject* driver, JSObject* producer)
+    AsyncGeneratorStepInProgress(Instance& instance, JSObject* driver)
         : driver(driver)
-        , producer(producer)
         , m_innermostStep(instance.coroutines.stepInProgress)
         , m_enclosingStep(std::exchange(m_innermostStep, this))
     {
@@ -205,7 +204,6 @@ public:
     }
 
     JSObject* const driver;
-    JSObject* const producer;
     // Empty until the step is finished.
     JSValue value;
     bool isDone { false };
@@ -263,11 +261,7 @@ AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator* generator,
         return { };
     Instance* instance = Instance::of(saved->realm());
     instance->coroutines.nextEntryEndsJob = isEnteredByJobLoop;
-    if (!isEnteredByJobLoop) {
-        // The consumer of an unfinished step suspends as soon as the generator does.
-        AsyncGeneratorStepInProgress* step = instance->coroutines.stepInProgress;
-        isEnteredByJobLoop = step && step->producer == generator && !step->value;
-    }
+    // Only a body that RunAsyncGeneratorStep has entered goes on at an await above its consumer: the frame of that stub tells a stack trace that the consumer waits.
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
     return willEnterAdapter(*instance, saved, generator, instance->coroutines.nextEntryEndsJob && instance->vm->isAsyncContextTrackingEnabled());
 }
@@ -400,7 +394,7 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
     if (instance.coroutines.frameThatMayContinue != frame)
         return { asyncIteratorNextWithDriver(globalObject, iterator, driver, sent, callCache), AsyncGeneratorStepStatus::Result };
 
-    AsyncGeneratorStepInProgress step(instance, driver, iterator);
+    AsyncGeneratorStepInProgress step(instance, driver);
     return step.resultOr(asyncIteratorNextWithDriver(globalObject, iterator, driver, sent, callCache));
 }
 
@@ -450,7 +444,7 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
     // The request at the head of the queue is the one that the stub wrote, so it names the consumer.
     std::optional<AsyncGeneratorStepInProgress> step;
     if (consumerMayContinue)
-        step.emplace(instance, asObject(generator->resumePromise()), generator);
+        step.emplace(instance, asObject(generator->resumePromise()));
     finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
     return step ? step->resultOr(vm.fastAsyncGeneratorSentinel()) : AsyncGeneratorStep { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
 }

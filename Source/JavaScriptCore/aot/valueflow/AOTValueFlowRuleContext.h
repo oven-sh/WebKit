@@ -92,6 +92,9 @@ public:
     }
     bool contains(ClimbingSet set, ValueFlowObjectID member) const { return sets().contains(set.m_set, member); }
     bool holdsOneMember(ClimbingSet set) const { return !!sets().onlyMember(set.m_set); }
+    bool holdsMoreMembersThan(ClimbingSet set, uint32_t number) const { return !ValueSets::isComplement(set.m_set) && sets().size(set.m_set) > number; }
+    bool holdsAllOf(ClimbingSet set, ClimbingSet members) const { return sets().isSubset(members.m_set, set.m_set); }
+    void appendPartsWithChainsOfTheirOwn(ClimbingSet set, Vector<ValueSetID>& parts) { m_maker.appendParts(set.m_set, parts); }
     bool meet(ClimbingSet first, ClimbingSet second) const { return m_maker.meet(first.m_set, second.m_set); }
     bool meet(ClimbingSet set, ValueSetID constant) const { return m_maker.meet(set.m_set, constant); }
     ClimbingSet unite(ClimbingSet first, ClimbingSet second) { return ClimbingSet(m_maker.unite(first.m_set, second.m_set)); }
@@ -104,6 +107,7 @@ public:
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
     ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
     bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;
     bool usesGeneralRulesOnly() const;
@@ -178,7 +182,6 @@ private:
     ValueFlowNodeID notPlain();
     ValueFlowNodeID writtenUnderUnknownKey();
     ValueFlowNodeID rareWriteNode(ValueFlowRareWrite);
-    std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
     ClimbingSet objectsThatMayHoldSomethingUnder(ValueFlowName, ClimbingSet objects);
     ValueFlowNodeID mutationNode(ObjectMutation);
     void logMadeNodesAskedFor(const ValueFlowNodeKey&, uint32_t madeNodes);

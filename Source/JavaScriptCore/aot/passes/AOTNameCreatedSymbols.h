@@ -46,7 +46,7 @@ constexpr bool tellsNameOfFunction(const PropertyKey& key)
 }
 
 // An executable holds one name for a function as it is written, whatever copies the compiler has made of it. The functions, no classes, whose objects take a name from a computed key at one operation of the program, while no object of a copy takes any. By the index of the function.
-BitVector findFunctionsNamedAtOneOperation(const Program&);
+BitVector findFunctionsNamedAtOneOperation(const Program&, const ParallelLoops&);
 
 // The symbols that a module of the library creates, holds in one variable that is stored to once and is not exported, and uses only as keys of accesses. By the index of their keys.
 BitVector findLibrarySymbolsUsedOnlyAsKeys(const Program&);

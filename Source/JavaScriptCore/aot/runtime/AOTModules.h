@@ -157,6 +157,7 @@ public:
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
     void queueJobsThatWaitForLoader();
     void didLoadGraph(ModuleID root);
+    void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
     void captureExportsAgain(ModuleID);
     // The start of the module is on the stack only to run the files that the module imports.
@@ -172,6 +173,8 @@ public:
     bool canTellHowGraphIsLoaded(ModuleID root);
     void appendRequestsForLoader(ModuleID, ModuleRecord*);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
+    void collectKeysOfUncompiledCode(ModuleID, OrderedHashSet<UniquedStringImpl*>& keys);
+    bool comesToCodeThatDoesNotLoad(ModuleID root);
     bool setIsWalkingRequests(bool isWalkingRequests) { return std::exchange(m_isWalkingRequests, isWalkingRequests); }
     // A graph is being loaded until its root is linked.
     unsigned numberOfGraphsBeingLoaded();

@@ -35,6 +35,7 @@
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "MicrotaskQueueInlines.h"
+#include "ModuleGraphLoadingState.h"
 #include "ModuleRegistryEntry.h"
 #include "ObjectConstructor.h"
 #include "ScriptFetchParameters.h"
@@ -972,7 +973,16 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         const ModuleData& targetData = data(target);
         if (targetData.isUncompiledCode()) {
             keptAlive.append(resolvedKey(target));
-            RETURN_IF_EXCEPTION(scope, void());
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                // The loader reports the error when it comes to the request, and asks for nothing behind it.
+                VM& vm = *m_instance.vm;
+                TRY_CLEAR_EXCEPTION(scope, void());
+                Identifier name = Identifier::fromString(vm, m_table.pathText(target));
+                JSModuleLoader::attachErrorInfo(m_instance.globalObject, exception, nullptr, name, ScriptFetchParameters::Type::JavaScript, JSModuleLoader::ModuleFailure::Kind::Instantiation);
+                loader()->addResolutionFailure(vm, { record->moduleKey().impl(), name.impl() }, exception->value());
+                record->appendRequestedModule(name, nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
+                return;
+            }
         } else if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data || isFileOfProgram(target))
             keptAlive.append(keyOfRequest(target));
         else
@@ -982,13 +992,10 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
     }
 }
 
-ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRecord* record)
+// Throws where a name does not resolve.
+void Modules::collectKeysOfUncompiledCode(ModuleID module, OrderedHashSet<UniquedStringImpl*>& keys)
 {
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!data(module).reachesUncompiledCode())
-        return record;
-    OrderedHashSet<UniquedStringImpl*> keys;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     BitVector visited(m_table.size());
     visited.quickSet(module.index());
     Vector<std::span<const ModuleRequestData>, 16> path { m_table.requests(module) };
@@ -1004,11 +1011,39 @@ ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRec
             continue;
         if (data(target).isUncompiledCode()) {
             const Identifier& key = resolvedKey(target);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            RETURN_IF_EXCEPTION(scope, void());
             keys.add(key.impl());
         } else if (status(target) == ModuleStatus::Unlinked && !visited.quickSet(target.index()))
             path.append(m_table.requests(target));
     }
+}
+
+// The load ends where the loader comes to such code, and the files that stand behind it never run.
+bool Modules::comesToCodeThatDoesNotLoad(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    OrderedHashSet<UniquedStringImpl*> keys;
+    collectKeysOfUncompiledCode(root, keys);
+    if (scope.exception()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, true);
+        return true;
+    }
+    for (UniquedStringImpl* key : keys) {
+        if (ModuleRegistryEntry* entry = loader()->registryEntry(Identifier::fromUid(*m_instance.vm, key)); entry && entry->fetchError())
+            return true;
+    }
+    return false;
+}
+
+ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRecord* record)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!data(module).reachesUncompiledCode())
+        return record;
+    OrderedHashSet<UniquedStringImpl*> keys;
+    collectKeysOfUncompiledCode(module, keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     for (UniquedStringImpl* key : keys)
         record->appendRequestedModule(Identifier::fromUid(vm, key), nullptr, ModulePhase::Evaluation);
     return record;
@@ -1502,6 +1537,14 @@ void ModuleRecord::willLoadRequests()
 void ModuleRecord::didLoad()
 {
     modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
+}
+
+void ModuleRecord::didFailToLoad(const ModuleGraphLoadingState& state)
+{
+    state.iterateVisited([](CyclicModuleRecord* visited) {
+        if (auto* compiled = dynamicDowncast<ModuleRecord>(visited))
+            compiled->modules().didFailToLoadGraph(compiled->m_module);
+    });
 }
 
 void ModuleRecord::didReplaceRecordInRegistry()

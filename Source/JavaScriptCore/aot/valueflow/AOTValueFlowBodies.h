@@ -93,7 +93,7 @@ public:
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }
     // Goes beside Bun from a read of Bun under its name, along every edge but those through properties of the unknown object. Rules and results never see it in a value.
     static constexpr ValueFlowObjectID markOfNamedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 2); }
-    // Goes with the answer of a read under a key nobody knows of what a built-in module answers, where the read left out a member that lets in unseen code, along the same edges. A read that names the member and whose answer holds the mark finds it.
+    // Goes with the answer of a read under a key nobody knows of what a built-in module answers, where the read left out a member that lets in unseen code, along the same edges. A read that names the member finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
     static constexpr ValueFlowObjectID markOfMemberLeftOut() { return ValueFlowObjectID(numberOfPrimitiveKinds + 3); }
     ValueFlowObjectID objectOf(BuiltinID builtin) const { return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index()); }
     ValueFlowObjectID objectOf(BuiltinID, ModuleID) const;

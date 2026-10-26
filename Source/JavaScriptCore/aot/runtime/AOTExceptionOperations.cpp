@@ -125,6 +125,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    // A collection that starts here goes over the frames from this one.
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
     if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
         vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
@@ -151,6 +153,7 @@ static Exception* takePendingException(VM& vm)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
     // Nobody lists the frames of a throw that compiled code catches further up.
     if (JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0)))
         return JSValue::encode(Exception::create(vm, thrown, Exception::StackCaptureAction::DoNotCaptureStack));
@@ -159,7 +162,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (I
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, (Instance* instance))
 {
-    Exception* exception = takePendingException(*instance->vm);
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    Exception* exception = takePendingException(vm);
     return makeUGPRPair(JSValue::encode(exception->value()), std::bit_cast<UCPURegister>(exception));
 }
 

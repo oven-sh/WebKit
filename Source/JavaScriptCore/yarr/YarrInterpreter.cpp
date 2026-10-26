@@ -1696,15 +1696,19 @@ public:
             ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
             if (!context) [[unlikely]]
                 return JSRegExpResult::ErrorNoMemory;
+            unsigned turnBegin = input.getPos();
             JSRegExpResult result = matchDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
+            // The turn behind one that takes no input begins where that began, without captures as that did, and so ends as that ended: so does every turn that is left.
+            unsigned turnsMade = result == JSRegExpResult::Match && input.getPos() == turnBegin ? term.atom.quantityMaxCount - backTrack->matchAmount : 1;
             if (result == JSRegExpResult::Match && hasCaptures) {
                 appendParenthesesDisjunctionContext(backTrack, context);
+                backTrack->matchAmount += turnsMade - 1;
                 continue;
             }
             resetMatches(term, context);
             freeParenthesesDisjunctionContext(context);
             if (result == JSRegExpResult::Match) {
-                ++backTrack->matchAmount;
+                backTrack->matchAmount += turnsMade;
                 continue;
             }
             undoTurnsWithoutChoices(term, backTrack);

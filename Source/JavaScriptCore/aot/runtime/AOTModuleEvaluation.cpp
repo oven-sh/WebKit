@@ -619,6 +619,15 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         return false;
     if (data(root).kind != ModuleKind::SourceText || (status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked))
         return false;
+    if (error == ErrorOfImportedFile::IsLeftToLoader && data(root).reachesUncompiledCode()) {
+        bool loadEndsEarly = comesToCodeThatDoesNotLoad(root);
+        RETURN_IF_EXCEPTION(scope, false);
+        // The loader goes through the graph, and each file runs when the loader comes to it.
+        if (loadEndsEarly) {
+            m_rootWhoseFilesRanAhead = root;
+            return false;
+        }
+    }
 
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
@@ -741,6 +750,15 @@ void Modules::queueJobsThatWaitForLoader()
         return;
     m_fileWhoseJobsWaitForLoader = std::nullopt;
     m_jobsThatWaitForLoader->moveTasksBehind(0, m_instance.vm->defaultMicrotaskQueue());
+}
+
+// The loader comes to nothing more of the graph.
+void Modules::didFailToLoadGraph(ModuleID root)
+{
+    if (m_rootWhoseFilesRanAhead != root)
+        return;
+    m_rootWhoseFilesRanAhead = std::nullopt;
+    queueJobsThatWaitForLoader();
 }
 
 void Modules::didLoadGraph(ModuleID root)

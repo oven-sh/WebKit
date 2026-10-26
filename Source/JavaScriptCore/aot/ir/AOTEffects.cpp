@@ -187,10 +187,10 @@ static EffectsOnEdges confinedEffectsBeyondOperands(const EffectContext& context
 
 EffectsOnEdges effectsBeyondOperands(const EffectContext& context, const Function& function, const Value& value, const EffectsOnEdges& effects)
 {
+    if (effectRuleOf(value.opcode) == EffectRule::Call)
+        return effects.normal.mayRunOtherCode() ? effects : callEffectsBeyondOperands(context, function, value, effects);
     if (effects.onAnyEdge().mayRunOtherCode())
         return effects;
-    if (effectRuleOf(value.opcode) == EffectRule::Call)
-        return callEffectsBeyondOperands(context, function, value, effects);
     switch (confinementOf(value.opcode)) {
     case OperandConfinement::Unknown:
         return effects;

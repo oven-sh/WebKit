@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTSystemResources.h"
 #include "AOTValueFlow.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
@@ -83,6 +84,7 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
 #define FOR_EACH_AOT_VALUE_OF_HEAP_TABLES(macro) \
     macro(ValueSetID, holdersThatAnswerUnderSomeKey) \
     macro(ValueSetID, objectsThatLetInUnseenCode) \
+    macro(ValueSetID, objectsThatLetInUnseenCodeWhenCalled) \
     macro(ValueSetID, objectsOfNativeModules) \
     macro(ValueSetID, objectsOfPublicModules) \
     macro(ValueSetID, holdersWithMembers) \
@@ -165,7 +167,6 @@ public:
     bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
 
-    static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 
@@ -258,8 +259,8 @@ private:
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     BitVector m_symbolsUsedOnlyAsKeys;
     BitVector m_functionsNamedAtOneOperation;
-    std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesAtCreation;
-    std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesOfBlocks;
+    ZeroFilledPages<std::atomic<uint64_t>> m_prototypesAtCreation;
+    ZeroFilledPages<std::atomic<uint64_t>> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };
 #define AOT_DECLARE_MEMBER(Type, name) Type m_##name;
     FOR_EACH_AOT_VALUE_OF_HEAP_TABLES(AOT_DECLARE_MEMBER)

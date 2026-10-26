@@ -1144,6 +1144,9 @@ static void moduleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, ThrowS
             errorValue = JSModuleLoader::maybeDuplicateFetchError(globalObject, error);
             RETURN_IF_EXCEPTION(scope, void());
         }
+#if ENABLE(AOT)
+        AOT::ModuleRecord::didFailToLoad(*state);
+#endif
         state->promise()->reject(vm, errorValue);
     }
 }

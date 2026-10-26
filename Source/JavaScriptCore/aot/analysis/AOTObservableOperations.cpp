@@ -52,7 +52,7 @@ bool ObservableOperations::isOwedToCheck(const Instruction& instruction)
 {
     if (!m_predicted)
         m_predicted.emplace(m_function, CFG(m_function));
-    return m_predicted->hasChecks() && hasOperandBehindCheck(*m_predicted, instruction);
+    return hasOperandBehindCheck(*m_predicted, instruction);
 }
 
 bool ObservableOperations::neitherThrowsNorRunsCode(ValueID id)

@@ -717,17 +717,65 @@ static bool isNameOfLibraryModule(const Program& program, std::span<const uint8_
     return false;
 }
 
-static bool passesOnlyNamesOfLibraryModules(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+// "left-pad/lib" and "@scope/left-pad/lib" name the packages "left-pad" and "@scope/left-pad". A path, a URL and a name that a package maps for itself name none.
+static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
+{
+    if (name.empty() || name[0] == '.' || name[0] == '/' || name[0] == '#' || std::ranges::any_of(name, [](uint8_t character) { return character == ':' || character == '\\'; }))
+        return { };
+    auto lengthOfPart = [](std::span<const uint8_t> text) -> size_t {
+        return std::ranges::find(text, '/') - text.begin();
+    };
+    size_t length = lengthOfPart(name);
+    if (name[0] == '@' && length < name.size())
+        length += 1 + lengthOfPart(name.subspan(length + 1));
+    return name.first(length);
+}
+
+static bool liesInPackage(std::span<const uint8_t> path, std::span<const uint8_t> package)
+{
+    static constexpr std::array<uint8_t, 12> folder { 'n', 'o', 'd', 'e', '_', 'm', 'o', 'd', 'u', 'l', 'e', 's' };
+    for (size_t start = 0; start + folder.size() + 1 + package.size() <= path.size(); ++start) {
+        std::span<const uint8_t> rest = path.subspan(start);
+        uint8_t separator = rest[folder.size()];
+        if (spanHasPrefix(rest, std::span(folder)) && (separator == '/' || separator == '\\') && spanHasPrefix(rest.subspan(folder.size() + 1), package))
+            return true;
+    }
+    return false;
+}
+
+// Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
+static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
+{
+    std::span<const uint8_t> package = packageNamedBy(name);
+    if (package.empty() || !context.refusedCode().codeOutsideImage)
+        return false;
+    const Program& program = context.program();
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        std::span<const uint8_t> path = program.string(program.modules[index].path);
+        if (mayAnswerToName(program, ModuleID(index)) && (spanHasPrefix(path, package) || liesInPackage(path, package)))
+            return false;
+    }
+    return true;
+}
+
+static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
     constexpr size_t indexOfName = 2;
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
         return false;
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
+    auto isSuchName = [&](StringID text) {
+        return isNameOfLibraryModule(program, program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
+    };
+    // A text that is no key of the program is any string to the values.
+    const Function& function = program.at(call.function);
+    if (const Value& name = function.at(definitionThroughSameValues(function, function.at(call.site).operand(indexOfName))); name.opcode == Opcode::String)
+        return isSuchName(name.string());
     bool passesOnlyThose = true;
     context.forEachMember(context.valueOf(context.operandsOf(call)[indexOfName]), [&](ValueFlowObjectID name) {
         const PropertyKey* key = universe.kindOf(name) == ValueFlowObjectKind::Key ? &program.at(universe.keyOf(name)) : nullptr;
-        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isNameOfLibraryModule(program, program.string(key->text));
+        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isSuchName(key->text);
     });
     return passesOnlyThose;
 }
@@ -753,7 +801,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
         if (!cause)
             return;
-        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesOfLibraryModules(statement, context)))
+        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesThatNoFileOfProgramAnswersTo(statement, context)))
             handLibraryModulesTo(context, statement.result);
         else
             raiseEvent(context, builtin, *cause, statement.result);

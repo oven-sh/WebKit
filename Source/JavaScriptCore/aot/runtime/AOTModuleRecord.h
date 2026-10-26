@@ -13,7 +13,11 @@
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
 
-namespace JSC { namespace AOT {
+namespace JSC {
+
+class ModuleGraphLoadingState;
+
+namespace AOT {
 
 class Modules;
 struct Instance;
@@ -60,6 +64,7 @@ public:
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests();
     void didLoad();
+    static void didFailToLoad(const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     bool takeStepOfMainModule();
     void takeStatus();

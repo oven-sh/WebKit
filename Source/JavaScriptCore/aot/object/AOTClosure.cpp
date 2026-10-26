@@ -29,6 +29,7 @@
 #include "ArgList.h"
 #include "AsyncGeneratorPrototype.h"
 #include "ButterflyInlines.h"
+#include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
 #include "FunctionPrototype.h"
@@ -42,7 +43,6 @@
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include "StructureCreateInlines.h"
-#include "TopExceptionScope.h"
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
@@ -235,9 +235,7 @@ bool Closure::hasStructureOfNewClosure(VM& vm) const
 static NEVER_INLINE void createClassObject(Closure* classObject)
 {
     State& state = classObject->state();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(classObject->vm());
     state.objects->classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::ClassObject);
-    scope.assertNoException();
 }
 
 void Closure::adoptBoundFunctionStructure(VM& vm)
@@ -490,6 +488,8 @@ bool Closure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, 
 void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
+    // The base class clears whatever its lookups throw.
+    DeferTerminationForAWhile deferTermination(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
     didLookForNameProperty(vm, closure);

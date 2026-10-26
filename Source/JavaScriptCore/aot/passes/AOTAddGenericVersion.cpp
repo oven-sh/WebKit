@@ -948,6 +948,9 @@ static std::optional<Position> storedPosition(const Program& program, FunctionID
     }
 }
 
+static constexpr OpcodeSet readsOfPositions { Opcode::CallDirect, Opcode::Call, Opcode::ResultAt, Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
+static constexpr OpcodeSet readsByName { Opcode::PropGet, Opcode::PrivateGet };
+
 static std::optional<Position> variableReadBy(const Value& read)
 {
     if (read.opcode == Opcode::GetModuleVariable)
@@ -1779,9 +1782,12 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
     TypeArena& types = scratch.arena();
     AnalysisContext context { build, program, nullptr, nullptr, id };
     bool isAfterFlow = run == TaintedPositionsRun::AfterFlow;
-    Vector<ValueID, 16> checks = findChecks(program, id, proofs);
-    if (isAfterFlow && checks.isEmpty())
-        return;
+    Vector<ValueID, 16> checks;
+    if (isAfterFlow) {
+        checks = findChecks(program, id, proofs);
+        if (checks.isEmpty())
+            return;
+    }
 
     FunctionAnalyses analyses(context, function);
     if (isAfterFlow)
@@ -1791,16 +1797,20 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
     Vector<TypedStore, 16> stores = findTypedStores(typing, analyses.cfg());
     if (stores.isEmpty())
         return;
-    BitVector storedValuesThatCount;
-    if (!checks.isEmpty())
-        storedValuesThatCount = isAfterFlow ? valuesThatAre(function, analyses.cfg(), checks.span()) : valuesBehind(function, analyses.cfg(), checks.span());
+    if (!isAfterFlow)
+        checks = findChecks(program, id, proofs);
 
     // Past form AsRead the type of a value need not be what its rule gives.
     bool isAsRead = program.form() == IRForm::AsRead;
     Vector<ValueID, 16> valuesThatMayHaveOtherTypeWithoutChecks;
     for (const TypedStore& store : stores) {
-        if (storedValuesThatCount.get(store.stored.index()) && (!isAsRead || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store))))
+        if (!checks.isEmpty() && (!isAsRead || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store))))
             valuesThatMayHaveOtherTypeWithoutChecks.append(store.stored);
+    }
+    BitVector storedValuesThatCount;
+    if (!valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
+        storedValuesThatCount = isAfterFlow ? valuesThatAre(function, analyses.cfg(), checks.span()) : valuesBehind(function, analyses.cfg(), checks.span());
+        valuesThatMayHaveOtherTypeWithoutChecks.removeAllMatching([&](ValueID stored) { return !storedValuesThatCount.get(stored.index()); });
     }
     if (valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
         if (!isAfterFlow)
@@ -1927,9 +1937,11 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
     ReadsOfBody reads { .isListed = true };
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
-            if (std::optional<Position> position = readPosition(program, function, function.at(id)))
-                reads.positions.append(*position);
-            else if (keyOfTypedReadByName(program, function.at(id)))
+            const Value& value = function.at(id);
+            if (readsOfPositions.contains(value.opcode)) {
+                if (std::optional<Position> position = readPosition(program, function, value))
+                    reads.positions.append(*position);
+            } else if (readsByName.contains(value.opcode) && keyOfTypedReadByName(program, value))
                 reads.typedReadsByName.append(id);
         }
     }
@@ -1999,10 +2011,12 @@ static Vector<GuardedRead> collectGuardedReads(const Program& program, FunctionI
         addReadIfMarked(entryParameters[index], { Position::Kind::EntryParameter, id.index(), index });
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
-            if (std::optional<Position> position = readPosition(program, function, function.at(value)))
-                addReadIfMarked(value, *position);
-            else if (readsMarkedFieldByName(program, function, function.at(value), marked))
-                addRead(value, DeclaredType(ExpectedType(function.at(value).type)));
+            const Value& read = function.at(value);
+            if (readsOfPositions.contains(read.opcode)) {
+                if (std::optional<Position> position = readPosition(program, function, read))
+                    addReadIfMarked(value, *position);
+            } else if (readsByName.contains(read.opcode) && readsMarkedFieldByName(program, function, read, marked))
+                addRead(value, DeclaredType(ExpectedType(read.type)));
         }
     }
     return reads;
@@ -2037,6 +2051,8 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
 {
     AnalysisContext context { build, program, nullptr, nullptr, id };
     FunctionAnalyses analyses(context, function);
+    TypingMemo typingMemo;
+    analyses.setTypingMemo(&typingMemo);
     TypingContext typing { program, function, types };
     uint32_t numberOfChecks = 0;
     IRBuilder builder(context, function, types, &analyses);
@@ -2062,10 +2078,12 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     }
     builder.applyInsertions();
     // A position that is taken back takes along what flow has said of the value that is read from it.
-    for (size_t index : valuesThatAre(function, analyses.cfg(), checks.span())) {
-        const Value& claim = function.values[index];
-        if (claim.opcode == Opcode::AssumeType && !claim.isBehindChecks() && !claim.isWordOfFrontEnd())
-            function.edit(ValueID(index), ValueEdit::Definition).setIsBehindChecks(true);
+    auto isClaimInEveryVersion = [](const Value& claim) { return claim.opcode == Opcode::AssumeType && !claim.isBehindChecks() && !claim.isWordOfFrontEnd(); };
+    if (std::ranges::any_of(function.values, isClaimInEveryVersion)) {
+        for (size_t index : valuesThatAre(function, analyses.cfg(), checks.span())) {
+            if (isClaimInEveryVersion(function.values[index]))
+                function.edit(ValueID(index), ValueEdit::Definition).setIsBehindChecks(true);
+        }
     }
 
     // A check has the type that its read had, so most of what is typed from the read keeps its types, and nothing behind such a value needs a look.
@@ -2078,7 +2096,7 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
                 changedValues.append(ValueID(index));
         }
     }
-    narrowValueTypesBehindChanges(TypePropagationInputs { program, id, function, analyses, types, build }, changedValues.span());
+    narrowValueTypesBehindChanges(TypePropagationInputs { program, id, function, analyses, types, build, &typingMemo }, changedValues.span());
     storeUnprovenInitialValues(program, id, function, types, build);
     resolveTailCasts(typing, function);
     return numberOfChecks;

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRTestSupport.h"
+#include "AOTPredictedValues.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
@@ -646,6 +647,25 @@ static void editOfWhatWasAddedTakesItsPromiseBack()
     AOT_TEST_CHECK(values.size() == 2 && values[0].edits.contains(ValueEdit::TypedByRule) && values[1].edits == ValueEdit::Added);
 }
 
+static void valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    ValueID given = addParameter(function, entry);
+    ValueID check = addValue(function, entry, Opcode::Check, { given });
+    ValueID cast = addValue(function, entry, Opcode::Upcast, { check });
+    PredictedValues predicted(function);
+    AOT_TEST_CHECK(predicted.hasChecks() && predicted.isBehindCheck(check) && predicted.isBehindCheck(cast));
+    AOT_TEST_CHECK(!predicted.isBehindCheck(given) && !predicted.isBehindCheck(ValueID()));
+    AOT_TEST_CHECK(predicted.isBehindCheck(addValue(function, entry, Opcode::Upcast, { given })));
+    AOT_TEST_CHECK(predicted.isBehindCheck(addParameter(function, entry)));
+
+    Function withoutChecks = createFunction({ Opcode::Undefined });
+    PredictedValues nothingPredicted(withoutChecks);
+    AOT_TEST_CHECK(!nothingPredicted.hasChecks() && !nothingPredicted.isBehindCheck(ValueID(0u)));
+    AOT_TEST_CHECK(nothingPredicted.isBehindCheck(addValue(withoutChecks, BlockID(0u), Opcode::Check, { ValueID(0u) })));
+}
+
 #define FOR_EACH_AOT_IR_FUNCTION_TEST(v) \
     v(constructorFormOfEachKind) v(coroutinesAreNotConstructors) v(moduleBodiesByKind) \
     v(entryParameterIndexesOfEveryFlagCombination) v(implicitEntryParametersHaveNoDeclaredPosition) \
@@ -655,7 +675,8 @@ static void editOfWhatWasAddedTakesItsPromiseBack()
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
     v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
-    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(editOfWhatWasAddedTakesItsPromiseBack)
+    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(editOfWhatWasAddedTakesItsPromiseBack) \
+    v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck)
 
 std::span<const NativeTest> irFunctionTests()
 {

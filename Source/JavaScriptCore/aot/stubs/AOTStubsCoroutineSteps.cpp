@@ -240,7 +240,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(firstOperand, secondOperand, sent, saved, consumer, siteWord, word, other, instanceGPR));
     RELEASE_ASSERT(noOverlap(result, generator, sent, saved, consumer, siteWord, word, other) && status == siteWord);
 
-    // What willEnterAsyncGeneratorBody does: the consumer suspends as soon as the generator does, so the body may continue if the consumer may. The body is suspended at a yield.
+    // The consumer suspends as soon as the generator does, so the body may continue if the consumer may. The body is suspended at a yield.
     jit.and32(TrustedImm32(consumerMayContinue), consumer, word);
     jit.or32(TrustedImm32(SavedFrame::isSuspendedAtYieldFlag), word);
     jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));

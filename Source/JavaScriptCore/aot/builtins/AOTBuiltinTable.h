@@ -999,6 +999,7 @@ public:
     std::span<const BuiltinCalledFunction> calledFunctionsOf(BuiltinID) const;
     const BuiltinUnseenCode* unseenCodeOf(BuiltinID) const;
     bool letsInUnseenCode(BuiltinID) const;
+    bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;
     std::optional<BuiltinBoxedStub> boxedCallStubOf(BuiltinID) const;
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }

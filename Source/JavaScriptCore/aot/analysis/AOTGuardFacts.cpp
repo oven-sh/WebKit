@@ -827,20 +827,37 @@ void GuardAvailability::computeFacts()
         RELEASE_ASSERT_NOT_REACHED();
     };
 
+    bool awaitsEdgesThatSpecifyObjects = true;
+    bool didAwaitEdge = false;
+    auto leaveSameParameterUnspecified = [&](std::span<const Edge> edges, BlockID block) {
+        return std::ranges::any_of(m_function.at(block).parameters, [&](ValueID parameter) {
+            return std::ranges::all_of(edges, [&](Edge edge) {
+                return leavesUnspecified(edge, parameter);
+            });
+        });
+    };
+
     auto factsOfParameter = [&](BlockID block, uint32_t parameterIndex) -> std::optional<GuardFacts> {
         if (block == entryBlock)
             return GuardFacts { };
         Vector<Edge, 4> edges;
         Vector<GuardFacts, 4> factsAfterEdges;
+        bool hasPendingEdge = false;
         for (Edge edge : cfg.incomingEdges(block)) {
             std::optional<GuardFacts> incoming = factsOnEdge(edge, parameterIndex);
-            if (!incoming)
+            if (!incoming) {
+                hasPendingEdge = true;
                 continue;
+            }
             edges.append(edge);
             factsAfterEdges.append(WTF::move(*incoming));
         }
         if (edges.isEmpty())
             return std::nullopt;
+        if (hasPendingEdge && awaitsEdgesThatSpecifyObjects && leaveSameParameterUnspecified(edges.span(), block)) {
+            didAwaitEdge = true;
+            return std::nullopt;
+        }
         if (edges.size() == 1)
             return WTF::move(factsAfterEdges.first());
         return meetFactsAfterEdges(edges.span(), factsAfterEdges.span());
@@ -874,6 +891,7 @@ void GuardAvailability::computeFacts()
 
     for (bool didChange = true; didChange;) {
         didChange = false;
+        didAwaitEdge = false;
         for (uint32_t index = 0; index < m_guards.size(); ++index) {
             if (!isGuardValue(m_function, m_guards[index]))
                 continue;
@@ -887,6 +905,10 @@ void GuardAvailability::computeFacts()
             }
             m_facts[index] = WTF::move(*next);
             isComputed.quickSet(index);
+            didChange = true;
+        }
+        if (!didChange && didAwaitEdge) {
+            awaitsEdgesThatSpecifyObjects = false;
             didChange = true;
         }
     }

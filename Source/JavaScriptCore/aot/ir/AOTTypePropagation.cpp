@@ -78,14 +78,37 @@ void TypePropagation::willTypeValues()
     m_statesBeforeRestart.grow(m_inputs.function.values.size());
 }
 
-void TypePropagation::willRestartValues()
+void TypePropagation::willMarkRestartedValues()
 {
-    if (m_uses)
+    if (std::exchange(m_marksRestartedValues, true))
         return;
     willTypeValues();
-    m_uses = &m_inputs.analyses.useLists();
     m_isQueued.ensureSize(m_inputs.function.values.size());
     m_isRestarted.ensureSize(m_inputs.function.values.size());
+}
+
+void TypePropagation::willRestartValues()
+{
+    willMarkRestartedValues();
+    uses();
+}
+
+const UseLists& TypePropagation::uses()
+{
+    if (!m_uses)
+        m_uses = &m_inputs.analyses.useLists();
+    return *m_uses;
+}
+
+// A rule reads where a parameter stands, and of no other value.
+ValueLocation TypePropagation::locationForRule(ValueID id) const
+{
+    if (m_uses)
+        return m_uses->locationOf(id);
+    if (m_inputs.function.at(id).opcode != Opcode::Parameter)
+        return { ValuePlacement::InBlock, { }, 0 };
+    PlaceOfParameter place = m_placesOfParameters[id.index()];
+    return { ValuePlacement::Parameter, BlockID(place.block), place.index };
 }
 
 void TypePropagation::addTypeOutOfDate(ValueID id, ASCIILiteral detail)
@@ -261,7 +284,7 @@ void TypePropagation::restart(ValueID id)
     Value& value = m_inputs.function.editAndReportLater(id);
     value.type = TypeTable::never;
     value.setExpected({ });
-    if (m_uses)
+    if (m_marksRestartedValues)
         m_isRestarted.quickSet(id.index());
 }
 
@@ -289,7 +312,15 @@ void TypePropagation::restartDependentsOf(std::span<const ValueID> values)
 
 void TypePropagation::restartSourcesOf(std::span<const ValueID> values, const BitVector& listed)
 {
-    willRestartValues();
+    // The users of a value are asked for where a value is typed from itself.
+    willMarkRestartedValues();
+    const Function& function = m_inputs.function;
+    m_placesOfParameters.grow(function.values.size());
+    for (BlockID block : m_cfg.reversePostOrder()) {
+        const CompactList<ValueID>& parameters = function.at(block).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index)
+            m_placesOfParameters[parameters[index].index()] = { block.index(), index };
+    }
     m_queuedValues = QueuedValues::OnlyListed;
     m_listedValues = &m_isRestarted;
     auto visit = [&](ValueID id) {
@@ -301,7 +332,7 @@ void TypePropagation::restartSourcesOf(std::span<const ValueID> values, const Bi
     std::ranges::for_each(values, visit);
     while (!m_worklist.isEmpty()) {
         ValueID id = m_worklist.takeLast();
-        ValueLocation location = m_uses->locationOf(id);
+        ValueLocation location = locationForRule(id);
         if (location.placement == ValuePlacement::Parameter)
             forEachSourceOfParameter(location.block, location.index, visit);
         else
@@ -340,7 +371,7 @@ void TypePropagation::listRestartedValuesInOrder()
 
     const Function& function = m_inputs.function;
     constexpr size_t valuesWalkedForOneSorted = 8;
-    if (m_rememberedValues.size() * valuesWalkedForOneSorted < function.values.size()) {
+    if (m_uses && m_rememberedValues.size() * valuesWalkedForOneSorted < function.values.size()) {
         listFromLastToFirst(m_rememberedValues.span());
         return;
     }
@@ -388,7 +419,7 @@ void TypePropagation::enqueueIndirectUsersOf(ValueID id)
     if (!isTest && !hasMultipleResults)
         return;
 
-    for (const Use& use : m_uses->usesOf(id)) {
+    for (const Use& use : uses().usesOf(id)) {
         if (hasMultipleResults && use.kind == Use::Kind::Operand)
             enqueue(use.user);
         if (isTest && use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.isConditionalBranch())
@@ -399,7 +430,7 @@ void TypePropagation::enqueueIndirectUsersOf(ValueID id)
 void TypePropagation::enqueueUsersOf(ValueID id)
 {
     const Function& function = m_inputs.function;
-    for (const Use& use : m_uses->usesOf(id)) {
+    for (const Use& use : uses().usesOf(id)) {
         switch (use.kind) {
         case Use::Kind::Operand:
             enqueue(use.user);
@@ -431,7 +462,7 @@ void TypePropagation::propagate(TypeLevel level, Direction direction)
     while (!m_worklist.isEmpty()) {
         ValueID id = m_worklist.takeLast();
         m_isQueued.quickClear(id.index());
-        ValueLocation location = m_uses->locationOf(id);
+        ValueLocation location = locationForRule(id);
         bool isTakenAgain = m_wasTakenFromWorklist.quickGet(id.index());
         if (!isTakenAgain && location.placement == ValuePlacement::Parameter)
             forEachSourceOfParameter(location.block, location.index, markIfNotTaken);
@@ -492,7 +523,8 @@ void TypePropagation::willTakeValuesFromWorklist()
 
 void TypePropagation::solve(TypeLevel level)
 {
-    willRestartValues();
+    if (!m_marksRestartedValues)
+        willRestartValues();
     willTakeValuesFromWorklist();
     listRestartedValuesInOrder();
     for (ValueID id : m_restartedValuesFromLastToFirst)
@@ -663,7 +695,7 @@ bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, T
     if (direction == Direction::Ascending) {
         next = types.unionOf(old, computed);
         auto isJoin = [&] {
-            ValueLocation location = m_uses->locationOf(id);
+            ValueLocation location = locationForRule(id);
             return location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() > 1;
         };
         if (next != old && isJoin())
@@ -801,27 +833,45 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
 {
     Function& function = m_inputs.function;
     const TypeArena& types = m_inputs.types;
-    std::optional<ProofScope> scope;
-    for (ValueID id : m_rememberedValues) {
+    auto mayBeWiderThanBefore = [&](ValueID id) {
         TypeID before = m_statesBeforeRestart[id.index()].type;
         TypeID now = function.at(id).type;
         if (!before || before == now)
-            continue;
+            return false;
         const Type& typeBefore = types.at(before);
         const Type& type = types.at(now);
-        bool mayBeWider = (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives);
-        if (!mayBeWider)
+        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives);
+    };
+    std::optional<ProofScope> scope;
+    auto replaceIfItCutsValue = [&](ValueID upcast, ValueID id) {
+        TypeID castType = function.at(upcast).castType();
+        if (types.at(function.at(id).type).isSubsetOf(types.at(castType), m_inputs.program))
+            return;
+        if (!scope)
+            scope = m_inputs.analyses.opcodesOfValues().contains(Opcode::Check) ? ProofScope::BehindChecks : ProofScope::EveryVersion;
+        function.edit(upcast).becomeAssumeType(id, Proven::byRulesBeforeWidening(castType, *scope));
+        ++m_outcome.replacedUpcasts;
+    };
+    const UseLists* useLists = m_inputs.analyses.useListsIfUpToDate();
+    for (ValueID id : m_rememberedValues) {
+        if (!mayBeWiderThanBefore(id))
             continue;
-        for (const Use& use : m_inputs.analyses.useLists().usesOf(id)) {
-            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::Upcast)
-                continue;
-            TypeID castType = function.at(use.user).castType();
-            if (type.isSubsetOf(types.at(castType), m_inputs.program))
-                continue;
-            if (!scope)
-                scope = m_inputs.analyses.opcodesOfValues().contains(Opcode::Check) ? ProofScope::BehindChecks : ProofScope::EveryVersion;
-            function.edit(use.user).becomeAssumeType(id, Proven::byRulesBeforeWidening(castType, *scope));
-            ++m_outcome.replacedUpcasts;
+        if (!useLists) {
+            // One walk finds the casts of every such value.
+            for (BlockID block : m_cfg.reversePostOrder()) {
+                for (ValueID upcast : function.at(block).values) {
+                    if (function.at(upcast).opcode != Opcode::Upcast)
+                        continue;
+                    ValueID operand = function.at(upcast).valueOperand();
+                    if (isRemembered(operand) && mayBeWiderThanBefore(operand))
+                        replaceIfItCutsValue(upcast, operand);
+                }
+            }
+            break;
+        }
+        for (const Use& use : useLists->usesOf(id)) {
+            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::Upcast)
+                replaceIfItCutsValue(use.user, id);
         }
     }
     if (m_outcome.replacedUpcasts)

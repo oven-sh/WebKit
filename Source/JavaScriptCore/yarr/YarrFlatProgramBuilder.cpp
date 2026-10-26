@@ -1180,12 +1180,15 @@ private:
             return true;
         bool jitCountsTurns = jitCountsTurnsOf(term);
         m_program->jitCountsTurns |= jitCountsTurns;
+        bool makesNoChoice = term.quantityType == QuantifierType::FixedCount && !jitCountsTurns;
         if (m_countsTurns) {
             bool isTestedForByParent = max == 1 && term.quantityType == QuantifierType::FixedCount;
             context.initialInputPosition = term.inputPosition - (isTestedForByParent ? disjunction.m_minimumSize : 0);
             if (isTestedForByParent || (!min && neededToEnter(disjunction, context.neededAfter)))
                 context.testedFor = disjunction.m_minimumSize;
-        } else if (min != 1 || max != 1) {
+        }
+        // Where turns are counted: only a group none of whose turns is.
+        if ((!m_countsTurns || makesNoChoice) && (min != 1 || max != 1)) {
             unsigned termsLeftToVisit = maxTermsVisitedForEmptiness;
             if (computeInputConsumption(disjunction, termsLeftToVisit) == InputConsumption::None)
                 return !min || emitGroupBody(term, context);
@@ -1193,7 +1196,7 @@ private:
         // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
         if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, term.quantityType == QuantifierType::FixedCount && !jitCountsTurns };
+        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
         });

@@ -1267,7 +1267,7 @@ public:
 #endif
 
 #if ENABLE(AOT)
-    NEVER_INLINE IterationStatus unwindCompiledFrames(AOT::CompiledFrameIterator& frames) const
+    NEVER_INLINE IterationStatus unwindCompiledFrames(const AOT::CompiledFrameIterator& frames) const
     {
         m_codeBlock = nullptr;
         AOT::CompiledUnwindResult result = AOT::unwindCompiledFrames(m_vm, frames, *m_vmEntryRecord, m_isTermination);
@@ -1277,7 +1277,7 @@ public:
             m_handler = CatchInfo(result.handler);
             break;
         case AOT::CompiledUnwindStatus::LeftCompiledCode:
-            m_exitFromCompiledCode = frames.exit();
+            m_exitFromCompiledCode = result.exit;
             break;
         case AOT::CompiledUnwindStatus::ReachedEntryFrame:
             break;

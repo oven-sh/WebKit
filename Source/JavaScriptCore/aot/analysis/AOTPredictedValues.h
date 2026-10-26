@@ -20,7 +20,7 @@ BitVector valuesBehind(const Function&, const CFG&, std::span<const ValueID>);
 // The given values themselves wherever they go: their casts, the parameters that take them, and what a test leaves of them.
 BitVector valuesThatAre(const Function&, const CFG&, std::span<const ValueID>);
 
-// Where the predictions of a body stand, and what is made from the values they are about.
+// Where the predictions of a body stand, and what is made from the values they are about. It holds until the values of the body get other numbers.
 class PredictedValues {
 public:
     struct Options {
@@ -35,10 +35,8 @@ public:
     PredictedValues(const Function&, const CFG&, Options);
 
     bool hasChecks() const { return m_hasChecks; }
-    // Of a value that was put into the body afterwards nothing is known here.
-    bool hasSeen(ValueID value) const { return value.index() < m_numberOfValues; }
-    // The type of the value may be owed to a check, which stands until the function gets its generic version.
-    bool isBehindCheck(ValueID value) const { return has(value, BehindCheck); }
+    // The type of the value may be owed to a check, which stands until the function gets its generic version. Of a value that was put into the body afterwards nothing is known here: it may be.
+    bool isBehindCheck(ValueID value) const { return value && (value.index() >= m_numberOfValues || has(value, BehindCheck)); }
 
     BitVector valuesBehindChecks() const;
 

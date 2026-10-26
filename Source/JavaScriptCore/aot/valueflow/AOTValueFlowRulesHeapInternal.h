@@ -166,6 +166,9 @@ private:
 
     ClimbingSet startOfLookup(ClimbingSet receivers);
     void forEachStartOfLookup(ClimbingSet receivers, NOESCAPE const Invocable<void(ClimbingSet)> auto&);
+    bool tellsApartStartsThatFindNothing(ClimbingSet start, const HeapKey&) const;
+    std::optional<ClimbingSet> startsThatMayFindSomething(ClimbingSet start, const HeapKey&);
+    void readFromStartsThatMayFindSomething(ClimbingSet start, const HeapKey&);
     HeapChain chainFrom(ClimbingSet receivers, ValueFlowName nameOfChain = prototypeLinkName);
     HeapChain chainFrom(ClimbingSet receivers, const HeapKey&);
     std::optional<ClimbingSet> chainUpToPrototypeObjectsOfEntries(ClimbingSet start, ValueFlowNodeID wholeChain, const HeapKey&);

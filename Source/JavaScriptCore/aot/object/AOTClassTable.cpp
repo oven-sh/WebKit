@@ -33,6 +33,7 @@
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "CustomGetterSetter.h"
+#include "DeferTermination.h"
 #include "FunctionPrototype.h"
 #include "FunctionRareData.h"
 #include "GetterSetter.h"
@@ -179,6 +180,7 @@ Closure* ClassTable::createClassObject(VM& vm, const LayoutData& classLayout)
         return created;
     ASSERT(hasOneClassObject(classLayout));
     count(m_state.instance, RuntimeCounterID::ClassesMadeWhenFirstTouched);
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     defineClass(m_state.instance.globalObject, created, classLayout, JSValue(), JSValue());
     scope.assertNoException();
@@ -1119,7 +1121,9 @@ void ClassTable::defineClass(JSGlobalObject* globalObject, Closure* classObject,
 void ClassTable::createClassPart(JSGlobalObject* globalObject, Closure* classObject, ClassPart part)
 {
     ASSERT(part != ClassPart::Everything);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     ClassDefinition(*this, globalObject, classObject, part).run(JSValue(), JSValue());
     scope.assertNoException();
 }

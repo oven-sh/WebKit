@@ -860,7 +860,24 @@ private:
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         answer(undescribedObject());
         if (answersProxy)
+            markWhereNameReadOnProxyMayAnswerMemberLeftOut();
+        if (answersProxy)
             m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_context.maker().unite(m_tables.heap().objectsThatLetInUnseenCode(), m_context.maker().of(m_universe.objectOf(Builtins::Bun)))));
+    }
+
+    // A name read on the proxy is read on its target, or it is what the get trap of the handler answers. The handler has escaped, and so has what its traps answer.
+    void markWhereNameReadOnProxyMayAnswerMemberLeftOut()
+    {
+        ValueSetID mark = m_context.maker().of(ValueFlowUniverse::markOfMemberLeftOut());
+        ValueSetID modules = m_context.maker().intersect(m_tables.heap().objectsOfPublicModules(), ValueSets::complement(m_context.maker().of(m_universe.objectOf(Builtins::Bun))));
+        m_context.forEachMember(m_context.restrict(objectsAt(BuiltinOperand::argument(0)), modules), [&](ValueFlowObjectID module) {
+            ValueSetID leftOut = m_tables.heap().membersOf(m_universe.builtinOf(module)).leftOut;
+            if (leftOut == ValueSets::nothing)
+                return;
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), leftOut);
+            m_context.add(m_call.result, mark);
+        });
+        m_context.connect(m_context.masked(escaped(), mark), m_call.result);
     }
 
     void noteClassesOfResult(const BuiltinOverload& overload)
@@ -2774,7 +2791,7 @@ static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& 
         return context.read(callees, { ValueFlowNameKind::HiddenSlot, id.index() });
     };
 
-    forEachPartOfCallees(context, context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), universe.callables()), [&](ClimbingSet targets) {
+    auto callTargets = [&](ClimbingSet targets) {
         ValueFlowCallGroup group = context.group(targets, kind);
         if (isConstruction(kind)) {
             context.add(group.newTarget, targets);
@@ -2794,6 +2811,21 @@ static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& 
             context.connect(group.result, description.result);
         if (description.thrown)
             context.connect(group.thrown, description.thrown);
+    };
+    forEachPartOfCallees(context, context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), universe.callables()), [&](ClimbingSet targets) {
+        if (!isConstruction(kind))
+            return callTargets(targets);
+        // `new` on a bound function enters its target with the target as new.target: a target that reads new.target sees itself there, and no other target.
+        Vector<ValueFlowObjectID, 8> readingNewTarget;
+        context.forEachMember(context.restrict(targets, universe.closures()), [&](ValueFlowObjectID target) {
+            if (context.program().at(universe.closureFunction(target)).newTargetParameterIndex())
+                readingNewTarget.append(target);
+        });
+        for (ValueFlowObjectID target : readingNewTarget)
+            callTargets(only(context, target));
+        ClimbingSet others = readingNewTarget.isEmpty() ? targets : context.restrict(targets, ValueSets::complement(context.maker().of(readingNewTarget.span())));
+        if (context.meet(others, ValueSets::anything))
+            callTargets(others);
     });
     settlePromisesThrough(allCallees, description, context);
 }

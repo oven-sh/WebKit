@@ -290,14 +290,16 @@ static MethodKind methodKindOf(FunctionKind kind)
     return kind == FunctionKind::Getter ? MethodKind::Getter : kind == FunctionKind::Setter ? MethodKind::Setter : MethodKind::Method;
 }
 
-BitVector findFunctionsNamedAtOneOperation(const Program& program)
+BitVector findFunctionsNamedAtOneOperation(const Program& program, const ParallelLoops& loops)
 {
-    BitVector named(program.functions.size());
-    BitVector namedOtherwise(program.functions.size());
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+    struct Naming {
+        uint32_t written;
+        bool isNamedOtherwise;
+    };
+    Vector<Naming> namings = collectInParallel<Naming>(loops, program.functions.size(), [&](unsigned index, Vector<Naming>& found) {
         const Function& function = program.functions[index];
         if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::SetFunctionName }))
-            continue;
+            return;
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
                 const Value& operation = function.at(id);
@@ -307,12 +309,15 @@ BitVector findFunctionsNamedAtOneOperation(const Program& program)
                 if (closure.opcode != Opcode::NewClosure)
                     continue;
                 const Function& made = program.at(closure.function());
-                uint32_t written = firstSourceOf(program, closure.function()).index();
-                if (named.get(written) || made.derivation.source || made.constructedClass || methodKindOf(made.kind) != operation.methodKind())
-                    namedOtherwise.set(written);
-                named.set(written);
+                found.append({ firstSourceOf(program, closure.function()).index(), made.derivation.source || made.constructedClass || methodKindOf(made.kind) != operation.methodKind() });
             }
         }
+    });
+    BitVector named(program.functions.size());
+    BitVector namedOtherwise(program.functions.size());
+    for (auto [written, isNamedOtherwise] : namings) {
+        if (named.set(written) || isNamedOtherwise)
+            namedOtherwise.set(written);
     }
     named.exclude(namedOtherwise);
     return named;

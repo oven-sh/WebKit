@@ -24,6 +24,7 @@
 #include "AOTStaticFields.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
@@ -416,6 +417,7 @@ void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsig
 void setIntegrity(VM& vm, JSObject* object, Integrity level)
 {
     ASSERT(isCompiledObject(object));
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     uncheckedDowncast<Object>(object)->setIntegrity(object->structure()->realm(), objectIntegrity(level));
     scope.assertNoException();
@@ -484,6 +486,7 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         JSObject* elementsOfTarget = objectHoldingIndexedProperties(&target);
         if (target.anyObjectInChainMayInterceptIndexedAccesses() || (elementsOfTarget && elementsOfTarget->canHaveExistingOwnIndexedGetterSetterProperties()))
             return false;
+        DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSGlobalObject* realm = target.structure()->realm();
         holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {

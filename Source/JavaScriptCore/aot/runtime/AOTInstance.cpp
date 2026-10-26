@@ -453,6 +453,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
     instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
+    instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
     fillInstanceClassInfos(*instance);

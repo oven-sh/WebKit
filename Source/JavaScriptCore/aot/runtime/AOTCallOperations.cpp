@@ -577,10 +577,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             rethrownException = uncheckedDowncast<Exception>(thrown.asCell());
     }
     bool isTermination = exception && vm.isTerminationException(exception);
-    std::optional<CompiledFrameIterator> frames = isTermination ? std::nullopt : findCompiledCallers(vm, *instance, callFrame);
-    CompiledUnwindResult found { CompiledUnwindStatus::LeftCompiledCode, { } };
-    if (frames) [[likely]]
-        found = unwindCompiledFrames(vm, *frames, *vmEntryRecord(vm.topEntryFrame), false);
+    CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwindRun(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), false);
     bool isHandled = found.status == CompiledUnwindStatus::FoundHandler;
     RELEASE_ASSERT(!isHandled || found.handler.code);
     bool takesException = found.handler.kind == CompiledHandlerKind::Finally;
@@ -593,7 +590,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
     bool clearsDeadStack = false;
     if (isHandled && vm.heap.cage().hasDeadStackToClear()) [[unlikely]] {
         clearsDeadStack = true;
-        ExceptionWords& wordsOfHandler = frames->instance()->runtime.exceptions;
+        ExceptionWords& wordsOfHandler = found.instance->runtime.exceptions;
         uintptr_t bytes = std::bit_cast<uintptr_t>(wordsOfHandler.stackPointerOfHandler) - std::bit_cast<uintptr_t>(vm.heap.cage().takeLowestAddressOfDeadStack(vm));
         wordsOfHandler.bytesOfDeadStackBelowHandler = static_cast<uint32_t>(std::min<uintptr_t>(bytes, std::numeric_limits<uint32_t>::max()) & ~static_cast<uintptr_t>(sizeof(void*) - 1));
         // The landing pad finds the value without a call, which would leave its frame behind on the cleared stack.
@@ -617,7 +614,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         if (isHandled && !needsException) {
             if (rethrownException)
                 return handlerCodeAndFrame;
-            stackIsUnobserved = isCaughtAboveCleanup(vm, *frames);
+            stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
             // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
             if (stackIsUnobserved && !clearsDeadStack)
                 return handlerCodeAndFrame;
@@ -630,7 +627,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto action = Exception::StackCaptureAction::DoNotCaptureStack;
         if (!stackIsUnobserved && !rethrownException)
-            action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, frames && frames->isAtEnd() ? &*frames : nullptr);
+            action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, found.hasLeftRun ? &found : nullptr);
         Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

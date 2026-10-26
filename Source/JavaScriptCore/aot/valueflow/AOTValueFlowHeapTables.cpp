@@ -386,8 +386,6 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_booleanKinds = kindsOf(maker, Primitive::Boolean);
     m_startsOfLookups = ValueSets::complement(maker.unite(maker.unite(placeholders, universe.keys()), kindsOf(maker, Primitive::UndefinedOrNull | Primitive::Absent)));
     m_keysNobodyKnows = ValueSets::complement(maker.unite(universe.keys(), m_numberKinds));
-    m_symbolsUsedOnlyAsKeys = findLibrarySymbolsUsedOnlyAsKeys(program);
-    m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program);
     m_accessors = maker.unite(maker.unite(universe.callables(), builtinObjects), placeholders);
     m_undescribedNativeCode = universe.objectOf(Builtins::UndeclaredNativeCode);
     if (BuiltinMemberLookup found = builtins.findMember(Builtins::ObjectPrototype, BuiltinNames::__proto__); found.outcome == BuiltinMemberLookup::Outcome::Found)
@@ -404,6 +402,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span)))
         m_displayNameKey = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
 
+    m_prototypesAtCreation = ZeroFilledPages<std::atomic<uint64_t>>(universe.numberOfObjects());
+    unsigned bitsOfBlocks = std::clamp<unsigned>(std::bit_width(static_cast<uint64_t>(universe.numberOfObjects())) + 2, 12, 20);
+    m_shiftOfBlocks = 64 - bitsOfBlocks;
+    m_prototypesOfBlocks = ZeroFilledPages<std::atomic<uint64_t>>(static_cast<size_t>(5) << bitsOfBlocks);
+
     uint32_t numberOfKeys = universe.numberOfObjects() - universe.keyConstant(PropertyKeyID(0u)).index();
     ValueSetID knownObjectsOfProgram = without(universe.knownObjects(), builtinObjects);
     Vector<ValueFlowObjectID> closuresWithPrototypeProperty;
@@ -419,6 +422,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_hasSetEntry.ensureSize(builtins.builtinCount());
         m_letsInUnseenCode.ensureSize(builtins.builtinCount());
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCode;
+        Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCodeWhenCalled;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
                 m_hasGetEntry.quickSet(index);
@@ -428,8 +432,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 m_letsInUnseenCode.quickSet(index);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCode);
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCodeWhenCalled(BuiltinID(index)))
+                universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCodeWhenCalled);
         }
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
+        m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
         Vector<ValueFlowObjectID, 32> objectsOfPublicModules;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
@@ -878,12 +885,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             });
         },
         [&] {
-            m_prototypesAtCreation = std::make_unique<std::atomic<uint64_t>[]>(universe.numberOfObjects());
-            unsigned bitsOfBlocks = std::clamp<unsigned>(std::bit_width(static_cast<uint64_t>(universe.numberOfObjects())) + 2, 12, 20);
-            m_shiftOfBlocks = 64 - bitsOfBlocks;
-            m_prototypesOfBlocks = std::make_unique<std::atomic<uint64_t>[]>(static_cast<size_t>(5) << bitsOfBlocks);
-            for (size_t entry = 0; entry < static_cast<size_t>(1) << bitsOfBlocks; ++entry)
-                m_prototypesOfBlocks[entry * 5 + 1].store(noBlockKept, std::memory_order_relaxed);
+            m_symbolsUsedOnlyAsKeys = findLibrarySymbolsUsedOnlyAsKeys(program);
+        },
+        [&] {
+            m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program, loops);
         },
         [&] {
             maker.sets().forEachMember(universe.arrays(), [&](ValueFlowObjectID object) {

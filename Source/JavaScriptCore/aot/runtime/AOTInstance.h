@@ -182,11 +182,18 @@ struct ClonedStructure {
     uint64_t cellSize;
 };
 
+struct MappedCopy;
+
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
     static constexpr unsigned numberOfClonedStructures = 16;
     static constexpr unsigned clonedStructureShift = 4;
     static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
+    static constexpr unsigned numberOfCopiesWithoutFrame = 64;
+    static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
+    {
+        return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + (targetWords >> 31) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
+    }
 
     void* auxiliarySpace;
     void* cagedAuxiliarySpace;
@@ -201,6 +208,7 @@ struct AllocationWords {
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
     ClonedStructure clonedStructures[numberOfClonedStructures];
+    const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
 };
 
 // Most objects that have extra properties have one or two.

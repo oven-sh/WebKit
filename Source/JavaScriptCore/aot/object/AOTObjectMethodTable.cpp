@@ -21,6 +21,7 @@
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "CustomGetterSetter.h"
+#include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -409,7 +410,9 @@ bool Object::tryDefineAbsentExtraProperty(VM& vm, PropertyName name, JSValue val
 
 static void setOrdinaryObjectIntegrity(JSGlobalObject* globalObject, JSObject* ordinary, Object::Integrity integrity)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferTermination(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     switch (integrity) {
     case Object::Integrity::NotExtensible:
         ordinary->methodTable()->preventExtensions(ordinary, globalObject);
@@ -429,6 +432,7 @@ static bool indexedPropertiesHaveIntegrity(JSGlobalObject* realm, JSObject* ordi
     if (!hasIndexedProperties(ordinary->indexingType()))
         return true;
     VM& vm = realm->vm();
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PropertyNameArrayBuilder indices(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     ordinary->getOwnIndexedPropertyNames(realm, indices, DontEnumPropertiesMode::Include);

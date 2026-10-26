@@ -464,7 +464,7 @@ ValueSetID HeapRule::prototypesAtCreationOf(ClimbingSet objects)
     bool goesByBlock = m_context.forEachBlock(objects, [&](uint64_t nameOfBlock) {
         std::atomic<uint64_t>* entry = m_tables.prototypesOfBlock(nameOfBlock);
         uint64_t count = entry[0].load(std::memory_order_acquire);
-        if (!(count & 1) && entry[1].load(std::memory_order_relaxed) == nameOfBlock) {
+        if (count && !(count & 1) && entry[1].load(std::memory_order_relaxed) == nameOfBlock) {
             std::array<uint64_t, 3> words { entry[2].load(std::memory_order_relaxed), entry[3].load(std::memory_order_relaxed), entry[4].load(std::memory_order_relaxed) };
             std::atomic_thread_fence(std::memory_order_acquire);
             if (entry[0].load(std::memory_order_relaxed) == count) {
@@ -1000,6 +1000,10 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         return;
 
     Members getters;
+    auto holdsMarkOfMemberLeftOut = [&](ValueFlowNodeID node) {
+        return node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfMemberLeftOut())), node);
+    };
+    bool mayAnswerMemberLeftOut = holdsMarkOfMemberLeftOut(m_statement.result) || holdsMarkOfMemberLeftOut(object.node);
     HeapChain chain = chainFrom(m_context.valueOf(object), key);
     ClimbingSet found = m_context.restrict(chain.objects, holders);
     if (holdsNamedBun(object))
@@ -1014,8 +1018,10 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
             if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
                 found = m_context.unite(found, m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))), m_context.maker().intersect(holders, allButBunUnlessNamed(operandOf(sourcesOfCopies)))));
             ClimbingSet next(prototypesAtCreationOf(above));
-            if (ValueFlowNodeID links = readWhereWritten(above, prototypeLinkName))
+            if (ValueFlowNodeID links = readWhereWritten(above, prototypeLinkName)) {
                 next = m_context.unite(next, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), links));
+                mayAnswerMemberLeftOut = mayAnswerMemberLeftOut || holdsMarkOfMemberLeftOut(links);
+            }
             above = known(next);
         }
     }
@@ -1023,7 +1029,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         if (m_tables.letsInUnseenCode(member))
             readMember(member, module, m_statement.result, getters);
     });
-    if (m_statement.result && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfMemberLeftOut())), m_statement.result)) {
+    if (mayAnswerMemberLeftOut) {
         ClimbingSet leftOut = m_context.valueWithin(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed));
         forEachMemberUnder(ClimbingSet(m_context.maker().intersect(holders, m_tables.objectsOfPublicModules())), key, [&](BuiltinID member, ModuleID module) {
             if (m_tables.letsInUnseenCode(member) && m_context.contains(leftOut, objectOfMember(member, module)))
@@ -1100,6 +1106,104 @@ ClimbingSet HeapRule::letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID key, 
     return m_context.restrict(holders, ValueSets::complement(m_universe.prototypeObjectsOfLibraryClasses()));
 }
 
+bool HeapRule::tellsApartStartsThatFindNothing(ClimbingSet start, const HeapKey& key) const
+{
+    AOT_THRESHOLD(uint32_t, mostStartsLookedUpTogether, 8);
+    if (key.keyClass != HeapKeyClass::Name || !m_context.holdsMoreMembersThan(start, mostStartsLookedUpTogether))
+        return false;
+    if (key.name == m_tables.prototypeKey() || key.name == m_tables.constructorKey() || key.name == m_tables.rawKey())
+        return false;
+    return std::ranges::none_of(m_tables.propertiesKeptForLife(), [&](const ValueFlowPropertyKeptForLife& kept) {
+        return kept.key == key.name;
+    });
+}
+
+// The receivers whose chain holds an object that may answer under the name: each of the others finds nothing. A set of receivers that grows keeps its record for a name as long as the new receivers find nothing under it.
+// There is no answer while a chain is not collected, or while the solver does not keep the holders under the name: the statement runs again.
+std::optional<ClimbingSet> HeapRule::startsThatMayFindSomething(ClimbingSet start, const HeapKey& key)
+{
+    ValueSetMaker& maker = m_context.maker();
+    ClimbingSet chain = m_context.valueOf(m_context.lookup(start, prototypeLinkName));
+    if (m_context.meet(chain, maker.unite(m_universe.placeholdersAlone(), only(ValueFlowUniverse::markOfNamedBun()))))
+        return start;
+    if (!m_context.holdsAllOf(chain, start))
+        return std::nullopt;
+
+    const ValueFlowMembersUnderKey& members = m_tables.under(key.name);
+    std::array<ValueSetID, 9> answeringByTables {
+        members.holders, members.instancesThatKeepProperty, members.prototypeObjectsOfEntries, holdersOfUndeclaredPropertiesUnder(key),
+        m_tables.holdersThatAnswerUnder(key.name), m_tables.holdersThatMayLoseMemberUnder(key.name), m_tables.objectsStoredToAtCreationUnder(key.name),
+        only(m_tables.undescribedNativeCode()), ValueSets::complement(m_universe.knownObjects()),
+    };
+    ClimbingSet answering;
+    for (ValueSetID holders : answeringByTables) {
+        if (holders != ValueSets::nothing)
+            answering = m_context.unite(answering, m_context.restrict(chain, holders));
+    }
+    bool areHoldersKept = true;
+    auto takeHoldersUnder = [&](ValueFlowName name) {
+        if (std::optional<ClimbingSet> holders = m_context.holdersUnder(name, chain))
+            answering = m_context.unite(answering, *holders);
+        else
+            areHoldersKept = false;
+    };
+    for (HeapPropertyPart part : { HeapPropertyPart::Value, HeapPropertyPart::Getter }) {
+        ValueFlowName name = foundName(key, part);
+        takeHoldersUnder(name);
+        if (m_context.mayFindWhatIsWrittenUnderUnknownKey(name))
+            takeHoldersUnder(writtenName(unknownHeapKey, part));
+        if (holdsAnything(m_context.read(unknownObjectAlone(), name)))
+            answering = m_context.unite(answering, m_context.unite(m_context.restrict(chain, m_universe.builtinObjects()), escapedAmong(chain)));
+        if (holdsAnything(ValueFlowProgramNodes::lost()) && holdsAnything(m_context.read(untrackedObjectAlone(), name)))
+            answering = m_context.unite(answering, lostAmong(chain));
+    }
+    if (!areHoldersKept)
+        return std::nullopt;
+    if (!holdsAnything(answering))
+        return ClimbingSet();
+    if (m_context.contains(answering, m_universe.objectOf(Builtins::ObjectPrototype)))
+        return start;
+
+    AOT_THRESHOLD(unsigned, mostPartsLookedAt, 256);
+    unsigned numberOfPartsLookedAt = 0;
+    bool areChainsCollected = true;
+    Vector<ValueSetID, 16> finding;
+    Vector<ValueSetID> partsToLookAt { m_context.withMembersOf(ValueSets::nothing, start) };
+    Vector<ValueSetID> smallerParts;
+    while (!partsToLookAt.isEmpty()) {
+        ValueSetID part = partsToLookAt.takeLast();
+        smallerParts.shrink(0);
+        m_context.appendPartsWithChainsOfTheirOwn(ClimbingSet(part), smallerParts);
+        if (smallerParts.isEmpty()) {
+            finding.append(part);
+            continue;
+        }
+        numberOfPartsLookedAt += smallerParts.size();
+        if (numberOfPartsLookedAt > mostPartsLookedAt)
+            return start;
+        for (ValueSetID smaller : smallerParts) {
+            ClimbingSet chainOfPart = m_context.valueOf(m_context.lookup(ClimbingSet(smaller), prototypeLinkName));
+            if (!m_context.holdsAllOf(chainOfPart, ClimbingSet(smaller)))
+                areChainsCollected = false;
+            else if (m_context.meet(chainOfPart, answering))
+                partsToLookAt.append(smaller);
+        }
+    }
+    if (!areChainsCollected)
+        return std::nullopt;
+    return ClimbingSet(maker.uniteAll(finding.span()));
+}
+
+void HeapRule::readFromStartsThatMayFindSomething(ClimbingSet start, const HeapKey& key)
+{
+    std::optional<ClimbingSet> finding = startsThatMayFindSomething(start, key);
+    if (!finding)
+        return;
+    connect(m_context.lookup(*finding, nameOfLookupForValue(key)), m_statement.result);
+    if (!m_context.holdsAllOf(*finding, start))
+        add(m_statement.result, m_universe.undefinedValue());
+}
+
 void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, const HeapReceiver& receiver, ValueFlowNodeID result)
 {
     Members builtinGetters;
@@ -1110,7 +1214,15 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     ClimbingSet getters;
     bool handsOutEvaluators = key.keyClass != HeapKeyClass::Unknown;
     auto answer = [&](ValueFlowNodeID node) {
-        connect(handsOutEvaluators ? node : m_context.masked(node, ValueSets::complement(m_tables.objectsThatLetInUnseenCode())), result);
+        if (handsOutEvaluators) {
+            connect(node, result);
+            return;
+        }
+        // The call of what such a read answers is no event. The answer may still be the function that is left out, so it is a value nobody knows.
+        ValueSetID leftOut = m_tables.objectsThatLetInUnseenCodeWhenCalled();
+        connect(m_context.masked(node, ValueSets::complement(leftOut)), result);
+        if (node && m_context.holdsAnyOf(ClimbingSet(leftOut), node))
+            add(result, m_universe.unknownObjectAlone());
     };
     auto takeGetters = [&](ValueFlowNodeID node) {
         getters = m_context.unite(getters, valueOfNodeIfAny(node));

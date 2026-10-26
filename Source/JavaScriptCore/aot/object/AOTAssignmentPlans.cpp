@@ -293,6 +293,7 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
 void AssignmentPlanCache::growMappedCopies()
 {
     Vector<std::unique_ptr<MappedCopy>> before = std::exchange(m_mappedCopies, { });
+    zeroSpan(std::span { m_state.instance.allocation.copiesWithoutFrame });
     size_t size = before.isEmpty() ? minNumberOfPlacesForMappedCopies : before.size() * 2;
     m_mappedCopies.grow(size);
     m_shiftForMappedCopies = 64 - WTF::fastLog2(static_cast<unsigned>(size));

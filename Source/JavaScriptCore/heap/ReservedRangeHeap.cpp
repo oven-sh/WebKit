@@ -81,6 +81,8 @@ static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
 static constexpr unsigned maxSegmentPlacements = 8;
 #endif
 static constexpr unsigned maxRandomPlacements = 16;
+// The system keeps one mapping for each stretch of granules with the same access.
+static constexpr size_t maxAccessBorders = 16384;
 static constexpr uintptr_t lowestRandomAddress = 64 * GB;
 static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
 #if OS(LINUX)
@@ -149,6 +151,16 @@ static void ensureGranuleBits(BitVector& bits, size_t end, size_t granuleCount)
 {
     if (end > bits.size())
         resizeGranuleBits(bits, std::min(std::max(end, 2 * bits.size()), granuleCount));
+}
+
+static std::atomic<size_t> s_accessBorderCount { 0 };
+
+static size_t countAccessBorders(const BitVector& accessibleGranules, size_t first, size_t count)
+{
+    size_t result = 0;
+    for (size_t index = first ? first - 1 : 0; index < first + count; ++index)
+        result += accessibleGranules.get(index) != accessibleGranules.get(index + 1);
+    return result;
 }
 
 static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
@@ -522,6 +534,8 @@ void* ReservedRangeHeap::tryAllocateGranules(size_t size)
         m_firstGranulesOfRuns.quickSet(first);
         if (first == m_firstGranuleToSearch)
             m_firstGranuleToSearch += count;
+        ensureGranuleBits(m_accessibleGranules, first + count, granuleCount);
+        setAccess(first, count, true);
     }
 
     void* result = std::bit_cast<void*>(m_start + first * granuleSize);
@@ -536,23 +550,36 @@ void ReservedRangeHeap::freeGranules(void* pointer)
 {
     size_t first = granuleIndexOf(m_start, m_size, pointer);
     size_t count;
+    bool removesAccess;
     {
         Locker locker { m_lock };
         RELEASE_ASSERT(m_firstGranulesOfRuns.get(first), first);
         count = granuleCountOfRun(first);
+        bool addsBorders = first && m_accessibleGranules.get(first - 1) && m_accessibleGranules.get(first + count);
+        removesAccess = !addsBorders || s_accessBorderCount.load(std::memory_order_relaxed) < maxAccessBorders;
+        if (removesAccess)
+            setAccess(first, count, false);
     }
 
     // The run stays marked as used until it is decommitted, so that nobody is handed it meanwhile.
 #if ASAN_ENABLED
     __asan_poison_memory_region(pointer, count * granuleSize);
 #endif
-    decommitGranules(pointer, count * granuleSize);
+    decommitGranules(pointer, count * granuleSize, removesAccess);
 
     Locker locker { m_lock };
     m_firstGranulesOfRuns.quickClear(first);
     for (size_t index = first; index < first + count; ++index)
         m_usedGranules.quickClear(index);
     m_firstGranuleToSearch = std::min(m_firstGranuleToSearch, first);
+}
+
+void ReservedRangeHeap::setAccess(size_t first, size_t count, bool isAccessible)
+{
+    size_t bordersBefore = countAccessBorders(m_accessibleGranules, first, count);
+    for (size_t index = first; index < first + count; ++index)
+        m_accessibleGranules.quickSet(index, isAccessible);
+    s_accessBorderCount.fetch_add(countAccessBorders(m_accessibleGranules, first, count) - bordersBefore, std::memory_order_relaxed);
 }
 
 size_t ReservedRangeHeap::granuleCountOfRun(size_t firstGranule)
@@ -571,11 +598,14 @@ void ReservedRangeHeap::commitGranules(void* address, size_t size)
     OSAllocator::commit(address, size, true, false);
 }
 
-void ReservedRangeHeap::decommitGranules(void* address, size_t size)
+void ReservedRangeHeap::decommitGranules(void* address, size_t size, bool removesAccess)
 {
     OSAllocator::decommit(address, size);
 #if OS(UNIX) && !PLATFORM(PLAYSTATION)
-    OSAllocator::protect(address, size, false, false);
+    if (removesAccess)
+        OSAllocator::protect(address, size, false, false);
+#else
+    UNUSED_PARAM(removesAccess);
 #endif
 }
 

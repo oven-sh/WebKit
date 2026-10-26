@@ -87,6 +87,8 @@ ValueFlowOperand HeapRule::receiversUnder(const ValueFlowOperand& object, const 
 void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     ClimbingSet receivers = m_context.valueOf(object);
+    // Beside a placeholder the receivers that it covers are listed for a while only: each list is looked up as it comes.
+    bool areReceiversListedForGood = !m_context.meet(receivers, m_universe.placeholdersAlone());
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
     if (namesObjectOfAccess() && isNameThatTableDoesNotListOnGlobalObject(key) && m_context.contains(receivers, globalObject)) {
         readThroughChain(ClimbingSet(only(globalObject)), key, { &object, { } }, m_statement.result);
@@ -107,7 +109,10 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 
     ValueFlowName name = nameOfLookupForValue(key);
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
-        connect(m_context.lookup(start, name), m_statement.result);
+        if (areReceiversListedForGood && tellsApartStartsThatFindNothing(start, key))
+            readFromStartsThatMayFindSomething(start, key);
+        else
+            connect(m_context.lookup(start, name), m_statement.result);
     });
     if (key.keyClass == HeapKeyClass::Unknown) {
         // A key nobody knows may be a symbol that the program has found by listing the keys.

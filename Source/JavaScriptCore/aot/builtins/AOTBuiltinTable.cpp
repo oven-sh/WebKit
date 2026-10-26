@@ -608,23 +608,23 @@ const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
     return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
 }
 
-static bool letsInUnseenCodeWhenCalled(const BuiltinTable& builtins, BuiltinID id)
+bool BuiltinTable::letsInUnseenCodeWhenCalled(BuiltinID id) const
 {
     constexpr OptionSet<BuiltinFlag> flagsOfEvents { BuiltinFlag::EvaluatesText, BuiltinFlag::LoadsModuleByName, BuiltinFlag::RunsUnseenCode };
-    const BuiltinUnseenCode* row = builtins.unseenCodeOf(id);
+    const BuiltinUnseenCode* row = unseenCodeOf(id);
     if (row && row->condition && row->condition->hasProperty)
         return false;
-    return builtins.at(id).flags.containsAny(flagsOfEvents) || row;
+    return at(id).flags.containsAny(flagsOfEvents) || row;
 }
 
 bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
 {
-    if (letsInUnseenCodeWhenCalled(*this, id))
+    if (letsInUnseenCodeWhenCalled(id))
         return true;
     // createRequire() returns a require function.
     return std::ranges::any_of(overloadsOf(id), [&](const BuiltinOverload& overload) {
         return std::ranges::any_of(at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
-            return part.kind == BuiltinTypePartKind::Builtin && letsInUnseenCodeWhenCalled(*this, canonicalID(part.builtin));
+            return part.kind == BuiltinTypePartKind::Builtin && letsInUnseenCodeWhenCalled(canonicalID(part.builtin));
         });
     });
 }

@@ -2156,7 +2156,9 @@ void ValueFlowSolver::noteNamesWatched(unsigned numberOfShard, ValueSetMaker& ma
         }
         if (!name.holders) {
             name.roundOfFirstQuestion = round;
-            Vector<ValueSetID, 16> written { m_input.universe->placeholdersAlone(), m_input.universe->builtinTables().heap().objectsDeclaringField(PropertyKeyID(name.name.payload)) };
+            Vector<ValueSetID, 16> written { m_input.universe->placeholdersAlone() };
+            if (name.name.kind == ValueFlowNameKind::Property)
+                written.append(m_input.universe->builtinTables().heap().objectsDeclaringField(PropertyKeyID(name.name.payload)));
             for (const Vector<NodeOfSet>* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
                 for (const NodeOfSet& node : *list)
                     written.append(node.set);
