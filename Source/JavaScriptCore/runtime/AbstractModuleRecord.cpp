@@ -1096,7 +1096,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                         return Resolution::ambiguous();
                     foundStarLinks |= !starTargets.isEmpty();
                     while (!starTargets.isEmpty())
-                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::Query });
+                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::QueryViaStarExport });
                     continue;
                 }
             }
