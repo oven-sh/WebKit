@@ -1,0 +1,56 @@
+# A proof of the flow analysis goes once typing gives its operand a type inside it, and one that still narrows is never removed, merged or weakened
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="operandIsInside" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = AssumeType v0 provenType=number
+    Return v1
+# CHECK-NEXT: b0(v0: i32):
+# CHECK-NEXT: Return v0
+}
+
+function f1 name="operandIsInsideThroughUpcast" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Upcast v0 castType=anything
+    v2 = AssumeType v1 provenType=number
+    Return v2
+# CHECK-NEXT: b0(v0: i32):
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="stillNarrows" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = AssumeType v0 provenType=number
+    Return v1
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: number = AssumeType v0 provenType=number
+# CHECK-NEXT: Return v1
+}
+
+function f3 name="equalOneDominates" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+    v2 = AssumeType v0 provenType=number
+    v3 = AssumeType v0 provenType=number
+    v4 = Add v2, v3
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = AssumeType v0 provenType=number
+    Return v5
+  b2():
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: boolean):
+# CHECK-NEXT: v2: number = AssumeType v0 provenType=number
+# CHECK-NEXT: v3: number = AssumeType v0 provenType=number
+# CHECK-NEXT: = Add v2, v3
+# CHECK: b1():
+# CHECK-NEXT: v5: number = AssumeType v0 provenType=number
+# CHECK-NEXT: Return v5
+}
+
+function f4 name="predictionIsNarrower" parameters=[{type=number}] results=[{type=number}] {
+    v1 ~ i32 = AssumeType v0 provenType=number
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number ~ i32 = AssumeType v0 provenType=number
+# CHECK-NEXT: Return v1
+}

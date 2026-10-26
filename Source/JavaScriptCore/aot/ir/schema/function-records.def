@@ -1,0 +1,68 @@
+flags FunctionCapabilities {
+    | engine MayChangeSignature MayBeCloned MayBeInlined HasOrdinaryFrame HasOnlyDirectCallers IsNeverCalledByHost IsHiddenInStackTraces
+    ClosuresAreReadWithoutCode RecordsCallee RecordsCalleeOnceRenamed NotesLooksForName
+}
+enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgumentArea: Bool, record: Name, capabilities: FunctionCapabilities
+    | engine isWrapperOrWorker: Bool, isEnteredOnlyByCalls: Bool, showsSourceText: Bool, hasClosureWord: Bool) {
+    Source(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, true, false)
+    Library(true, true, true, None, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame, false, true, false, false)
+    Model(true, false, true, None, none, false, false, false, false)
+    Signature(false, false, false, None, none, false, true, false, false)
+    | engine
+    GenericEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, true)
+    TableEntrypoint(false, false, false, Entrypoint, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, false)
+    TableLookup(false, false, false, TableLookup, HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, false, false, false)
+    GenericVersion(true, false, true, Version, MayBeCloned+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost, false, true, false, false)
+    AllocatedThisVersion(true, false, true, Version, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, false, true, false, false)
+    ConstructBody(true, false, true, Version, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, false, true, false, false)
+    CallSiteVersion(true, false, true, Version, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, false, true, false, false)
+    CalleeVersion(true, false, true, Version, MayChangeSignature+MayBeCloned+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, false, true, false, false)
+    CoroutineRamp(false, true, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, true, false)
+    CoroutineBody(false, false, true, Coroutine, none, false, false, false, false)
+    AsyncWorker(false, false, true, Coroutine, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, true, true, false, false)
+    BoundFunction(false, true, true, BoundFunction, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
+    ResultWrapper(false, true, true, ResultWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
+    ResultWorker(false, false, true, ResultWorker, MayChangeSignature+MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost, true, true, false, false)
+    ParameterWrapper(false, true, true, ParameterWrapper, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
+    EntryChecks(false, true, true, EntryChecks, MayBeInlined+HasOrdinaryFrame+IsNeverCalledByHost+IsHiddenInStackTraces, true, true, true, false)
+    OutlinedBody(false, false, true, None, HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
+    Serializer(false, false, true, Serializer, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
+    Parser(false, false, true, Parser, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
+    ChainStep(false, false, true, ChainStep, MayBeInlined+HasOrdinaryFrame+HasOnlyDirectCallers+IsNeverCalledByHost+IsHiddenInStackTraces, false, true, false, false)
+    StubBody(false, false, false, StubBody, none, false, false, false, false)
+}
+
+enum ArgumentPassing { | engine Buffer Registers }
+enum CoroutineKind { | engine Generator AsyncFunction AsyncGenerator }
+enum NullishResult { | engine Never Undefined Null }
+enum TypedResultForm { | engine None ParsedText ParsedBody Rows }
+
+record ParameterOrigin engine { original: UInt32? }
+record Derivation engine { source: Function(Dispatch)? parameter: UInt32 node: UInt32 parameterMap: List<ParameterOrigin> }
+record DerivedFunctionKey engine { role: FunctionRole target: Function(Dispatch)? parameter: UInt32 node: UInt32 }
+record InlineFrame engine {
+    callee: Function(Dispatch)? callPosition: UInt32 parent: UInt32 isTailCall: Bool isConstruction: Bool callIsPartOfConstruction: Bool module: Module(Referrer)?
+}
+record Origin engine { position: UInt32 inlineFrame: UInt32 isTailCall: Bool isPartOfConstruction: Bool }
+
+variant CreatorRecord engine {
+    None
+    Entrypoint {
+        target: Function(Call) arguments: ArgumentPassing takesNewTarget: Bool constructEntrypoint: Function(Call)?
+    }
+    TableLookup { key: PropertyKey }
+    Version { provenVersion: Function(Dispatch) }
+    Coroutine {
+        kind: CoroutineKind ramp: Function(Dispatch) body: Function(Dispatch) entryWithoutPromise: Function(Dispatch)? promiseType: Type?
+        promiseParameter: UInt32? worker: Function(Dispatch)?
+    }
+    BoundFunction { target: Function(Closure) numberOfBoundArguments: UInt32 numberOfCapturedArguments: UInt32 capturesTargetClosure: Bool }
+    ResultWrapper { worker: Function(Dispatch) nullish: NullishResult layout: Layout? }
+    ResultWorker { origin: Function(Dispatch) }
+    ParameterWrapper { body: Function(Dispatch) parameter: UInt32 }
+    EntryChecks { body: Function(Dispatch) fallback: Function(Dispatch) }
+    Serializer { layout: Layout? }
+    Parser { type: Type layout: Layout? form: TypedResultForm }
+    ChainStep
+    StubBody { builtin: Builtin }
+}

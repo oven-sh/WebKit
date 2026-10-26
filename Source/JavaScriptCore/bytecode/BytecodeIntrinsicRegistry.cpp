@@ -129,10 +129,5 @@ std::optional<BytecodeIntrinsicRegistry::Entry> BytecodeIntrinsicRegistry::looku
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_SIMPLE_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS)
 #undef JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS
 
-JSValue BytecodeIntrinsicRegistry::orderedHashTableSentinelValue(BytecodeGenerator& generator)
-{
-    return generator.vm().orderedHashTableSentinel();
-}
-
 } // namespace JSC
 

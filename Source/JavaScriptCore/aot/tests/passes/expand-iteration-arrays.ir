@@ -1,0 +1,221 @@
+# An iteration over an array becomes an index, a length read and an element read at each step
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(RESOLVED): pass ExpandIteration SimplifyControlFlow ThreadJumps FoldConstants SimplifyControlFlow EliminateDeadCode SimplifyCasts ResolveBuiltins ResolveAccesses PlaceTypeTests CompactBlocks
+# RUN(LEFT): pass ExpandIteration
+# OPTIONS: disable=pass:PlaceTypeTests disable-in=2:1
+# STATISTIC: IterationsExpandedByClass = 6
+# STATISTIC: IterationsExpandedGenerically = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="forOf" parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b6(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b5():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2
+    Return
+  b5() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b6():
+    Return
+# CHECK: b0(v0: Array<number, pristine[Names]>, v1: anything):
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[start0]]([[zero0]])
+# CHECK-NEXT: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length0]]: anything = PropGet v0 key="length"
+# CHECK-NEXT: [[limit0]]: int[0, 9007199254740991] = ToLength [[length0]]
+# CHECK-NEXT: [[inRange0]]: boolean = Less [[index0]], [[limit0]]
+# CHECK-NEXT: Branch [[inRange0]] -> taken [[read0]](| 0), notTaken [[end0]](| 0)
+# CHECK: = Call v1, -, v6
+# CHECK: Branch v8 -> taken b4(), notTaken b1([[carried0]])
+# CHECK: Jump -> next b1([[first0]])
+# CHECK: [[start0]]([[first0]]: int[0, 9007199254740991]):
+# CHECK: [[after0]](v5: boolean, v6: anything, [[carried0]]: int[0, 9007199254740991]):
+# CHECK: Branch v5 -> taken b6(), notTaken b2()
+# CHECK: [[read0]]([[proven0]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[element0]]: {{*}} = ElemGet v0, [[proven0]] [keyIsIntegral]
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next0]]: int[1, 9007199254740991] = Add [[proven0]], [[one0]]
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[after0]]([[no0]], [[element0]], [[next0]])
+# CHECK-NEXT: [[end0]]({{*}}):
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[after0]]([[yes0]], [[nothing0]], [[index0]])
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: NewArray
+# ABSENT-NOT: handler=
+}
+
+function f1 name="keys" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeKeys/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# CHECK: = PropGet v0 key="length"
+# CHECK: [[inRange1]]: boolean = Less
+# CHECK-NEXT: Branch [[inRange1]] -> taken [[read1]](| 0), notTaken
+# CHECK: [[read1]]([[proven1]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[one1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next1]]: int[1, 9007199254740991] = Add [[proven1]], [[one1]]
+# CHECK-NEXT: [[no1]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no1]], [[proven1]], [[next1]])
+# ABSENT-NOT: ElemGet
+# ABSENT-NOT: NewArray
+}
+
+function f2 name="entries" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeEntries/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f2 name="entries"
+# CHECK: = PropGet v0 key="length"
+# CHECK: [[read2]]([[proven2]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[element2]]: {{*}} = ElemGet v0, [[proven2]] [keyIsIntegral]
+# CHECK: [[no2]]: false = Boolean
+# CHECK-NEXT: [[pair2]]: Array = NewArray [[proven2]], [[element2]] contents=anything
+# CHECK-NEXT: Jump -> next {{*}}([[no2]], [[pair2]],
+# ABSENT-LABEL: function f2 name="entries"
+
+function f3 name="bodyPushes" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v6 = CallBuiltin v0, v5 overload=ArrayPrototypePush/0
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3 name="bodyPushes"
+# CHECK: b0(v0: Array<number, pristine[Names]>):
+# CHECK-NOT: key="length"
+# CHECK: b1([[index3]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length3]]: anything = PropGet v0 key="length"
+# CHECK-NEXT: [[limit3]]: int[0, 9007199254740991] = ToLength [[length3]]
+# CHECK-NEXT: = Less [[index3]], [[limit3]]
+# CHECK: = CallBuiltin v0, v5 overload=ArrayPrototypePush/0
+# CHECK-NEXT: Jump -> next b1(
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
+# ABSENT-LABEL: function f3 name="bodyPushes"
+
+function f4 name="sumOfNullableArray" parameters=[{type=undefined|null|Array<number>}, {type=number}] results=[{type=number flags=[IsExpected]}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    v8 = Check v7 expectedType=number
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+}
+# CHECK-LABEL: function f4 name="sumOfNullableArray"
+# ABSENT-LABEL: function f4 name="sumOfNullableArray"
+# RESOLVED-LABEL: function f4 name="sumOfNullableArray"
+# RESOLVED: [[storage4]]: boolean = HasArrayStorage [[array4]] arrayStorage=Double
+# RESOLVED-NEXT: Branch [[storage4]] -> taken [[guarded4]](| 0), notTaken
+# RESOLVED: [[guarded4]]([[guard4]]: guard):
+# RESOLVED-NEXT: Jump -> next [[header4]](
+# RESOLVED-NEXT: [[header4]]({{*}}):
+# RESOLVED-NEXT: LoopHint
+# RESOLVED-NOT: PropGet
+# RESOLVED-NOT: ElemGet
+# RESOLVED-NOT: = Call v
+# RESOLVED-NOT: IsPristine
+# RESOLVED: = CallBuiltin [[array4]] overload=ArrayPrototypeLength/0
+# RESOLVED-NOT: PropGet
+# RESOLVED-NOT: ElemGet
+# RESOLVED-NOT: = Call v
+# RESOLVED-NOT: IsPristine
+# RESOLVED: = IsElementPresent [[array4]], {{*}}, [[guard4]] arrayStorage=Double [keyIsIntegral]
+# RESOLVED-NOT: PropGet
+# RESOLVED-NOT: ElemGet
+# RESOLVED-NOT: = Call v
+# RESOLVED-NOT: IsPristine
+# RESOLVED: : number = GetArrayElement [[array4]], {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# RESOLVED-NOT: PropGet
+# RESOLVED-NOT: ElemGet
+# RESOLVED-NOT: = Call v
+# RESOLVED-NOT: IsPristine
+# RESOLVED: Jump -> next [[header4]](
+
+function f5 name="asyncKind" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# The steps are those of the sync iteration, and each value is awaited as the wrapper around the array's iterator would: passes/expand-iteration-async-over-sync.ir
+# CHECK-LABEL: function f5 name="asyncKind"
+# CHECK: = Await {{*}} [takesExtraTurn]
+# CHECK: = PropGet v0 key="length"
+# CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
+# ABSENT-LABEL: function f5 name="asyncKind"
+# ABSENT-NOT: @@asyncIterator
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: CreateAsyncFromSyncIterator
+# ABSENT-NOT: key="next"
+# ABSENT-LABEL: function f6 name="openIterator"
+# RESOLVED-LABEL: function f5 name="asyncKind"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

@@ -1,0 +1,72 @@
+# A number that was tested while boxed and is kept as a double behind the test is not boxed again where it is wanted boxed: the word that was tested is still there.
+# Not where that word has a narrower type than the value it would stand for: the types of the users follow their operand
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+# REQUIRES(CODE): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="testedNumberReturned" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=number
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: number):
+    v4 = Mul v3, v1 form=Numbers
+    v5 = Mul v3, v4 form=Numbers
+    v6 = Less v5, v1 form=Numbers
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v3
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="testedNumberReturned"
+# CHECK: b1(v3: number @Double):
+# CHECK: b2():
+# CHECK-NEXT: Return v3
+# CODE-LABEL: f0:
+# CODE-NOT: stub BoxNumber
+
+function f1 name="joinedNumberIsBoxed" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=number
+    TestAndBranch v3 -> taken b2(| 0), notTaken b1()
+  b1():
+    Jump -> next b2(v1)
+  b2(v4: number):
+    v5 = Mul v4, v1 form=Numbers
+    v6 = Mul v4, v5 form=Numbers
+    v7 = Less v6, v1 form=Numbers
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    Return v4
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="joinedNumberIsBoxed"
+# CHECK: b2(v4: number @Double):
+# CHECK: b3():
+# CHECK-NEXT: Return v4
+# CODE-LABEL: f1:
+# CODE: stub BoxNumber.Double x1
+
+function f2 name="parameterWiderThanWhatArrives" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = AssumeType v0 provenType=i32
+    v3 = StrictEq v2, v0 form=Generic
+    Jump -> next b1(v2)
+  b1(v4: number):
+    v5 = Mul v4, v1 form=Numbers
+    v6 = Mul v4, v5 form=Numbers
+    v7 = Less v6, v1 form=Numbers
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="parameterWiderThanWhatArrives"
+# CHECK: b1(v4: number @Double):
+# CHECK: b2():
+# CHECK-NEXT: Return v4
+# CODE-LABEL: f2:
+# CODE: stub BoxNumber.Double x1
+# CODE-NOT: no code

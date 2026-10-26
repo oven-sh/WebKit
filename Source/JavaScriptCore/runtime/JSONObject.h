@@ -59,18 +59,25 @@ private:
 };
 
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
-JSValue JSONParseWithException(JSGlobalObject*, StringView);
+// Bytes that are all ASCII are parsed where they are. Empty without an exception for any other bytes: they are parsed as a string.
+JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, std::span<const char8_t> utf8);
+enum class CompiledJSONParser : bool { Try, Skip };
+JSValue JSONParseWithException(JSGlobalObject*, StringView, CompiledJSONParser = CompiledJSONParser::Try);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, JSValue space);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent);
 
 #if USE(BUN_JSC_ADDITIONS)
 struct StreamingJSONParseResult {
     size_t charactersConsumed;
-    enum class Status : uint8_t { Complete, NeedMoreData, Error } status;
+    // NeedsText: the bytes are not all ASCII. Nothing was parsed, and they are to be parsed as a string.
+    enum class Status : uint8_t { Complete, NeedMoreData, Error, NeedsText } status;
 };
 
 JS_EXPORT_PRIVATE StreamingJSONParseResult streamingJSONParse(
     JSGlobalObject*, StringView input, MarkedArgumentBuffer& results);
+// charactersConsumed counts bytes.
+JS_EXPORT_PRIVATE StreamingJSONParseResult streamingJSONParse(
+    JSGlobalObject*, std::span<const char8_t> utf8, MarkedArgumentBuffer& results);
 #endif
 
 } // namespace JSC

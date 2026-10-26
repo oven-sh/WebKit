@@ -50,6 +50,10 @@ class QueuedTask;
 enum class CompilationType;
 enum class ScriptExecutionStatus;
 
+namespace AOT {
+struct ModuleHost;
+}
+
 enum class JSPromiseRejectionOperation : unsigned {
     Reject, // When a promise is rejected without any handlers.
     Handle, // When a handler is added to a rejected promise for the first time.
@@ -92,6 +96,11 @@ struct GlobalObjectMethodTable {
     String (*codeForEval)(JSGlobalObject*, JSValue);
     bool (*canCompileStrings)(JSGlobalObject*, CompilationType, String, const ArgList&);
     Structure* (*trustedScriptStructure)(JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
+    JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
+    const AOT::ModuleHost* moduleHost { nullptr };
+#endif
 };
 
 } // namespace JSC

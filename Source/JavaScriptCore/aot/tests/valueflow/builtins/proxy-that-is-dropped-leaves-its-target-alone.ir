@@ -1,0 +1,33 @@
+# class Body { step(by) { return by } }; body = new Body; body.step(1); new Proxy(body, {})
+# Making a proxy runs no code, and only whoever holds the proxy reaches its target. Nobody holds this one, so the call in the program is the only call of the method.
+# RUN: valueflow-apply
+# CHECK: function f2 name="step" {{*}}parameters=[{type=1}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Body" constructor=f1
+layout L1 name="Handler"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="step"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Integer integer=1
+    v7 = PropGet v5 key="step"
+    v8 = Call v7, v5, v6
+    v9 = NewObject layout=L1
+    v10 = Builtin builtin=Proxy
+    v11 = Construct v10, -, v5, v9
+    Return
+}
+function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="step" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

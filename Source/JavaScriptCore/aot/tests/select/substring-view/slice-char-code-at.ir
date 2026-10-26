@@ -1,0 +1,70 @@
+# An indexed read of a range reads the base string and counts from the start of the range
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-char-code-at" parameters=[{type=string}, {type=int}, {type=int}, {type=number}] results=[{type=number}] {
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = CallBuiltin v8, v3 overload=StringPrototypeCharCodeAt/0
+    Return v9
+# CHECK-NOT: = Substring
+# CHECK: [[result0]]: number = StringRangeCodeUnitOrNaN v0, v6, v7, v3
+# CHECK-NEXT: Return [[result0]]
+}
+
+function f1 name="slice-code-point-at" parameters=[{type=string}, {type=int}, {type=int}, {type=number}] results=[{type=undefined|int}] {
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = CallBuiltin v8, v3 overload=StringPrototypeCodePointAt/0
+    Return v9
+# CHECK-NOT: = Substring
+# CHECK: [[result1]]: undefined|int[0, 1114111] = StringRangeCodePointOrUndefined v0, v6, v7, v3
+# CHECK-NEXT: Return [[result1]]
+}
+
+function f2 name="char-code-at-without-position" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = CallBuiltin v7 overload=StringPrototypeCharCodeAt/0
+    Return v8
+# CHECK-NOT: = Substring
+# CHECK: [[zero2]]: 0 = Integer
+# CHECK-NEXT: [[result2]]: number = StringRangeCodeUnitOrNaN v0, v5, v6, [[zero2]]
+# CHECK-NEXT: Return [[result2]]
+}
+
+function f3 name="slice-element" parameters=[{type=string}, {type=int}, {type=int}, {type=number}] results=[{type=anything}] {
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = ElemGet v8, v3
+    Return v9
+# CHECK-NOT: = Substring
+# CHECK: [[result3]]: undefined|string = StringRangeCharacterOrUndefined v0, v6, v7, v3
+# CHECK-NEXT: Return [[result3]]
+}
+
+function f4 name="slice-trimmed" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = CallBuiltin v7 overload=StringPrototypeTrim/0
+    Return v8
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NEXT: v8: string = Call{{*}} v7 {{*}}overload=StringPrototypeTrim/0
+}

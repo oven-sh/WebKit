@@ -1,0 +1,56 @@
+# The machine call sites of a built-in's function object, of the operations of its inline code and of an awaited call are recorded as a tail call's when the row is a demoted tail call
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code
+# CHECK: f0: size={{*}} tailCallSites=
+# CHECK-NEXT: f1: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f2: size={{*}} tailCallSites=
+# CHECK-NEXT: f3: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f8: size={{*}} sites=3 {{*}} tailCallSites=1
+# CHECK-NEXT: f9: size={{*}} sites=2
+# CHECK-NOT: tailCallSites
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="markedCallBuiltin" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 @0 tail
+    Return v2
+}
+function f1 name="callBuiltin" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    Return v2
+}
+function f2 name="markedCallInline" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0 @0 tail
+    Return v2
+}
+function f3 name="callInline" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+    Return v2
+}
+function f4 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f7
+    v3 = AssumeType v2 provenType=Promise
+    Return v3
+}
+function f5 name="markedAwaitedCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f8 entryWithoutPromise=f8 promiseType=Promise promiseParameter=1}
+function f6 name="awaitedCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1}
+function f7 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitBySavingFrame v0, v1 @10
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f8 name="markedAwaitedCall" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f8 entryWithoutPromise=f8 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitCallBySavingFrame v1, v0 function=f7 @20 tail
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f9 name="awaitedCall" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitCallBySavingFrame v1, v0 function=f7 @20
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}

@@ -1,0 +1,71 @@
+# any = first or second or third; others = fourth or first or second; kept = {}; any.go = one; any.go(two); fourth.go(two); kept.go()   (expectations changed by ruling 74: no field for a name that is stored only through a receiver nobody knows)
+# Each variable holds more than the analysis follows in one set, so the untracked object stands for what they held. What is stored through it lies in one place for each name.
+# A read through the untracked object finds it there, and so does a read of an object that the analysis has stopped following, also of one that never came to the variable of the store.
+# An object that is still followed does not have it. The stored value stays in the program: it is entered with the operands of its calls alone.
+# What the store does to its receiver may have been done to every object that is no longer followed, and to no other: each of those may be stored into after its creation and may gain the name.
+# No store lists one of them among its receivers, so the name gets no field in their layouts: it is an extra property. It stands in the one list of the program of the names that are stored
+# through receivers nobody knows, and each of those layouts says only that such a store may reach its objects. They may gain no other name.
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# RUN: valueflow-solve calls
+# CHECK: f0 v16 -> f1
+# CHECK: f0 v18 -> f1
+# CHECK-NOT: f0 v20 -> {{*}}
+# CHECK: f1 v1 -> f2
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 0
+# RUN(RESULTS): valueflow-results
+# RESULTS: class {{*}}layout=L3 {{*}}impossibleMutations=[
+# RESULTS-NOT: AddProperty
+# RESULTS-NOT: StoreAfterCreation
+# RESULTS: class {{*}}layout=L4 {{*}}impossibleMutations=[{{*}}AddProperty{{*}}StoreAfterCreation
+# RESULTS: stored-through-unknown-receivers ["go"]
+# RUN(APPLY): valueflow-apply
+# APPLY: layout L3 name="Fourth" flow=
+# APPLY-NOT: AddProperty
+# APPLY-NOT: addedKeys=
+# APPLY: addedKeysAreComplete=true isReachedThroughUnknownReceivers=true}
+# APPLY: layout L4 name="Kept" flow=
+# APPLY-NOT: addedKeys=
+# APPLY: addedKeysAreComplete=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Second"
+layout L2 name="Third"
+layout L3 name="Fourth"
+layout L4 name="Kept"
+variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="others" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewObject layout=L2 fields=[]
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    v6 = NewObject layout=L3 fields=[]
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v1 variable=g1
+    v10 = NewObject layout=L4 fields=[]
+    v11 = GetModuleVariable variable=g0
+    v12 = NewClosure function=f1
+    PropSet v11, v12 key="go" mode=Strict
+    v14 = NewClosure function=f2
+    v15 = PropGet v11 key="go"
+    v16 = Call v15, v11, v14
+    v17 = PropGet v6 key="go"
+    v18 = Call v17, v6, v14
+    v19 = PropGet v10 key="go"
+    v20 = Call v19, v10
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,152 @@
+# A loop of the caller pays for a call at every turn, and what the loop knows of the arguments stops at the call. Of a function with one call site there is one copy at most:
+# its one call, hot and in a loop of the caller, has a budget of its own. A function with two call sites has the budget of hot code in each, and so has the one call outside of loops.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot limit=InlineBudgetHotBytes:80
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v2 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = PropGet v5 key="f"
+    v7 = PropGet v6 key="g"
+    v8 = PropGet v7 key="h"
+    Return v8
+}
+function f1 name="calledAtTwoPlaces" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v2 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = PropGet v5 key="f"
+    v7 = PropGet v6 key="g"
+    v8 = PropGet v7 key="h"
+    Return v8
+}
+function f2 name="calledAtOnePlaceOutsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v2 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = PropGet v5 key="f"
+    v7 = PropGet v6 key="g"
+    v8 = PropGet v7 key="h"
+    Return v8
+}
+function f3 name="farMoreCalledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v2 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = PropGet v5 key="f"
+    v7 = PropGet v6 key="g"
+    v8 = PropGet v7 key="h"
+    v9 = PropGet v8 key="i"
+    v10 = PropGet v9 key="j"
+    v11 = PropGet v10 key="k"
+    v12 = PropGet v11 key="l"
+    v13 = PropGet v12 key="m"
+    v14 = PropGet v13 key="n"
+    v15 = PropGet v14 key="o"
+    v16 = PropGet v15 key="p"
+    v17 = PropGet v16 key="q"
+    v18 = PropGet v17 key="r"
+    v19 = PropGet v18 key="s"
+    v20 = PropGet v19 key="t"
+    v21 = PropGet v20 key="u"
+    v22 = PropGet v21 key="v"
+    v23 = PropGet v22 key="w"
+    v24 = PropGet v23 key="x"
+    v25 = PropGet v24 key="y"
+    v26 = PropGet v25 key="z"
+    v27 = PropGet v26 key="a1"
+    v28 = PropGet v27 key="b1"
+    v29 = PropGet v28 key="c1"
+    v30 = PropGet v29 key="d1"
+    v31 = PropGet v30 key="e1"
+    v32 = PropGet v31 key="f1"
+    v33 = PropGet v32 key="g1"
+    v34 = PropGet v33 key="h1"
+    v35 = PropGet v34 key="i1"
+    v36 = PropGet v35 key="j1"
+    v37 = PropGet v36 key="k1"
+    v38 = PropGet v37 key="l1"
+    v39 = PropGet v38 key="m1"
+    v40 = PropGet v39 key="n1"
+    Return v40
+}
+function f4 name="theOneCallInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f0
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK-NOT: function=f0
+}
+
+function f5 name="oneOfTwoCallsInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f1
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: = CallDirect {{*}} function=f1
+}
+
+function f6 name="theOtherOfTwoCallsInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f1
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: = CallDirect {{*}} function=f1
+}
+
+function f7 name="theOneCallOutsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+# CHECK: = CallDirect {{*}} function=f2
+}
+
+function f8 name="theOneCallOfFarMoreInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f3
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: = CallDirect {{*}} function=f3
+}

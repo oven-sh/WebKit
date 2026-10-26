@@ -1,0 +1,57 @@
+# However often a function is entered, what it does on a way that always ends in a throw is compact code: StringAndValue is a form of fast code only
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = ToString v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v9 = CallDirect v1, v3, v2 function=f1
+    Branch v2 -> taken b5(), notTaken b6()
+  b6():
+    Branch v2 -> taken b4(), notTaken b7()
+  b7():
+    Branch v2 -> taken b3(), notTaken b8()
+  b8():
+    Branch v2 -> taken b2(), notTaken b9()
+  b9():
+    Branch v2 -> taken b1(), notTaken b10()
+  b10():
+    Return
+}
+
+function f1 name="calledInFiveLoops" parameters=[{type=anything}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = StrictEq v1, v0
+    Jump -> next b2()
+  b2():
+    Throw v3
+  b3():
+    v4 = StrictEq v1, v0
+    Return v4
+# CHECK: b1()
+# CHECK: form=Generic
+# CHECK: Throw
+# CHECK: form=StringAndValue
+}

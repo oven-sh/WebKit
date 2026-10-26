@@ -1,0 +1,50 @@
+# What is claimed of a value in every version, by the front end or by anybody else, stays where the value has that type by a check: the check may go, and the claim goes on holding.
+# It goes where no check stands in front of the value, also when the pass itself has taken the check away. A type that is assumed behind checks goes as it did
+# FORM: Prepared
+# RUN: pass SimplifyCasts VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+function f0 name="behindCheck" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=object site=w0
+    v2 = AssumeType v1 provenType=object [isWordOfFrontEnd]
+    PropDefine v2, v0 key="a"
+    Return
+# CHECK: v1: object = Check v0 expectedType=object site=w0
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: PropDefine v2, v0 key="a"
+}
+function f1 name="behindNoCheck" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = AssumeType v0 provenType=object [isWordOfFrontEnd]
+    PropDefine v1, v0 key="a"
+    Return
+# CHECK: b0(v0: object):
+# CHECK-NEXT: PropDefine v0, v0 key="a"
+}
+function f2 name="assumedBehindChecks" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=object site=w0
+    v2 = AssumeType v1 provenType=object [isBehindChecks]
+    v3 = PropGet v2 key="a"
+    Return v3
+# CHECK: v1: object = Check v0 expectedType=object site=w0
+# CHECK-NEXT: = PropGet v1 key="a"
+}
+function f3 name="behindCheckThatGoes" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=object site=w0
+    v2 = AssumeType v1 provenType=object [isWordOfFrontEnd]
+    PropDefine v2, v0 key="a"
+    Return
+# CHECK: b0(v0: object):
+# CHECK-NEXT: PropDefine v0, v0 key="a"
+}
+function f4 name="assumedInEveryVersionForAnotherReason" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=object site=w0
+    v2 = AssumeType v1 provenType=object
+    v3 = PropGet v2 key="a"
+    Return v3
+# CHECK: v1: object = Check v0 expectedType=object site=w0
+# CHECK-NEXT: v2: object = AssumeType v1 provenType=object
+# CHECK-NEXT: = PropGet v2 key="a"
+}

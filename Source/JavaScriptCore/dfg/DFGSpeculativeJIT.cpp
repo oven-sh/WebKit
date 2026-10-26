@@ -2764,7 +2764,7 @@ GeneratedOperandType SpeculativeJIT::checkGeneratedTypeForToInt32(Node* node)
 void SpeculativeJIT::emitDoubleToInt32(FPRReg fpr, GPRReg gpr)
 {
 #if CPU(ARM64)
-    if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+    if (supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
         convertDoubleToInt32UsingJavaScriptSemantics(fpr, gpr);
         return;
     }

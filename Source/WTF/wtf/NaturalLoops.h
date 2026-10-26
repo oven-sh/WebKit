@@ -120,7 +120,8 @@ class NaturalLoops {
 public:
     typedef std::array<unsigned, 2> InnerMostLoopIndices;
 
-    NaturalLoops(Graph& graph, Dominators<Graph>& dominators, bool selfCheck = false)
+    template<typename DominatorsType>
+    NaturalLoops(Graph& graph, DominatorsType& dominators, bool selfCheck = false)
         : m_graph(graph)
         , m_innerMostLoopIndices(graph.template newMap<InnerMostLoopIndices>())
     {

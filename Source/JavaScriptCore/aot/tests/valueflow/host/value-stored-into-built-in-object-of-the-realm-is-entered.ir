@@ -1,0 +1,28 @@
+# Native code reaches the built-in objects of the realm without being handed them, and it reads and calls what the program puts there. A store in a function nobody reaches costs nothing
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# CHECK-NEXT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Date
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="now" mode=Strict
+    v3 = NewClosure function=f2
+    Return
+}
+function f1 name="fixedTime" results=[{type=anything}] {
+    v0 = Integer integer=0
+    Return v0
+}
+function f2 name="neverCalled" results=[{type=anything}] {
+    v0 = Builtin builtin=Date
+    v1 = NewClosure function=f3
+    PropSet v0, v1 key="parse" mode=Strict
+    Return
+}
+function f3 name="neverStored" results=[{type=anything}] {
+    Return
+}

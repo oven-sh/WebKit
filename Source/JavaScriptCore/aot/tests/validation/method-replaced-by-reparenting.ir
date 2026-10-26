@@ -1,0 +1,51 @@
+# class Greeter { greet() { return "as defined" } }  function greetingOf(greeter: Greeter) { return greeter.greet() }  register(greetingOf, new Greeter())
+# An object keeps its layout for life, also when it gets another prototype. So a proven layout says nothing about where a lookup goes on behind the object's own properties.
+# A method call on a receiver with a proven layout is a direct call all the same, behind one test of a bit of the class. The run time clears the bit as soon as one object of the layout gets another prototype.
+# The lie: that test passes whatever the bit says (drop-guard), as if the run time had missed the change or flow had called it impossible. The caller has put the instance under an object with a `greet` of its own.
+# A validating build looks the name up in front of every method call that became direct, without running code of the program. It finds a function of another definition and ends the process.
+# Beside it, in the same build: the instance is put under an empty object that inherits from the prototype object of the class, so the lookup takes one step more and finds the same method, and the instance is left alone
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (greetingOf, greeter) => { Object.setPrototypeOf(greeter, { greet() { return "replaced"; } }); print(greetingOf(greeter)); };
+# RUN(OTHER): run-in-shell globalThis.register = (greetingOf, greeter) => { Object.setPrototypeOf(greeter, Object.create(Object.getPrototypeOf(greeter))); print(greetingOf(greeter)); };
+# RUN(SAME): run-in-shell globalThis.register = (greetingOf, greeter) => { print(greetingOf(greeter)); };
+# OPTIONS: validate drop-guard=AreMembersUnchanged:0 heat=OnlyLoopsAreHot
+# CHECK: AOT validation: LookupDiffers f
+# CHECK: crashed with
+# OTHER-NOT: AOT validation
+# OTHER: as defined
+# OTHER-NEXT: exited with 0
+# SAME-NOT: AOT validation
+# SAME: as defined
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+layout L0 kind=Instance name="Greeter" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="greet"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v6, v5
+    Return
+}
+function f1 name="Greeter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="greet" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = String string="as defined"
+    Return v1
+}
+function f3 name="greetingOf" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="greet"
+    v2 = Call v1, v0 calleeKey="greet"
+    Return v2
+}

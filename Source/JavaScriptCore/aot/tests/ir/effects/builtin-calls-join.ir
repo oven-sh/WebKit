@@ -1,0 +1,43 @@
+# join, toString and a sort without a comparator convert what an array holds and not the array: an array that is proven to hold no object runs no code, and an array that may hold one runs unknown code
+# FORM: Prepared
+# RUN: effects f0 f1
+# RUN(USES): operands f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Element" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+function f0 name="holdsNoObject" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=Array<undefined|number|string, proven, pristine[Storage, Names]>}, {type=string}] results=[{type=undefined}] {
+    v3 = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0
+    v4 = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0
+    v5 = CallBuiltin v1 overload=ArrayPrototypeToString/0
+    v6 = CallBuiltin v0 overload=ArrayPrototypeSort/1
+    v7 = CallBuiltin v0 overload=ArrayPrototypeToSorted/1
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: unknownCode
+# USES-LABEL: function f0
+# USES: v3 CallBuiltin 0: [Inspects, ReadsContents]
+# USES: v4 CallBuiltin 0: [Inspects, ReadsContents]
+# USES: v5 CallBuiltin 0: [Inspects, ReadsContents]
+# USES: v7 CallBuiltin 0: [Inspects, ReadsContents, RetainsContents]
+function f1 name="mayHoldObject" parameters=[{type=Array<string, pristine[Storage]>}, {type=Array<L0, proven, pristine[Storage]>}, {type=Array<string|object, proven, pristine[Storage, Names]>}, {type=Array<string, proven, pristine[Storage]>}, {type=string}] results=[{type=undefined}] {
+    v5 = CallBuiltin v0, v4 overload=ArrayPrototypeJoin/0
+    v6 = CallBuiltin v1, v4 overload=ArrayPrototypeJoin/0
+    v7 = CallBuiltin v2 overload=ArrayPrototypeToString/0
+    v8 = CallBuiltin v3, v4 overload=ArrayPrototypeJoin/1
+    v9 = CallBuiltin v1 overload=ArrayPrototypeSort/1
+    v10 = CallBuiltin v0 overload=ArrayPrototypeToSorted/1
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v5 CallBuiltin: unknownCode
+# CHECK-NEXT: v6 CallBuiltin: unknownCode
+# CHECK-NEXT: v7 CallBuiltin: unknownCode
+# CHECK-NEXT: v8 CallBuiltin: unknownCode
+# CHECK-NEXT: v9 CallBuiltin: unknownCode
+# CHECK-NEXT: v10 CallBuiltin: unknownCode
+# USES-LABEL: function f1
+# USES: v5 CallBuiltin 0: [Inspects, ReadsContents, PassesToUserCode, AppliesToContents]
+# USES: v6 CallBuiltin 0: [Inspects, ReadsContents, PassesToUserCode, AppliesToContents]
+# USES: v7 CallBuiltin 0: [Inspects, ReadsContents, PassesToUserCode, AppliesToContents]
+# USES: v8 CallBuiltin 0: [Inspects, ReadsContents, PassesToUserCode, AppliesTransitively]

@@ -425,6 +425,10 @@ EOF
         "setEntryAddressWide32(#{id}, _#{full_name}_wide32)"
     end
 
+    def asm_section
+        @extras[:asm_section] || :bytecode
+    end
+
     def struct_indices
         out = []
         out += @args.map(&:field_name) unless @args.nil?

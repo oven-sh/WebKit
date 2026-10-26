@@ -756,6 +756,36 @@
 #define ENABLE_DFG_JIT 0
 #endif
 
+/* The ShadowRealm class, its global and the functions that wrap a callable of another realm. */
+#if !defined(ENABLE_SHADOW_REALM)
+#define ENABLE_SHADOW_REALM 1
+#endif
+
+/* Calls of native functions by a signature: JSFFIFunction, JSFFICallback, and CallFFI in the DFG and the FTL. */
+#if !defined(ENABLE_FFI)
+#if USE(BUN_JSC_ADDITIONS)
+#define ENABLE_FFI 1
+#else
+#define ENABLE_FFI 0
+#endif
+#endif
+
+#if !defined(ENABLE_AOT)
+#if ENABLE(FTL_JIT) && (CPU(ARM64) || CPU(X86_64)) && (OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS))
+#define ENABLE_AOT 1
+#else
+#define ENABLE_AOT 0
+#endif
+#endif
+
+#if !defined(ENABLE_AOT_POSITION_INDEPENDENT_IMAGE)
+#if OS(DARWIN) || OS(WINDOWS)
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 1
+#else
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 0
+#endif
+#endif
+
 /* The JIT disassembler is a debugging-only facility: it is reached solely by
    diagnostic options such as dumpDisassembly, dumpDFGDisassembly,
    dumpFTLDisassembly and logJIT. Its instruction tables are large - the
@@ -832,7 +862,7 @@
 #define ENABLE_DFG_DOES_GC_VALIDATION 0
 #endif
 
-#if ENABLE(JIT)
+#if ENABLE(JIT) || ENABLE(AOT)
 #define ENABLE_CONCURRENT_JS 1
 #endif
 
@@ -851,7 +881,7 @@
 #endif
 
 /* This controls whether B3 is built. B3 is needed for FTL JIT and WebAssembly */
-#if ENABLE(FTL_JIT)
+#if ENABLE(FTL_JIT) || ENABLE(AOT)
 #define ENABLE_B3_JIT 1
 #endif
 
@@ -927,7 +957,7 @@
 #endif
 
 /* Yet Another Regex Runtime - turned on by default for JIT enabled ports. */
-#if !defined(ENABLE_YARR_JIT) && ENABLE(JIT)
+#if !defined(ENABLE_YARR_JIT) && (ENABLE(JIT) || ENABLE(AOT))
 #define ENABLE_YARR_JIT 1
 #endif
 
@@ -950,6 +980,11 @@
 /* Enables an optimiztion to advance two codepoints when we fail to match a non-BMP character */
 #if ENABLE(YARR_JIT) && CPU(ARM64)
 #define ENABLE_YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP 1
+#endif
+
+/* Something emits machine code through jit/'s helpers: a JIT tier, or the back end of the ahead-of-time compiler. */
+#if ENABLE(JIT) || ENABLE(B3_JIT) || ENABLE(YARR_JIT)
+#define ENABLE_CODE_GENERATION 1
 #endif
 
 /* If either the JIT or the RegExp JIT is enabled, then the Assembler must be

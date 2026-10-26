@@ -1,0 +1,83 @@
+# A namespace object refuses to delete an export and accepts only a definition that changes nothing. So a removal or a definition under a name reads the export of that name, and leaves the others unread.
+# Under a key nobody knows it may read every export, and so may anything asked of a namespace that has an export under an index.
+#   import * as removed ..  delete removed.b; Reflect.deleteProperty(asked, "b"); Reflect.defineProperty(defined, "b", { value: 1 }); delete walked[name]; delete indexed[0]
+# FORM: AsRead
+# RUN: valueflow-apply
+# RUN(RESULTS): valueflow-results
+# CHECK: variable g0 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g1
+# CHECK-NOT: reads=
+# CHECK: variable g2 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g3
+# CHECK-NOT: reads=
+# CHECK: variable g4 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g5
+# CHECK-NOT: reads=
+# CHECK: module m0 path=
+# RESULTS: module m0 namespaceUse=NeverCreated
+# RESULTS-NEXT: module m1 namespaceUse=NamedReadsOnly
+# RESULTS-NEXT: module m2 namespaceUse=NamedReadsOnly
+# RESULTS-NEXT: module m3 namespaceUse=NamedReadsOnly
+# RESULTS-NOT: module m4
+# RESULTS-NOT: module m5
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}]
+module m1 path="removed.js" displayPath="removed.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}]
+module m2 path="asked.js" displayPath="asked.js" body=f2 exports=[{name="a" variable=g2}, {name="b" variable=g3}]
+module m3 path="defined.js" displayPath="defined.js" body=f3 exports=[{name="a" variable=g4}, {name="b" variable=g5}]
+module m4 path="walked.js" displayPath="walked.js" body=f4 exports=[{name="a" variable=g6}]
+module m5 path="indexed.js" displayPath="indexed.js" body=f5 exports=[{name="0" variable=g7}, {name="a" variable=g8}]
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="b" module=m1 declared={type=anything}
+variable g2 name="a" module=m2 declared={type=anything}
+variable g3 name="b" module=m2 declared={type=anything}
+variable g4 name="a" module=m3 declared={type=anything}
+variable g5 name="b" module=m3 declared={type=anything}
+variable g6 name="a" module=m4 declared={type=anything}
+variable g7 name="zero" module=m5 declared={type=anything}
+variable g8 name="a" module=m5 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = String string="b"
+    v3 = Builtin builtin=Reflect
+    v4 = ModuleNamespace module=m1
+    v5 = PropDelete v4 key="b"
+    v6 = ModuleNamespace module=m2
+    v7 = Builtin builtin=ReflectDeleteProperty
+    v8 = Call v7, v3, v6, v2
+    v9 = ModuleNamespace module=m3
+    v10 = Integer integer=1
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = Builtin builtin=ReflectDefineProperty
+    v13 = Call v12, v3, v9, v2, v11
+    v14 = ModuleNamespace module=m4
+    v15 = ElemDelete v14, v1
+    v16 = ModuleNamespace module=m5
+    v17 = Integer integer=0
+    v18 = ElemDelete v16, v17
+    Return
+}
+function f1 name="body1" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="body2" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="body3" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="body4" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="body5" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 122 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -122,6 +122,7 @@ Rules for an edit to an upstream test:
 |---|---|---|
 | 32 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
 | `stress/sampling-profiler-bound-function-name.js` | `requireOptions("--useExecutableAllocationFuzz=false")` | with the DFG enabled it waits for the stack `foo < baz`, which exists only once the DFG has inlined the bound function. In the same mode, a process in which the compilations of `baz` and its caller fail sees `foo < bound foo < baz` for the 50 s the test allows itself |
+| `stress/sampling-profiler-line-column.js` | `$skipModes` for `ftl-eager`; the lines it waits for are 13 to 18 (upstream: 11 to 16), because the two lines added at the top move `test()` down by two | it waits for a sample of `test()` with a line inside `test()`. A frame of FTL code is sampled with no line (4294967295), so a sample has to fall into the few milliseconds before `test()` is compiled by the FTL; a process that misses them waits its 50 s in vain. 35 of 600 runs on a busy machine with `main`'s own shell (87ee10da), each over in under 5 s or never |
 | `stress/buffer-accessor-jit-byteoffset.js`, `-fractional-value.js`, `-large.js` | `$skipModes << :lockdown` | they check `numberOfDFGCompiles()`; lockdown runs with the JIT off |
 | `stress/regress-174463162.js` | `$skipModes` for `dfg-eager`, `dfg-eager-no-cjit-validate`, `ftl-eager`, `ftl-eager-no-cjit`, `no-cjit-collect-continuously` | its `$vm` helper scribbles a live cell's header; a collection before the script ends marks a cell with no Structure. Only the `--collectContinuously=true` modes collect that early. Upstream's bots hit it too |
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
@@ -143,6 +144,18 @@ Rules for an edit to an upstream test:
 
 ---
 
+## TestWTF (`Tools/TestWebKitAPI/Tests/WTF`)
+
+Upstream's too, and run by the `test` job.
+
+| file | change | reason |
+|---|---|---|
+| `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
+| `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
+| `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+
+---
+
 ## D. Runner scripts
 
 - `Tools/Scripts/run-javascriptcore-tests`: `--no-slow` and `--asan`, passed on to `run-jsc-stress-tests`; the port lookup
@@ -151,6 +164,25 @@ Rules for an edit to an upstream test:
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
+
+---
+
+## The fork's own tests
+
+Not upstream's: a sync neither brings nor changes them. Most are named `stress/bun-*.js`. Regression tests for fixes meant to go upstream are named the way upstream names its tests.
+
+| file | what it holds the engine to |
+|---|---|
+| `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
+| `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
+| `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
+| `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
+| `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
+| `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
+| the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
+
+`jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
+the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ---
 

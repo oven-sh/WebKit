@@ -69,7 +69,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalPlainYearMonth);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalPlainYearMonth);
 
 TemporalPlainYearMonthConstructor::TemporalPlainYearMonthConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalPlainYearMonth, constructTemporalPlainYearMonth)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalPlainYearMonth), JSC_REGISTERED_HOST_FUNCTION(constructTemporalPlainYearMonth))
 {
 }
 

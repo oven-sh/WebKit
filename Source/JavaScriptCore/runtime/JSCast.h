@@ -103,7 +103,7 @@ using JSResizableOrGrowableSharedBigUint64Array = JSGenericResizableOrGrowableSh
     macro(CodeBlock, JSType::CodeBlockType, JSType::CodeBlockType) \
     macro(JSObject, FirstObjectType, LastObjectType) \
     macro(JSFinalObject, JSType::FinalObjectType, JSType::FinalObjectType) \
-    macro(JSFunction, JSType::JSFunctionType, JSType::JSFunctionType) \
+    macro(JSFunction, JSType::JSFunctionType, JSType::CompiledClosureType) \
     macro(InternalFunction, JSType::InternalFunctionType, JSType::NullSetterFunctionType) \
     macro(NullSetterFunction, JSType::NullSetterFunctionType, JSType::NullSetterFunctionType) \
     macro(JSArray, JSType::ArrayType, JSType::DerivedArrayType) \

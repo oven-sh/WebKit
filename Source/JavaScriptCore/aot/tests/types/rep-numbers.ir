@@ -1,0 +1,30 @@
+# Booleans, integers by range, numbers, and numbers beside a marker. The slot of an integer is the narrowest one that holds its range.
+# RUN: rep
+# CHECK: t0: rep Boolean slot Boolean cells no
+# CHECK-NEXT: t1: rep Boolean slot Boolean cells no
+# CHECK-NEXT: t2: rep Int32 slot Uint8 cells no
+# CHECK-NEXT: t3: rep Int32 slot Int8 cells no
+# CHECK-NEXT: t4: rep Int32 slot Uint16 cells no
+# CHECK-NEXT: t5: rep Int32 slot Int16 cells no
+# CHECK-NEXT: t6: rep Int32 slot Int32 cells no
+# CHECK-NEXT: t7: rep Int64 slot Uint32 cells no
+# CHECK-NEXT: t8: rep Int64 slot Int64 cells no
+# CHECK-NEXT: t9: rep Double slot Double cells no
+# CHECK-NEXT: t10: rep Double slot Double cells no
+# CHECK-NEXT: t11: rep OptionalInt64 slot OptionalInt64 cells no
+# CHECK-NEXT: t12: rep OptionalDouble slot OptionalDouble cells no
+# CHECK-NEXT: t13: rep OptionalInt64 slot OptionalInt64 cells no
+# CHECK-NEXT: t14: rep Int32 slot Uint16 cells no
+# CHECK-NEXT: t15: rep Int32 slot Int16 cells no
+# CHECK-NEXT: t16: rep Int64 slot Int64 cells no
+# CHECK-NEXT: t17: rep Int64 slot Int64 cells no
+# CHECK-NEXT: t18: rep Double slot Double cells no
+# CHECK-NEXT: t19: rep Double slot Double cells no
+# CHECK-NEXT: t20: rep Double slot Double cells no
+# CHECK-NEXT: t21: rep OptionalDouble slot OptionalDouble cells no
+# CHECK-NEXT: t22: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: Void: never
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=boolean}, {type=true}, {type=int[0, 255]}, {type=int[-128, 127]}, {type=int[0, 65535]}, {type=int[-32768, 32767]}, {type=i32}, {type=int[0, 4294967295]}, {type=int}, {type=number}, {type=double}, {type=undefined|int}, {type=null|number}, {type=int|absent}, {type=int[0, 256]}, {type=int[-1, 255]}, {type=int[-1, 4294967295]}, {type=int[-2147483649, 0]}, {type=whole}, {type=fractional}, {type=int[0, 9]|whole}, {type=undefined|whole}, {type=boolean|int}] results=[{type=undefined}]

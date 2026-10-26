@@ -1,0 +1,111 @@
+# The uses that one test covers, where each test stands, and how much code is copied
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v1:v3 site=v2:v3
+# RUN(F1): test-placement function=f1 site=v1:v2
+# RUN(F2): test-placement function=f2 site=v2:v6 site=v3:v7 site=v4:v6 site=v5:v7
+# RUN(F3): test-placement function=f3 site=v1:v4 site=v3:v5
+# RUN(F4): test-placement function=f4 site=v1:v3 site=v2:v4
+# RUN(F5): test-placement function=f5 site=v1:v2,v3
+# RUN(F6): test-placement function=f6 site=v3:v5 site=v4:v5
+# RUN(F7): test-placement function=f7 site=v2:v5 site=v4:v5 effects=own
+# RUN(F8): test-placement function=f8 site=v3:v6 site=v5:v6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+layout L1 name="Size" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="twoUses" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = ShapeTest v0 layouts=[L0]
+    Return v2
+}
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1 v2; cloned 0
+# F0-NOT: stretch
+
+function f1 name="oneUse" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = ShapeTest v0 layouts=[L0]
+    Return v1
+}
+# F1: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 0
+# F1-NOT: stretch
+
+function f2 name="twoReceivers" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v1 key="x"
+    v4 = PropGet v0 key="y"
+    v5 = PropGet v1 key="y"
+    v6 = ShapeTest v0 layouts=[L0]
+    v7 = ShapeTest v1 layouts=[L0]
+    Return v5
+}
+# F2: stretch 0: test ShapeTest v0 layouts=[L0] before v2; test ShapeTest v1 layouts=[L0] before v3; uses v2 v3 v4 v5; cloned 0
+# F2-NOT: stretch
+
+function f3 name="castsShareCondition" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = Upcast v0 castType=anything
+    v3 = PropGet v2 key="y"
+    v4 = ShapeTest v0 layouts=[L0]
+    v5 = ShapeTest v2 layouts=[L0]
+    Return v3
+}
+# F3: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1 v3; cloned 0
+# F3-NOT: stretch
+
+function f4 name="differentLayoutSets" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = ShapeTest v0 layouts=[L0]
+    v4 = ShapeTest v0 layouts=[L0, L1]
+    Return v2
+}
+# F4: stretch 0: test ShapeTest v0 layouts=[L0] before v1; test ShapeTest v0 layouts=[L0, L1] before v2; uses v1 v2; cloned 0
+# F4-NOT: stretch
+
+function f5 name="twoTestsOfOneSite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    v2 = TypeTest v0 testedType=Array<anything>
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Return v1
+}
+# F5: stretch 0: test TypeTest v0 testedType=Array before v1; test IsPristine v0 builtinClass=Array aspects=[Storage] before v1; uses v1; cloned 0
+# F5-NOT: stretch
+
+function f6 name="useOnOneArm" parameters=[{type=object}, {type=boolean}, {type=function}] results=[{type=anything}] {
+    v3 = PropGet v0 key="x"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="y"
+    Return v4
+  b2():
+    v5 = ShapeTest v0 layouts=[L0]
+    v6 = Call v2
+    v7 = Call v2
+    Return v3
+}
+# F6: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3 v4; cloned 12
+# F6-NOT: stretch
+
+function f7 name="permanentAcrossCall" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = PropGet v0 key="x"
+    v3 = Call v1
+    v4 = PropGet v0 key="y"
+    v5 = TypeTest v0 testedType=string
+    Return v4
+}
+# F7: stretch 0: test TypeTest v0 testedType=string before v2; uses v2 v4; cloned 32
+# F7-NOT: stretch
+
+function f8 name="endedByCall" parameters=[{type=Array<anything>}, {type=function}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    v4 = Call v1
+    v5 = ElemGet v0, v2
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v5
+}
+# F8: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v3; uses v3; cloned 0
+# F8-NEXT: stretch 1: test HasArrayStorage v0 arrayStorage=Contiguous before v5; uses v5; cloned 0
+# F8-NOT: stretch

@@ -1,0 +1,35 @@
+# class List extends Array { static get [Symbol.species]() { return Array } }; list = new List; list.push(1); list.indexOf(1)
+# Neither push nor indexOf asks the class of its receiver for a species, and the constructor of Array calls nothing on what it makes for the class. Nothing has escaped, so nobody enters the getter.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v10 -> ArrayPrototypePush
+# CHECK-NEXT: f0 v12 -> ArrayPrototypeIndexOf
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 side=Static methodKind=Getter key=@@species
+    v6 = FinishClass v3 layout=L0
+    v7 = Construct v6
+    v8 = Integer integer=1
+    v9 = Builtin builtin=ArrayPrototypePush
+    v10 = Call v9, v7, v8
+    v11 = Builtin builtin=ArrayPrototypeIndexOf
+    v12 = Call v11, v7, v8
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Builtin builtin=Array
+    Return v1
+}

@@ -1,0 +1,54 @@
+# function Point() {}; const members = (Point.prototype = {}); members.once = f; members.twice = f; members.twice = g; function A() {}; function B() {}; const shared = (A.prototype = B.prototype = {}); shared.run = f
+# The object that the program stores as the prototype object of one constructor function holds the members of its class, whichever variable the stores go through.
+# An object that two functions get holds the members of neither.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}classFlow={evaluations=AtMostOnce {{*}}members=[{key="once" function=f2}] namedMembers=[{key="once" function=f2}, {key="twice"}]
+# CHECK: layout L1 kind=Instance name="A"
+# CHECK-NOT: members=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="A" constructor=f4 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="B" constructor=f5 flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="A" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g2 name="B" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = NewDictionary
+    PropSet v0, v1 key="prototype" mode=Strict
+    v3 = NewClosure function=f2
+    PropSet v1, v3 key="once" mode=Strict
+    PropSet v1, v3 key="twice" mode=Strict
+    v6 = NewClosure function=f3
+    PropSet v1, v6 key="twice" mode=Strict
+    v8 = Construct v0
+    v9 = GetModuleVariable variable=g1
+    v10 = GetModuleVariable variable=g2
+    v11 = NewDictionary
+    PropSet v10, v11 key="prototype" mode=Strict
+    PropSet v9, v11 key="prototype" mode=Strict
+    PropSet v11, v3 key="run" mode=Strict
+    v15 = Construct v9
+    v16 = Construct v10
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="first" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="second" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="A" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="B" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

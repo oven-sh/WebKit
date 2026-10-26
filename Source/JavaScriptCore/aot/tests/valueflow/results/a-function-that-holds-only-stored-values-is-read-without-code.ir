@@ -1,0 +1,58 @@
+# function plain() {}  plain.member = 1;      function withGetter() {}  Object.defineProperty(withGetter, "member", { get: getter });
+# function relinked() {}  Object.setPrototypeOf(relinked, above);      function shown() {}  sink(shown);
+# A read of a name on a function finds a value that the program stored there, a method of Function.prototype or Object.prototype, or nothing: it runs no code.
+# Not so where the function is given a property by a descriptor or another prototype, or reaches code that nobody has seen
+# RUN: valueflow-apply
+# CHECK: function f1 name="plain" {{*}}ClosuresAreReadWithoutCode]
+# CHECK: function f2 name="withGetter"
+# CHECK-NOT: ClosuresAreReadWithoutCode
+# CHECK: function f5 name="unused"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="get" declared={type=anything}}]
+layout L1 name="Above"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    PropSet v0, v1 key="member" mode=Strict
+    v3 = PropGet v0 key="member"
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f6
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = String string="member"
+    v9 = Call v7, -, v4, v8, v6
+    v10 = PropGet v4 key="member"
+    v11 = NewClosure function=f3
+    v12 = NewObject layout=L1
+    v13 = Builtin builtin=ObjectSetPrototypeOf
+    v14 = Call v13, -, v11, v12
+    v15 = PropGet v11 key="member"
+    v16 = NewClosure function=f4
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="sink" [isFreeName]
+    v19 = Call v18, -, v16, v3, v10, v15
+    v20 = PropGet v16 key="member"
+    v21 = Call v18, -, v20
+    Return
+}
+function f1 name="plain" results=[{type=anything}] {
+    Return
+}
+function f2 name="withGetter" results=[{type=anything}] {
+    Return
+}
+function f3 name="relinked" results=[{type=anything}] {
+    Return
+}
+function f4 name="shown" results=[{type=anything}] {
+    Return
+}
+function f5 name="unused" results=[{type=anything}] {
+    Return
+}
+function f6 name="getter" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

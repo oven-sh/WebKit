@@ -1,0 +1,18 @@
+# The type of a callee lists a function of the program and a built-in that the program converts into the same function type: an arm with a direct call for the function,
+# and behind it the callee is the built-in, which the next run of ResolveBuiltins calls as such. No arm is left for anything else
+# FORM: Prepared
+# RUN: pass ResolveCalls ResolveBuiltins
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="calls" parameters=[{type=f0|builtin(MathAbs)}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK: [[isDouble]]: boolean = TypeTest v0 testedType=f0
+# CHECK: = CallDirect v1 function=f0
+# CHECK: ({{*}}: builtin(MathAbs)) frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin -, v1 overload=MathAbs/0
+}

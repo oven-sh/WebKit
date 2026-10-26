@@ -26,7 +26,7 @@
 #include "config.h"
 #include "YarrDisassembler.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "Disassembler.h"
 #include "LinkBuffer.h"
@@ -156,4 +156,4 @@ void YarrDisassembler::dumpDisassembly(PrintStream& out, const char* prefix, Lin
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

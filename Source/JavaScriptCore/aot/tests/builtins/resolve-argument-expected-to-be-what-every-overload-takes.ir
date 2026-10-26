@@ -1,0 +1,72 @@
+# `Object.create(base)`: every overload takes an object or null there, as it stands, so the built-in throws for anything else. An argument that may be something else is tested for all that they take,
+# where code stands in line for the call: whatever is expected of it, and also where nothing is. A built-in that is a call of the host either way expects nothing, nor does an argument that is converted
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="nobodyKnowsTheBase" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=null|object
+# CHECK: ([[base0]]: null|object):
+# CHECK: = CallBuiltin -, [[base0]] overload=ObjectCreate/0
+# CHECK-NEXT: Return
+# CHECK: CallBuiltin {{*}}, [[other0]] overload=ObjectCreate/0 builtinCallForm=AnyReceiver
+# CHECK: ([[other0]]: undefined|boolean|number|string|symbol|bigint) frequency=Unlikely:
+}
+
+function f1 name="theBaseMayBeMissing" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=L0
+# CHECK: ([[base1]]: L0):
+# CHECK: = CallBuiltin -, [[base1]] overload=ObjectCreate/0
+# CHECK-NEXT: Return
+}
+
+function f2 name="moreIsExpectedThanIsTaken" parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|object):
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=null|object
+# CHECK: ([[base2]]: null|object
+# CHECK: = CallBuiltin -, [[base2]] overload=ObjectCreate/0
+# CHECK-NEXT: Return
+}
+
+function f3 name="theTargetOfReflect" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=ReflectGetPrototypeOf
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=object
+# CHECK: ([[target3]]: object):
+# CHECK: = CallBuiltin -, [[target3]] overload=ReflectGetPrototypeOf/0
+}
+
+function f4 name="aCallOfTheHostEitherWay" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = Builtin builtin=ObjectDefineProperties
+    v3 = Call v2, -, v0, v1
+    Return v3
+# CHECK-NOT: TypeTest
+}
+
+function f5 name="theArgumentIsConverted" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectKeys
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: TypeTest
+}
+
+function f6 name="theBaseIsProven" parameters=[{type=null|L0}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ObjectCreate/0
+}

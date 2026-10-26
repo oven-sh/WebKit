@@ -1,0 +1,78 @@
+# Code that is rarer than what leads to it is a slow path already, typed as the copy of this run is: nothing in it rests on the tests that this run places.
+# So the copy goes on there, whatever is live, and copies none of it. The value that the run narrows is joined with the copy's own at the head of the slow path and stays narrow in the typed code
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="narrowedValueIsLiveInTheSlowPath" flags=[IsChecked] parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v3, v3
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = Call v2, -, v3
+    v6 = Call v2, -, v5
+    Return v6
+}
+# PLAN-LABEL: function f0
+# PLAN: copy comes back at b2:0
+# IR-LABEL: function f0 name="narrowedValueIsLiveInTheSlowPath"
+# IR: [[read]]: number = GetSlot
+# IR-NEXT: Branch v1 -> taken {{*}}(), notTaken [[slowPath]]([[read]])
+# IR: : number = Add
+# IR-NOT: = Call v2, -,
+# IR: [[readByName]]: anything{{*}} = PropGet v0 key="a"
+# IR-NEXT: Branch v1 -> taken {{*}}(), notTaken [[slowPath]]([[readByName]])
+# IR-NOT: = Call v2, -,
+# IR: [[slowPath]]([[joined]]: anything ~ number) frequency=Unlikely:
+# IR-NEXT: = Call v2, -, [[joined]]
+# IR: = Call v2, -,
+# IR-NOT: = Call v2, -,
+
+# The block behind the branch is as frequent as the stretch: the typed code would lose the type of the read there, so the copy has its own
+function f1 name="narrowedValueIsLiveInCodeThatIsAsFrequent" flags=[IsChecked] parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v3, v3
+    Return v4
+  b2():
+    v5 = Mul v3, v3
+    Return v5
+}
+# PLAN-LABEL: function f1
+# PLAN-NOT: copy comes back
+# IR-LABEL: function f1 name="narrowedValueIsLiveInCodeThatIsAsFrequent"
+# IR: : number = Mul
+# IR: : number|bigint{{*}} = Mul
+
+# An arm that goes straight back into code as frequent as the stretch is part of that code: what the copy brought in there would meet the narrowed value at the next join. So the copy has its own
+function f2 name="slowArmGoesStraightBack" flags=[IsChecked] parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    v4 = Call v2, -, v3
+    Jump -> next b3()
+  b3():
+    v5 = Add v3, v3
+    Return v5
+}
+# PLAN-LABEL: function f2
+# PLAN: copy comes back at b3:0
+# IR-LABEL: function f2 name="slowArmGoesStraightBack"
+# IR: [[readInArm]]: number = GetSlot
+# IR: = Call v2, -, [[readInArm]]
+# IR: : number = Add
+# IR: [[readByNameInArm]]: anything{{*}} = PropGet v0 key="a"
+# IR: = Call v2, -, [[readByNameInArm]]

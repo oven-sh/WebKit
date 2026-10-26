@@ -1,0 +1,37 @@
+# A declared function that is read as a value and never called has a closure, which the closure table creates at the first read. A declaration that the program assigns to has a word of the statics, and the tables name the function that a zero word stands for
+# RUN: plan-slots variables
+# RUN(TABLES): tables statics functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="none" module=m0 declared={type=function} initialization=Function function=f1
+variable g1 name="assigned" module=m0 declared={type=anything} initialization=Function function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="length"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v3, -, v5
+    PutModuleVariable v6 variable=g1
+    v8 = NewClosure function=f3
+    v9 = Call v3, -, v8
+    Return
+}
+function f1 name="none" results=[{type=anything}] {
+    Return
+}
+function f2 name="assigned" results=[{type=anything}] {
+    Return
+}
+function f3 name="later" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}
+
+# CHECK: g0 ClosureTable FunctionAsZero DeferredClosure
+# CHECK-NEXT: g1 Statics FunctionAsZero JSValue
+# TABLES: functionVariable offset=[[offset]] function=[[entrypoint]]
+# TABLES-NOT: functionVariable
+# TABLES: function [[entrypoint]] name="assigned" {{*}}length=

@@ -1,0 +1,32 @@
+# Whether an object has a property of its own is answered by the object alone. The test by name reads no link to a prototype, so it does no more than the call, also on an object that may get properties
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyBuiltinCalls
+# RUN(EFFECTS): effects f2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="MayGetProperties" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] ownAccessorsAreComplete=true}
+function f0 name="object" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = String string="z"
+    v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+    v3 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: boolean = PropHasOwn v0 key="z"
+# CHECK-NEXT: v3: boolean = PropHasOwn v0 key="z"
+}
+function f1 name="objectOrUndefined" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = String string="z"
+    v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+    Return v2
+# CHECK-NOT: CallBuiltin
+# CHECK: [[object]]: L0 = ToObject v0
+# CHECK-NEXT: v2: boolean = PropHasOwn [[object]] key="z"
+}
+function f2 name="testByName" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHasOwn v0 key="z"
+    Return v1
+}
+# EFFECTS: v1 PropHasOwn: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, AllocatorState) writes(AllocatorState, RuntimeState) throws collects

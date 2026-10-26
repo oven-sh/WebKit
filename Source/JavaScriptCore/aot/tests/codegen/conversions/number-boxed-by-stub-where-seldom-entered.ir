@@ -1,0 +1,93 @@
+# In a block that is not Normal a number is boxed by a stub: a call instead of the test for an int32, the test for NaN and two ways to box. In a Normal block of fast code the code stays in line,
+# and so does what is short anywhere: an integer known to be an int32, a value that is only undefined or null
+# FORM: Placed
+# OPTIONS: heat=everything-is-hot check=validate-back-end validate
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="doubleInUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number @Double, v1: boolean @Boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 @JSValue = Box v0
+    Return v2
+  b2():
+    v3 @JSValue = Undefined
+    Return v3
+}
+# CHECK-LABEL: f0:
+# CHECK: stub BoxNumber.Double x1
+
+function f1 name="doubleInRareBlock" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number @Double, v1: boolean @Boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 @JSValue = Box v0
+    Return v2
+  b2():
+    v3 @JSValue = Undefined
+    Return v3
+}
+# CHECK-LABEL: f1:
+# CHECK: stub BoxNumber.Double x1
+
+function f2 name="doubleInNormalBlock" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @JSValue = Box v0
+    Return v1
+}
+# CHECK-LABEL: f2:
+# CHECK-NOT: stub BoxNumber
+
+function f3 name="optionalDoubleInUnlikelyBlock" parameters=[{type=undefined|null|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|number @OptionalDouble, v1: boolean @Boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 @JSValue = Box v0
+    Return v2
+  b2():
+    v3 @JSValue = Undefined
+    Return v3
+}
+# CHECK-LABEL: f3:
+# CHECK: stub BoxNumber.OptionalDouble x1
+
+function f4 name="integerInUnlikelyBlock" parameters=[{type=int}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: int @Int64, v1: boolean @Boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 @JSValue = Box v0
+    Return v2
+  b2():
+    v3 @JSValue = Undefined
+    Return v3
+}
+# CHECK-LABEL: f4:
+# CHECK: stub BoxNumber.Integer x1
+
+function f5 name="optionalIntegerInUnlikelyBlock" parameters=[{type=undefined|null|int}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|null|int @OptionalInt64, v1: boolean @Boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 @JSValue = Box v0
+    Return v2
+  b2():
+    v3 @JSValue = Undefined
+    Return v3
+}
+# CHECK-LABEL: f5:
+# CHECK: stub BoxNumber.OptionalInteger x1
+
+function f6 name="int32InWideRegisterInUnlikelyBlock" parameters=[{type=i32}, {type=int}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: i32 @Int32, v1: int @Int64, v2: boolean @Boolean):
+    v3 @Int64 = WidenInteger v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 @JSValue = Box v3
+    Return v4
+  b2():
+    v5 @JSValue = Undefined
+    Return v5
+}
+# CHECK-LABEL: f6:
+# CHECK-NOT: stub BoxNumber

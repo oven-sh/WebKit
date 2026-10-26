@@ -36,6 +36,7 @@ namespace JSC {
 namespace Wasm {
 
 class IPIntCallee;
+struct ModuleInImage;
 
 class IPIntPlan final : public EntryPlan {
     using Base = EntryPlan;
@@ -74,6 +75,7 @@ private:
 
     Vector<std::unique_ptr<FunctionIPIntMetadataGenerator>> m_wasmInternalFunctions;
     RefPtr<IPIntCallees> m_ipintCallees;
+    const ModuleInImage* m_moduleInImage { nullptr };
     bool m_calleesAlreadyRegistered { false };
 };
 

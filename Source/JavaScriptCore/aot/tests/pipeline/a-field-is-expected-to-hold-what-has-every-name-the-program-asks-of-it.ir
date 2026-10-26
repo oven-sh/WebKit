@@ -1,0 +1,76 @@
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Incoming" constructor=f1 fields=[{key="method" declared={type=anything} flags=[IsRequired]}, {key="url" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Other" constructor=f2 fields=[{key="method" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Wrapper" constructor=f3 fields=[{key="req" declared={type=anything} flags=[IsRequired]}, {key="one" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L2 {{*}}{key="req" declared={type=undefined|null|L0 flags=[IsExpected]}{{*}}{key="one" declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L2
+    v8 = FinishClass v7 layout=L2
+    v9 = String string="a"
+    v10 = Construct v2, v2, v9
+    v11 = Construct v5, v5, v9
+    v12 = Construct v8, v8, v10
+    v13 = NewClosure function=f4
+    v14 = NewClosure function=f5
+    v15 = NewClosure function=f6
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="text" [isFreeName]
+    v18 = Builtin builtin=Function
+    v19 = Construct v18, -, v17
+    v20 = Call v19, -, v2, v5, v8, v10, v11, v12, v13, v14, v15
+    Return v20
+}
+function f1 name="Incoming" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="method" mode=Strict
+    PropSet v3, v1 key="url" mode=Strict
+    Return v3
+}
+function f2 name="Other" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="method" mode=Strict
+    Return v3
+}
+function f3 name="Wrapper" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropSet v3, v1 key="req" mode=Strict
+    PropSet v3, v0 key="one" mode=Strict
+    Return v3
+}
+function f4 name="method" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L2):
+    v1 = PropGet v0 key="req"
+    v2 = PropGet v1 key="method"
+    Return v2
+}
+function f5 name="url" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L2):
+    v1 = PropGet v0 key="req"
+    v2 = PropGet v1 key="url"
+    Return v2
+}
+function f6 name="asksOneName" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L2):
+    v1 = PropGet v0 key="one"
+    v2 = PropGet v1 key="method"
+    Return v2
+}

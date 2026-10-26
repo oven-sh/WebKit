@@ -1,0 +1,110 @@
+# So little work is allowed that the escape analysis gives up: it does not say which arrays a block parameter names.
+# A guard lasts over a write or a call only while the arrays involved are seen to be allocated in this function, so they stay in it and are handed to no outlined body.
+# The same allocation in functions without a guard is outlined
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxEscapeAnalysisWork:1
+# RUN: pass OutlineColdOperations
+# LOSS: MaxEscapeAnalysisWork x9 f0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="appendToEitherListUnderGuardOnParameter" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = Integer integer=7
+    v3 = NewArray v2, v2, v2, v2 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray contents=anything
+    Jump -> next b3(v4)
+  b3(v5: Array):
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v6 -> taken b4(| 0), notTaken b7()
+  b4(v7):
+    v8 = Integer
+    v9 = IsElementPresent v0, v8, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v9 -> taken b5(| 0), notTaken b7()
+  b5(v10):
+    v11 = AllGuards v7, v10
+    v12 = GetArrayElement v0, v8, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    AppendElement v5, v12
+    v14 = Integer integer=1
+    v15 = IsElementPresent v0, v14, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v15 -> taken b6(| 0), notTaken b7()
+  b6(v16):
+    Return
+  b7():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-2: = NewArray
+
+function f1 name="readEitherListUnderGuardAcrossStore" parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = Integer integer=7
+    v4 = NewArray v3, v3, v3, v3 contents=anything
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewArray contents=anything
+    Jump -> next b3(v5)
+  b3(v6: Array):
+    v7 = IsPristine v6 builtinClass=Array aspects=[Storage]
+    TestAndBranch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8):
+    v9 = Integer integer=1
+    PropSet v0, v2 key="seen"
+    v11 = GetArrayElement v6, v9, v8 level=Expected [keyIsIntegral]
+    Return v11
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-2: = NewArray
+
+function f2 name="readEitherListUnderGuardAcrossColdCalls" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v1 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray contents=anything
+    Jump -> next b3(v4)
+  b3(v5: Array):
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    TestAndBranch v6 -> taken b4(| 0), notTaken b12()
+  b4(v7):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), otherwise b11()
+# REPEAT: i = 0..5
+  b%(i+5)() frequency=Rare:
+    v%(i*2+8) = CallInline v5 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+    v%(i*2+9) = Call v1, -, v%(i*2+8), v%(i*2+8), v%(i*2+8)
+    Jump -> next b11()
+# END REPEAT
+  b11():
+    v20 = Integer integer=1
+    v21 = GetArrayElement v5, v20, v7 level=Expected [keyIsIntegral]
+    Return v21
+  b12():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = Call v1, -,
+# CHECK-LABEL: function f3
+# CHECK: = CallDirect function=
+# REPEAT: i = 3..10
+
+function f%(i) name="plain%(i)" parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = Integer integer=7
+    v2 = NewArray v1, v1, v1, v1 contents=anything
+    Return v2
+  b2():
+    Return
+}
+# END REPEAT

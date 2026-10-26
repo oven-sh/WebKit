@@ -43,6 +43,9 @@ void printInternal(PrintStream& out, FrequencyClass frequency)
     case FrequencyClass::Rare:
         out.print("Rare");
         return;
+    case FrequencyClass::Unlikely:
+        out.print("Unlikely");
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

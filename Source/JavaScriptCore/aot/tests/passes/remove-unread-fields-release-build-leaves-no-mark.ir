@@ -1,0 +1,7 @@
+# A release build removes an unread field and leaves no mark on it
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+# CHECK-NOT: IsRemovedAsUnread
+# PROGRAM-OF: remove-unread-fields-validating-build.ir

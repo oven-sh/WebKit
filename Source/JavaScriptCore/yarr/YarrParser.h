@@ -65,6 +65,8 @@ template <class T> concept YarrSyntaxCheckable = requires (T& checker, Vector<Ve
     { checker.atomCharacterClassPushNested(bool { }) } -> std::same_as<void>;
     { checker.atomCharacterClassPopNested(bool { }) } -> std::same_as<void>;
     { checker.atomCharacterClassEnd() } -> std::same_as<void>;
+    { checker.atomCharacterClassRemembered(unsigned { }) } -> std::same_as<void>;
+    { checker.atomCharacterClassRepeated(unsigned { }) } -> std::same_as<bool>;
     { checker.atomParenthesesSubpatternBegin(bool { }) } -> std::same_as<void>;
     { checker.atomParenthesesSubpatternBegin(bool { }, std::optional<String> { }) } -> std::same_as<void>;
     { checker.atomParentheticalAssertionBegin(bool { }, MatchDirection { }) } -> std::same_as<void>;
@@ -1305,6 +1307,19 @@ private:
     {
         ASSERT(!hasError(m_errorCode));
         ASSERT(peek() == '[');
+
+        // A pattern that a program puts together repeats its classes, often a few long classes behind every character. The text of a class says all there is to say
+        // about it, so where the text of a class parsed before follows once more, the delegate is asked to take that class again. The one taken last is looked at first.
+        unsigned start = m_index;
+        for (unsigned i = 0; i < m_numberOfRememberedCharacterClasses; ++i) {
+            unsigned slot = (m_lastCharacterClassSlot + i) % numberOfCharacterClassSlots;
+            auto [startOfClass, length] = m_rememberedCharacterClasses[slot];
+            if (length && m_size - start >= length && !memcmp(m_data + start, m_data + startOfClass, length * sizeof(CharType)) && m_delegate.atomCharacterClassRepeated(slot)) {
+                m_index += length;
+                m_lastCharacterClassSlot = slot;
+                return;
+            }
+        }
         consume();
 
         CharacterClassParserDelegate characterClassConstructor(m_delegate, m_errorCode, m_compileMode);
@@ -1316,6 +1331,19 @@ private:
             case ']':
                 consume();
                 characterClassConstructor.end();
+                if (!hasError(m_errorCode)) {
+                    // A long class keeps its slot until sixteen other long ones have come. Of the short ones only the last is kept: to parse one again costs about as much as to look for it.
+                    if (m_index - start >= minLengthOfLongCharacterClass) {
+                        m_lastCharacterClassSlot = m_nextLongCharacterClassSlot;
+                        m_nextLongCharacterClassSlot = (m_nextLongCharacterClassSlot + 1) % slotOfLastShortCharacterClass;
+                        m_numberOfRememberedCharacterClasses = numberOfCharacterClassSlots;
+                    } else {
+                        m_lastCharacterClassSlot = slotOfLastShortCharacterClass;
+                        m_numberOfRememberedCharacterClasses = std::max(m_numberOfRememberedCharacterClasses, 1u);
+                    }
+                    m_rememberedCharacterClasses[m_lastCharacterClassSlot] = { start, m_index - start };
+                    m_delegate.atomCharacterClassRemembered(m_lastCharacterClassSlot);
+                }
                 return;
 
             case '\\':
@@ -1904,6 +1932,8 @@ private:
 
         m_delegate.resetForReparsing();
         m_index = 0;
+        m_numberOfRememberedCharacterClasses = 0;
+        m_rememberedCharacterClasses = { };
         m_numSubpatterns = 0;
         m_maxSeenBackReference = 0;
         m_kIdentityEscapeSeen = false;
@@ -2152,6 +2182,9 @@ private:
                     return std::nullopt;
                 }
 
+                if constexpr (requires { m_delegate.willLookUpUnicodeProperty(); })
+                    m_delegate.willLookUpUnicodeProperty();
+
                 if (foundEquals) {
                     auto result = unicodeMatchPropertyValue(unicodePropertyName, expressionBuilder.toString());
                     if (!result)
@@ -2201,6 +2234,14 @@ private:
     const CharType* m_data;
     unsigned m_size;
     unsigned m_index { 0 };
+    static constexpr unsigned slotOfLastShortCharacterClass = 16;
+    static constexpr unsigned numberOfCharacterClassSlots = slotOfLastShortCharacterClass + 1;
+    static constexpr unsigned minLengthOfLongCharacterClass = 16;
+    std::array<std::pair<unsigned, unsigned>, numberOfCharacterClassSlots> m_rememberedCharacterClasses { };
+    // How many slots a look goes through, from the one that was taken last: that one alone while no long class has come.
+    unsigned m_numberOfRememberedCharacterClasses { 0 };
+    unsigned m_nextLongCharacterClassSlot { 0 };
+    unsigned m_lastCharacterClassSlot { 0 };
     CompileMode m_compileMode;
     unsigned m_backReferenceLimit;
     unsigned m_numSubpatterns { 0 };

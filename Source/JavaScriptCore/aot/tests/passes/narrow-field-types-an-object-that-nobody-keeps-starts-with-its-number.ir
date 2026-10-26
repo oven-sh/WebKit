@@ -1,0 +1,70 @@
+# Every store that the program shows puts an int32 or a sum of two int32s into these fields: by the kinds of its stores each of them is worth a slot of four bytes.
+# A sum is of the kind and not of the type. An object that STARTS with one is made with a filler and gets the sum by a tested store behind the allocation,
+# and the arm of that test that fails goes on with a second form of the object.
+# Step is made by a function that the program calls by its name, read by the caller and dropped: it would have been taken apart. Step.item stays a number, and the allocation keeps its initial value.
+# Argument is made for a callee that the program names, which reads it and drops it: the same.
+# Pair is dropped too. Pair.first starts with an int32 that fits and gets a sum later, by a store that stands in the program anyway: it is narrowed.
+# Kept starts with a sum and goes into an array: four bytes fewer are worth the test. Handed starts with a sum and goes to a callee that nobody knows: the same.
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# STATISTIC: FieldsNarrowedToInt32 = 3
+# STATISTIC: InitialValuesStoredBehindAllocations = 2
+# CHECK: layout L0 name="Step" module=m0 fields=[{key="item" declared={type=number}
+# CHECK: layout L1 name="Argument" module=m0 fields=[{key="size" declared={type=number}
+# CHECK: layout L2 name="Pair" module=m0 fields=[{key="first" declared={type=int[-2147483643, 2147483647]}
+# CHECK: layout L3 name="Kept" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
+# CHECK: layout L4 name="Handed" module=m0 fields=[{key="count" declared={type=int[-2147483643, 2147483647]}
+# CHECK: function f0
+# CHECK: [[sum]]: {{*}} = Add
+# CHECK: NewObject -, [[sum]] layout=L1 fields=[0]
+# CHECK: [[kept]]: L3 = NewObject {{*}}layout=L3 fields=[0]
+# CHECK-NEXT: PropSet [[kept]], [[sum]] key="count"
+# CHECK: [[handed]]: L4 = NewObject {{*}}layout=L4 fields=[0]
+# CHECK-NEXT: PropSet [[handed]], [[sum]] key="count"
+# CHECK: function f1
+# CHECK: NewObject -, v0 layout=L0 fields=[0]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Step" module=m0 fields=[{key="item" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Argument" module=m0 fields=[{key="size" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Pair" module=m0 fields=[{key="first" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Kept" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Handed" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Integer integer=0
+    v3 = BitOr v1, v2
+    v4 = Add v3, v3
+    v5 = CallDirect v4 function=f1
+    v6 = PropGet v5 key="item"
+    v7 = NewObject -, v4 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = CallDirect v8 function=f2
+    v10 = NewObject -, v2 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    PropSet v11, v4 key="first" mode=Strict
+    v13 = PropGet v11 key="first"
+    v14 = NewObject -, v4 layout=L3 fields=[0]
+    v15 = FinishObject v14
+    v16 = NewArray v15 contents=anything
+    v17 = NewObject -, v4 layout=L4 fields=[0]
+    v18 = FinishObject v17
+    v19 = Call v1, -, v18
+    v20 = Add v6, v9
+    v21 = Add v20, v13
+    Return v21
+}
+
+function f1 name="step" flags=[IsChecked] parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+
+function f2 name="sizeOf" flags=[IsChecked] parameters=[{type=L1}] results=[{type=number}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}

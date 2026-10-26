@@ -1,0 +1,49 @@
+# An async frame of an async function shows the name the function itself has, never one that it takes from a variable or a property. An async frame of a generator shows no name that the generator itself has
+# RUN(WRITTEN): tables function-traces
+# RUN(INFERRED): tables function-traces
+# RUN(GENERATOR): tables function-traces
+# RUN(INFERREDGENERATOR): tables function-traces
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return
+}
+function f1 name="written" flags=[IsAsync, HasExplicitName] results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Await v0
+    Return v1
+}
+function f2 name="inferred" kind=Arrow flags=[IsAsync] results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Await v0
+    Return v1
+}
+function f3 name="writtenGenerator" flags=[IsGenerator, TakesCallee, HasExplicitName] results=[{type=anything}] {
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+function f4 name="inferredGenerator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    Return
+}
+
+# WRITTEN-NOT: role=CoroutineBody source=f1 {{*}} namedByOwner
+# WRITTEN: role=CoroutineBody source=f1 {{*}} function strict async rejectsOnThrow
+# WRITTEN-NOT: role=CoroutineBody source=f1 {{*}} namedByOwner
+# INFERRED: role=CoroutineBody source=f2 {{*}} function strict async rejectsOnThrow namedByOwner
+# GENERATOR: role=CoroutineBody source=f3 {{*}} function strict namedByOwner
+# INFERREDGENERATOR-NOT: role=CoroutineBody source=f4 {{*}} namedByOwner
+# INFERREDGENERATOR: role=CoroutineBody source=f4 {{*}} function strict
+# INFERREDGENERATOR-NOT: role=CoroutineBody source=f4 {{*}} namedByOwner

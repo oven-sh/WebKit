@@ -1,0 +1,109 @@
+# function Plain(x) { this.x = x }  new Plain(1)    function WithMethod(x) { this.x = x }  WithMethod.prototype.twice = function () { return this.x * 2 }  new WithMethod(1)
+# function Replaced(x) { this.x = x }  Replaced.prototype = { other: 1 }  new Replaced(1)    function Relinked(x) { this.x = x }  Object.setPrototypeOf(Relinked.prototype, null)  new Relinked(1)
+# function HandedOut(x) { this.x = x }  somethingThatNoTableLists(HandedOut)  new HandedOut(1)    function WithStatic(x) { this.x = x }  WithStatic.count = 0  new WithStatic(1)
+# A function is born with Function.prototype above it and with a prototype object, which has Object.prototype above it. Nobody follows the order of what a program stores afterwards,
+# and what is never done needs no order: a function that seen code alone has keeps `prototype`, both links and its names where nothing is stored, defined or linked anew.
+# A name that is stored on the prototype object is listed, so the names stay complete. Each thing that is done costs the fact that it is about.
+# FORM: AsRead
+# RUN: flow
+# CHECK: layout L0 flow=
+# CHECK: classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L1 flow=
+# CHECK: classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="twice" function=f7}]
+# CHECK: layout L2 flow=
+# CHECK-NOT: prototypeProperty=Fixed
+# CHECK-NOT: prototypeLink=Fixed
+# CHECK-NOT: prototypeNamesAreComplete=true
+# CHECK: layout L3 flow=
+# CHECK-NOT: prototypeLink=Fixed
+# CHECK: prototypeProperty=Fixed
+# CHECK: layout L4 flow=
+# CHECK-NOT: =Fixed
+# CHECK-NOT: NamesAreComplete=true
+# CHECK: layout L5 flow=
+# CHECK: classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="WithMethod" module=m0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Replaced" module=m0 constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Relinked" module=m0 constructor=f4 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="HandedOut" module=m0 constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L5 kind=Instance name="WithStatic" module=m0 constructor=f6 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L6 fields=[{key="other" declared={type=anything}}] ownFieldCount=1
+variable g0 name="Plain" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="WithMethod" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Replaced" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="Relinked" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="HandedOut" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="WithStatic" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+data d0 root=Object{layout=L6 members=[{key="other" value=Number{value=1}}]} module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = GetModuleVariable variable=g0
+    v2 = Construct v1, -, v0 calleeName="Plain"
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="prototype"
+    v5 = NewClosure function=f7
+    PropSet v4, v5 key="twice"
+    v7 = Construct v3, -, v0 calleeName="WithMethod"
+    v8 = GetModuleVariable variable=g2
+    v9 = Data data=d0
+    PropSet v8, v9 key="prototype"
+    v11 = Construct v8, -, v0 calleeName="Replaced"
+    v12 = GetModuleVariable variable=g3
+    v13 = PropGet v12 key="prototype"
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectSetPrototypeOf
+    v16 = Null
+    v17 = Call v15, v14, v13, v16 calleeName="setPrototypeOf"
+    v18 = Construct v12, -, v0 calleeName="Relinked"
+    v19 = GetModuleVariable variable=g4
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="somethingThatNoTableLists" [isFreeName]
+    v22 = Call v21, -, v19
+    v23 = Construct v19, -, v0 calleeName="HandedOut"
+    v24 = GetModuleVariable variable=g5
+    v25 = Integer
+    PropSet v24, v25 key="count"
+    v27 = Construct v24, -, v0 calleeName="WithStatic"
+    Return v27
+}
+function f1 name="Plain" flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="WithMethod" flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="Replaced" flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f4 name="Relinked" flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L3 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="HandedOut" flags=[HasThis, HasExplicitName] length=1 thisType={type=L4 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L4 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f6 name="WithStatic" flags=[HasThis, HasExplicitName] length=1 thisType={type=L5 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L5 {
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f7 name="twice" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    Return v3
+}

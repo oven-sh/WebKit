@@ -1,0 +1,344 @@
+# A type test in front of a merge is evaluated with 64 steps. When those run out inside a module variable, the truncated result must not be cached for the variable.
+# FORM: Selected
+# RUN: pass CollectRegExpLiterals
+# CHECK: regexp requests: 2
+# CHECK-NEXT: evaluated "p12|p11|p10|p9|p8|p7|p6|p5|p4|p3|p2|p1|p0" flags=- sites=f1:v4
+# CHECK-NEXT: evaluated "p59|p58|p57|p56|p55|p54|p53|p52|p51|p50|p49|p48|p47|p46|p45|p44|p43|p42|p41|p40|p39|p38|p37|p36|p35|p34|p33|p32|p31|p30|p29|p28|p27|p26|p25|p24|p23|p22|p21|p20|p19|p18|p17|p16|p15|p14|p13|p12|p11|p10|p9|p8|p7|p6|p5|p4|p3|p2|p1|p0" flags=- sites=f2:v4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="piece0" module=m0 declared={type=string}
+variable g1 name="piece1" module=m0 declared={type=string}
+variable g2 name="piece2" module=m0 declared={type=string}
+variable g3 name="piece3" module=m0 declared={type=string}
+variable g4 name="piece4" module=m0 declared={type=string}
+variable g5 name="piece5" module=m0 declared={type=string}
+variable g6 name="piece6" module=m0 declared={type=string}
+variable g7 name="piece7" module=m0 declared={type=string}
+variable g8 name="piece8" module=m0 declared={type=string}
+variable g9 name="piece9" module=m0 declared={type=string}
+variable g10 name="piece10" module=m0 declared={type=string}
+variable g11 name="piece11" module=m0 declared={type=string}
+variable g12 name="piece12" module=m0 declared={type=string}
+variable g13 name="piece13" module=m0 declared={type=string}
+variable g14 name="piece14" module=m0 declared={type=string}
+variable g15 name="piece15" module=m0 declared={type=string}
+variable g16 name="piece16" module=m0 declared={type=string}
+variable g17 name="piece17" module=m0 declared={type=string}
+variable g18 name="piece18" module=m0 declared={type=string}
+variable g19 name="piece19" module=m0 declared={type=string}
+variable g20 name="piece20" module=m0 declared={type=string}
+variable g21 name="piece21" module=m0 declared={type=string}
+variable g22 name="piece22" module=m0 declared={type=string}
+variable g23 name="piece23" module=m0 declared={type=string}
+variable g24 name="piece24" module=m0 declared={type=string}
+variable g25 name="piece25" module=m0 declared={type=string}
+variable g26 name="piece26" module=m0 declared={type=string}
+variable g27 name="piece27" module=m0 declared={type=string}
+variable g28 name="piece28" module=m0 declared={type=string}
+variable g29 name="piece29" module=m0 declared={type=string}
+variable g30 name="piece30" module=m0 declared={type=string}
+variable g31 name="piece31" module=m0 declared={type=string}
+variable g32 name="piece32" module=m0 declared={type=string}
+variable g33 name="piece33" module=m0 declared={type=string}
+variable g34 name="piece34" module=m0 declared={type=string}
+variable g35 name="piece35" module=m0 declared={type=string}
+variable g36 name="piece36" module=m0 declared={type=string}
+variable g37 name="piece37" module=m0 declared={type=string}
+variable g38 name="piece38" module=m0 declared={type=string}
+variable g39 name="piece39" module=m0 declared={type=string}
+variable g40 name="piece40" module=m0 declared={type=string}
+variable g41 name="piece41" module=m0 declared={type=string}
+variable g42 name="piece42" module=m0 declared={type=string}
+variable g43 name="piece43" module=m0 declared={type=string}
+variable g44 name="piece44" module=m0 declared={type=string}
+variable g45 name="piece45" module=m0 declared={type=string}
+variable g46 name="piece46" module=m0 declared={type=string}
+variable g47 name="piece47" module=m0 declared={type=string}
+variable g48 name="piece48" module=m0 declared={type=string}
+variable g49 name="piece49" module=m0 declared={type=string}
+variable g50 name="piece50" module=m0 declared={type=string}
+variable g51 name="piece51" module=m0 declared={type=string}
+variable g52 name="piece52" module=m0 declared={type=string}
+variable g53 name="piece53" module=m0 declared={type=string}
+variable g54 name="piece54" module=m0 declared={type=string}
+variable g55 name="piece55" module=m0 declared={type=string}
+variable g56 name="piece56" module=m0 declared={type=string}
+variable g57 name="piece57" module=m0 declared={type=string}
+variable g58 name="piece58" module=m0 declared={type=string}
+variable g59 name="piece59" module=m0 declared={type=string}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="p0"
+    PutModuleVariable v0 variable=g0
+    v2 = String string="p1|"
+    v3 = GetModuleVariable variable=g0
+    v4 = Strcat v2, v3
+    PutModuleVariable v4 variable=g1
+    v6 = String string="p2|"
+    v7 = GetModuleVariable variable=g1
+    v8 = Strcat v6, v7
+    PutModuleVariable v8 variable=g2
+    v10 = String string="p3|"
+    v11 = GetModuleVariable variable=g2
+    v12 = Strcat v10, v11
+    PutModuleVariable v12 variable=g3
+    v14 = String string="p4|"
+    v15 = GetModuleVariable variable=g3
+    v16 = Strcat v14, v15
+    PutModuleVariable v16 variable=g4
+    v18 = String string="p5|"
+    v19 = GetModuleVariable variable=g4
+    v20 = Strcat v18, v19
+    PutModuleVariable v20 variable=g5
+    v22 = String string="p6|"
+    v23 = GetModuleVariable variable=g5
+    v24 = Strcat v22, v23
+    PutModuleVariable v24 variable=g6
+    v26 = String string="p7|"
+    v27 = GetModuleVariable variable=g6
+    v28 = Strcat v26, v27
+    PutModuleVariable v28 variable=g7
+    v30 = String string="p8|"
+    v31 = GetModuleVariable variable=g7
+    v32 = Strcat v30, v31
+    PutModuleVariable v32 variable=g8
+    v34 = String string="p9|"
+    v35 = GetModuleVariable variable=g8
+    v36 = Strcat v34, v35
+    PutModuleVariable v36 variable=g9
+    v38 = String string="p10|"
+    v39 = GetModuleVariable variable=g9
+    v40 = Strcat v38, v39
+    PutModuleVariable v40 variable=g10
+    v42 = String string="p11|"
+    v43 = GetModuleVariable variable=g10
+    v44 = Strcat v42, v43
+    PutModuleVariable v44 variable=g11
+    v46 = String string="p12|"
+    v47 = GetModuleVariable variable=g11
+    v48 = Strcat v46, v47
+    PutModuleVariable v48 variable=g12
+    v50 = String string="p13|"
+    v51 = GetModuleVariable variable=g12
+    v52 = Strcat v50, v51
+    PutModuleVariable v52 variable=g13
+    v54 = String string="p14|"
+    v55 = GetModuleVariable variable=g13
+    v56 = Strcat v54, v55
+    PutModuleVariable v56 variable=g14
+    v58 = String string="p15|"
+    v59 = GetModuleVariable variable=g14
+    v60 = Strcat v58, v59
+    PutModuleVariable v60 variable=g15
+    v62 = String string="p16|"
+    v63 = GetModuleVariable variable=g15
+    v64 = Strcat v62, v63
+    PutModuleVariable v64 variable=g16
+    v66 = String string="p17|"
+    v67 = GetModuleVariable variable=g16
+    v68 = Strcat v66, v67
+    PutModuleVariable v68 variable=g17
+    v70 = String string="p18|"
+    v71 = GetModuleVariable variable=g17
+    v72 = Strcat v70, v71
+    PutModuleVariable v72 variable=g18
+    v74 = String string="p19|"
+    v75 = GetModuleVariable variable=g18
+    v76 = Strcat v74, v75
+    PutModuleVariable v76 variable=g19
+    v78 = String string="p20|"
+    v79 = GetModuleVariable variable=g19
+    v80 = Strcat v78, v79
+    PutModuleVariable v80 variable=g20
+    v82 = String string="p21|"
+    v83 = GetModuleVariable variable=g20
+    v84 = Strcat v82, v83
+    PutModuleVariable v84 variable=g21
+    v86 = String string="p22|"
+    v87 = GetModuleVariable variable=g21
+    v88 = Strcat v86, v87
+    PutModuleVariable v88 variable=g22
+    v90 = String string="p23|"
+    v91 = GetModuleVariable variable=g22
+    v92 = Strcat v90, v91
+    PutModuleVariable v92 variable=g23
+    v94 = String string="p24|"
+    v95 = GetModuleVariable variable=g23
+    v96 = Strcat v94, v95
+    PutModuleVariable v96 variable=g24
+    v98 = String string="p25|"
+    v99 = GetModuleVariable variable=g24
+    v100 = Strcat v98, v99
+    PutModuleVariable v100 variable=g25
+    v102 = String string="p26|"
+    v103 = GetModuleVariable variable=g25
+    v104 = Strcat v102, v103
+    PutModuleVariable v104 variable=g26
+    v106 = String string="p27|"
+    v107 = GetModuleVariable variable=g26
+    v108 = Strcat v106, v107
+    PutModuleVariable v108 variable=g27
+    v110 = String string="p28|"
+    v111 = GetModuleVariable variable=g27
+    v112 = Strcat v110, v111
+    PutModuleVariable v112 variable=g28
+    v114 = String string="p29|"
+    v115 = GetModuleVariable variable=g28
+    v116 = Strcat v114, v115
+    PutModuleVariable v116 variable=g29
+    v118 = String string="p30|"
+    v119 = GetModuleVariable variable=g29
+    v120 = Strcat v118, v119
+    PutModuleVariable v120 variable=g30
+    v122 = String string="p31|"
+    v123 = GetModuleVariable variable=g30
+    v124 = Strcat v122, v123
+    PutModuleVariable v124 variable=g31
+    v126 = String string="p32|"
+    v127 = GetModuleVariable variable=g31
+    v128 = Strcat v126, v127
+    PutModuleVariable v128 variable=g32
+    v130 = String string="p33|"
+    v131 = GetModuleVariable variable=g32
+    v132 = Strcat v130, v131
+    PutModuleVariable v132 variable=g33
+    v134 = String string="p34|"
+    v135 = GetModuleVariable variable=g33
+    v136 = Strcat v134, v135
+    PutModuleVariable v136 variable=g34
+    v138 = String string="p35|"
+    v139 = GetModuleVariable variable=g34
+    v140 = Strcat v138, v139
+    PutModuleVariable v140 variable=g35
+    v142 = String string="p36|"
+    v143 = GetModuleVariable variable=g35
+    v144 = Strcat v142, v143
+    PutModuleVariable v144 variable=g36
+    v146 = String string="p37|"
+    v147 = GetModuleVariable variable=g36
+    v148 = Strcat v146, v147
+    PutModuleVariable v148 variable=g37
+    v150 = String string="p38|"
+    v151 = GetModuleVariable variable=g37
+    v152 = Strcat v150, v151
+    PutModuleVariable v152 variable=g38
+    v154 = String string="p39|"
+    v155 = GetModuleVariable variable=g38
+    v156 = Strcat v154, v155
+    PutModuleVariable v156 variable=g39
+    v158 = String string="p40|"
+    v159 = GetModuleVariable variable=g39
+    v160 = Strcat v158, v159
+    PutModuleVariable v160 variable=g40
+    v162 = String string="p41|"
+    v163 = GetModuleVariable variable=g40
+    v164 = Strcat v162, v163
+    PutModuleVariable v164 variable=g41
+    v166 = String string="p42|"
+    v167 = GetModuleVariable variable=g41
+    v168 = Strcat v166, v167
+    PutModuleVariable v168 variable=g42
+    v170 = String string="p43|"
+    v171 = GetModuleVariable variable=g42
+    v172 = Strcat v170, v171
+    PutModuleVariable v172 variable=g43
+    v174 = String string="p44|"
+    v175 = GetModuleVariable variable=g43
+    v176 = Strcat v174, v175
+    PutModuleVariable v176 variable=g44
+    v178 = String string="p45|"
+    v179 = GetModuleVariable variable=g44
+    v180 = Strcat v178, v179
+    PutModuleVariable v180 variable=g45
+    v182 = String string="p46|"
+    v183 = GetModuleVariable variable=g45
+    v184 = Strcat v182, v183
+    PutModuleVariable v184 variable=g46
+    v186 = String string="p47|"
+    v187 = GetModuleVariable variable=g46
+    v188 = Strcat v186, v187
+    PutModuleVariable v188 variable=g47
+    v190 = String string="p48|"
+    v191 = GetModuleVariable variable=g47
+    v192 = Strcat v190, v191
+    PutModuleVariable v192 variable=g48
+    v194 = String string="p49|"
+    v195 = GetModuleVariable variable=g48
+    v196 = Strcat v194, v195
+    PutModuleVariable v196 variable=g49
+    v198 = String string="p50|"
+    v199 = GetModuleVariable variable=g49
+    v200 = Strcat v198, v199
+    PutModuleVariable v200 variable=g50
+    v202 = String string="p51|"
+    v203 = GetModuleVariable variable=g50
+    v204 = Strcat v202, v203
+    PutModuleVariable v204 variable=g51
+    v206 = String string="p52|"
+    v207 = GetModuleVariable variable=g51
+    v208 = Strcat v206, v207
+    PutModuleVariable v208 variable=g52
+    v210 = String string="p53|"
+    v211 = GetModuleVariable variable=g52
+    v212 = Strcat v210, v211
+    PutModuleVariable v212 variable=g53
+    v214 = String string="p54|"
+    v215 = GetModuleVariable variable=g53
+    v216 = Strcat v214, v215
+    PutModuleVariable v216 variable=g54
+    v218 = String string="p55|"
+    v219 = GetModuleVariable variable=g54
+    v220 = Strcat v218, v219
+    PutModuleVariable v220 variable=g55
+    v222 = String string="p56|"
+    v223 = GetModuleVariable variable=g55
+    v224 = Strcat v222, v223
+    PutModuleVariable v224 variable=g56
+    v226 = String string="p57|"
+    v227 = GetModuleVariable variable=g56
+    v228 = Strcat v226, v227
+    PutModuleVariable v228 variable=g57
+    v230 = String string="p58|"
+    v231 = GetModuleVariable variable=g57
+    v232 = Strcat v230, v231
+    PutModuleVariable v232 variable=g58
+    v234 = String string="p59|"
+    v235 = GetModuleVariable variable=g58
+    v236 = Strcat v234, v235
+    PutModuleVariable v236 variable=g59
+    v238 = CallDirect function=f1
+    v239 = CallDirect function=f2
+    Return v239
+}
+
+function f1 name="shortChain" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g12
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = String string="x+"
+    Jump -> next b3(v2)
+  b3(v3: string):
+    v4 = CallInline -, v3 inlineBuiltin=NewRegExp overload=RegExp/4 @10
+    Return v4
+}
+
+function f2 name="longChain" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g59
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = String string="x+"
+    Jump -> next b3(v2)
+  b3(v3: string):
+    v4 = CallInline -, v3 inlineBuiltin=NewRegExp overload=RegExp/4 @20
+    Return v4
+}

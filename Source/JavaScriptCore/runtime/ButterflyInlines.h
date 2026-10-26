@@ -45,10 +45,13 @@ inline size_t LEGACY_NODELETE nextLength(size_t length)
 
 inline size_t Butterfly::preCapacity(Structure* structure)
 {
-    if (!hasAnyArrayStorage(structure->indexingType())) [[likely]]
-        return 0;
+    if (hasAnyArrayStorage(structure->indexingType())) [[unlikely]]
+        return IndexingHeader::from(this)->arrayStorage()->m_indexBias;
 
-    return IndexingHeader::from(this)->arrayStorage()->m_indexBias;
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        return IndexingHeader::from(this)->elementsStartOffset(structure->outOfLineCapacity());
+
+    return 0;
 }
 
 inline size_t Butterfly::indexingPayloadSizeInBytes(Structure* structure)
@@ -169,6 +172,8 @@ inline Butterfly* Butterfly::createOrGrowPropertyStorage(
         oldButterfly->propertyStorage() - oldPropertyCapacity,
         totalSize(0, oldPropertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes));
     memset(result->propertyStorage() - newPropertyCapacity, 0, (newPropertyCapacity - oldPropertyCapacity) * sizeof(EncodedJSValue));
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        result->indexingHeader()->elementsStartOffset(newPropertyCapacity) = preCapacity;
     return result;
 }
 

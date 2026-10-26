@@ -1,0 +1,31 @@
+# A call of RegExp with a constant text whose pattern cannot be built stays a call, which throws
+# FORM: AsRead
+# RUN: pipeline FoldConstantRegExps
+# OPTIONS: only-passes=FoldConstantRegExps
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+
+function f1 name="longerThanAnyString" results=[{type=anything}] {
+    v0 = String string="a{4294967295}a"
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+}
+
+function f2 name="asLongAsAString" results=[{type=anything}] {
+    v0 = String string="a{4294967295}"
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+# CHECK: NewRegExp pattern="a{4294967295}"
+# CHECK-NOT: CallBuiltin
+}

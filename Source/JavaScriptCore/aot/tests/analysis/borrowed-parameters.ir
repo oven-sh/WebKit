@@ -1,0 +1,355 @@
+# A function borrows an entry parameter that it only looks at, calls, reads, fills or hands to a function that borrows it. It does not borrow what it stores, returns, throws, captures, reads by name, constructs or hands to code that is not known to borrow it. What is read through a parameter is judged apart, and so is whether anything of it is called
+# FORM: Prepared
+# RUN: borrowed-parameters
+# RUN(USES): operands summaries f41 f42 f44
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Holder" fields=[{key="held" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={members=[L1]}
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="onlyCalls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: f0: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f1 name="passesToOnlyCalls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: f1: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f2 name="ping" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+# CHECK-LABEL: f2: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f3 name="pong" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK-LABEL: f3: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f4 name="readsAndWritesEnvironment" kind=Arrow captures=[{type=env L0}] results=[{type=boolean}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = ToBoolean v1
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    Return v2
+}
+# CHECK-LABEL: f4: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f5 name="callsKnownCallees" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 callees=[f0, f1]
+    Return v2
+}
+# CHECK-LABEL: f5: 0 borrowed, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f6 name="compares" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: f6: 0 borrowed, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f7 name="passesWhatItReadsToOnlyCalls" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: f7: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f8 name="returnsCallOfOnlyCalls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1
+}
+# CHECK-LABEL: f8: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f9 name="storesInField" parameters=[{type=anything}, {type=L1}] results=[{type=undefined}] {
+    PutSlot v1, -, v0 key="held" receivers=[L1] level=Proven
+    Return
+}
+# CHECK-LABEL: f9: 0 leaks, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f10 name="storesInEnvironmentField" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: f10: 0 borrowed, 1 leaks
+
+function f11 name="storesInVariable" parameters=[{type=anything}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: f11: 0 leaks
+
+function f12 name="returns" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: f12: 0 leaks
+
+function f13 name="throws" parameters=[{type=anything}] results=[{type=anything}] {
+    Throw v0
+}
+# CHECK-LABEL: f13: 0 leaks
+
+function f14 name="captures" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f15
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: f14: 0 leaks
+
+function f15 name="looksAtCapture" kind=Arrow captures=[{type=anything}] results=[{type=boolean}] {
+    v1 = ToBoolean v0
+    Return v1
+}
+# CHECK-LABEL: f15: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f16 name="passesOneArgumentTooMany" parameters=[{type=anything}, {type=anything}, {type=f0}] results=[{type=anything}] {
+    v3 = Call v2, -, v0, v1 callees=[f0]
+    Return v3
+}
+# CHECK-LABEL: f16: 0 borrowed, 1 leaks, 2 borrowed
+# CHECK-NOT: contents-leak
+
+function f17 name="passesToRestParameter" parameters=[{type=anything}, {type=f18}] results=[{type=anything}] {
+    v2 = Call v1, -, v0 callees=[f18]
+    Return v2
+}
+# CHECK-LABEL: f17: 0 leaks, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f18 name="takesRest" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: f18: 0 leaks
+
+function f19 name="passesToUnknownCallee" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: f19: 0 leaks, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f20 name="passesToCalleesThatAreNotAllKnown" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = Call v1, -, v0 callees=[f0, ..]
+    Return v2
+}
+# CHECK-LABEL: f20: 0 leaks, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f21 name="passesToFunctionWithoutBody" parameters=[{type=anything}, {type=f22}] results=[{type=anything}] {
+    v2 = Call v1, -, v0 callees=[f22]
+    Return v2
+}
+# CHECK-LABEL: f21: 0 leaks, 1 borrowed
+# CHECK-NOT: contents-leak
+
+function f22 name="withoutBody" parameters=[{type=anything}] results=[{type=undefined}]
+
+function f23 name="handsToBuiltin" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Return v1
+}
+# CHECK-LABEL: f23: 0 leaks
+
+function f24 name="readsByName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# CHECK-LABEL: f24: 0 leaks
+
+function f25 name="constructs" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+}
+# CHECK-LABEL: f25: 0 leaks
+
+function f26 name="callsWithList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = CallList v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: f26: 0 leaks, 1 leaks
+
+function f27 name="callsFunctionThatReturnsItself" parameters=[{type=f28}] results=[{type=anything}] {
+    v1 = Call v0 callees=[f28]
+    Return v1
+}
+# A closure of a function that takes its callee lies in no frame, and whoever makes it knows that.
+# CHECK-LABEL: f27: 0 borrowed
+
+function f28 name="returnsItself" flags=[TakesCallee] results=[{type=function}] {
+    Return v0
+}
+# CHECK-LABEL: f28: 0 leaks
+
+function f29 name="returnsOneOfTwo" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: f29: 0 leaks, 1 leaks, 2 leaks
+
+function f30 name="returnsNarrowedCopy" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: f30: 0 leaks
+
+function f31 name="returnsCast" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = Upcast v0 castType=anything
+    Return v1
+}
+# CHECK-LABEL: f31: 0 leaks
+
+function f32 name="returnsField" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+# CHECK-LABEL: f32: 0 borrowed contents-leak
+
+function f33 name="returnsSlot" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="held" receivers=[L1] level=Proven
+    Return v1
+}
+# CHECK-LABEL: f33: 0 borrowed contents-leak
+
+function f34 name="passesToReturnsField" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = CallDirect v0 function=f32
+    Return v1
+}
+# CHECK-LABEL: f34: 0 borrowed contents-leak
+
+function f35 name="passesWhatItReadsToReturns" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CallDirect v1 function=f12
+    Return v2
+}
+# CHECK-LABEL: f35: 0 borrowed contents-leak
+
+function f36 name="storesWhatItReads" kind=Arrow captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: f36: 0 borrowed contents-leak
+
+function f37 name="returnsCaptureOfClosure" parameters=[{type=f15}] results=[{type=anything}] {
+    v1 = GetCapture v0 function=f15 index=0
+    Return v1
+}
+# CHECK-LABEL: f37: 0 borrowed contents-leak
+
+function f38 name="numberIsNoReference" parameters=[{type=number}] results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: f38: 0 leaks
+
+function f39 name="oneParameterTooMany" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: f39: 0 borrowed, 1 borrowed, 2 borrowed, 3 borrowed, 4 borrowed, 5 borrowed, 6 borrowed, 7 borrowed, 8 borrowed, 9 borrowed, 10 borrowed, 11 borrowed, 12 borrowed, 13 borrowed, 14 borrowed, 15 borrowed, 16 borrowed, 17 borrowed, 18 borrowed, 19 borrowed, 20 borrowed, 21 leaks
+
+function f40 name="passesToLooksAtCapture" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = CallDirect v0 function=f15
+    Return v1
+}
+# CHECK-LABEL: f40: 0 borrowed
+# CHECK-NOT: contents-leak
+
+# The summary of a function is made from its body and from this table for its callees. Nothing two calls down calls the operand, so no call is named: the escape analysis takes an object that is called and is no closure for one that unknown code got.
+function f41 name="nothingIsCalledTwoCallsDown" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = CallDirect v0 function=f40
+    Return v1
+}
+# CHECK-LABEL: f41: 0 borrowed
+# CHECK-NOT: contents-leak
+# USES-LABEL: function f41
+# USES: v1 CallDirect 0: [Inspects,
+# USES-NOT: Calls
+
+function f42 name="calledTwoCallsDown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: f42: 0 borrowed
+# CHECK-NOT: contents-leak
+# USES-LABEL: function f42
+# USES: v1 CallDirect 0: [Inspects, Calls, CallsPerElement, CallsRepeatedly,
+
+# What becomes of a value in a field of an environment is known by the field, so a call of it says nothing about the environment.
+function f43 name="callsWhatItReads" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: f43: 0 borrowed
+# CHECK-NOT: contents-leak
+
+function f44 name="passesEnvironmentToCallsWhatItReads" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = CallDirect v0 function=f43
+    Return v1
+}
+# CHECK-LABEL: f44: 0 borrowed
+# CHECK-NOT: contents-leak
+# USES-LABEL: function f44
+# USES: v1 CallDirect 0: [Inspects,
+# USES-NOT: Calls
+
+function f45 name="coroutine" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: f45: 0 leaks
+
+function f46 name="storesAfterAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L1}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f46 body=f47 entryWithoutPromise=f47 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f47
+    Return v1
+}
+# CHECK-LABEL: f46: 0 leaks
+
+function f47 name="storesAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=L1}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f46 body=f47 entryWithoutPromise=f47 promiseType=Promise promiseParameter=1} {
+    v2 = Null
+    v3 = AwaitBySavingFrame v2, v1
+    PutSlot v0, -, v2 key="held" receivers=[L1] level=Proven
+    Return v3
+}
+# CHECK-LABEL: f47: 0 leaks, 1 leaks
+
+# The rest array holds the arguments of the frame, which are no operands of the operation that makes it.
+function f48 name="takesRest" role=GenericEntrypoint flags=[HasThis] captures=[{type=f18}] results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18} {
+    v2 = CreateRest firstArgument=1
+    Return v2
+}
+# CHECK-LABEL: f48: 0 leaks, 1 leaks

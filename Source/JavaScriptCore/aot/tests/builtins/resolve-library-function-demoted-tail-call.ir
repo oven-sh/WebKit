@@ -1,0 +1,35 @@
+# The direct call of a library function is marked when the call it replaces is a demoted tail call, or a tail call that the pass demotes
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=31 function=f0
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v3 = Boolean boolean=true
+    Return v3
+}
+function f1 name="marked" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="every"
+    v4 = Call v3, v0, v1, v2 calleeKey="every" @0 tail
+    Return v4
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 @0 tail
+}
+
+function f2 name="tailCall" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="every"
+    v4 = Call v3, v0, v1, v2 calleeKey="every"
+    ReturnCall v4 requirement=Allowed
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 @0 tail
+# CHECK-NEXT: Return v4
+}
+
+function f3 name="ordinary" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="every"
+    v4 = Call v3, v0, v1, v2 calleeKey="every"
+    Return v4
+# CHECK-NOT: @{{*}} tail
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0
+# CHECK-NOT: @{{*}} tail
+}

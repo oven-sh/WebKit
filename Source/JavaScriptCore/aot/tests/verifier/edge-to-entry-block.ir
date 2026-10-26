@@ -1,0 +1,16 @@
+# an edge into block 0
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: EdgeToEntryBlock 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    Jump -> next b0()
+}
+function f1 name="good" results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    Return
+}

@@ -1,0 +1,16 @@
+# Sixteen string literals are the limit and no hit. The seventeenth widens the list to string, and the other parts stay.
+# OPTIONS: limit=MaxLiteralsInType:16
+# RUN: union-widening
+# LOSS: MaxLiteralsInType x2 f0
+# CHECK: t0 | t0 = "s0"|"s1"|"s10"|{{*}}|"s15"|"s2"|{{*}}|"s9"
+# CHECK-NEXT: t0 | t1 = undefined|string|L0
+# CHECK-NEXT: t0 | t2 = "s0"|"s1"|"s10"|{{*}}|"s15"|"s2"|{{*}}|"s9"
+# CHECK-NEXT: t1 | t1 = undefined|"s16"|L0
+# CHECK-NEXT: t1 | t2 = undefined|"s0"|"s16"|L0
+# CHECK-NEXT: t2 | t2 = "s0"
+# CHECK-NEXT: loss MaxLiteralsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+function f0 name="types" parameters=[{type="s0"|"s1"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9"|"s10"|"s11"|"s12"|"s13"|"s14"|"s15"}, {type=undefined|"s16"|L0}, {type="s0"}] results=[{type=undefined}]

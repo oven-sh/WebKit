@@ -1,0 +1,10 @@
+# an option lowers a limit for the build, and the default stays what the table says
+# OPTIONS: limit=MaxLayoutsInType:3
+# RUN: limits MaxLayoutsInType 3 4 1024
+# CHECK: limit MaxLayoutsInType = 3 (default 1024)
+# CHECK-NEXT: can be lowered: yes
+# CHECK-NEXT: exceeds 3: no
+# CHECK-NEXT: exceeds 4: yes
+# CHECK-NEXT: exceeds 1024: yes
+# CHECK-NEXT: gave up: MaxLayoutsInType
+# LOSS: MaxLayoutsInType x3

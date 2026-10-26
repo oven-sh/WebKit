@@ -1,0 +1,71 @@
+# HashedIndex with chosen hashes: hashed-index <hashes> <hash> <position>.
+# Entry i of the list is add(hash, i). The lookup passes the hash and an isEqual that accepts only the position.
+# "compared" counts the calls of isEqual: one per entry with that hash, up to the accepted one or the first free slot.
+
+# RUN(EMPTY): hashed-index - 0 0
+# RUN(EMPTY): hashed-index - 4294967295 0
+# EMPTY: none compared 0
+
+# RUN(FIRST): hashed-index 0 0 0
+# RUN(FIRST): hashed-index 4294967295 4294967295 0
+# RUN(FIRST): hashed-index 0,4294967295 0 0
+# FIRST: position 0 compared 1
+# RUN(SECOND): hashed-index 0,4294967295 4294967295 1
+# RUN(SECOND): hashed-index 4294967295,0 0 1
+# SECOND: position 1 compared 1
+
+# 16 slots. Every hash here starts at slot 15, so the second entry is in slot 0 and the third in slot 1.
+# RUN(WRAPPED): hashed-index 15,31,47 47 2
+# RUN(WRAPPED): hashed-index 4294967295,15,47 47 2
+# WRAPPED: position 2 compared 1
+# RUN(AFTERWRAPPED): hashed-index 15,31,47 63 0
+# RUN(AFTERWRAPPED): hashed-index 15,31,47 4294967295 0
+# AFTERWRAPPED: none compared 0
+
+# RUN(SAMESLOT): hashed-index 7 23 0
+# SAMESLOT: none compared 0
+
+# RUN(EQUALHASH): hashed-index 7,7,7 7 1
+# EQUALHASH: position 1 compared 2
+# RUN(NOTEQUAL): hashed-index 7,7,7 7 3
+# NOTEQUAL: none compared 3
+# RUN(ONENOTEQUAL): hashed-index 0 0 1
+# RUN(ONENOTEQUAL): hashed-index 4294967295 4294967295 1
+# ONENOTEQUAL: none compared 1
+
+# Eight entries fill half of 16 slots, all from slot 1 on. The ninth doubles the slots, and the hashes then start at slot 1 or 17.
+# RUN(FULL): hashed-index 1,17,33,49,65,81,97,113 113 7
+# RUN(GROWN): hashed-index 1,17,33,49,65,81,97,113,129 113 7
+# FULL: position 7 compared 1
+# GROWN: position 7 compared 1
+# RUN(GROWNFIRST): hashed-index 1,17,33,49,65,81,97,113,129 1 0
+# GROWNFIRST: position 0 compared 1
+# RUN(GROWNLAST): hashed-index 1,17,33,49,65,81,97,113,129 129 8
+# GROWNLAST: position 8 compared 1
+# RUN(GROWNMISSING): hashed-index 1,17,33,49,65,81,97,113,129 145 0
+# GROWNMISSING: none compared 0
+
+# One hash 17 times: 64 slots after two doublings, and the run of entries starts at the last slot each time.
+# RUN(OLDEST): hashed-index 63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63 63 0
+# OLDEST: position 0 compared
+# RUN(NEWEST): hashed-index 63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63 63 16
+# NEWEST: position 16 compared 17
+# RUN(NONEOFMANY): hashed-index 63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63,63 63 17
+# NONEOFMANY: none compared 17
+
+# RUN(ENTRY): hashed-index 1,x 1 0
+# ENTRY: error: bad argument 1,x
+# RUN(GAP): hashed-index 1,,2 1 0
+# GAP: error: bad argument 1,,2
+# RUN(TOOLARGE): hashed-index 4294967296 0 0
+# TOOLARGE: error: bad argument 4294967296
+# RUN(HASH): hashed-index 1 x 0
+# HASH: error: bad argument x
+# RUN(POSITION): hashed-index 1 1 -
+# POSITION: error: bad argument -
+# RUN(EXTRA): hashed-index 1 1 0 2
+# EXTRA: error: bad argument 2
+# RUN(TOOFEW): hashed-index 1 1
+# RUN(TOOFEW): hashed-index 1
+# RUN(TOOFEW): hashed-index
+# TOOFEW: error: missing argument

@@ -1,0 +1,102 @@
+# A check of a type has no effects, whether it may fail or not: where it fails the function goes on in its generic version, and nothing throws.
+# A cast that the language asks for has no effects where its operand is inside what it lets through, else it throws and does nothing else. A type test never has effects
+# FORM: Prepared
+# RUN: effects
+# RUN(ONLY): effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="B" fields=[{key="y" declared={type=number}}]
+variable g0 name="early" declared={type=number|absent} initialization=Uninitialized
+variable g1 name="late" declared={type=number} initialization=Undefined
+function f0 name="check" parameters=[{type=number}, {type=anything}, {type=i32}, {type=undefined|number}] results=[{type=undefined}] {
+    v4 = Check v0 expectedType=number
+    v5 = Check v2 expectedType=number
+    v6 = Check v1 expectedType=number
+    v7 = Check v3 expectedType=number
+    v8 = Check v0 expectedType=i32
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v4 Check: none
+# CHECK-NEXT: v5 Check: none
+# CHECK-NEXT: v6 Check: none
+# CHECK-NEXT: v7 Check: none
+# CHECK-NEXT: v8 Check: none
+function f1 name="checkNeverPasses" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=number
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1 Check: none
+function f2 name="checkInitialized" results=[{type=undefined}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="early"
+    v4 = CheckInitialized v3 name="early"
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v1 CheckInitialized: none
+# CHECK: v3 CheckInitialized: throws
+# CHECK-NEXT: v4 CheckInitialized: none
+function f3 name="requireObjectCoercible" parameters=[{type=number}, {type=object}, {type=undefined|number}, {type=null|object}, {type=anything}] results=[{type=undefined}] {
+    v5 = RequireObjectCoercible v0 nullishAccess=Read
+    v6 = RequireObjectCoercible v1 nullishAccess=Read
+    v7 = RequireObjectCoercible v2 nullishAccess=Read
+    v8 = RequireObjectCoercible v3 nullishAccess=Write
+    v9 = RequireObjectCoercible v4 nullishAccess=Iterate
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v5 RequireObjectCoercible: none
+# CHECK-NEXT: v6 RequireObjectCoercible: none
+# CHECK-NEXT: v7 RequireObjectCoercible: throws
+# CHECK-NEXT: v8 RequireObjectCoercible: throws
+# CHECK-NEXT: v9 RequireObjectCoercible: throws
+function f4 name="requireObject" parameters=[{type=object}, {type=L0}, {type=Array<number>}, {type=undefined|object}, {type=anything}] results=[{type=undefined}] {
+    v5 = RequireObject v0 runtimeError=IteratorResultNotObject
+    v6 = RequireObject v1 runtimeError=IteratorResultNotObject
+    v7 = RequireObject v2 runtimeError=IteratorResultNotObject
+    v8 = RequireObject v3 runtimeError=IteratorResultNotObject
+    v9 = RequireObject v4 runtimeError=IteratorResultNotObject
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v5 RequireObject: none
+# CHECK-NEXT: v6 RequireObject: none
+# CHECK-NEXT: v7 RequireObject: none
+# CHECK-NEXT: v8 RequireObject: throws
+# CHECK-NEXT: v9 RequireObject: throws
+function f5 name="castsWithoutCheck" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+    v2 = Upcast v0 castType=anything
+    v3 = Upcast v0 castType=number
+    v4 = AssumeType v1 provenType=number
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v2 Upcast: none
+# CHECK-NEXT: v3 Upcast: none
+# CHECK-NEXT: v4 AssumeType: none
+function f6 name="typeTests" parameters=[{type=anything}, {type=string}, {type=object}] results=[{type=undefined}] {
+    v3 = TypeTest v0 testedType="a"|"b"
+    v4 = TypeTest v1 testedType="a"|"b"
+    v5 = TypeTest v0 testedType=L0|L1
+    v6 = TypeTest v2 testedType=L0|L1
+    v7 = TypeTest v0 testedType=undefined|null
+    v8 = TypeTest v0 testedType=string
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v3 TypeTest: none
+# CHECK-NEXT: v4 TypeTest: none
+# CHECK-NEXT: v5 TypeTest: none
+# CHECK-NEXT: v6 TypeTest: none
+# CHECK-NEXT: v7 TypeTest: none
+# CHECK-NEXT: v8 TypeTest: none
+# ONLY-NOT: collects
+# ONLY-NOT: writes
+# ONLY-NOT: reads(S
+# ONLY-NOT: reads(A
+# ONLY-NOT: nknownCode

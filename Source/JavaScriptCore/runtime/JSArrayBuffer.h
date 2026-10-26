@@ -50,6 +50,7 @@ public:
     JS_EXPORT_PRIVATE static JSArrayBuffer* create(VM&, Structure*, RefPtr<ArrayBuffer>&&);
 
     ArrayBuffer* impl() const { return m_impl; }
+    static constexpr ptrdiff_t offsetOfImpl() { return OBJECT_OFFSETOF(JSArrayBuffer, m_impl); }
     
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 

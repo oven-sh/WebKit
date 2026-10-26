@@ -1,0 +1,54 @@
+# A read by name under a handler unwinds to its landing pad, as a value and as the condition of a branch
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls
+# CHECK: f1: size={{*}} handlers=1
+# CHECK: f2: size={{*}} handlers=1
+# CHECK: f3: size={{*}} handlers=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="value" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = PropGet v0 key="first"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f2 name="condition" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b4():
+    v1 = PropGet v0 key="done"
+    Jump -> next b1()
+  b1():
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v0
+  b3():
+    Return v1
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+function f3 name="fusedCondition" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="done"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return
+}

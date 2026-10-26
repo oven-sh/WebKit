@@ -1,0 +1,47 @@
+# With the call of a function that calls what it is handed goes the closure that the caller made for that call alone: the copy calls the closure's function directly and the closure is never made.
+# That counts where code runs seldom too: it is bytes that go. A closure that something else holds is made all the same
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineBenefitKnownCalleeArgument = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsWhatItIsHanded" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    v3 = Mul v1, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    Return v2
+}
+
+function f1 name="handed" kind=Arrow captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
+    v2 = Mul v0, v1
+    Return v2
+}
+
+function f2 name="makesTheClosureForTheCall" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = NewClosure v0 function=f1
+    v3 = CallDirect v2, v0 function=f0
+    Return v3
+  b2():
+    Return v0
+# CHECK-NOT: CallDirect
+}
+
+function f3 name="returnsTheClosureToo" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = NewClosure v0 function=f1
+    v3 = CallDirect v2, v0 function=f0
+    Return v2
+  b2():
+    Return v0
+# CHECK: = CallDirect v2, v0
+}

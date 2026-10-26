@@ -158,7 +158,7 @@ void* OSAllocator::tryReserveUncommitted(size_t bytes, Usage usage, void* addres
 #if OS(LINUX) || OS(HAIKU)
     UNUSED_PARAM(usage);
     void* result = tryReserveAndCommitImpl(bytes, usage, address, writable, executable, jitCageEnabled, numGuardPagesToAddOnEachEnd, /* uncommitted */ true);
-#ifdef MADV_DONTFORK
+#if defined(MADV_DONTFORK) && !ENABLE(FUZZILLI)
     if (result)
         while (madvise(result, bytes, MADV_DONTFORK) == -1 && errno == EAGAIN) { }
 #endif
@@ -211,7 +211,8 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
 
     void* aligned = address;
     kern_return_t result = mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&aligned), bytes, alignment - 1, flags, MEMORY_OBJECT_NULL, 0, copy, protections, protections, childProcessInheritance);
-    ASSERT_UNUSED(result, result == KERN_SUCCESS || !aligned);
+    if (result != KERN_SUCCESS)
+        return nullptr;
 #if HAVE(MADV_FREE_REUSE)
     if (aligned) {
         // To support the "reserve then commit" model, we have to initially decommit.
@@ -238,7 +239,7 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
     void* result = mmap(address, bytes, protection, MAP_NORESERVE | MAP_PRIVATE | MAP_ANON | MAP_ALIGNED(getLSBSet(alignment)), -1, 0);
     if (result == MAP_FAILED)
         return nullptr;
-#ifdef MADV_DONTFORK
+#if defined(MADV_DONTFORK) && !ENABLE(FUZZILLI)
     if (result)
         while (madvise(result, bytes, MADV_DONTFORK) == -1 && errno == EAGAIN) { }
 #endif

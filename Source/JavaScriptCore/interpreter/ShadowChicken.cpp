@@ -181,7 +181,7 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
             callFrame, vm, [&] (StackVisitor& visitor) -> IterationStatus {
                 if (visitor->isInlinedDFGFrame())
                     return IterationStatus::Continue;
-                if (visitor->isNativeCalleeFrame()) {
+                if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
                     // FIXME: Make shadow chicken work with Wasm.
                     // https://bugs.webkit.org/show_bug.cgi?id=165441
                     return IterationStatus::Continue;
@@ -306,7 +306,7 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
                 return IterationStatus::Continue;
             }
 
-            if (visitor->isNativeCalleeFrame()) {
+            if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
                 // FIXME: Make shadow chicken work with Wasm.
                 return IterationStatus::Continue;
             }

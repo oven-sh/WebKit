@@ -1,0 +1,32 @@
+# A spread of a string or a number tests it for a string. Where no arm may be made for the string, what passes goes to the function that walks anything.
+# A validating build checks the tested value at the head of that block, and the check stays in front of the call
+# FORM: Prepared optimizing
+# OPTIONS: validate limit=MaxDispatchCases:0
+# RUN: pass ExpandIteration
+# LOSS: MaxDispatchCases
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="spreadsTextOrNumber" parameters=[{type=string|number}] results=[{type=anything}] {
+  b0(v0: string|number):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: Jump -> next [[entry]](v0)
+# CHECK: [[entry]]([[operand]]: number|string):
+# CHECK-NEXT: [[isString]]: boolean = TypeTest [[operand]] testedType=string
+# CHECK-NEXT: Branch [[isString]] -> taken [[walks]](| 0), notTaken [[throws]](| 0)
+# CHECK: [[walks]]([[string]]: string)
+# CHECK-NEXT: ValidateType [[operand]] validatedType=string
+# CHECK-NEXT: CallDirect v1, [[string]] function={{*}} [isNeverInlined]
+# CHECK-NEXT: Jump
+# CHECK: [[throws]]([[number]]: number) frequency=Rare:
+# CHECK-NEXT: never = ThrowNotIterable [[number]] [isSpread]
+# CHECK-NEXT: Unreachable
+}
+
+function f1 name="namesTheKey" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key=@@iterator
+    Return v1
+}

@@ -1,0 +1,26 @@
+# A copy buys time only where time is spent: the same two functions, and the call stands in no loop
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 1
+# STATISTIC: SelectedHeadsInlined = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="early" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=i32
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="caller"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f1
+# CHECK-NOT: isAfterInlinedHead

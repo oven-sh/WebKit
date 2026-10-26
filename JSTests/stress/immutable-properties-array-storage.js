@@ -38,7 +38,7 @@ let mutators = [
     a => { a[0] = 9; }, a => { "use strict"; a[1] = 9; }, a => { a[a.length] = 9; }, a => { a[a.length + 5] = 9; }, a => { a.length = 0; }, a => { a.length = 99; },
     a => a.push(9), a => a.push(9, 9, 9), a => a.pop(), a => a.shift(), a => a.unshift(9), a => a.splice(0, 1), a => a.splice(1, 0, 9), a => a.splice(1, 2, 7, 7, 7),
     a => a.reverse(), a => a.sort(), a => a.sort((x, y) => (x < y) - (x > y)), a => a.fill(9), a => a.fill(9, 1, 2), a => a.copyWithin(0, 1), a => { delete a[0]; },
-    a => Object.defineProperty(a, 0, { value: 9 }), a => Object.defineProperty(a, 0, { get() { return 9; } }), a => Object.defineProperty(a, "length", { value: 0 }), a => Object.defineProperty(a, "length", { writable: false }),
+    a => Object.defineProperty(a, 0, { value: 9 }), a => Object.defineProperty(a, 0, { get() { return 9; } }), a => Object.defineProperty(a, "length", { value: 0 }),
     a => { a.named = 9; }, a => Reflect.set(a, 1, 9), a => Reflect.deleteProperty(a, 1), a => Object.assign(a, [9, 9]), a => Array.prototype.push.apply(a, [7, 8]), a => Array.prototype.fill.call(a, 9, 0, 1), a => Array.prototype.copyWithin.call(a, 1, 0),
     a => { a[1]++; }, a => { a[1] += 1; }, a => { [a[0], a[1]] = [a[1], a[0]]; }, a => { for (let k in a) { a[k] = 0; break; } }, a => Object.setPrototypeOf(a, null), a => { a.__proto__ = {}; },
     a => { class Base { constructor() { return a; } } class Field extends Base { field = 1; } new Field; },
@@ -47,7 +47,17 @@ let mutators = [
     a => Array.prototype.sort.call(a, () => -1), a => { a[40000] = "X"; }, a => Array.prototype.fill.call(a, "X"),
 ];
 // These make an ordinary array non-extensible, which is one of the things that teach an allocation site: they are not warmed up.
-let mutatorsNotWarmedUp = [a => Object.freeze(a), a => Object.seal(a)];
+let mutatorsNotWarmedUp = [];
+// These only take from what the properties admit (writable and configurable go to false), so they succeed. No value changes. They are tried last: the attributes, and with them the storage, are others behind them.
+let narrowers = [a => Object.defineProperty(a, "length", { writable: false }), a => Object.seal(a), a => Object.freeze(a)];
+function contents(array) { return JSON.stringify(Reflect.ownKeys(array).map(key => [String(key), typeof array[key], typeof array[key] === "object" || typeof array[key] === "function" ? "" : String(array[key])])); }
+function narrowingChangesNoValue(array, label) {
+    let before = contents(array);
+    for (let narrower of narrowers) {
+        shouldBe(narrower(array), array, label + ": " + String(narrower));
+        shouldBe(contents(array), before, label + " after " + String(narrower));
+    }
+}
 
 let targets = {};
 for (let name in copyOnWriteKinds)
@@ -120,3 +130,7 @@ for (let name in copyOnWriteKinds) {
         shouldBe($vm.indexingMode(result), mode);
     }
 }
+
+// Last: what only narrows.
+for (let name in copyOnWriteKinds)
+    narrowingChangesNoValue($vm.makePropertiesImmutable(copyOnWriteKinds[name]()), name);

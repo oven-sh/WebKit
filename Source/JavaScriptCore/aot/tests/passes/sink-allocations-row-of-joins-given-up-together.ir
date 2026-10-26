@@ -1,0 +1,42 @@
+# An object that a row of merge blocks only hands on, up to a call that takes it as a cell: no parameter of the row pays once the one behind it is given up.
+# All of them are given up in the judgement that gives up the last one, so the search for the allocation that does pay fits into this limit.
+# One full analysis for each parameter of the row spends it, and then nothing is sunk.
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:1000
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 1
+# STATISTIC: AllocationsMergedAtJoins = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="aRowOfMergeBlocksHandsTheObjectOn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    PropDefine v3, v0 key="y" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = Call v0, -, v3
+    Jump -> next b3(v5)
+  b2():
+    v7 = NewObject -, v1 layout=L0 fields=[0]
+# REPEAT: i = 0..10; a = 7 8 10 12 14 16 18 20 22 24 26
+    Jump -> next b%(i*3+3)(v%(a))
+  b%(i*3+3)(v%(i*2+8): L0):
+    Branch v2 -> taken b%(i*3+4)(), notTaken b%(i*3+5)()
+  b%(i*3+4)():
+    v%(i*2+9) = Call v0
+    Jump -> next b%(i*3+6)(v%(i*2+8))
+  b%(i*3+5)():
+# END REPEAT
+    Jump -> next b36(v28)
+  b36(v30: L0):
+    v31 = Call v1, -, v30
+    Return v31
+}
+# CHECK-LABEL: function f0 name="aRowOfMergeBlocksHandsTheObjectOn"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK: [[cell]]:{{*}}= NewObject -, v1, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell]]

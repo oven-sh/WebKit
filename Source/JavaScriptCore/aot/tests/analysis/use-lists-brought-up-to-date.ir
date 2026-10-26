@@ -1,0 +1,93 @@
+# Use lists that are held when the builder edits a function are told that it has touched a block, and are made anew for the next who asks. A checking build compares them with the function
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN(ORDER): repair function=f0 redirect=b2.1:b1 use-lists
+# RUN(SWAP): repair function=f0 redirect=b0.0:b2 redirect=b0.1:b1 use-lists
+# RUN(ERASE): erase-values function=f0 block=b1 indexes=1 use-lists
+# RUN(SPLIT): split-block function=f0 block=b3 indexes=1 use-lists
+# RUN(EDGE): split-edge function=f0 edge=b2.0 use-lists
+# RUN(JUMP): convert-branch function=f0 block=b2 target=0 use-lists
+# RUN(INSERT): insert function=f0 points=b1:0,b3:1 use-lists
+# RUN(REPLACE): substitute function=f0 replace=v5:v2 use-lists
+# RUN(ADD): add-parameter function=f0 block=b3 type=number arguments=b1.0:v1,b2.0:v2 use-lists
+# RUN(REMOVE): remove-parameters function=f0 block=b3 indexes=1 use-lists
+# RUN(EXPAND): expand function=f0 value=v8 arms=1 use-lists
+# RUN(UNCOVERED): remove-handler function=f1 block=b1 use-lists
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = Add v1, v1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Mul v2, v1
+    v4 = Negate v2
+    Jump -> next b3(v3, v1)
+  b2():
+    v5 = Sub v2, v1
+    Branch v0 -> taken b3(v5, v2), notTaken b4()
+  b3(v6, v7):
+    v8 = Add v6, v2
+    v9 = Negate v8
+    Return v8
+  b4():
+    v10 = Negate v2
+    Return v10
+}
+# The edge puts b2 in front of b1, and nothing reaches b4 any more.
+# ORDER: Branch v0 -> taken b3(v5, v2), notTaken b1()
+# ORDER: use-lists:
+# ORDER: v1 uses: [v2(0) v2(1) v5(1) v3(1) b1.0(1)]
+# ORDER: v2 uses: [v5(0) b2.0(1) v3(0) v4(0) v8(1)]
+# ORDER: detached: [v10]
+# Blocks that nobody has touched change places, the order becomes b0 b2 b4 b1 b3.
+# SWAP: Branch v0 -> taken b2(), notTaken b1()
+# SWAP: use-lists:
+# SWAP: v1 uses: [v2(0) v2(1) v5(1) v3(1) b1.0(1)]
+# SWAP: v2 uses: [v5(0) b2.0(1) v10(0) v3(0) v4(0) v8(1)]
+# SWAP: detached: []
+# ERASE: use-lists:
+# ERASE: v2 uses: [v3(0) v5(0) b2.0(1) v8(1) v10(0)]
+# ERASE: detached: [v4]
+# SPLIT: use-lists:
+# SPLIT: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v8(1) v10(0)]
+# SPLIT: v8 uses: [v9(0) b5.terminator(0)]
+# SPLIT: v9 location: b5 value 0
+# EDGE: use-lists:
+# EDGE: v2 uses: [v3(0) v4(0) v5(0) b5.0(1) v8(1) v10(0)]
+# JUMP: use-lists:
+# JUMP: v0 uses: [b0.terminator(0)]
+# JUMP: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v8(1)]
+# JUMP: detached: [v10]
+# INSERT: use-lists:
+# INSERT: v3 location: b1 value 1
+# INSERT: v9 location: b3 value 2
+# INSERT: v11 location: b1 value 0
+# INSERT: v12 location: b3 value 1
+# REPLACE: use-lists:
+# REPLACE: v2 uses: [v3(0) v4(0) v5(0) b2.0(0) b2.0(1) v8(1) v10(0)]
+# REPLACE: v5 uses: []
+# ADD: use-lists:
+# ADD: v1 uses: [v2(0) v2(1) v3(1) b1.0(1) b1.0(2) v5(1)]
+# ADD: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) b2.0(2) v8(1) v10(0)]
+# ADD: v11 location: b3 parameter 2
+# REMOVE: use-lists:
+# REMOVE: v1 uses: [v2(0) v2(1) v3(1) v5(1)]
+# REMOVE: v2 uses: [v3(0) v4(0) v5(0) v8(1) v10(0)]
+# REMOVE: detached: [v7]
+# EXPAND: use-lists:
+# EXPAND: v2 uses: [v3(0) v4(0) v5(0) b2.0(1) v11(1) v10(0)]
+# EXPAND: v8 location: b5 parameter 0
+# EXPAND: v8 uses: [v9(0) b5.terminator(0)]
+function f1 name="handler" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1() handler=b2(v1):
+    v2 = Call v0, -, v1
+    Return v1
+  b2(v3) role=CatchHandler:
+    v4 = CatchValue
+    v5 = Add v3, v1
+    Return v5
+}
+# UNCOVERED: use-lists:
+# UNCOVERED: v1 uses: [v2(2) b1.terminator(0)]
+# UNCOVERED: detached: [v3 v4 v5]

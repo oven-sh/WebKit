@@ -1,0 +1,75 @@
+enum StringRangeMethod { | engine Slice Substring Substr SingleIndex SingleRelativeIndex }
+enum RegExpMatchForm { | engine Test Exec Search Match }
+flags PropertyDescriptorFlags { | engine HasValue HasWritable IsWritable HasEnumerable IsEnumerable HasConfigurable IsConfigurable HasGet HasSet }
+record PlacedKey engine { key: PropertyKey fieldAccess: FieldAccess? level: KnowledgeLevel accessSite: AccessSite? mayAdd: Bool }
+
+family FusedAccess Selected..Placed ; accessClass = ByName
+operation PropGetChain (object: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) -> unknown ; unknownCode ; replaces = PropGet
+operation PropGetPair (object: Any/inspects, other?: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) [readsFromFirstResult] -> results(unknown, unknown) ; unknownCode ; replaces = PropGet
+operation PropGetAndTest (object: Any/inspects, key: PropertyKey, comparedString?: String, with AccessStamp) -> natural(boolean) ; unknownCode ; replaces = PropGet, ToBoolean, StrictEq ; branches = Only
+operation CallMethod (receiver: Any/retains, arguments...: Any/retains, key: PropertyKey, calleeName?: String, readOrigin: Origin, with AccessStamp, callees?: CalleeSet, callAccessSite?: AccessSite) -> unknown ; unknownCode ; replaces = PropGet, Call ; accessClass = IndirectCall ; siteCaches = 1 ; runsBeforeCallee = true
+operation TryPutByIds (object: Object/inspects, keys: List<PropertyKey>, values...: Any/retains(object), from Placed request?: Request, from Placed siteCache?: SiteCache) [isDefinition] -> natural(boolean) ; Allocates reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, RuntimeState) ; replaces = PropSet, PropDefine ; runtime = TryPutProperties ; siteCaches = 1
+
+family SlotRun Selected..Placed ; accessClass = Slot
+operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; AllocatesWithoutCollecting reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true ; remembersOwner = true
+
+family ObjectCreation Selected..Placed
+operation DefineOwnProperty (object: Object/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject ; runtime = DefineOwnProperty
+operation DefineAccessors (object: Object/inspects+definesName, keys: List<PropertyKey>, getterMask: UInt32, enumerableMask: UInt32, functions...: Callable/retains(object)) -> none ; DefinesProperty ; replaces = DefineGetter, DefineSetter ; runtime = DefineAccessors
+
+family SelectedOperator Selected..Placed
+operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none
+operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true
+
+family String Selected..Placed
+operation Substring (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin, ElemGet ; runtime = Substring
+operation SubstringOrUndefined (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string | undefined) ; CreatesString ; Prepared..Placed ; interpreted = Allocation ; replaces = CallBuiltin ; runtime = Substring
+operation FlattenString (string: String/inspects+returns) -> natural(FlatString) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin, ElemGet, StrictEq, StringRangeCodeUnitOrNaN, StringRangeCodeUnitOrMinusOne, StringRangeCodePointOrUndefined, StringRangeCharacterOrEmpty, StringRangeCharacterOrUndefined, StringRangeEqualsLiteral, StringRangeToNumber, StringRangeParseInt, StringRangeSubstringOrUndefined, Substring, StringEqualsLiteral, StringOrderToCharacter, StringStartsWithLiteral, StringEndsWithLiteral, StringIndexOfLiteral, StringIndexOfCharacter, StringLastIndexOfLiteral, GetStringCodeUnit, GetStringLength ; runtime = Flatten
+operation StringRange (length: Integer/inspects, first: Number/inspects, second?: Number/inspects, method: StringRangeMethod) -> results(natural(int[0, 2147483647]), natural(int[0, 2147483647])) ; none ; Prepared..Placed
+operation StringOrder (left: String/inspects, right: String/inspects) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq, CallBuiltin ; runtime = CompareStrings
+operation StringOrderToCharacter (string: String/inspects, codeUnit: UInt32) -> natural(int[-1, 1]) ; ResolvesRopes ; replaces = Less, LessEq, Greater, GreaterEq
+operation StringEqualsLiteral (string: String/inspects, literal: String) -> natural(boolean) ; reads(StringStorage) ; branches = May ; replaces = StrictEq, Eq ; runtime = StringEqualsLiteral
+operation ValueEqualsLiteral (value: Any/inspects, literal: String) -> natural(boolean) ; reads(StringStorage) ; branches = May ; replaces = StrictEq ; runtime = StringEqualsLiteral
+operation ValueLooselyEqualsLiteral (value: Any/Converted, literal: String) -> natural(boolean) ; ResolvesRopes by Operator ; branches = May ; replaces = Eq ; runtime = CompareEqToString
+operation StringStartsWithLiteral (string: String/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May ; replaces = CallBuiltin ; runtime = StringStartsWithLiteral
+operation StringEndsWithLiteral (string: String/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May ; replaces = CallBuiltin ; runtime = StringEndsWithLiteral
+operation StringIndexOfLiteral (string: String/inspects, position: Integer/inspects, literal: String) -> natural(int[-1, 2147483647]) ; ResolvesRopes ; replaces = CallBuiltin ; runtime = StringIndexOfLiteral
+operation StringIndexOfCharacter (string: String/inspects, position: Integer/inspects, codeUnit: UInt32) -> natural(int[-1, 2147483647]) ; ResolvesRopes ; replaces = CallBuiltin ; runtime = StringIndexOfCharacter
+operation StringLastIndexOfLiteral (string: String/inspects, position: Integer/inspects, literal: String) -> natural(int[-1, 2147483647]) ; ResolvesRopes ; Prepared..Placed ; replaces = CallBuiltin ; runtime = StringLastIndexOfLiteral
+
+family StringRangeRead Selected..Placed ; replaces = CallBuiltin, Substring, StrictEq, Eq, ToNumber, ToNumeric, ElemGet
+operation StringRangeCodeUnitOrNaN (string: String/inspects, start?: Integer/inspects, end?: Integer/inspects, position: Number/inspects) -> natural(number) ; ResolvesRopes
+operation StringRangeCodeUnitOrMinusOne (string: String/inspects, start?: Integer/inspects, end?: Integer/inspects, position: Number/inspects) -> natural(int[-1, 65535]) ; ResolvesRopes ; replaces = CallBuiltin, Substring, StrictEq, Eq, ElemGet, Less, LessEq, Greater, GreaterEq
+operation StringRangeCodePointOrUndefined (string: String/inspects, start?: Integer/inspects, end?: Integer/inspects, position: Number/inspects) -> natural(int[0, 1114111] | undefined) ; ResolvesRopes
+operation StringRangeCharacterOrEmpty (string: String/inspects, start?: Integer/inspects, end?: Integer/inspects, position: Number/inspects) -> natural(string) ; CreatesString
+operation StringRangeCharacterOrUndefined (string: String/inspects, start?: Integer/inspects, end?: Integer/inspects, position: Number/inspects) -> natural(string | undefined) ; CreatesString
+operation StringRangeEqualsLiteral (string: String/inspects, start: Integer/inspects, end: Integer/inspects, literal: String) -> natural(boolean) ; ResolvesRopes ; branches = May
+operation StringRangeToNumber (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(number) ; ResolvesRopes
+operation StringRangeParseInt (string: String/inspects, start: Integer/inspects, end: Integer/inspects, radix?: Integer/inspects) -> natural(number) ; ResolvesRopes
+operation StringRangeSubstringOrUndefined (string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> natural(string | undefined) ; CreatesString
+
+family StringBuilderPart Selected..Placed ; replaces = StringBuilderAppend, Substring, CallBuiltin
+operation StringBuilderAppendConstant (builder: StringBuilder/inspects, string: String) -> none ; AppendsToBuilder
+operation StringBuilderAppendInteger (builder: StringBuilder/inspects, value: Integer/inspects) -> none ; AppendsToBuilder
+operation StringBuilderAppendNumber (builder: StringBuilder/inspects, value: Number/inspects) -> none ; AppendsToBuilder ; runtime = AppendNumberWithRadix
+operation StringBuilderAppendString (builder: StringBuilder/inspects, value: String/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString
+operation StringBuilderAppendStringRange (builder: StringBuilder/inspects, string: String/inspects, start: Integer/inspects, end: Integer/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendStringRange
+operation StringBuilderAppendBoolean (builder: StringBuilder/inspects, value: Boolean/inspects) -> none ; AppendsToBuilder
+operation StringBuilderAppendStringOrNullish (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppendString
+operation StringBuilderAppendValue (builder: StringBuilder/inspects, value: Any/inspects) -> none ; AppendsToBuilder ; runtime = StringBuilderAppend
+
+family KeyPartsLookup Selected..Placed ; replaces = Strcat, CallBuiltin
+operation MapGetByKeyParts (map: Object/inspects+readsContents, parts...: Any/inspects) -> unknown ; CreatesString reads(CollectionStorage, CollectionEntries) ; runtime = MapGetByKeyParts
+operation HasByKeyParts (collection: Object/inspects+readsContents, parts...: Any/inspects) -> natural(boolean) ; CreatesString reads(CollectionStorage, CollectionEntries) ; runtime = HasByKeyParts
+
+family ResolvedCall Selected..Placed
+operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none
+operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
+operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin
+
+family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
+operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall
+terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
+
+family Control Selected..Placed
+terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch ; canStartRegion = true ; canEndInteriorBlock = true ; canEndBlockOfHead = true

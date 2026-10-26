@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIConversions.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 
 #include "CallFrame.h"
@@ -361,6 +361,10 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (auto* callback = dynamicDowncast<JSFFICallback>(cell)) {
+            if (callback->isClosed()) [[unlikely]] {
+                throwTypeError(globalObject, scope, "bun:ffi: the JSFFICallback has been closed"_s);
+                return false;
+            }
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->nativeEntrypoint()));
             return true;
         }
@@ -550,4 +554,4 @@ JSC_DEFINE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject* globalObj
 } // namespace JSC
 
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

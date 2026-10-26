@@ -1,0 +1,18 @@
+# The list of the names that the objects of a layout may gain has two parts: the names that are stored into objects known to have the layout, which the layout lists,
+# and the names that are stored through receivers nobody knows, which the program lists once. They count for a layout that says isReachedThroughUnknownReceivers.
+# A text has no such list of the program, so there an object of such a layout may gain any name, and a lookup that goes past the object holds only while no object of the layout hides the member. A layout that no such store reaches goes by its own list.
+# FORM: Prepared
+# RUN(FOLLOWED): member-lookup layout=L0 key="m"
+# FOLLOWED: Method level=Proven holder=L0 method=F1
+# RUN(LISTED): member-lookup layout=L0 key="own"
+# LISTED: Absent level=Expected proofs=[NoExtraProperties]
+# RUN(REACHED): member-lookup layout=L1 key="m"
+# REACHED: Method level=Expected holder=L1 method=F3 conditions=[MemberNotHidden(L1, Prototype, 
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Followed" constructor=f0 flow={baseState=None members=[L0] impossibleMutations=[ChangePrototype] addedKeys=["own"] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Reached" constructor=f2 flow={baseState=None members=[L1] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true isReachedThroughUnknownReceivers=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f3 mutability=Fixed}]}
+function f0 name="Followed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="Reached" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f3 name="m" kind=Method flags=[HasThis] results=[{type=anything}]

@@ -30,6 +30,9 @@
 #include <wtf/Vector.h>
 
 namespace JSC {
+
+class ErrorInstance;
+namespace AOT { struct ReturnAddressTrace; }
     
 class Exception final : public JSCell {
 public:
@@ -45,9 +48,13 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+        // Walks the frames even where the value is an Error that holds a stack of its own.
+        CaptureStackOfThrow,
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
+    // Null unless the value is an Error that was made in the compiled frame on top and still holds the return addresses of its own stack, which the Exception then shares.
+    static Exception* tryCreateWithStackOfErrorMadeHere(VM&, JSValue thrownValue);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
@@ -61,7 +68,12 @@ public:
     }
 
     JSValue value() const { return m_value.get(); }
-    const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
+    const Vector<StackFrame>& stack() const LIFETIME_BOUND
+    {
+        if (returnAddresses()) [[unlikely]]
+            const_cast<Exception*>(this)->materializeStack();
+        return m_stack;
+    }
     // The stack may be skipped when a user catch clause handles the throw, but vm.lastException()
     // outlives the catch and can still be reported, so fall back to the Error's own stack. That one
     // is freed whenever the Error materializes its stack property, so it is copied in, not borrowed.
@@ -76,8 +88,8 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
-    bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
-    void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
+    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlag & didNotifyInspectorOfThrowFlag; }
+    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlag |= didNotifyInspectorOfThrowFlag; }
 
 #if ENABLE(WEBASSEMBLY)
     void tryUnwrapValueForJSTag(VM&);
@@ -89,16 +101,28 @@ public:
 private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
+    bool tryRetainReturnAddresses(VM&, StackCaptureAction);
+    void retainReturnAddresses(VM&, AOT::ReturnAddressTrace*, Vector<StackFrame>&& otherFrames);
+    static ErrorInstance* errorToTakeStackFrom(VM&, JSValue thrownValue);
+    void takeStackFrom(VM&, ErrorInstance&);
+    JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
+    static constexpr uintptr_t didNotifyInspectorOfThrowFlag = 1;
+    AOT::ReturnAddressTrace* returnAddresses() const { return std::bit_cast<AOT::ReturnAddressTrace*>(m_returnAddressesAndFlag & ~didNotifyInspectorOfThrowFlag); }
+    void setReturnAddresses(AOT::ReturnAddressTrace* returnAddresses) { m_returnAddressesAndFlag = std::bit_cast<uintptr_t>(returnAddresses) | (m_returnAddressesAndFlag & didNotifyInspectorOfThrowFlag); }
 
     WriteBarrier<Unknown> m_value;
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
 #endif
     Vector<StackFrame> m_stack;
-    bool m_didNotifyInspectorOfThrow { false };
+    uintptr_t m_returnAddressesAndFlag { 0 };
 
     friend class LLIntOffsetsExtractor;
 };
+
+#if CPU(ADDRESS64)
+static_assert(sizeof(Exception) <= 48);
+#endif
 
 } // namespace JSC

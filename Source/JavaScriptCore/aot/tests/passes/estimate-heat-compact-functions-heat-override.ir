@@ -1,0 +1,25 @@
+# An override that gives everything one class leaves no function compact: a test that asks for cold code gets cold code
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1 heat=EverythingIsCold
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold
+# CHECK-NOT: Compact
+# CHECK-NOT: compact:
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f1
+    Return
+}
+
+function f1 name="calledTwiceByCodeThatRunsOnce" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}

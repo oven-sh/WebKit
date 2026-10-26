@@ -1,0 +1,25 @@
+# The summary the solver gives a function covers what its body does when it is summarized again against the summaries of its callees
+# FORM: Prepared
+# RUN: check-summaries
+# CHECK: valid
+# RUN(ONE): check-summaries f0
+# ONE: valid
+# RUN(BAD): check-summaries f3
+# BAD-NOT: valid
+# BAD: error: bad argument f3
+# BAD-NOT: valid
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="outer" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return
+}
+function f1 name="middle" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f2
+    Return
+}
+function f2 name="writes" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    Return
+}

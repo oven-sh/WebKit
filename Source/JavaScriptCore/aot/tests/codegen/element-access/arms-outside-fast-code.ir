@@ -1,0 +1,123 @@
+# Outside fast code an access to an element of an array whose kind of storage nobody knows is one call of a stub that takes the position as it is and keeps the registers of its caller: nothing is tested and nothing boxed in line but a stored number, which a stub boxes.
+# Under a known kind of storage the access stands in line with one arm, the same call: a read and the test that `in` is compiled to leave an element that is not there to it, a store one behind the last element.
+# Fast code has all of it in line, and its arm is the same call. A read of a typed array is no read of an array
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsAtInteger" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: f1: size=
+function f1 name="readsAtNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NEXT: stub ArrayGetAtNumber x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: f2: size=
+function f2 name="readsKnownStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    Return v2
+}
+# CHECK-NEXT: stub ArrayGetAtNumber x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: f3: size=
+function f3 name="storesAtInteger" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=string}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 level=Proven
+    Return
+}
+# CHECK-NEXT: stub ArrayPutAtIndex.Value x1
+# CHECK-NOT: operation
+# CHECK: f4: size=
+function f4 name="storesAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=string}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 level=Proven
+    Return
+}
+# CHECK-NEXT: stub ArrayPutAtNumber.Value x1
+# CHECK-NOT: operation
+# CHECK: f5: size=
+function f5 name="storesNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 level=Proven
+    Return
+}
+# CHECK-NEXT: stub ArrayPutAtIndex.Number x1
+# CHECK-NOT: operation
+# CHECK: f6: size=
+function f6 name="inFastCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=number}, {type=string}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = GetArrayElement v0, v1 level=Proven
+    v7 = GetArrayElement v0, v2 level=Proven
+    PutArrayElement v0, v1, v6 level=Proven
+    PutArrayElement v0, v2, v7 level=Proven
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: stub ArrayGetAtIndex x1
+# CHECK-NEXT: stub ArrayGetAtNumber x1
+# CHECK-NEXT: stub ArrayPutAtIndex.Value x1
+# CHECK-NEXT: stub ArrayPutAtNumber.Value x1
+# CHECK-NOT: operation
+# CHECK-NOT: stub GetByValCached
+# S: f6 b1 Fast
+# CHECK: f7: size=
+function f7 name="inCompactCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=number}, {type=string}, {type=boolean}] results=[{type=undefined}] {
+    Branch v4 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = GetArrayElement v0, v1 level=Proven
+    v6 = GetArrayElement v0, v2 level=Proven
+    PutArrayElement v0, v1, v5 level=Proven
+    PutArrayElement v0, v2, v6 level=Proven
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-NEXT: stub ArrayGetAtIndex x1
+# CHECK-NEXT: stub ArrayGetAtNumber x1
+# CHECK-NEXT: stub ArrayPutAtIndex.Value x1
+# CHECK-NEXT: stub ArrayPutAtNumber.Value x1
+# CHECK-NOT: operation
+# S: f7 b1 Compact
+# CHECK: f8: size=
+function f8 name="readsTypedArray" parameters=[{type=Uint8Array}, {type=i32}] results=[{type=anything}] {
+    v2 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
+    Return v2
+}
+# CHECK-NOT: stub Array
+# CHECK: stub GetByValCached x1
+# CHECK: f9: size=
+function f9 name="hasAtInteger" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=boolean}] {
+    v2 = HasArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NEXT: stub ArrayHasAtIndex x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: f10: size=
+function f10 name="hasAtNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=boolean}] {
+    v2 = HasArrayElement v0, v1 level=Proven
+    Return v2
+}
+# CHECK-NEXT: stub ArrayHasAtNumber x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NEXT: f11: size=
+function f11 name="hasInFastCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = HasArrayElement v0, v1 level=Proven
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: stub ArrayHasAtIndex x1
+# CHECK-NOT: stub InByValCached
+# S: f11 b1 Fast

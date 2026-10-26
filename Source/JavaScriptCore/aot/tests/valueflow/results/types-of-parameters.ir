@@ -1,0 +1,26 @@
+# The parameters of a function whose callers are all known get the type of what the calls pass, and an argument that a call leaves out is undefined. A function that native code may enter keeps its types
+# RUN: valueflow-apply
+# CHECK: function f1 name="add" {{*}}parameters=[{type=1}, {type=undefined|fractional}]
+# CHECK: function f2 name="callback" {{*}}parameters=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Double number=1.5
+    v3 = Call v0, -, v1, v2
+    v4 = Call v0, -, v1
+    v5 = NewClosure function=f2
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = Call v5, -, v1
+    Return
+}
+function f1 name="add" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

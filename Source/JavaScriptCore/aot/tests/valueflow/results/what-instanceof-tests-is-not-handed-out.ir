@@ -1,0 +1,47 @@
+# [] instanceof Array    new Map instanceof Map    [] instanceof Plain, a function of the program    [] instanceof bound, which is Plain.bind(null)    [] instanceof unknown
+# The method that every function inherits asks a closure or a function of the table for its prototype property and walks the chain of what is tested: nobody gets hold of that object, and what is proven of it stays proven.
+# An empty literal has no holes. A bound function hands what is tested on to its target, and a constructor nobody knows does anything with it
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="tests"
+# CHECK: : Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0
+# CHECK: : Map<never, never, proven, pristine[Storage, Names]> = AssumeType v4
+# CHECK: : Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v6
+# CHECK: [[againstBound]]: Array = NewArray
+# CHECK-NOT: AssumeType [[againstBound]]
+# CHECK: [[againstUnknown]]: Array = NewArray
+# CHECK-NOT: AssumeType [[againstUnknown]]
+# CHECK: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="tests" results=[{type=anything}] {
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=Array
+    v2 = InstanceOf v0, v1
+    v3 = Builtin builtin=Map
+    v4 = Construct v3
+    v5 = InstanceOf v4, v3
+    v6 = NewArray contents=anything
+    v7 = NewClosure function=f2
+    v8 = InstanceOf v6, v7
+    v9 = NewArray contents=anything
+    v10 = Builtin builtin=FunctionPrototypeBind
+    v11 = Null
+    v12 = Call v10, v7, v11
+    v13 = InstanceOf v9, v12
+    v14 = NewArray contents=anything
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="unknown" [isFreeName]
+    v17 = InstanceOf v14, v16
+    Return
+}
+function f2 name="Plain" results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,56 @@
+# In the generic version `false` stands in the allocation for the value that the check for a boolean has turned away, and a store behind the allocation tests the value.
+# Nothing stands in for a symbol. The symbol that is listed last is defined behind its allocation. The symbol in front of a method stays in the allocation: its field takes anything.
+# The empty string stands in for a string: add-generic-version-a-string-stands-in-for-a-string-field.ir
+# FORM: AsRead
+# OPTIONS: disable=flow-results
+# RUN: pipeline AddGenericVersion
+# STATISTIC: InitialValuesStoredBehindAllocations = 2
+# CHECK: frequency=Unlikely
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK: [[filler]]: false = Boolean
+# CHECK-NEXT: [[flagged]]: L1 = NewObject -, [[filler]], {{*}} layout=L1 fields=[0, 1]
+# CHECK-NEXT: PropSet [[flagged]], {{*}} key="flag"
+# CHECK: [[last]]: L2 = NewObject -, {{*}} layout=L2 fields=[1]
+# CHECK-NEXT: PropDefine [[last]], {{*}} key="tag"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
+layout L1 name="FlagBeforeMethod" fields=[{key="flag" declared={type=boolean} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
+layout L2 name="SymbolBehindMethod" fields=[{key="tag" declared={type=symbol} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="more" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="run" results=[{type=anything}] {
+    Return
+}
+
+function f2 name="makesObjects" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=symbol}
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    PropSet v0, v5 key="first" mode=Strict
+    v7 = PropGet v0 key="other" [isFreeName]
+    v8 = Convert v7 declared={type=boolean}
+    v9 = NewObject -, v8, v3 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    PropSet v0, v10 key="second" mode=Strict
+    v12 = NewObject -, v3, v2 layout=L2 fields=[1, 0]
+    v13 = FinishObject v12
+    PropSet v0, v13 key="third" mode=Strict
+    Return
+}

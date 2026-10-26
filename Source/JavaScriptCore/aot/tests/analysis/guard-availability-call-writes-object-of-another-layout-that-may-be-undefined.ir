@@ -1,0 +1,12 @@
+# A callee that writes through `b: B` ends no proof about `a: A`, though the types of both list undefined and null
+# FORM: Prepared
+# RUN: guards points uses summaries
+
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v5]
+# CHECK-NEXT: b1:1 available: [v5]
+
+# CHECK-LABEL: function f1
+# CHECK: b1:0 available: [v5]
+# CHECK-NEXT: b1:1 available: []
+# PROGRAM-OF: guard-availability-both-judgements-agree-on-values-that-may-be-undefined.ir

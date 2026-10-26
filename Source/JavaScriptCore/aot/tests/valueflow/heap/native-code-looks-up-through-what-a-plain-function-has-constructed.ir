@@ -1,0 +1,34 @@
+# function plain() {}  function method(a) { a.x }  plain.prototype.method = method; back = somethingNoTableLists(new plain()); back.constructor.x
+# Whoever holds what a plain function without a layout has constructed looks up through it what lies on the prototype object, as through an instance of a class: it calls the method with operands nobody knows.
+# It is not handed the prototype object or the function, so neither has escaped. Seen code that reads `constructor` through the unknown object finds the function.
+# a-plain-function-has-a-prototype-object-of-its-own.ir keeps the new object
+# RUN: valueflow-why values=f2:v1 values=f0:v9 escaped=f1
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} unknown
+# CHECK: values=f0:v9
+# CHECK: operand 0 {{*}} f1
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = PropGet v0 key="prototype"
+    PropSet v2, v1 key="method"
+    v4 = Construct v0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="somethingThatNoTableLists" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = PropGet v7 key="constructor"
+    v9 = PropGet v8 key="x"
+    Return
+}
+function f1 name="plain" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="method" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}

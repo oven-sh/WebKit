@@ -35,7 +35,9 @@
 #include "CPU.h"
 #include "JSCPtrTag.h"
 #include "SIMDInfo.h"
+#include <array>
 #include <limits.h>
+#include <span>
 #include <wtf/Assertions.h>
 #include <wtf/Vector.h>
 #include <stdint.h>
@@ -345,6 +347,12 @@ public:
         BranchType_JMP,
         BranchType_CALL,
         BranchType_RET
+    };
+
+    enum class BranchEncoding : uint8_t {
+        Direct,
+        DirectThenNop,
+        InvertedThenJump,
     };
 
     enum class ThunkOrNot : uint8_t {
@@ -1235,7 +1243,7 @@ public:
     template<int datasize>
     ALWAYS_INLINE void ldp(FPRegisterID rt, FPRegisterID rt2, RegisterID rn, PairPostIndex simm)
     {
-        CHECK_DATASIZE();
+        CHECK_DATASIZE_SIMD();
         insn(loadStoreRegisterPairPostIndex(MEMPAIROPSIZE_FP(datasize), true, MemOp_LOAD, simm, rn, rt, rt2));
     }
 
@@ -2880,7 +2888,7 @@ public:
     template<int datasize>
     ALWAYS_INLINE void stp(FPRegisterID rt, FPRegisterID rt2, RegisterID rn, PairPostIndex simm)
     {
-        CHECK_DATASIZE();
+        CHECK_DATASIZE_SIMD();
         insn(loadStoreRegisterPairPostIndex(MEMPAIROPSIZE_FP(datasize), true, MemOp_STORE, simm, rn, rt, rt2));
     }
 
@@ -3845,10 +3853,10 @@ public:
         m_jumpsToLink.append(LinkRecord(this, from.offset() - sizeof(int), std::bit_cast<intptr_t>(to), ThunkOrNot::Thunk));
     }
 
-    static void linkJump(void* code, AssemblerLabel from, void* to)
+    static BranchEncoding linkJump(void* code, AssemblerLabel from, void* to)
     {
         ASSERT(from.isSet());
-        relinkJumpOrCall<BranchType_JMP>(addressOf(code, from), addressOf(code, from), to);
+        return relinkJumpOrCall<BranchType_JMP>(addressOf(code, from), addressOf(code, from), to);
     }
 
     static void linkCall(void* code, AssemblerLabel from, void* to)
@@ -3860,6 +3868,98 @@ public:
     static void linkPointer(void* code, AssemblerLabel where, void* valuePtr)
     {
         linkPointer<jitMemcpyRepatch>(addressOf(code, where), valuePtr);
+    }
+
+    [[nodiscard]] static bool setAdrDistance(std::span<uint8_t> word, int64_t distance)
+    {
+        auto [instruction] = readInstructions<1>(word);
+        RELEASE_ASSERT(isPCRelative(instruction));
+        if (!isInt<21>(distance))
+            return false;
+        writeInstructions<1>(word, { pcRelative(false, static_cast<int32_t>(distance), destinationRegister(instruction)) });
+        return true;
+    }
+
+    [[nodiscard]] static bool setAdrThenAddDistance(std::span<uint8_t> twoWords, int64_t distance)
+    {
+        RegisterID rd = farAddressRegister(twoWords);
+        int64_t pages = distance >> 12;
+        if (!isUInt12(std::abs(pages)))
+            return false;
+        writeInstructions<2>(twoWords, {
+            pcRelative(false, static_cast<int32_t>(distance & 0xfff), rd),
+            addSubtractImmediate(Datasize_64, pages < 0 ? AddOp_SUB : AddOp_ADD, DontSetFlags, 1, static_cast<int>(std::abs(pages)), rd, rd),
+        });
+        return true;
+    }
+
+    // site and target are offsets from the same 4 KB-aligned base.
+    [[nodiscard]] static bool setAdrpThenAddTarget(std::span<uint8_t> twoWords, uint64_t site, uint64_t target)
+    {
+        RegisterID rd = farAddressRegister(twoWords);
+        int64_t pages = static_cast<int64_t>(target >> 12) - static_cast<int64_t>(site >> 12);
+        if (!isInt<21>(pages))
+            return false;
+        writeInstructions<2>(twoWords, {
+            pcRelative(true, static_cast<int32_t>(pages), rd),
+            addSubtractImmediate(Datasize_64, AddOp_ADD, DontSetFlags, 0, static_cast<int>(target & 0xfff), rd, rd),
+        });
+        return true;
+    }
+
+    [[nodiscard]] static bool setLoadLiteralDistance(std::span<uint8_t> word, int64_t distance)
+    {
+        auto [instruction] = readInstructions<1>(word);
+        RELEASE_ASSERT(isLoadRegisterLiteral(instruction));
+        if ((distance & 3) || !isInt<21>(distance))
+            return false;
+        writeInstructions<1>(word, { loadRegisterLiteral(LdrLiteralOp_64BIT, false, static_cast<int>(distance >> 2), destinationRegister(instruction)) });
+        return true;
+    }
+
+    [[nodiscard]] static bool setBranchDistance(std::span<uint8_t> word, BranchType type, int64_t distance)
+    {
+        auto [instruction] = readInstructions<1>(word);
+        RELEASE_ASSERT(isUnconditionalBranchImmediate(instruction));
+        RELEASE_ASSERT(type != BranchType_RET);
+        if ((distance & 3) || !isInt<28>(distance))
+            return false;
+        writeInstructions<1>(word, { unconditionalBranchImmediate(type == BranchType_CALL, static_cast<int32_t>(distance >> 2)) });
+        return true;
+    }
+
+    [[nodiscard]] static bool setConditionalBranchDistance(std::span<uint8_t> word, int64_t distance)
+    {
+        constexpr int immediateMask = 0x7ffff << 5;
+        auto [instruction] = readInstructions<1>(word);
+        RELEASE_ASSERT(isConditionalBranchImmediate(instruction) || isCompareAndBranchImmediate(instruction));
+        if ((distance & 3) || !isInt<21>(distance))
+            return false;
+        writeInstructions<1>(word, { (instruction & ~immediateMask) | ((static_cast<int>(distance >> 2) << 5) & immediateMask) });
+        return true;
+    }
+
+    [[nodiscard]] static bool setTestBitBranchDistance(std::span<uint8_t> word, int64_t distance)
+    {
+        constexpr int immediateMask = 0x3fff << 5;
+        auto [instruction] = readInstructions<1>(word);
+        RELEASE_ASSERT(isTestAndBranchImmediate(instruction));
+        if ((distance & 3) || !isInt<16>(distance))
+            return false;
+        writeInstructions<1>(word, { (instruction & ~immediateMask) | ((static_cast<int>(distance >> 2) << 5) & immediateMask) });
+        return true;
+    }
+
+    [[nodiscard]] static bool setMoveWideImmediates(std::span<uint8_t> twoWords, uint32_t value)
+    {
+        constexpr int immediateMask = 0xffff << 5;
+        auto [low, high] = readInstructions<2>(twoWords);
+        RELEASE_ASSERT(isMoveWideImmediate(low) && isMoveWideImmediate(high));
+        writeInstructions<2>(twoWords, {
+            (low & ~immediateMask) | static_cast<int>((value & 0xffff) << 5),
+            (high & ~immediateMask) | static_cast<int>((value >> 16) << 5),
+        });
+        return true;
     }
 
     static void replaceWithVMHalt(void* where)
@@ -4159,7 +4259,7 @@ public:
     }
 
     template<RepatchingInfo repatch>
-    static void ALWAYS_INLINE link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction8, uint8_t* to)
+    static BranchEncoding ALWAYS_INLINE link(LinkRecord& record, uint8_t* from, const uint8_t* fromInstruction8, uint8_t* to)
     {
         const int* fromInstruction = reinterpret_cast<const int*>(fromInstruction8);
         switch (record.linkType()) {
@@ -4178,27 +4278,22 @@ public:
             break;
         }
         case LinkJumpConditionDirect:
-            linkConditionalBranch<DirectBranch, repatch>(record.condition(), reinterpret_cast<int*>(from), fromInstruction, to);
-            break;
+            return linkConditionalBranch<DirectBranch, repatch>(record.condition(), reinterpret_cast<int*>(from), fromInstruction, to);
         case LinkJumpCondition:
-            linkConditionalBranch<IndirectBranch, repatch>(record.condition(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
-            break;
+            return linkConditionalBranch<IndirectBranch, repatch>(record.condition(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
         case LinkJumpCompareAndBranchDirect:
-            linkCompareAndBranch<DirectBranch, repatch>(record.condition(), record.is64Bit(), record.compareRegister(), reinterpret_cast<int*>(from), fromInstruction, to);
-            break;
+            return linkCompareAndBranch<DirectBranch, repatch>(record.condition(), record.is64Bit(), record.compareRegister(), reinterpret_cast<int*>(from), fromInstruction, to);
         case LinkJumpCompareAndBranch:
-            linkCompareAndBranch<IndirectBranch, repatch>(record.condition(), record.is64Bit(), record.compareRegister(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
-            break;
+            return linkCompareAndBranch<IndirectBranch, repatch>(record.condition(), record.is64Bit(), record.compareRegister(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
         case LinkJumpTestBitDirect:
-            linkTestAndBranch<DirectBranch, repatch>(record.condition(), record.bitNumber(), record.compareRegister(), reinterpret_cast<int*>(from), fromInstruction, to);
-            break;
+            return linkTestAndBranch<DirectBranch, repatch>(record.condition(), record.bitNumber(), record.compareRegister(), reinterpret_cast<int*>(from), fromInstruction, to);
         case LinkJumpTestBit:
-            linkTestAndBranch<IndirectBranch, repatch>(record.condition(), record.bitNumber(), record.compareRegister(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
-            break;
+            return linkTestAndBranch<IndirectBranch, repatch>(record.condition(), record.bitNumber(), record.compareRegister(), reinterpret_cast<int*>(from) - 1, fromInstruction - 1, to);
         default:
             ASSERT_NOT_REACHED();
             break;
         }
+        return BranchEncoding::Direct;
     }
 
     static ALWAYS_INLINE bool canEmitJump(void* from, void* to)
@@ -4280,7 +4375,7 @@ protected:
     }
 
     template<BranchTargetType type, RepatchingInfo repatch = jitMemcpyRepatch>
-    static void linkCompareAndBranch(Condition condition, bool is64Bit, RegisterID rt, int* from, const int* fromInstruction, void* to)
+    static BranchEncoding linkCompareAndBranch(Condition condition, bool is64Bit, RegisterID rt, int* from, const int* fromInstruction, void* to)
     {
         RELEASE_ASSERT(roundUpToMultipleOf<instructionSize>(from) == from);
         ASSERT(!(reinterpret_cast<intptr_t>(from) & 3));
@@ -4298,15 +4393,17 @@ protected:
                 insn = nopPseudo();
                 machineCodeCopy<repatch>(from + 1, &insn, sizeof(int));
             }
+            return type == IndirectBranch ? BranchEncoding::DirectThenNop : BranchEncoding::Direct;
         } else {
             int insn = compareAndBranchImmediate(is64Bit ? Datasize_64 : Datasize_32, invert(condition) == ConditionNE, 2, rt);
             machineCodeCopy<repatch>(from, &insn, sizeof(int));
             linkJumpOrCall<BranchType_JMP, repatch>(from + 1, fromInstruction + 1, to);
+            return BranchEncoding::InvertedThenJump;
         }
     }
 
     template<BranchTargetType type, RepatchingInfo repatch = jitMemcpyRepatch>
-    static void linkConditionalBranch(Condition condition, int* from, const int* fromInstruction, void* to)
+    static BranchEncoding linkConditionalBranch(Condition condition, int* from, const int* fromInstruction, void* to)
     {
         RELEASE_ASSERT(roundUpToMultipleOf<instructionSize>(from) == from);
         ASSERT(!(reinterpret_cast<intptr_t>(from) & 3));
@@ -4324,15 +4421,17 @@ protected:
                 insn = nopPseudo();
                 machineCodeCopy<repatch>(from + 1, &insn, sizeof(int));
             }
+            return type == IndirectBranch ? BranchEncoding::DirectThenNop : BranchEncoding::Direct;
         } else {
             int insn = conditionalBranchImmediate(2, invert(condition));
             machineCodeCopy<repatch>(from, &insn, sizeof(int));
             linkJumpOrCall<BranchType_JMP, repatch>(from + 1, fromInstruction + 1, to);
+            return BranchEncoding::InvertedThenJump;
         }
     }
 
     template<BranchTargetType type, RepatchingInfo repatch = jitMemcpyRepatch>
-    static void linkTestAndBranch(Condition condition, unsigned bitNumber, RegisterID rt, int* from, const int* fromInstruction, void* to)
+    static BranchEncoding linkTestAndBranch(Condition condition, unsigned bitNumber, RegisterID rt, int* from, const int* fromInstruction, void* to)
     {
         RELEASE_ASSERT(roundUpToMultipleOf<instructionSize>(from) == from);
         ASSERT(!(reinterpret_cast<intptr_t>(from) & 3));
@@ -4351,15 +4450,17 @@ protected:
                 insn = nopPseudo();
                 machineCodeCopy<repatch>(from + 1, &insn, sizeof(int));
             }
+            return type == IndirectBranch ? BranchEncoding::DirectThenNop : BranchEncoding::Direct;
         } else {
             int insn = testAndBranchImmediate(invert(condition) == ConditionNE, static_cast<int>(bitNumber), 2, rt);
             machineCodeCopy<repatch>(from, &insn, sizeof(int));
             linkJumpOrCall<BranchType_JMP, repatch>(from + 1, fromInstruction + 1, to);
+            return BranchEncoding::InvertedThenJump;
         }
     }
 
     template<BranchType type, RepatchingInfo repatch = jitMemcpyRepatch>
-    static void relinkJumpOrCall(int* from, const int* fromInstruction, void* to)
+    static BranchEncoding relinkJumpOrCall(int* from, const int* fromInstruction, void* to)
     {
         static_assert(type == BranchType_JMP || type == BranchType_CALL);
         if ((type == BranchType_JMP) && disassembleNop(from)) {
@@ -4375,8 +4476,7 @@ protected:
                 if (imm19 == 8)
                     condition = invert(condition);
 
-                linkConditionalBranch<IndirectBranch, repatch>(condition, from - 1, fromInstruction - 1, to);
-                return;
+                return linkConditionalBranch<IndirectBranch, repatch>(condition, from - 1, fromInstruction - 1, to);
             }
 
             Datasize opSize;
@@ -4388,8 +4488,7 @@ protected:
                 if (imm19 == 8)
                     op = !op;
 
-                linkCompareAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, opSize == Datasize_64, rt, from - 1, fromInstruction - 1, to);
-                return;
+                return linkCompareAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, opSize == Datasize_64, rt, from - 1, fromInstruction - 1, to);
             }
 
             int imm14;
@@ -4400,17 +4499,55 @@ protected:
                 if (imm14 == 8)
                     op = !op;
 
-                linkTestAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, bitNumber, rt, from - 1, fromInstruction - 1, to);
-                return;
+                return linkTestAndBranch<IndirectBranch, repatch>(op ? ConditionNE : ConditionEQ, bitNumber, rt, from - 1, fromInstruction - 1, to);
             }
         }
 
         linkJumpOrCall<type, repatch>(from, fromInstruction, to);
+        return BranchEncoding::Direct;
     }
 
     static int* addressOf(void* code, AssemblerLabel label)
     {
         return reinterpret_cast<int*>(static_cast<char*>(code) + label.offset());
+    }
+
+    template<size_t count>
+    static std::array<int, count> readInstructions(std::span<const uint8_t> bytes)
+    {
+        RELEASE_ASSERT(bytes.size() == count * instructionSize);
+        std::array<int, count> instructions;
+        memcpy(instructions.data(), bytes.data(), bytes.size());
+        return instructions;
+    }
+
+    template<size_t count>
+    static void writeInstructions(std::span<uint8_t> bytes, const std::array<int, count>& instructions)
+    {
+        RELEASE_ASSERT(bytes.size() == count * instructionSize);
+        memcpy(bytes.data(), instructions.data(), bytes.size());
+    }
+
+    static bool isPCRelative(int instruction) { return (instruction & 0x1f000000) == 0x10000000; }
+    static bool isAddSubtractImmediate(int instruction) { return (instruction & 0x1f000000) == 0x11000000; }
+    static bool isLoadRegisterLiteral(int instruction) { return (instruction & 0x3b000000) == 0x18000000; }
+    static bool isUnconditionalBranchImmediate(int instruction) { return (instruction & 0x7c000000) == 0x14000000; }
+    static bool isConditionalBranchImmediate(int instruction) { return (instruction & 0xff000010) == 0x54000000; }
+    static bool isCompareAndBranchImmediate(int instruction) { return (instruction & 0x7e000000) == 0x34000000; }
+    static bool isTestAndBranchImmediate(int instruction) { return (instruction & 0x7e000000) == 0x36000000; }
+    static bool isMoveWideImmediate(int instruction) { return (instruction & 0x1f800000) == 0x12800000; }
+
+    static RegisterID destinationRegister(int instruction) { return disassembleXOrZr(instruction & 0x1f); }
+
+    static RegisterID farAddressRegister(std::span<const uint8_t> twoWords)
+    {
+        auto [first, second] = readInstructions<2>(twoWords);
+        RELEASE_ASSERT(isPCRelative(first));
+        RELEASE_ASSERT(isAddSubtractImmediate(second));
+        RegisterID rd = destinationRegister(first);
+        RELEASE_ASSERT(!isZr(rd));
+        RELEASE_ASSERT(destinationRegister(second) == rd);
+        return rd;
     }
 
     static RegisterID disassembleXOrSp(int reg) { return reg == 31 ? ARM64Registers::sp : static_cast<RegisterID>(reg); }

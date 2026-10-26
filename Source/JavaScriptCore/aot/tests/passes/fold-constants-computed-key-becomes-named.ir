@@ -1,0 +1,98 @@
+# A key computed from known parts folds to a string, and in the same run the access by that key becomes an access by name
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 5
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass FoldConstants FoldConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumOfTwoStrings" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="on"
+    v2 = String string="Click"
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+# CHECK: v3: "onClick" = String string="onClick"
+# CHECK-NEXT: v4:{{*}}= PropGet v0 key="onClick"
+# CHECK-NEXT: Return v4
+}
+
+function f1 name="template" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = String string="data"
+    v3 = String string="-"
+    v4 = String string="id"
+    v5 = Strcat v2, v3, v4
+    ElemSet v0, v5, v1 mode=Sloppy
+    Return
+# CHECK: v5: "data-id" = String string="data-id"
+# CHECK-NEXT: PropSet v0, v1 key="data-id" mode=Sloppy
+# CHECK-NEXT: Return
+}
+
+function f2 name="stringAndNumber" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = String string="item"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = ElemHas v0, v3
+    Return v4
+# CHECK: v3: "item1" = String string="item1"
+# CHECK-NEXT: v4:{{*}}= PropHas v0 key="item1"
+}
+
+function f3 name="everyAccess" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="a"
+    v3 = String string="b"
+    v4 = Add v2, v3
+    v5 = ElemGet v0, v4
+    ElemSet v0, v4, v1
+    v7 = ElemHas v0, v4
+    v8 = ElemDelete v0, v4
+    ElemDefine v0, v4, v1
+    Return v5
+# CHECK: v4: "ab" = String string="ab"
+# CHECK-NEXT: v5:{{*}}= PropGet v0 key="ab"
+# CHECK-NEXT: PropSet v0, v1 key="ab"
+# CHECK-NEXT: v7:{{*}}= PropHas v0 key="ab"
+# CHECK-NEXT: v8:{{*}}= PropDelete v0 key="ab"
+# CHECK-NEXT: PropDefine v0, v1 key="ab"
+# CHECK-NEXT: Return v5
+}
+
+function f4 name="superAccess" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
+    v3 = String string="on"
+    v4 = String string="Click"
+    v5 = Add v3, v4
+    v6 = SuperGet v0, v1, v5
+    SuperSet v0, v1, v2, v5 mode=Sloppy
+    Return v6
+# CHECK: v5: "onClick" = String string="onClick"
+# CHECK-NEXT: v6:{{*}}= SuperGet v0, v1 key="onClick"
+# CHECK-NEXT: SuperSet v0, v1, v2 mode=Sloppy key="onClick"
+# CHECK-NEXT: Return v6
+}
+
+function f5 name="onePartUnknown" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = String string="on"
+    v3 = Add v2, v1
+    v4 = ElemGet v0, v3
+    Return v4
+# CHECK-NOT: PropGet
+# CHECK: v3:{{*}}= Add v2, v1
+# CHECK-NEXT: v4:{{*}}= ElemGet v0, v3
+}
+
+function f6 name="oneOfTwoNames" parameters=[{type=anything}, {type="a"|"b"}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: PropGet
+# CHECK: v2:{{*}}= ElemGet v0, v1
+}
+
+function f7 name="superAccessWithUnknownKey" parameters=[{type=object}, {type=object}, {type=string}] results=[{type=anything}] {
+    v3 = SuperGet v0, v1, v2
+    Return v3
+# CHECK: v3:{{*}}= SuperGet v0, v1, v2
+# CHECK-NEXT: Return v3
+}

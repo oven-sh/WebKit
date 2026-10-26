@@ -25,8 +25,9 @@ function snapshot(object) {
 }
 
 let symbol = Symbol("s");
+let setterCalls = 0;
 function make() {
-    return { a: 1, b: "two", [symbol]: 3, get g() { return 4; }, set g(v) { throw new Error("setter must not run"); } };
+    return { a: 1, b: "two", [symbol]: 3, get g() { return 4; }, set g(v) { setterCalls++; } };
 }
 
 // It returns the object, is reported by hasImmutableProperties(), and is idempotent.
@@ -54,26 +55,86 @@ function make() {
     shouldBe(Object.isFrozen(object), false);
 }
 
-// [[Set]] with the object as receiver.
+// [[Set]] with the object as receiver. A setter is not called either.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
-    (function () { object.a = 9; object.fresh = 9; object[symbol] = 9; object[0] = 9; object.g = 9; })(); // sloppy: ignored
+    (function () { object.a = 9; object.fresh = 9; object[symbol] = 9; object[0] = 9; })(); // sloppy: ignored
     shouldBe(snapshot(object), before);
     shouldThrow(() => { "use strict"; object.a = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object.fresh = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object[symbol] = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object[0] = 9; }, TypeError);
-    shouldThrow(() => { "use strict"; object.g = 9; }, TypeError); // the setter does not run
+    object.g = 9;
+    shouldThrow(() => { "use strict"; object.g = 9; }, TypeError);
+    shouldBe(Reflect.set(object, "g", 9), false);
+    shouldBe(setterCalls, 0);
     shouldBe(Reflect.set(object, "a", 9), false);
     shouldBe(Reflect.set(object, "fresh", 9), false);
-    shouldBe(Reflect.set(object, "g", 9), false);
     shouldBe(snapshot(object), before);
     shouldBe(object.a, 1);
     shouldBe(object.g, 4);
 }
 
-// [[DefineOwnProperty]]: a definition that changes nothing succeeds, every other one fails.
+// [[Set]] of the value that a writable data property holds changes nothing and succeeds. A read-only property and an accessor refuse it as before.
+{
+    let held = { };
+    let object = { a: 1, b: held, get g() { return 4; }, set g(v) { setterCalls++; } };
+    Object.defineProperty(object, "readOnly", { value: 5, writable: false, configurable: true });
+    $vm.makePropertiesImmutable(object);
+    let before = snapshot(object);
+    (function () { "use strict"; object.a = 1; object.b = held; object.a = object.a || 2; })();
+    shouldBe(Reflect.set(object, "a", 1), true);
+    shouldBe(Reflect.set(object, "b", held), true);
+    shouldThrow(() => { "use strict"; object.a = 2; }, TypeError);
+    shouldThrow(() => { "use strict"; object.b = { }; }, TypeError);
+    shouldThrow(() => { "use strict"; object.readOnly = 5; }, TypeError);
+    shouldThrow(() => { "use strict"; object.g = 4; }, TypeError);
+    shouldThrow(() => { "use strict"; object.fresh = undefined; }, TypeError);
+    shouldBe(setterCalls, 0);
+    shouldBe(snapshot(object), before);
+}
+
+// The two values are compared as a definition compares them: an equal string in another cell, a number read out of a list of doubles and NaN are the value that is held. -0 is not +0.
+{
+    let doubles = [0.5, 3, -0, NaN, 0];
+    let letter = "t";
+    let object = { text: "two", whole: 3, none: NaN, zero: 0, negativeZero: -0, big: 10n };
+    $vm.makePropertiesImmutable(object);
+    let before = snapshot(object);
+    (function () {
+        "use strict";
+        object.text = letter + "wo";
+        object.text = [letter, "w", "o"].join("");
+        object.text = "a two".slice(2);
+        object.whole = doubles[1];
+        object.none = doubles[3];
+        object.none = doubles[4] / doubles[4];
+        object.zero = doubles[4];
+        object.negativeZero = doubles[2];
+        object.big = 5n + 5n;
+    })();
+    shouldBe(Reflect.set(object, "text", letter + "wo"), true);
+    shouldBe(Reflect.set(object, "whole", doubles[1]), true);
+    shouldBe(Reflect.set(object, "zero", doubles[2]), false);
+    shouldThrow(() => { "use strict"; object.zero = doubles[2]; }, TypeError);
+    shouldThrow(() => { "use strict"; object.negativeZero = doubles[4]; }, TypeError);
+    shouldThrow(() => { "use strict"; object.text = letter + "wO"; }, TypeError);
+    shouldThrow(() => { "use strict"; object.whole = "3"; }, TypeError);
+    shouldThrow(() => { "use strict"; object.big = 10; }, TypeError);
+    shouldBe(snapshot(object), before);
+    shouldBe(Object.is(object.zero, 0) && Object.is(object.negativeZero, -0), true);
+}
+
+// [[DefineOwnProperty]]: writable and configurable may go from true to false, so that Object.freeze() and Object.seal() succeed: the value stays what it is.
+for (let narrower of [{ writable: false }, { configurable: false }, { writable: false, configurable: false }, { value: 1, writable: false }]) {
+    let object = $vm.makePropertiesImmutable(make());
+    shouldBe(Reflect.defineProperty(object, "a", narrower), true);
+    shouldBe(object.a, 1);
+    shouldBe(Reflect.defineProperty(object, "a", { writable: true, configurable: true }), false);
+}
+
+// [[DefineOwnProperty]]: a definition that changes nothing succeeds. So does one that only takes from what the property admits (see below). Every other one fails.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
@@ -87,9 +148,7 @@ function make() {
     shouldBe(Object.defineProperty(object, "a", { value: 1 }), object);
 
     shouldBe(Reflect.defineProperty(object, "a", { value: 2 }), false);
-    shouldBe(Reflect.defineProperty(object, "a", { writable: false }), false);
     shouldBe(Reflect.defineProperty(object, "a", { enumerable: false }), false);
-    shouldBe(Reflect.defineProperty(object, "a", { configurable: false }), false);
     shouldBe(Reflect.defineProperty(object, "a", { get() { } }), false);
     shouldBe(Reflect.defineProperty(object, "g", { get() { } }), false);
     shouldBe(Reflect.defineProperty(object, "g", { value: 1 }), false);
@@ -137,16 +196,20 @@ function make() {
     shouldBe(Reflect.setPrototypeOf(nullProto, Object.prototype), false);
 }
 
-// [[PreventExtensions]] has nothing left to do. Object.seal() and Object.freeze() would change attributes, so they fail,
-// unless there is nothing for them to change.
+// [[PreventExtensions]] has nothing left to do. Object.seal() and Object.freeze() only take from what the properties admit, so they
+// succeed: no value changes.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
     shouldBe(Reflect.preventExtensions(object), true);
     shouldBe(Object.preventExtensions(object), object);
-    shouldThrow(() => Object.seal(object), TypeError);
-    shouldThrow(() => Object.freeze(object), TypeError);
     shouldBe(snapshot(object), before);
+    let values = JSON.stringify(Reflect.ownKeys(object).map(key => [String(key), typeof object[key], String(object[key])]));
+    shouldBe(Object.seal(object), object);
+    shouldBe(Object.isSealed(object), true);
+    shouldBe(Object.freeze(object), object);
+    shouldBe(Object.isFrozen(object), true);
+    shouldBe(JSON.stringify(Reflect.ownKeys(object).map(key => [String(key), typeof object[key], String(object[key])])), values);
 
     let empty = $vm.makePropertiesImmutable({});
     shouldBe(Object.freeze(empty), empty);

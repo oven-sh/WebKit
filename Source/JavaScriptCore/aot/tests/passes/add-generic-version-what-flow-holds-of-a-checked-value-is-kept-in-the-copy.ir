@@ -1,0 +1,22 @@
+# Flow holds one ordinary object at a value that is checked to be a list, and no test tells the two classes apart. What flow holds is true whether the check stands or not,
+# so the copy behind the exit of the second check keeps it, and the function returns what its result declares
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion VerifyProgram
+# STATISTIC: GenericVersionsCreated = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="run" parameters=[{type=anything}] results=[{type=Object}] {
+    v1 = NewDictionary
+    v2 = AssumeType v1 provenType=Object
+    v3 = Check v2 expectedType=undefined|null|Array<number>
+    v4 = Check v0 expectedType=number
+    v5 = Add v4, v4
+    PropDefine v2, v5 key="sum"
+    v7 = AssumeType v3 provenType=Object
+    Return v7
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: frequency=Unlikely
+# CHECK: [[held]]: Object = AssumeType {{*}} provenType=Object
+# CHECK-NEXT: Return [[held]]
+}

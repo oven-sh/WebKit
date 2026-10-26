@@ -26,10 +26,16 @@
 #include "config.h"
 
 #include "AirCode.h"
+#include "AirFixSpillsAfterTerminals.h"
+#include "AirFoldTrapsIntoAccesses.h"
 #include "AirGenerate.h"
+#include "AirInstInlines.h"
 #include "AirSpecial.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "B3Const64Value.h"
+#include "B3ConstDoubleValue.h"
+#include "B3MemoryValue.h"
 #include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
@@ -38,18 +44,61 @@
 #include "InitializeThreading.h"
 #include "JITCompilation.h"
 #include "LinkBuffer.h"
+#include "MachineContext.h"
 #include "Options.h"
 #include "ProbeContext.h"
 #include "PureNaN.h"
+#include "AirAllocateRegistersByGreedy.h"
+#include "AirAllocateStackByGraphColoring.h"
+#include "AirEliminateDeadCode.h"
+#include "AirArgInlines.h"
+#include "AirBitMatrixLiveness.h"
+#include "AirBlockEntryClobberSpecial.h"
+#include "AirCustom.h"
+#include "AirDuplicateReturns.h"
+#include "AirEmitShuffle.h"
+#include "AirFormTraits.h"
+#include "AirForwardRegisterCopies.h"
+#include "AirFrameEmission.h"
+#include "AirFrameStates.h"
+#include "AirGenerationContext.h"
+#include "AirHoistCommonMoves.h"
+#include "AirInstObserver.h"
+#include "AirLimits.h"
+#include "AirLiveness.h"
+#include "AirMergeIdenticalBlocks.h"
+#include "AirOpcodeUtils.h"
+#include "AirOptimizeBlockOrder.h"
+#include "AirPadInterference.h"
+#include "AirPlanFrame.h"
+#include "AirRegLiveness.h"
+#include "AirReportUsedRegisters.h"
+#include "AirResequenceMovesBeforePatches.h"
+#include "AirReuseConditionFlags.h"
+#include "AirShrinkWrapFrame.h"
+#include "AirSplitLiveRangesAroundFrame.h"
+#include "AirStackAllocation.h"
+#include "AirStackColoring.h"
+#include "AirTmpInlines.h"
+#include "AirValidate.h"
+#include "B3CompilationReport.h"
+#include "B3Limits.h"
+#include "B3Policy.h"
+#include <csetjmp>
+#include <csignal>
 #include <regex>
 #include <string>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/InterferenceGraph.h>
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdMap.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -2230,6 +2279,9 @@ void testElideSimpleMove()
         root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
         auto compilation = compile(proc);
+#if !ENABLE(DISASSEMBLER)
+        continue;
+#endif
         auto disassembly = compilation->disassembly();
         std::regex findRRMove(isARM64() ? "mov\\s+x\\d+, x\\d+\\n" : "mov %\\w+, %\\w+\\n");
         auto result = matchAll(disassembly, findRRMove);
@@ -2526,6 +2578,49 @@ void testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister()
     CHECK(result == (numberOfLiveTmps * (numberOfLiveTmps - 1)) / 2);
 }
 
+// Every tmp begins as a copy of one tmp that every block reads, and each block of a long chain changes one of them.
+void testManySpilledCopiesOfOneTmp()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+    constexpr unsigned count = 4000;
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* done = code.addBlock();
+    BasicBlock* leave = code.addBlock();
+
+    Tmp seed = code.newTmp(GP);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), seed);
+    Vector<Tmp> copies;
+    for (unsigned i = 0; i < count; ++i) {
+        copies.append(code.newTmp(GP));
+        root->append(Move, nullptr, seed, copies[i]);
+    }
+
+    BasicBlock* block = root;
+    for (unsigned i = 0; i < count; ++i) {
+        BasicBlock* next = code.addBlock();
+        block->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), seed, seed);
+        block->setSuccessors(next, FrequentedBlock(leave, B3::FrequencyClass::Rare));
+        next->append(Add64, nullptr, seed, copies[i]);
+        block = next;
+    }
+    block->append(Jump, nullptr);
+    block->setSuccessors(done);
+
+    Tmp sum = code.newTmp(GP);
+    done->append(Move, nullptr, Arg::imm(0), sum);
+    for (Tmp copy : copies)
+        done->append(Add64, nullptr, copy, sum);
+    done->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    done->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    leave->append(Move, nullptr, Arg::imm(0), Tmp(GPRInfo::returnValueGPR));
+    leave->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(3)) == static_cast<int64_t>(count) * 6);
+}
+
 void testStackSlotSharingWithNonInterferingSlots()
 {
     // O0 uses a simple stack allocator that gives every slot a unique offset — no sharing.
@@ -2679,6 +2774,8 @@ void testEarlyAndLateUseOfSameTmp()
         CHECK(actualResult == expectedResult);
     }
 }
+
+#include "testair_bun.h"
 
 void testEarlyClobberInterference()
 {
@@ -3300,6 +3397,32 @@ void testSplitAroundLoopCriticalEdge()
     CHECK(invoke<int64_t>(*compilation, static_cast<int64_t>(0)) == (criticalEntry ? 10 : 2152));
 }
 
+void testFixSpillsAfterTerminalWithSameSuccessorTwice()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* done = code.addBlock();
+
+    Tmp result = Tmp(GPRInfo::returnValueGPR);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), result);
+    root->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), result, result);
+    root->append(Add64, nullptr, Arg::imm(1), result);
+    root->setSuccessors(done, done);
+    done->append(Ret64, nullptr, result);
+
+    code.resetReachability();
+    fixSpillsAfterTerminals(code);
+    CHECK(root->size() == 2);
+    CHECK(done->size() == 1);
+    for (BasicBlock* successor : root->successorBlocks()) {
+        CHECK(successor->size() == 2);
+        CHECK(successor->successorBlock(0) == done);
+    }
+    CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)) == 42);
+}
+
 #define PREFIX "O", Options::defaultB3OptLevel(), ": "
 
 #define RUN(test) do {                                 \
@@ -3439,9 +3562,11 @@ void run(const char* filter)
 
     RUN(testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister());
     RUN(testStackSlotSharingWithNonInterferingSlots());
+    RUN(testManySpilledCopiesOfOneTmp());
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());
+    RUN_BUN_TESTS();
 
 #if CPU(ARM64)
     RUN(testStorePair());
@@ -3484,6 +3609,7 @@ void run(const char* filter)
         RUN(testSplitAroundLoopNoInLoopUses());
         RUN((testSplitAroundLoopCriticalEdge<true>()));
         RUN((testSplitAroundLoopCriticalEdge<false>()));
+        RUN(testFixSpillsAfterTerminalWithSameSuccessorTwice());
 
         if (!tasks.isEmpty()) {
             anyTestsScheduled = true;
@@ -3525,6 +3651,8 @@ int main(int argc, char** argv)
     
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
+        JSC::Options::airValidateGreedRegAlloc() = true;
+        JSC::Options::validateGraphAtEachPhase() = true;
     });
 
     for (unsigned i = 0; i <= 2; ++i) {

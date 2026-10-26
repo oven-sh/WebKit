@@ -1,0 +1,17 @@
+# The command conversions: the steps that bring a value of a type from one representation into another. t<n> is the type of parameter n of the first function
+# FORM: Placed
+# RUN: conversions t0 Int32 JSValue t0 Int32 Double t0 JSValue Int32 t1 Double JSValue t1 JSValue Double t2 Cell JSValue t2 JSValue Cell t3 JSValue JSValue t1 Double Cell
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=i32}, {type=number}, {type=string}, {type=anything}] results=[{type=undefined}] {
+    Return
+}
+# CHECK: Int32 -> JSValue: Box(JSValue)
+# CHECK-NEXT: Int32 -> Double: IntegerToNumber(Double)
+# CHECK-NEXT: JSValue -> Int32: Unbox(Int32)
+# CHECK-NEXT: Double -> JSValue: Box(JSValue)
+# CHECK-NEXT: JSValue -> Double: Unbox(Double)
+# CHECK-NEXT: Cell -> JSValue: Box(JSValue)
+# CHECK-NEXT: JSValue -> Cell: Unbox(Cell)
+# CHECK-NEXT: JSValue -> JSValue: nothing
+# CHECK-NEXT: Double -> Cell: none

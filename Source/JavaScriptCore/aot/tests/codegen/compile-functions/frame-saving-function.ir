@@ -1,0 +1,25 @@
+# An array literal built across awaits that save the frame leaves no frame address or compressed reference live at a suspension
+# FORM: AsRead
+# RUN: compile
+# OPTIONS: check=validate-back-end,validate-references
+# STATISTIC: CoroutinesSplit = 1
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="collect" flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0
+    v4 = Await v1
+    v5 = Call v2
+    v6 = Await v5
+    v7 = NewArray v3, v4, v6 contents=anything
+    Return v7
+}

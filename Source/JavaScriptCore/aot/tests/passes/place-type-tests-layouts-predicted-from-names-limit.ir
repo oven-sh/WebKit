@@ -1,0 +1,15 @@
+# The names asked of a value predict layouts while each name has no more declarations among them than the limit
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Update" fields=[{key="updateQueue" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="overTheLimit" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="updateQueue"
+    Return v1
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = PropGet v0 key="updateQueue"
+# CHECK-NEXT: Return v1
+}

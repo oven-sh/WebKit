@@ -1,0 +1,48 @@
+# Unknown code does not write a variable whose writers are all known and whose one writer is called only by compiled code, from the body of the entry module down
+# FORM: AsRead
+# RUN: effects flow summaries f3
+# RUN(W): write-overlap flow summaries f3
+# RUN(NOFLOWW): write-overlap summaries f3
+
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
+variable g0 name="writerCalledByCompiledCode" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+variable g1 name="writerEscapes" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+variable g2 name="writersUnknown" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="calledByCompiledCode" results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="escapes" kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="queueMicrotask" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3
+    v5 = CallDirect function=f3
+    Return
+}
+function f3 name="readsAroundUnknownCall" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingUnknown" [isFreeName]
+    v5 = Call v4
+    v6 = GetModuleVariable variable=g0
+    Return v6
+}
+# CHECK: unknown code: reads(all) writes(ModuleVariables/2, ObjectFields,
+# W: v5 on v0: None
+# W: v5 on v1: May
+# W: v5 on v2: May
+# W: v5 on v6: None
+# NOFLOWW: v5 on v0: May
+# NOFLOWW: v5 on v1: May
+# NOFLOWW: v5 on v2: May

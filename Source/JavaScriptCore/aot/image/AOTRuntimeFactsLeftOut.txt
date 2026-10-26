@@ -1,0 +1,50 @@
+# An expression of the compiler's half that aot/image/AOTRuntimeFacts.def cannot evaluate, and why. aot/image/generator/runtime-facts.ts reads the part in front of the bar.
+AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | use of undeclared identifier 'kind'; did you mean 'find'?
+AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | use of undeclared identifier 'kind'; did you mean 'find'?
+ExactAllocationCounts::offsetOfCellsOfAllocations() | use of undeclared identifier 'ExactAllocationCounts'
+Extension::offsetOfGranuleBits() | use of undeclared identifier 'Extension'; did you mean 'Exception'?
+MapBucket::offsetOfKey() | use of undeclared identifier 'MapBucket'
+MapBucket::offsetOfValue() | use of undeclared identifier 'MapBucket'
+OBJECT_OFFSETOF(AllocatorWithoutRoom, freeList) | unknown type name 'AllocatorWithoutRoom'
+OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function) | offsetof of incomplete type 'BuiltinDirectFunctionBinding'
+OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function) | offsetof of incomplete type 'BuiltinNativeFunctionBinding'
+OBJECT_OFFSETOF(CacheEntry, header) | unknown type name 'CacheEntry'
+OBJECT_OFFSETOF(CacheEntry, prototype) | unknown type name 'CacheEntry'
+OBJECT_OFFSETOF(ClassAccessorData, getter) | unknown type name 'ClassAccessorData'
+OBJECT_OFFSETOF(ClassPrototype, m_memberRow) | 'm_memberRow' is a private member of 'JSC::AOT::ClassPrototype'
+OBJECT_OFFSETOF(Closure, m_entry) | 'm_entry' is a private member of 'JSC::AOT::Closure'
+OBJECT_OFFSETOF(CompiledStructure, m_environmentShapePage) | 'm_environmentShapePage' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_extensionSlot) | 'm_extensionSlot' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.extraPropertiesCellSize) | 'm_extraKeysAndCellSize' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_extraKeysAndCellSize.numberOfExtraKeys) | 'm_extraKeysAndCellSize' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_extraPropertiesSlot) | 'm_extraPropertiesSlot' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_flags) | 'm_flags' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_layout) | 'm_layout' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(CompiledStructure, m_namedStructureAndRareData.extraPropertiesStructureID) | 'm_namedStructureAndRareData' is a private member of 'JSC::AOT::CompiledStructure'
+OBJECT_OFFSETOF(Extension, m_granuleBits) | unknown type name 'Extension'; did you mean 'Exception'?
+OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | use of undeclared identifier 'Plan'
+OBJECT_OFFSETOF(Plan::FastField, offset) | use of undeclared identifier 'Plan'
+OBJECT_OFFSETOF(Plan::FastField, representation) | use of undeclared identifier 'Plan'
+OBJECT_OFFSETOF(ProgramSymbol, number) | unknown type name 'ProgramSymbol'; did you mean 'ProgramSymbols'?
+OBJECT_OFFSETOF(ProgramSymbol, uid) | unknown type name 'ProgramSymbol'; did you mean 'ProgramSymbols'?
+OBJECT_OFFSETOF(ProgramSymbols, entries) | offsetof of incomplete type 'ProgramSymbols'
+OBJECT_OFFSETOF(ProgramSymbols, mask) | offsetof of incomplete type 'ProgramSymbols'
+OBJECT_OFFSETOF(SlimClosure, m_word) | 'm_word' is a private member of 'JSC::AOT::SlimClosure'
+OBJECT_OFFSETOF(StackStringBuilder, buffer) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
+OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
+OBJECT_OFFSETOF(StackStringBuilder, limit) | unknown type name 'StackStringBuilder'; did you mean 'StringBuilder'?
+SetBucket::offsetOfKey() | use of undeclared identifier 'SetBucket'
+Storage::offsetOfCharacters() | use of undeclared identifier 'Storage'
+Storage::offsetOfLengthOutsideBuffer() | use of undeclared identifier 'Storage'
+Storage::offsetOfLimit() | use of undeclared identifier 'Storage'
+Storage::offsetOfMinLengthAppendedByReference() | use of undeclared identifier 'Storage'
+Storage::offsetOfNextFree() | use of undeclared identifier 'Storage'
+Storage::offsetOfPosition() | use of undeclared identifier 'Storage'
+Yarr::BytecodePattern::offsetOfFlatProgram() | incomplete type 'JSC::Yarr::BytecodePattern' named in nested name specifier
+Yarr::MatchingContextHolder::offsetOfFreeList() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
+Yarr::MatchingContextHolder::offsetOfStackLimit() | incomplete type 'JSC::Yarr::MatchingContextHolder' named in nested name specifier
+EntryFrame::vmEntryRecordOffset() | static assertion expression is not an integral constant expression
+JSMap::offsetOfStorage() | static assertion expression is not an integral constant expression
+JSSet::offsetOfStorage() | static assertion expression is not an integral constant expression
+MutatorMarkStackLayout::offsetOfHeadSegment() | static assertion expression is not an integral constant expression
+MutatorMarkStackLayout::offsetOfTop() | static assertion expression is not an integral constant expression

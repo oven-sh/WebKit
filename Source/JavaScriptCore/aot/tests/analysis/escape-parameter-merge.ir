@@ -1,0 +1,58 @@
+# A block parameter points to every object passed on an incoming edge and may be untracked when an edge passes an untracked value
+# FORM: AsRead
+# RUN: analyses escape aliases function=f0 alias-values=v1,v6,v9
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point"
+function f0 name="merge" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = TypeTest v1 testedType=object
+    v3 = Undefined
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject layout=L0 fields=[]
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewObject layout=L0 fields=[]
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v6 testedType=object
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    v8 = NewObject layout=L0 fields=[]
+    Jump -> next b6(v8)
+  b5():
+    Jump -> next b6(v3)
+  b6(v9):
+    Return v9
+}
+# CHECK: function f0
+# CHECK: objects: 3
+# CHECK: o0 definition: v4
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 reasons: []
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 live instances: AtMostOne
+# CHECK: o0 aliases: [v4 v6]
+# CHECK: o0 object uses: [v7(0)]
+# CHECK: o0 escaping uses: []
+# CHECK: o1 definition: v5
+# CHECK: o1 state: DoesNotEscape
+# CHECK: o1 aliases: [v5 v6]
+# CHECK: o2 definition: v8
+# CHECK: o2 state: Escapes
+# CHECK: o2 reasons: [Returned]
+# CHECK: o2 first escape: b6.terminator(0)
+# CHECK: o2 uses: [Returns]
+# CHECK: o2 aliases: [v8 v9]
+# CHECK: o2 escaping uses: [b6.terminator(0)]
+# CHECK: v6 points to: [o0 o1]
+# CHECK: v6 may be untracked: no
+# CHECK: v9 points to: [o2]
+# CHECK: v9 may be untracked: yes
+# CHECK: aliases:
+# CHECK: v1 v6 alias: NoAlias
+# CHECK: v1 v9 alias: MayAlias
+# CHECK: v6 v9 alias: NoAlias

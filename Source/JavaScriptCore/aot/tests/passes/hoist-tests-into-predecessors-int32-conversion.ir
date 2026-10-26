@@ -1,0 +1,90 @@
+# A bitwise operator on a joined number moves onto the edges where one of them passes an integer: there the conversion to int32 costs nothing, and the joined value is an int32 and no double. It stays where no edge passes an integer, where the joined value has another use, and where the value may be an object, whose conversion runs code
+# FORM: Prepared
+# RUN: pass HoistTestsIntoPredecessors
+# STATISTIC: HoistTestsIntoPredecessorsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumWithElementThatMayBeMissing" parameters=[{type=i32}, {type=int[0, 255]}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v0, v1
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = Add v0, v2
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = Integer
+    v8 = BitOr v6, v7
+    Return v8
+# CHECK: v4: int[{{*}}] = Add v0, v1
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: [[integer0]]: i32 = BitOr v4, [[zero0]]
+# CHECK-NEXT: Jump -> next b3([[integer0]])
+# CHECK: v5: number = Add v0, v2
+# CHECK-NEXT: [[zero1]]: 0 = Integer
+# CHECK-NEXT: [[number0]]: i32 = BitOr v5, [[zero1]]
+# CHECK-NEXT: Jump -> next b3([[number0]])
+# CHECK: b3([[joined0]]: i32):
+# CHECK-NOT: BitOr
+# CHECK: Return [[joined0]]
+}
+
+function f1 name="operandFromOutside" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = RShift v0, v3
+    Return v4
+# CHECK: b1():
+# CHECK-NEXT: = RShift v0, v0
+# CHECK: b2():
+# CHECK-NEXT: = RShift v0, v1
+# CHECK: b3({{*}}: i32):
+# CHECK-NOT: RShift
+}
+
+function f2 name="noEdgePassesAnInteger" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Integer
+    v5 = BitOr v3, v4
+    Return v5
+# CHECK: b3(v3: number):
+# CHECK: v5: i32 = BitOr v3, v4
+}
+
+function f3 name="joinedValueHasAnotherUse" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Add v5, v3
+    Return v6
+# CHECK: b3(v3: number):
+# CHECK: v5: i32 = BitOr v3, v4
+}
+
+function f4 name="valueMayBeAnObject" parameters=[{type=i32}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Integer
+    v5 = BitOr v3, v4
+    Return v5
+# CHECK: b3(v3: anything):
+# CHECK: = BitOr v3, v4
+}

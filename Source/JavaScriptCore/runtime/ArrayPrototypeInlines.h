@@ -36,6 +36,10 @@
 #include "JSStringInlines.h"
 #include "ObjectPrototype.h"
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -82,6 +86,10 @@ ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
     } else {
         if (globalObject->objectPrototype() != thisObject->getPrototypeDirect())
             return false;
+#if ENABLE(AOT)
+        if (AOT::PropertyWalk::isCompiledObject(thisObject))
+            return AOT::PropertyWalk::hasOwnProperty(thisObject, vm.propertyNames->isConcatSpreadableSymbol.impl()) == AOT::PropertyWalk::Presence::Absent;
+#endif
     }
 
     if (!thisObject->hasCustomProperties())
@@ -154,8 +162,8 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
             return;
         }
         JSArray* array = uncheckedDowncast<JSArray>(obj);
-        // Only ArrayStorage can hold a read-only length, whose unchanged assignment must still throw.
-        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value)
+        // An array with ArrayStorage or with elements frozen in place can have a read-only length, whose unchanged assignment must still throw.
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !(isCopyOnWrite(array->indexingMode()) && array->structure()->hasFrozenElementsInPlace()))
             return;
         scope.release();
         array->setLength(globalObject, static_cast<uint32_t>(value), throwException);
@@ -301,6 +309,35 @@ inline bool canUseFastArrayJoin(const JSObject* thisObject)
     return false;
 }
 
+inline JSString* repeatSeparator(JSGlobalObject* globalObject, StringView separator, unsigned count)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!count || separator.isEmpty())
+        return jsEmptyString(vm);
+    if (separator.length() == 1) {
+        if (separator.is8Bit())
+            RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span8().front(), count));
+        RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span16().front(), count));
+    }
+
+    JSString* result = jsEmptyString(vm);
+    JSString* operand = jsString(vm, separator);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (;;) {
+        if (count & 1) {
+            result = jsString(globalObject, result, operand);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        count >>= 1;
+        if (!count)
+            return result;
+        operand = jsString(globalObject, operand, operand);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+}
+
 // This is intentionally supporting non-JSArray as well.
 ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* thisObject, StringView separator, unsigned length, bool& sawHoles, bool& genericCase)
 {
@@ -405,36 +442,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     case ALL_UNDECIDED_INDEXING_TYPES: {
         if (length && holesMustForwardToPrototype(thisObject))
             goto generalCase;
-        switch (separator.length()) {
-        case 0:
-            RELEASE_AND_RETURN(scope, jsEmptyString(vm));
-        case 1: {
-            if (length <= 1)
-                RELEASE_AND_RETURN(scope, jsEmptyString(vm));
-            if (separator.is8Bit())
-                RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span8().front(), length - 1));
-            RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span16().front(), length - 1));
-        default:
-            JSString* result = jsEmptyString(vm);
-            if (length <= 1)
-                return result;
-
-            JSString* operand = jsString(vm, separator);
-            RETURN_IF_EXCEPTION(scope, { });
-            unsigned count = length - 1;
-            for (;;) {
-                if (count & 1) {
-                    result = jsString(globalObject, result, operand);
-                    RETURN_IF_EXCEPTION(scope, { });
-                }
-                count >>= 1;
-                if (!count)
-                    return result;
-                operand = jsString(globalObject, operand, operand);
-                RETURN_IF_EXCEPTION(scope, { });
-            }
-        }
-        }
+        RELEASE_AND_RETURN(scope, repeatSeparator(globalObject, separator, length ? length - 1 : 0));
     }
     }
 

@@ -1,0 +1,134 @@
+# f(f(n)) where f is the one function that its type lists, or any other. Two ways part at the test of f, come together with what each of them computed, and the same test of f follows.
+# Each way knows how that test ends, so each gets a copy of the block with the test. The first test dominates the copy, which PropagateBranchConditions then decides,
+# and the int32 of the direct call is no longer merged with whatever the call by value answers.
+# Not copied: a merge point whose test is of another value or for another type, one that holds code beside the test, and one that no way reaches from an earlier test.
+# Nor a test for anything but functions: each run takes one step along a row of equal tests, and a row of tests of one object in a large function is long
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps VerifyProgram
+# RUN(FOLDED): pass ThreadJumps PropagateBranchConditions SimplifyControlFlow EliminateDeadCode RetypeValues VerifyProgram
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f4
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = CallDirect v1 function=f4
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = Call v5, -, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = TypeTest v0 testedType=f4
+    Branch v8 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v9):
+    v10 = CallDirect v7 function=f4
+    Return v10
+  b5(v11):
+    v12 = Call v11, -, v7
+    Return v12
+# CHECK: b1(v3: f4):
+# CHECK: Jump -> next [[afterDirectCall]](v4)
+# CHECK: b2(v5: function):
+# CHECK: Jump -> next [[afterCallByValue]](v6)
+# CHECK: [[afterDirectCall]]({{*}}):
+# CHECK-NEXT: = TypeTest v0 testedType=f4
+# CHECK: [[afterCallByValue]]({{*}}):
+# CHECK-NEXT: = TypeTest v0 testedType=f4
+# FOLDED: : i32 = CallDirect v1 function=f4
+# FOLDED-NOT: TypeTest
+# FOLDED: : i32 = CallDirect {{*}} function=f4
+# FOLDED-NEXT: Return
+# FOLDED: [[other]]: anything = Call {{*}}, -, v1
+# FOLDED-NOT: TypeTest
+# FOLDED: = Call {{*}}, -, [[other]]
+}
+
+function f1 name="testOfAnotherValue" parameters=[{type=function|f4}, {type=function|f4}, {type=number}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=f4
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = CallDirect v2 function=f4
+    Jump -> next b3(v5)
+  b2(v6):
+    v7 = Call v6, -, v2
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = TypeTest v1 testedType=f4
+    Branch v9 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v10):
+    v11 = CallDirect v8 function=f4
+    Return v11
+  b5(v12):
+    v13 = Call v12, -, v8
+    Return v13
+# CHECK: Jump -> next b3(v5)
+# CHECK: Jump -> next b3(v7)
+}
+
+function f2 name="codeBesideTheTest" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f4
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = CallDirect v1 function=f4
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = Call v5, -, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Call v0, -, v7
+    v9 = TypeTest v0 testedType=f4
+    Branch v9 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v10):
+    Return v8
+  b5(v11):
+    Return v7
+# CHECK: Jump -> next b3(v4)
+# CHECK: Jump -> next b3(v6)
+}
+
+function f3 name="noEarlierTestOnTheWay" parameters=[{type=function|f4}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Add v1, v1
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v0 testedType=f4
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    v7 = CallDirect v4 function=f4
+    v8 = TypeTest v0 testedType=f4
+    Branch v8 -> taken b6(| 0), notTaken b5(| 0)
+  b5(v9):
+    v10 = Call v9, -, v4
+    Return v10
+  b6(v11):
+    Return v7
+# CHECK: Jump -> next b3(v1)
+# CHECK: Jump -> next b3(v3)
+}
+
+function f4 name="listed" parameters=[{type=anything}] results=[{type=i32}] {
+    v1 = Integer integer=1
+    Return v1
+}
+
+function f5 name="testForAString" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = GetStringLength v3
+    Jump -> next b3(v4)
+  b2(v5):
+    Jump -> next b3(v1)
+  b3(v6):
+    v7 = TypeTest v0 testedType=string
+    Branch v7 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v8):
+    Return v6
+  b5(v9):
+    Return v1
+# CHECK: Jump -> next b3(v4)
+# CHECK: Jump -> next b3(v1)
+}

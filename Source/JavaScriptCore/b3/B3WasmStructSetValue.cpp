@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3WasmStructSetValue.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3ValueInlines.h"
 
@@ -46,4 +46,4 @@ void WasmStructSetValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
 
 } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

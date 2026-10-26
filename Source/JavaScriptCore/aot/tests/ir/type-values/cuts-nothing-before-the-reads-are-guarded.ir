@@ -1,0 +1,79 @@
+# A branch that the declared type of a capture or of a variable decides is not decided for good: a Check in another function may have turned a value away, and the generic version of that function
+# stores it all the same. GuardTaintedPositions then puts a Check behind the read, and the generic version of the reader is a copy of the code behind that Check. So TypeValues cuts nothing:
+# an arm that it had cut would be missing from the copy. Where no Check comes, the arm is cut as soon as GuardTaintedPositions is through
+# FORM: AsRead
+# RUN: pass TypeValues VerifyProgram
+# CHECK-LABEL: function f1 name="testsCapture"
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-LABEL: function f2 name="testsVariable"
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-LABEL: function f3 name="testsVariableThatKeepsItsType"
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-LABEL: function f4 name="noValue"
+# CHECK: v1: never = ToObject v0
+# CHECK-NEXT: PutModuleVariable v1 variable=g2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="given" module=m0 declared={type=string} initialization=Uninitialized
+variable g1 name="constant" module=m0 declared={type=string} initialization=Uninitialized
+variable g2 name="last" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=string}
+    PutModuleVariable v2 variable=g0
+    v4 = String string="text"
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure v2 function=f1
+    Return
+}
+
+function f1 name="testsCapture" kind=Arrow captures=[{type=string}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    Return v3
+  b2(v4):
+    v5 = Integer integer=2
+    Return v5
+}
+
+function f2 name="testsVariable" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    Return v3
+  b2(v4):
+    v5 = Integer integer=2
+    Return v5
+}
+
+function f3 name="testsVariableThatKeepsItsType" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    Return v3
+  b2(v4):
+    v5 = Integer integer=2
+    Return v5
+}
+
+function f4 name="noValue" results=[{type=anything}] {
+    v0 = Null
+    v1 = ToObject v0
+    PutModuleVariable v1 variable=g2
+    Return v1
+}

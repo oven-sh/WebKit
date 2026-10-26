@@ -1,0 +1,75 @@
+# A function that two functions call may run, and so may what it calls nearly every time: an entrance that tests its arguments has all the callers, and the body behind it has one.
+# What it calls on an unlikely path is compact
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Compact 10 1
+# CHECK-NEXT: f2 Compact 10 1
+# CHECK-NEXT: f3 Cold 10 1
+# CHECK-NEXT: f4 Cold 10 1
+# CHECK-NEXT: f5 Compact 10 1
+# CHECK-NEXT: f6 Cold 10 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v0 function=f2
+    v4 = CallDirect v0 function=f2
+    Return
+}
+
+function f1 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f3
+    Return v71
+}
+
+function f2 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f3
+    Return v71
+}
+
+function f3 name="entrance" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..71
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Branch v71 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v72 = CallDirect v0 function=f5
+    Return v72
+  b2():
+    v73 = CallDirect v0 function=f4
+    Return v73
+}
+
+function f4 name="body" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f6
+    Return v71
+}
+
+function f5 name="calledOnUnlikelyPath" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f6 name="calledEveryTimeByTheBody" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}

@@ -1,0 +1,27 @@
+# With the pass off a tail call of the function itself stays a call
+# FORM: Prepared
+# OPTIONS: disable=pass:EliminateTailRecursion
+# RUN: pass EliminateTailRecursion
+# STATISTIC: TailRecursionsEliminated = 0
+# STATISTIC: EliminateTailRecursionChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v1, v0 function=f0
+    ReturnCall v3
+  b2():
+    Return v1
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: v2: boolean = ToBoolean v0
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: number = CallDirect v1, v0 function=f0
+# CHECK-NEXT: ReturnCall v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v1
+}

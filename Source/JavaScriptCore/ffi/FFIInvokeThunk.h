@@ -37,11 +37,11 @@ namespace JSC { namespace FFI {
 
 class Signature;
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 JS_EXPORT_PRIVATE MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&);
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 
 } } // namespace JSC::FFI
 

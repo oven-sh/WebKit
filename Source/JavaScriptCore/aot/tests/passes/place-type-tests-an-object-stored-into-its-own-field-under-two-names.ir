@@ -1,0 +1,34 @@
+# `holder.self = holder`: the receiver is named behind the check for undefined and null, the stored value in front of it. One value, two names, and only the type of the second lists undefined.
+# A counter holds undefined or a number in the field. Of what the stored name may be only undefined fits, and the receiver is an object: no value passes a test for it, so the store gets no tests and stays by name.
+# A link holds undefined or a link there. A link passes, so that store is tested, and behind the tests it is a store into a link
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="mark" declared={type=anything} flags=[IsRequired, IsEnforced]}, {key="self" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] ownFieldCount=1 flow={baseState=None allocationClasses=[0] constructorOrders=[{}]}
+layout L1 name="Counter" fields=[{key="mark" declared={type=undefined|number} flags=[IsEnforced]}, {key="self" declared={type=undefined|number} flags=[IsEnforced]}] flow={baseState=None allocationClasses=[1] constructorOrders=[{}]}
+layout L2 name="Link" fields=[{key="mark" declared={type=undefined|number} flags=[IsEnforced]}, {key="self" declared={type=undefined|L2} flags=[IsEnforced]}] flow={baseState=None allocationClasses=[2] constructorOrders=[{}]}
+
+function f0 name="aFieldThatHoldsNumbers" parameters=[{type=undefined|null|L0|L1}] results=[{type=undefined}] {
+  b0(v0: undefined|null|L0|L1):
+    v1 = RequireObjectCoercible v0 nullishAccess=Write name="self"
+    PropSet v1, v0 key="self"
+    v3 = Undefined
+    Return v3
+# CHECK: = RequireObjectCoercible v0
+# CHECK-NEXT: PropSet v1, v0 key="self"
+# CHECK-NOT: = TypeTest
+}
+
+function f1 name="aFieldThatHoldsLinks" parameters=[{type=undefined|null|L0|L2}] results=[{type=undefined}] {
+  b0(v0: undefined|null|L0|L2):
+    v1 = RequireObjectCoercible v0 nullishAccess=Write name="self"
+    PropSet v1, v0 key="self"
+    v3 = Undefined
+    Return v3
+# CHECK: ([[passed]]: undefined|L2):
+# CHECK-NEXT: [[link]]: L2 = AssumeType [[passed]] provenType=L2
+# CHECK: PutSlotOrAdd [[link]], {{*}}, [[passed]] key="self" receivers=[L2] level=Expected
+# CHECK: = TypeTest v0 testedType=undefined|L2
+}

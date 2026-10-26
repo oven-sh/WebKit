@@ -1,0 +1,103 @@
+# The cases and the default of the switch keep the arguments of the edges they replace
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchStringGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="arguments-from-head"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: [[ten]]: 10 = Integer integer=10
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(v1), case b1([[ten]]), case b1(v0), otherwise b1([[ten]])
+# CHECK-NEXT: b1([[result]]: anything):
+# CHECK-NEXT: Return [[result]]
+function f0 name="arguments-from-head" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=10
+    v3 = String string="a"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(v1), notTaken b1()
+  b1():
+    v5 = String string="b"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b3(v2), notTaken b2()
+  b2():
+    v7 = String string="c"
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b3(v0), notTaken b3(v2)
+  b3(v9):
+    Return v9
+}
+
+# CHECK-LABEL: function f1 name="constant-of-link"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: [[second]]: "b" = String string="b"
+# CHECK-NEXT: SwitchString v0 strings=["a", "b", "c"] -> case b1(v1), case b1([[second]]), case b1(v0), otherwise b1(v1)
+function f1 name="constant-of-link" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="a"
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b3(v1), notTaken b1()
+  b1():
+    v4 = String string="b"
+    v5 = StrictEq v0, v4
+    Branch v5 -> taken b3(v4), notTaken b2()
+  b2():
+    v6 = String string="c"
+    v7 = StrictEq v0, v6
+    Branch v7 -> taken b3(v0), notTaken b3(v1)
+  b3(v8):
+    Return v8
+}
+
+# CHECK-LABEL: function f2 name="parameter-of-link"
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(v0), case b1(v1), case b1(v0), otherwise b1(v0)
+function f2 name="parameter-of-link" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="a"
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b3(v0), notTaken b1(v1)
+  b1(v4):
+    v5 = String string="b"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b3(v4), notTaken b2()
+  b2():
+    v7 = String string="c"
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b3(v0), notTaken b3(v0)
+  b3(v9):
+    Return v9
+}
+
+# CHECK-LABEL: function f3 name="narrowed-parameter-of-link"
+# CHECK-NOT: Switch
+function f3 name="narrowed-parameter-of-link" parameters=[{type="a"|"b"|"c"|"d"}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b3(v0), notTaken b1(| 0)
+  b1(v3):
+    v4 = String string="b"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b3(v3), notTaken b2(| 0)
+  b2(v6):
+    v7 = String string="c"
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b3(v6), notTaken b3(v6)
+  b3(v9):
+    Return v9
+}
+
+# CHECK-LABEL: function f4 name="narrowed-parameter-only-compared"
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(v0), case b1(v0), case b1(v0), otherwise b1(v0)
+# CHECK-NEXT: b1([[joined]]: "a"|"b"|"c"|"d"):
+function f4 name="narrowed-parameter-only-compared" parameters=[{type="a"|"b"|"c"|"d"}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b3(v0), notTaken b1(| 0)
+  b1(v3):
+    v4 = String string="b"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b3(v0), notTaken b2(| 0)
+  b2(v6):
+    v7 = String string="c"
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b3(v0), notTaken b3(v0)
+  b3(v9):
+    Return v9
+}

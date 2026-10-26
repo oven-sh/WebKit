@@ -1,0 +1,127 @@
+# An iteration over a typed array validates the view, reads its length and reads an element at each step
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 3
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="uint8Array" parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: b0(v0: Uint8Array<number, pristine[Names]>):
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next {{*}}([[zero0]])
+# CHECK-NEXT: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK-NEXT: [[length0]]: {{*}} = GetTypedArrayLength v0 typedArrayType=2
+# CHECK-NEXT: [[inRange0]]: boolean = Less [[index0]], [[length0]]
+# CHECK-NEXT: Branch [[inRange0]] -> taken [[read0]](| 0), notTaken [[end0]](| 0)
+# CHECK: [[read0]]([[proven0]]: {{*}}):
+# CHECK-NEXT: [[element0]]: undefined|int[0, 255] = GetTypedArrayElement v0, [[proven0]] typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next0]]: {{*}} = Add [[proven0]], [[one0]]
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no0]], [[element0]], [[next0]])
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: ElemGet
+# ABSENT-NOT: key="length"
+}
+
+function f1 name="float64Keys" parameters=[{type=Float64Array<number>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=TypedArrayPrototypeKeys/0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b1()
+  b2():
+    Return v6
+# The call of keys validated the view where the iterator was made, so the open validates nothing.
+# CHECK: b0(v0: Float64Array<number>):
+# CHECK-NEXT: = CallBuiltin v0 overload=TypedArrayPrototypeKeys/0
+# CHECK-NEXT: [[zero1]]: 0 = Integer
+# CHECK-NEXT: Jump -> next {{*}}([[zero1]])
+# CHECK-NEXT: b1([[index1]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK-NEXT: [[length1]]: {{*}} = GetTypedArrayLength v0 typedArrayType=10
+# CHECK-NEXT: [[inRange1]]: boolean = Less [[index1]], [[length1]]
+# CHECK-NEXT: Branch [[inRange1]] -> taken [[read1]](| 0), notTaken
+# CHECK: [[read1]]([[proven1]]: {{*}}):
+# CHECK-NEXT: [[one1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next1]]: {{*}} = Add [[proven1]], [[one1]]
+# CHECK-NEXT: [[no1]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no1]], [[proven1]], [[next1]])
+# ABSENT-NOT: GetTypedArrayElement
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+}
+
+function f2 name="int32ArrayNotProven" parameters=[{type=Int32Array<number>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="int32ArrayNotProven"
+# CHECK: b0(v0: Int32Array<number>):
+# CHECK-NEXT: [[isPristine2]]: boolean = IsPristine v0 builtinClass=Int32Array aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine2]] -> taken [[pristine2]](| 0), notTaken [[changed2]]()
+# CHECK: [[protocol2]]([[iterable2]]: Int32Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable2]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[pristine2]]({{*}}: guard):
+# CHECK-NEXT: RequireAttachedTypedArray v0
+# CHECK: [[changed2]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol2]](v0)
+# CHECK: = GetTypedArrayElement v0, {{*}} typedArrayType=6 [keyIsIntegral]
+# ABSENT-LABEL: function f2 name="int32ArrayNotProven"
+
+function f3 name="dataView" parameters=[{type=DataView}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: b0(v0: DataView):
+# CHECK-NEXT: = CallDirect v0 function=[[openIterator]] [isNeverInlined]
+# ABSENT-NOT: RequireAttachedTypedArray
+# ABSENT-NOT: GetTypedArrayLength
+# ABSENT-NOT: GetTypedArrayElement
+# ABSENT-NOT: IsPristine
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

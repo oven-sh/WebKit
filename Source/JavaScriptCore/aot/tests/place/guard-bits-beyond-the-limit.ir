@@ -1,0 +1,49 @@
+# The guards of one side of a class beyond the limit get no bit, the lightest first, and a set of conditions with such a guard gets none either: its test never passes
+# FORM: AsRead
+# OPTIONS: limit=MaxGuardBitsPerClassSide:64
+# RUN: place guards
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" module=m0 constructor=f1
+variable g0 name="Widget" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L0 key="m00"
+# REPEAT: i = 1..69
+    v%(i*2+4) = NewClosure function=f%(i+3)
+    DefineMethod v3, v%(i*2+4) layout=L0 index=%(i) key="m%(i:2)"
+# END REPEAT
+    v144 = FinishClass v3 layout=L0
+    PutModuleVariable v144 variable=g0
+    v146 = NewClosure function=f2
+    v147 = Call v1, -, v144, v146
+    Return
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="use" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0, -
+# REPEAT: i = 0..69
+    v%(i*2+2) = PropGet v1 key="m%(i:2)"
+    v%(i*2+3) = Call v%(i*2+2), v1 calleeKey="m%(i:2)"
+# END REPEAT
+    Return
+}
+# REPEAT: i = 0..69
+function f%(i+3) name="m%(i:2)" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+# END REPEAT
+# CHECK: guard 63 L0 Prototype Member "m63" bit=63 word@8
+# CHECK-NOT: bit=64
+# CHECK-NOT: NotHidden
+# CHECK-NOT: set [

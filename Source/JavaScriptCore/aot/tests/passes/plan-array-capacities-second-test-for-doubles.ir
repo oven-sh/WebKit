@@ -1,0 +1,41 @@
+# Behind a test for Double storage that has passed stands a second one, and the read behind its failing edge relies on the first. A conversion on that edge would end the proof of the first test;
+# it was placed, found out, and taken away again together with every other conversion of the function: an array of whole numbers that another test of the function asks about failed that test for ever.
+# The edge gets no conversion, and the other test keeps its own
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: IntegerArrayConversionsPlaced = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="secondTest" parameters=[{type=Array<number>}, {type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b6()
+  b1(v4):
+    v5 = HasArrayStorage v1 arrayStorage=Double [isWritable]
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = HasArrayStorage v1 arrayStorage=Double
+    Branch v7 -> taken b3(| 0), notTaken b5()
+  b3(v8):
+    v9 = IsElementPresent v1, v2, v8 arrayStorage=Double [keyIsIntegral]
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = AllGuards v6, v8, v10
+    v12 = GetArrayElement v1, v2, v11 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    Return v12
+  b5() frequency=Unlikely:
+    v13 = GetArrayElement v1, v2, v6 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v13
+  b6() frequency=Unlikely:
+    v14 = ElemGet v0, v2
+    v15 = ElemGet v1, v2
+    Return v15
+# CHECK: Branch v3 -> taken b1(| 0), notTaken [[first]]()
+# CHECK: Branch v5 -> taken b2(| 0), notTaken [[second]]()
+# CHECK: Branch v7 -> taken b3(| 0), notTaken b5()
+# CHECK: [[first]]() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK: [[second]]() frequency=Unlikely:
+# CHECK-NEXT: ConvertToDoubleStorage v1
+# CHECK-NOT: ConvertToDoubleStorage
+}

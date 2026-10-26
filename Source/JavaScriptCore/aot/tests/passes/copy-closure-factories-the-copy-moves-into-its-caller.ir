@@ -1,0 +1,45 @@
+# const a = once(loadA), b = once(loadB);  [a(), b()]
+# A copy of the factory has one call, so its body moves to the call however seldom the caller runs, and the copy is gone.
+# RUN: pipeline RemoveUnreachableFunctions
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: function=f7
+# CHECK-NOT: function=f9
+# CHECK-LABEL: function f1 name="once"
+# CHECK-NOT: function f7 name="once" {{*}} {
+# CHECK-NOT: function f9 name="once" {{*}} {
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f4
+    v4 = Call v0, -, v3
+    v5 = Call v2
+    v6 = Call v4
+    v7 = NewArray v5, v6 contents=anything holes=[]
+    Return v7
+}
+function f1 name="once" module=m0 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f2
+    Return v3
+}
+function f2 name="get" module=m0 position=20 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = GetEnvironmentField v0 layout=L0
+    Return v4
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    Return v1
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}

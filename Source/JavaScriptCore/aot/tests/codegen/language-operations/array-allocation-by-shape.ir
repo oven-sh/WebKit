@@ -1,0 +1,45 @@
+# An array of holes and a rest array take their cell from the stub in code of every shape
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
+# RUN: generate-code calls
+# CHECK: f1: size=
+# CHECK: stub NewArrayWithLength.Contiguous x2
+# CHECK: f2: size=
+# CHECK: stub NewArrayWithLength.Contiguous x2
+# The generic entrypoint of the function with the rest parameter is balanced.
+# CHECK: operation operationAOTNewArray x1
+# CHECK-NEXT: stub NewArrayWithLength.Contiguous x1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="balanced" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Array
+    v3 = Construct v2, -, v0
+    v4 = NewArray v1, v3 contents=anything holes=[1]
+    Return v4
+}
+function f2 name="fast" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v1
+    v3 = Builtin builtin=Array
+    Jump -> next b1(v1)
+  b1(v4: anything):
+    LoopHint
+    v6 = Construct v3, -, v0
+    v7 = NewArray v4, v6 contents=anything holes=[1]
+    Branch v2 -> taken b1(v7), notTaken b2()
+  b2():
+    Return v7
+}
+function f3 name="rest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    Return v1
+}

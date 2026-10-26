@@ -1,0 +1,64 @@
+# Without summaries nothing is known about a callee: no call is inlined and no block is marked as one that never returns
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot disable=pass:SummarizeForInlining
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 0
+# STATISTIC: InlineDecisionInlineHead = 0
+# STATISTIC: InlineDecisionBarrier = 4
+# STATISTIC: InlineCallsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+
+function f1 name="alwaysThrows" parameters=[{type=number}] results=[{type=number}] {
+    Throw v0
+}
+
+function f2 name="smallCallee" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="smallCallee"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number = CallDirect v0 function=f0
+# CHECK-NEXT: Return v1
+
+function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: name="markedCall"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number = CallDirect v0 function=f0 [isAlwaysInlined]
+# CHECK-NEXT: Return v1
+
+function f4 name="callInLoop" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: name="callInLoop"
+# CHECK: LoopHint
+# CHECK-NEXT: v3: number = CallDirect v0 function=f0
+# CHECK-NEXT: Branch v1
+
+function f5 name="callNeverReturns" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f1
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="callNeverReturns"
+# CHECK: b1():
+# CHECK-NEXT: v2: number = CallDirect v0 function=f1
+# CHECK-NEXT: Return v2

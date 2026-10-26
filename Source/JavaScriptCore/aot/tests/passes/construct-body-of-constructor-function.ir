@@ -1,0 +1,177 @@
+# `new` of a constructor function that is its own new.target enters the construct body of the function: a copy that takes no `this`, allocates the object itself and returns what was constructed. The caller allocates nothing.
+# The function keeps its body for every other way in: a plain call, another new.target, the super call of a subclass. There the object comes from the caller
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Scoped" constructor=f1 fields=[{key="step" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Observed" constructor=f2 fields=[{key="made" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Replacing" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L4 kind=Instance name="Typed" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Other" constructor=f5 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="Below" base=L0 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+
+function f0 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0, v1: anything, v2: anything):
+    PropSet v0, v1 key="x"
+    PropSet v0, v2 key="y"
+    Return
+# CHECK-NOT: role=
+# CHECK: b0(v0: anything ~ L0, v1: anything, v2: anything):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: PropSet v0, v2 key="y"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# The run time cannot make the closure of a function that captures something, so it does not know the one prototype object
+}
+function f1 name="Scoped" flags=[HasThis] captures=[{type=number}] thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything ~ L1, v2: anything):
+    PropSet v1, v0 key="step"
+    Return
+}
+function f2 name="Observed" flags=[HasThis, HasNewTarget] thisType={type=L2 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L2, v1: anything):
+    PropSet v0, v1 key="made"
+    Return
+}
+function f3 name="Replacing" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L3, v1: anything):
+    Return v1
+}
+# `this` and the parameter of a typed function are only expected to hold their types
+function f4 name="Typed" flags=[HasThis, IsChecked] thisType={type=L4 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=undefined}] {
+  b0(v0: anything ~ L4, v1: anything ~ number):
+    PropSet v0, v1 key="x"
+    Return
+}
+function f5 name="Other" flags=[HasThis] thisType={type=L5 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L5):
+    Return
+}
+function f6 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f7 name="new-of-the-function" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Construct v0, -, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: : L0 = CallDirect v1, v2 function=[[pointBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: GetConstructPrototype
+# CHECK-NOT: = Construct
+}
+function f8 name="own-new-target-named" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, v0, v1, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: : L0 = CallDirect v1, v1 function=[[pointBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: = Construct
+}
+function f9 name="prototype-read-from-new-target" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f1, v1: anything):
+# CHECK-NEXT: [[step]]: number = GetCapture v0 function=f1
+# CHECK-NEXT: : L1 = CallDirect [[step]], v0, v1 function=[[scopedBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: GetConstructPrototype
+}
+function f10 name="new-target-read-in-the-body" parameters=[{type=f2}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: f2):
+# CHECK-NEXT: : L2 = CallDirect v0 function=[[observedBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# Whether an object was returned in place of the new one is settled in the construct body
+}
+function f11 name="function-returns-a-value" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f3, v1: anything):
+# CHECK-NEXT: : object = CallDirect v1 function=[[replacingBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: TypeTest
+}
+function f12 name="typed-function" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f4, v1: anything):
+# CHECK-NEXT: : L4 = CallDirect v1 function=[[typedBody]] [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: TypeTest
+}
+
+# new.target selects the prototype of the object, and the prototype object of a function names no layout
+function f13 name="another-new-target" parameters=[{type=f0}, {type=f5}, {type=anything}] results=[{type=anything}] {
+    v3 = Construct v0, v1, v2, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f5, v2: anything):
+# CHECK-NEXT: = Construct v0, v1, v2, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f14 name="super-call-of-a-subclass" parameters=[{type=f0}, {type=f6}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2, v2 layout=L6
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f6, v2: anything):
+# CHECK-NEXT: [[prototypeOfBelow]]: object = GetConstructPrototype v1 layout=L6
+# CHECK-NEXT: [[below]]:{{*}}= NewObject [[prototypeOfBelow]] layout=L6
+# CHECK-NEXT: = CallDirect [[below]], v2, v2 function=f0 [isConstruction]
+# CHECK-NOT: SuperConstruct
+}
+function f15 name="plain-call" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0, v1, v2, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = CallDirect v1, v2, v2 function=f0
+# CHECK-NOT: isConstruction
+# CHECK-NOT: NewObject
+}
+
+# The run time knows the one prototype object of the function, so the allocation names none
+# CHECK: function [[pointBody]] name="Point"{{*}}role=ConstructBody flags=[AllocatesOwnThis]{{*}}parameters=[{type=anything}, {type=anything}] results=[{type=L0}]{{*}}derivation={source=f0 parameterMap=[{original=1}, {original=2}]} creator=Version{provenVersion=f0} constructedClass=L0 {
+# CHECK-NEXT: b0([[x]]: anything, [[y]]: anything):
+# CHECK-NEXT: [[point]]: L0 = NewObject layout=L0
+# CHECK-NEXT: PropSet [[point]], [[x]] key="x"
+# CHECK-NEXT: PropSet [[point]], [[y]] key="y"
+# CHECK-NEXT: Return [[point]]
+# CHECK-NEXT: }
+
+# new.target is a closure of the function here, which is what ties its prototype property to the layout
+# CHECK: function [[scopedBody]] name="Scoped"{{*}}role=ConstructBody flags=[HasNewTarget, AllocatesOwnThis] captures=[{type=number}]{{*}}results=[{type=L1}]{{*}}derivation={source=f1 parameterMap=[{original=0}, {}, {original=2}]} creator=Version{provenVersion=f1} constructedClass=L1 {
+# CHECK-NEXT: b0([[captured]]: number, [[newTargetOfScoped]]: anything, [[unused]]: anything):
+# CHECK-NEXT: [[closureOfScoped]]: f1 = AssumeType [[newTargetOfScoped]] provenType=f1
+# CHECK-NEXT: [[prototypeOfScoped]]: object = GetConstructPrototype [[closureOfScoped]] layout=L1
+# CHECK-NEXT: [[scoped]]: L1 = NewObject [[prototypeOfScoped]] layout=L1
+# CHECK-NEXT: PropSet [[scoped]], [[captured]] key="step"
+# CHECK-NEXT: Return [[scoped]]
+# CHECK-NEXT: }
+
+# CHECK: function [[observedBody]] name="Observed"{{*}}role=ConstructBody flags=[HasNewTarget, AllocatesOwnThis]{{*}}results=[{type=L2}]{{*}}derivation={source=f2 parameterMap=[{original=1}]} creator=Version{provenVersion=f2} constructedClass=L2 {
+# CHECK-NEXT: b0([[newTargetOfObserved]]: anything):
+# CHECK-NEXT: [[closureOfObserved]]: f2 = AssumeType [[newTargetOfObserved]] provenType=f2
+# CHECK-NEXT: [[observed]]: L2 = NewObject layout=L2
+# CHECK-NEXT: PropSet [[observed]], [[closureOfObserved]] key="made"
+# CHECK-NEXT: Return [[observed]]
+# CHECK-NEXT: }
+
+# CHECK: function [[replacingBody]] name="Replacing"{{*}}role=ConstructBody flags=[AllocatesOwnThis]{{*}}results=[{type=object}]{{*}}derivation={source=f3 parameterMap=[{original=1}]} creator=Version{provenVersion=f3} constructedClass=L3 {
+# CHECK-NEXT: b0([[returned]]: anything):
+# CHECK-NEXT: [[kept]]: L3 = NewObject layout=L3
+# CHECK-NEXT: [[isObject]]: boolean = TypeTest [[returned]] testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[replaces]](| 0), notTaken [[keeps]](| 0)
+# CHECK-NEXT: [[replaces]]([[replacement]]: object) frequency=Unlikely:
+# CHECK-NEXT: Return [[replacement]]
+# CHECK-NEXT: [[keeps]]({{*}}):
+# CHECK-NEXT: Return [[kept]]
+# CHECK-NEXT: }
+
+# CHECK: function [[typedBody]] name="Typed"{{*}}role=ConstructBody flags=[IsChecked, AllocatesOwnThis]{{*}}parameters=[{type=number flags=[IsExpected]}] results=[{type=L4}]{{*}}derivation={source=f4 parameterMap=[{original=1}]} creator=Version{provenVersion=f4} constructedClass=L4 {
+# CHECK-NEXT: b0([[value]]: anything ~ number):
+# CHECK-NEXT: [[made]]: L4 = NewObject layout=L4
+# CHECK-NEXT: PropSet [[made]], [[value]] key="x"
+# CHECK-NEXT: Return [[made]]
+# CHECK-NEXT: }

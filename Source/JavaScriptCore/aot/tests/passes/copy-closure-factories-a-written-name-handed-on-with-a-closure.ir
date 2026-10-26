@@ -1,0 +1,32 @@
+# function define(object, name) { object.__defineGetter__(name, function () { return name; }); }   define(object, "a");  define(object, "b");
+# The function hands its parameter and a closure it creates to one call.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[first]]{{*}} = NewClosure function=f4
+# CHECK-NEXT: Call [[first]], -, v1, v2
+# CHECK: [[second]]{{*}} = NewClosure function=f6
+# CHECK-NEXT: Call [[second]], -, v1, v4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = String string="a"
+    v3 = Call v0, -, v1, v2
+    v4 = String string="b"
+    v5 = Call v0, -, v1, v4
+    Return
+}
+function f1 name="define" module=m0 position=10 length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="__defineGetter__"
+    v3 = NewClosure v1 function=f2
+    v4 = Call v2, v0, v1, v3
+    Return
+}
+function f2 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

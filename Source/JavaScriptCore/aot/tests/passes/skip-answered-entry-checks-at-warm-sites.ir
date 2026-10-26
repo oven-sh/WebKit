@@ -1,0 +1,32 @@
+# A shorter entrance is a function more, and pays where the call is expected to run: in every function that is not cold, not in hot ones alone.
+# The program of skip-answered-entry-checks.ir with every function warm.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SkipAnsweredEntryChecks VerifyProgram
+# STATISTIC: ShorterEntrancesCreated = 2
+# STATISTIC: CallsThatSkipAnsweredEntryChecks = 3
+# CHECK: outcome: Changed
+
+# CHECK-LABEL: function f1 name="answersTheFirst"
+# CHECK: = CallDirect v0, v1 function=f9
+# CHECK-LABEL: function f2 name="answersTheFirstToo"
+# CHECK: = CallDirect v0, v1 function=f9
+# CHECK-LABEL: function f3 name="answersBoth"
+# CHECK: = CallDirect v0, v1 function=f10
+# CHECK-LABEL: function f4 name="answersNone"
+# CHECK: = CallDirect v0, v1 function=f6
+# CHECK-LABEL: function f5 name="answersInAnArmThatIsUnlikely"
+# CHECK: = CallDirect v0, v1 function=f6
+# A shorter entrance has the parameters of the entrance, one for one, and says so: what flow knows of them is found through it
+# CHECK-LABEL: function f9 name="shared" module=m0 role=CallSiteVersion{{*}}derivation={source=f6 parameterMap=[{original=0}, {original=1}]}
+# CHECK: b0(v0: number, v1: anything{{*}}):
+# CHECK: = TypeTest v1 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, {{*}} function=f7
+# CHECK: = CallDirect v0, v1 function=f8
+# CHECK-LABEL: function f10 name="shared" module=m0 role=CallSiteVersion{{*}}derivation={source=f6 parameterMap=[{original=0}, {original=1}]}
+# CHECK: b0(v0: number, v1: string):
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f7
+# CHECK-NOT: function=f8
+# PROGRAM-OF: skip-answered-entry-checks.ir

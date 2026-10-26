@@ -1,0 +1,83 @@
+# Each dictionary has one call of the stub, in code of every shape, two dictionaries are two objects, and a dictionary nobody uses is not made
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: compile
+# CHECK: image not empty
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewDictionary
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="register" [isFreeName]
+    v8 = Call v7, -, v0, v1, v2, v3, v4, v5
+    Return v8
+}
+# CALLS-LABEL: f0: size=
+# CALLS: stub NewDictionary.n0 x1
+
+function f1 name="empty" results=[{type=anything}] {
+    v0 = NewDictionary
+    Return v0
+}
+
+function f2 name="oneInsideTheOther" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewDictionary
+    v2 = NewDictionary
+    PropDefine v1, v2 key="inner"
+    PropDefine v2, v0 key="value"
+    Return v1
+}
+# CALLS-LABEL: f2: size=
+# CALLS: stub NewDictionary.n0 x2
+
+function f3 name="unused" results=[{type=anything}] {
+    v0 = NewDictionary
+    Return
+}
+
+function f4 name="madeInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1(v0)
+  b1(v2: anything):
+    LoopHint
+    v4 = NewDictionary
+    PropDefine v4, v2 key="previous"
+    Branch v1 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v4
+}
+
+function f5 name="literalThenKeys" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewDictionary
+    SetLiteralPrototype v3, v0
+    PropDefine v3, v1 key="own"
+    CopyDataProperties v3, v0
+    ElemDefine v3, v2, v1
+    ElemSet v3, v2, v1
+    v9 = ElemGet v3, v2
+    v10 = ElemHas v3, v2
+    v11 = ElemDelete v3, v2
+    v12 = PropGet v3 key="own"
+    v13 = NewArray v3, v9, v10, v11, v12 contents=anything
+    Return v13
+}
+# The body of a function that only its generic entrypoint enters is in the entrypoint. In the order of the listing: the entrypoints of empty, unused and madeInLoop, then the worker of literalThenKeys,
+# which is split off only when its entrypoint names it: until then no code does
+# CALLS-LABEL: f9: size=
+# CALLS-NOT: operation
+# CALLS: stub NewDictionary.n0 x1
+# CALLS-NOT: operation
+# CALLS-LABEL: f11: size=
+# CALLS-NOT: NewDictionary
+# CALLS-LABEL: f12: size=
+# CALLS: stub NewDictionary.n0 x
+# CALLS-LABEL: f14: size=
+# CALLS: stub NewDictionary.n0 x1

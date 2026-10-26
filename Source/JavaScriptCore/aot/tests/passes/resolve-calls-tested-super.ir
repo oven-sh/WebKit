@@ -1,0 +1,157 @@
+# A member read through super whose lookup holds only while class guards hold is resolved under one test of all those guards
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f1 mutability=Fixed}, {key="patched" function=f2}, {key="counted" function=f3 mutability=Fixed}, {key="area" kind=Getter function=f4 mutability=Fixed}, {key="area" kind=Setter function=f5 mutability=Fixed}, {key="scale" kind=Setter function=f5 mutability=Fixed}, {key="create" side=Static function=f6 mutability=Fixed}] namedMembers=[{key="run" function=f1 mutability=Fixed}, {key="patched" function=f2}, {key="counted" function=f3 mutability=Fixed}, {key="area" kind=Getter function=f4 mutability=Fixed}, {key="area" kind=Setter function=f5 mutability=Fixed}, {key="scale" kind=Setter function=f5 mutability=Fixed}, {key="create" side=Static function=f6 mutability=Fixed}]}
+layout L1 kind=Instance name="RelinkedCircle" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Circle" base=L0 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Mystery" constructor=f9 flags=[HasHeritage] classFlow={evaluations=AtMostOnce prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f2 name="patched" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="counted" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="area" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f5 name="area" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f6 name="create" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f7 name="RelinkedCircle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="Mystery" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f10 name="prototype-link-may-change" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}, {type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+# CHECK-NEXT: b0(v0: anything, v1: f7, v2: anything):
+# CHECK-NEXT: v3: null|object = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: [[isLinked]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK-NEXT: Branch [[isLinked]] -> taken {{*}}(| 0), notTaken {{*}}()
+# CHECK-NEXT: {{*}}({{*}}: guard):
+# CHECK-NEXT: v4: f1 = NewClosure function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v3, v0 key="run"
+# CHECK-NOT: Unchanged
+}
+function f11 name="static-link-may-change" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1
+    v3 = SuperGet v2, v0 key="create"
+    v4 = Call v3, v0 calleeKey="create"
+    Return v4
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
+# CHECK: v3: f6 = NewClosure function=f6
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="create"
+# CHECK-NOT: Unchanged
+}
+function f12 name="method-may-be-replaced" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f8}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="patched"
+    v4 = Call v3, v0 calleeKey="patched"
+    Return v4
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="patched"}]
+# CHECK: v3: f2 = NewClosure function=f2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="patched"
+# CHECK-NOT: Unchanged
+}
+function f13 name="two-guards" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="patched"
+    v4 = Call v3, v0 calleeKey="patched"
+    Return v4
+# CHECK: [[bothAreUnchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L0 key="patched"}, {kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK-NEXT: Branch [[bothAreUnchanged]] -> taken {{*}}(| 0), notTaken {{*}}()
+# CHECK: v3: f2 = NewClosure function=f2
+# CHECK-NOT: Unchanged
+}
+function f14 name="getter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="area"
+    Return v3
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: v3: number = CallDirect v0 function=f4
+# CHECK-NEXT: Return v3
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="area"
+}
+function f15 name="setter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}, {type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    SuperSet v3, v0, v2 key="area"
+    Return
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: = CallDirect v0, v2 function=f5
+# CHECK-NEXT: Return
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: SuperSet v3, v0, v2 key="area"
+}
+function f16 name="setter-without-getter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="scale"
+    Return v3
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="scale"
+}
+function f17 name="method-read-as-a-value" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="run"
+    Return v3
+# CHECK-NEXT: b0(v0: anything, v1: f7):
+# CHECK-NEXT: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: = SuperGet v2, v0 key="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f18 name="method-with-capture" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f7}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="counted"
+    v4 = Call v3, v0 calleeKey="counted"
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: f7):
+# CHECK-NEXT: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: = SuperGet v2, v0 key="counted"
+# CHECK-NEXT: = Call v3, v0 calleeKey="counted"
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+}
+function f19 name="nothing-to-test" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f8}, {type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+# CHECK-NEXT: b0(v0: anything, v1: f8, v2: anything):
+# CHECK-NEXT: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call v4, v0, v2 calleeKey="run"
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+}
+function f20 name="unknown-base" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f9}, {type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v1 homeKind=ClassPrototype
+    v4 = SuperGet v3, v0 key="run"
+    v5 = Call v4, v0, v2 calleeKey="run"
+    Return v5
+# CHECK-NEXT: b0(v0: anything, v1: f9, v2: anything):
+# CHECK-NEXT: = GetSuperBase v1 homeKind=ClassPrototype
+# CHECK-NEXT: = SuperGet v3, v0 key="run"
+# CHECK-NEXT: = Call v4, v0, v2 calleeKey="run"
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+}

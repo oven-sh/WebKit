@@ -274,7 +274,11 @@ EOF
         GeneratedFile::create(filename, *dependencies) do |template|
             template.multiline_comment = nil
             template.line_comment = "#"
-            template.body = (opcodes.map.with_index(&:set_entry_address) + opcodes.map.with_index(&:set_entry_address_wide16) + opcodes.map.with_index(&:set_entry_address_wide32)) .join("\n")
+            template.body = [:trampoline, :bytecode, :webAssembly].map { |section|
+                members = opcodes.each_with_index.select { |opcode, _| opcode.asm_section == section }
+                lines = members.map { |opcode, id| opcode.set_entry_address(id) } + members.map { |opcode, id| opcode.set_entry_address_wide16(id) } + members.map { |opcode, id| opcode.set_entry_address_wide32(id) }
+                "#{section}Entries(macro ()\n#{lines.join("\n")}\nend)"
+            }.join("\n")
         end
     end
 

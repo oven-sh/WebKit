@@ -1,0 +1,77 @@
+# A slow path that comes into a loop behind its head goes on in the generic copy, so the body rests on the tests of the head.
+# Where the order of the blocks reaches the body through the slow path first, it has the body in front of the head: the test in the body still names the proofs of the tests in the head
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+# The type of an object and the instance it belongs to outlast unknown code. Whether a slot is filled does not.
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="bodyIsOrderedInFrontOfHead" flags=[IsChecked] parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    Branch v1 -> taken b2(), notTaken b1()
+  b1() frequency=Unlikely:
+    v3 = Call v2
+    Jump -> next b3()
+  b2():
+    LoopHint
+    v5 = PropGet v0 key="a"
+    v6 = Call v2, -, v5
+    Jump -> next b3()
+  b3():
+    v7 = PropGet v0 key="a"
+    v8 = Call v2, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(), notTaken b4()
+  b4():
+    Return v8
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v7; test TypeTest v0 testedType=L0 before v5; test BelongsToInstance v0 before v5; test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v5; slow path leaves on b1.0; uses v5 v7; cloned 40
+# PLAN-NOT: stretch
+# IR-LABEL: function f0 name="bodyIsOrderedInFrontOfHead"
+# IR: b1() frequency=Unlikely:
+# IR-NEXT: v3: anything = Call v2
+# IR-NEXT: Jump -> next [[copy0]]()
+# IR: b2():
+# IR-NEXT: LoopHint
+# IR-NEXT: [[test0]]: {{*}} = TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken
+# IR: b3():
+# IR-NEXT: = IsSlotFilled [[pair0]], [[instance0]] key="a"
+# IR: [[copy0]]() frequency=Rare:
+# IR: [[passed0]]([[pair0]]: L0):
+# IR-NEXT: [[belongs0]]: boolean = BelongsToInstance [[pair0]]
+# IR-NEXT: Branch [[belongs0]] -> taken [[ofInstance0]](| 0), notTaken
+# IR: [[ofInstance0]]([[instance0]]: guard):
+# IR-NOT: TypeTest
+
+function f1 name="headIsOrderedInFrontOfBody" flags=[IsChecked] parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = Call v2
+    Jump -> next b3()
+  b2():
+    LoopHint
+    v5 = PropGet v0 key="a"
+    v6 = Call v2, -, v5
+    Jump -> next b3()
+  b3():
+    v7 = PropGet v0 key="a"
+    v8 = Call v2, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(), notTaken b4()
+  b4():
+    Return v8
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v5; test BelongsToInstance v0 before v5; test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v5; test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v7; slow path leaves on b1.0; uses v5 v7; cloned 40
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="headIsOrderedInFrontOfBody"
+# IR: b3():
+# IR-NEXT: = IsSlotFilled [[pair1]], [[instance1]] key="a"
+# IR: ([[pair1]]: L0):
+# IR: ([[instance1]]: guard):

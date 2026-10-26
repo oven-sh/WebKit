@@ -1,0 +1,18 @@
+# A class with more guarded members than a word has bits: the bits of one side of the class fill words that follow each other
+# FORM: AsRead
+# RUN: place guards
+# RUN(TABLES): tables layouts
+
+# CHECK: guard 63 L0 Prototype Member "m63" bit=63 word@8
+# CHECK-NEXT: guard 64 L0 Prototype Member "m64" bit=64 word@16
+# CHECK: guard 127 L0 Prototype NotHidden "m57" bit=127 word@16
+# CHECK-NEXT: guard 128 L0 Prototype NotHidden "m58" bit=128 word@24
+# CHECK: guard 139 L0 Prototype NotHidden "m69" bit=139 word@24
+# CHECK-NEXT: guard 140 set [0 70] bit=0 word@32
+# CHECK: set [63 133] bit=63 word@32
+# CHECK-NEXT: set [64 134] bit=0 word@40
+# CHECK: set [69 139] bit=5 word@40
+# TABLES: class index=L0 {{*}} guardWords=[8 0]
+# TABLES: guard name="m64" kind=Member side=Prototype bit=64
+# TABLES: guard name="m58" kind=NotHidden side=Prototype bit=128
+# PROGRAM-OF: guard-bits-beyond-the-limit.ir

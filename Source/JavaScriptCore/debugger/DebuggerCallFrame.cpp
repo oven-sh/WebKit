@@ -29,6 +29,7 @@
 #include "config.h"
 #include "DebuggerCallFrame.h"
 
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "DebuggerEvalEnabler.h"
 #include "DebuggerScope.h"
@@ -59,8 +60,9 @@ private:
     mutable LineColumn m_lineColumn;
 };
 
-Ref<DebuggerCallFrame> DebuggerCallFrame::create(VM& vm, CallFrame* callFrame)
+NEVER_INLINE Ref<DebuggerCallFrame> DebuggerCallFrame::create(VM& vm, CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &DebuggerCallFrame::create);
     if (!callFrame) [[unlikely]] {
         ShadowChicken::Frame emptyFrame;
         RELEASE_ASSERT(!emptyFrame.isTailDeleted);

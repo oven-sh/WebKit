@@ -31,6 +31,8 @@
 #include "JSObjectInlines.h"
 #include "ScriptProfilingScope.h"
 #include "TopExceptionScope.h"
+#include <wtf/SetForScope.h>
+#include <wtf/StackPointer.h>
 
 #if ASSERT_ENABLED
 #include "IntegrityInlines.h"
@@ -58,7 +60,7 @@ JSValue call(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisV
 JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallData& callData, JSValue thisValue, const ArgList& args)
 {
     VM& vm = globalObject->vm();
-    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native, "Expected object to be callable but received %d", static_cast<int>(callData.type));
+    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native || callData.type == CallData::Type::Compiled, "Expected object to be callable but received %d", static_cast<int>(callData.type));
     ASSERT_WITH_MESSAGE(!thisValue.isEmpty(), "Expected thisValue to be non-empty. Use jsUndefined() if you meant to use undefined.");
 #if ASSERT_ENABLED
     for (size_t i = 0; i < args.size(); ++i) {
@@ -74,6 +76,9 @@ JSValue call(JSGlobalObject* globalObject, JSValue functionObject, const CallDat
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+#if ENABLE(AOT)
+    SetForScope takesException(vm.aotState().stackPointerOfExceptionTaker, currentStackPointer());
+#endif
     JSValue result = call(globalObject, functionObject, callData, thisValue, args);
     if (scope.exception()) [[unlikely]] {
         returnedException = scope.exception();

@@ -1,0 +1,17 @@
+# In code that is not fast a search for a value of an open type stays a call: the tests for what it is would not pay. What is known to be compared by identity has inline code there too
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="indexOfAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK-NOT: TryCallInline
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
+function f1 name="indexOfBoolean" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+}

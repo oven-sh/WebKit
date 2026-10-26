@@ -73,12 +73,14 @@ namespace JSC {
     macro(ModuleGraphLoadingStateType, SpecCellOther) \
     macro(JSModuleLoaderType, SpecCellOther) \
     macro(SentinelType, SpecCellOther) \
+    macro(CompiledEnvironmentType, SpecCellOther) \
     \
     /* The ObjectType value must come before any JSType that is a subclass of JSObject. */ \
     macro(ObjectType, SpecObjectOther) \
     macro(FinalObjectType, SpecFinalObject) \
     macro(JSCalleeType, SpecObjectOther) \
     macro(JSFunctionType, SpecFunction) \
+    macro(CompiledClosureType, SpecFunction) \
     macro(InternalFunctionType, SpecObjectOther) \
     macro(NullSetterFunctionType, SpecObjectOther) \
     macro(BooleanObjectType, SpecObjectOther) \
@@ -155,6 +157,9 @@ namespace JSC {
     macro(WebAssemblyModuleType, SpecObjectOther) \
     macro(WebAssemblyInstanceType, SpecObjectOther) \
     macro(WebAssemblyGCObjectType, SpecObjectOther) \
+    macro(CompiledObjectType, SpecObjectOther) \
+    macro(SlimClosureType, SpecObjectOther) \
+    macro(SlimClosureWithPropertiesType, SpecObjectOther) \
     /* Start StringObjectType types. */ \
     macro(StringObjectType, SpecStringObject) \
     /* We do not want to accept String.prototype in StringObjectUse, so that we do not include it as SpecStringObject. */ \
@@ -180,6 +185,28 @@ struct JSTypeRange {
     JSType first;
     JSType last;
 };
+
+static constexpr JSTypeRange jsFunctionTypes { JSFunctionType, CompiledClosureType };
+constexpr bool isJSFunctionType(JSType type) { return jsFunctionTypes.first <= type && type <= jsFunctionTypes.last; }
+static_assert(CompiledClosureType == JSFunctionType + 1);
+
+static constexpr JSTypeRange slimClosureTypes { SlimClosureType, SlimClosureWithPropertiesType };
+constexpr bool isSlimClosureType(JSType type) { return slimClosureTypes.first <= type && type <= slimClosureTypes.last; }
+static_assert(SlimClosureWithPropertiesType == SlimClosureType + 1);
+constexpr bool isCompiledCalleeType(JSType type) { return type == CompiledClosureType || isSlimClosureType(type); }
+
+static constexpr JSTypeRange functionTypes { JSFunctionType, NullSetterFunctionType };
+static_assert(InternalFunctionType == JSFunctionType + 2 && NullSetterFunctionType == JSFunctionType + 3);
+constexpr bool isFunctionType(JSType type) { return (functionTypes.first <= type && type <= functionTypes.last) || isSlimClosureType(type); }
+static_assert(isFunctionType(JSFunctionType) && isFunctionType(CompiledClosureType) && isFunctionType(InternalFunctionType) && isFunctionType(NullSetterFunctionType) && isFunctionType(SlimClosureType) && isFunctionType(SlimClosureWithPropertiesType));
+static_assert(!isFunctionType(StringType) && !isFunctionType(CompiledEnvironmentType) && !isFunctionType(FinalObjectType) && !isFunctionType(JSCalleeType) && !isFunctionType(BooleanObjectType));
+static_assert(!isFunctionType(ArrayType) && !isFunctionType(ProxyObjectType) && !isFunctionType(CompiledObjectType) && !isFunctionType(InternalFieldTupleType) && !isFunctionType(MaxJSType));
+
+static constexpr JSTypeRange objectTypesWithoutButterfly { WebAssemblyGCObjectType, SlimClosureType };
+constexpr bool hasButterflyField(JSType type) { return type >= ObjectType && !(objectTypesWithoutButterfly.first <= type && type <= objectTypesWithoutButterfly.last); }
+static_assert(CompiledObjectType == WebAssemblyGCObjectType + 1 && SlimClosureType == WebAssemblyGCObjectType + 2);
+
+static_assert(CompiledEnvironmentType + 1 == ObjectType);
 
 static constexpr uint8_t EmbedderArrayLikeType = 0b11101101;
 

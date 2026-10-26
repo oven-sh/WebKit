@@ -1,0 +1,54 @@
+# A field for int32s that may be absent, undefined or null takes 4 bytes and needs no Extension. The five lowest int32s are kept for the markers: for such a field they are values of another type, as any other number is.
+# A field that is declared to hold more than int32s takes 8 bytes where a store that the program shows puts another number into it
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Optional" fields=[{key="small" declared={type=undefined|int[-2147483643, 2147483647]}}, {key="nullable" declared={type=null|int[0, 100000]} flags=[IsRequired]}, {key="either" declared={type=undefined|null|int[-1, 1]}}, {key="last" declared={type=undefined|int[0, 2147483647]}}, {key="fifth" declared={type=undefined|int[0, 7]}}, {key="sixth" declared={type=undefined|int[0, 7]}}]
+layout L1 name="OtherIntegers" fields=[{key="whole" declared={type=undefined|i32}}, {key="lowest" declared={type=undefined|int[-2147483644, 0]}}, {key="wide" declared={type=undefined|int}}, {key="unsigned" declared={type=undefined|int[0, 4294967295]}}]
+layout L2 name="Required" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="maybe" declared={type=undefined|null|i32}}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}, {key="sign" declared={type=undefined|null|int[-1, 1]} flags=[IsRequired]}, {key="fifth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="sixth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}]
+layout L3 name="OtherNumbers" fields=[{key="fraction" declared={type=undefined|null|number} flags=[IsRequired]}, {key="large" declared={type=undefined|null|number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=0
+    v3 = Integer integer=4294967295
+    v4 = Double number=1.5
+    v5 = NewObject -, v2, v2, v2, v2, v2, v2 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    v6 = FinishObject v5
+    v7 = Call v1, -, v6
+    v8 = NewObject -, v2, v2, v3, v3 layout=L1 fields=[0, 1, 2, 3]
+    v9 = FinishObject v8
+    v10 = Call v1, -, v9
+    v11 = NewObject -, v2, v2, v2, v2, v2, v2 layout=L2 fields=[0, 1, 2, 3, 4, 5]
+    v12 = FinishObject v11
+    v13 = Call v1, -, v12
+    v14 = NewObject -, v4, v3 layout=L3 fields=[0, 1]
+    v15 = FinishObject v14
+    v16 = Call v1, -, v15
+    v17 = PropGet v0 key="thing" [isFreeName]
+    v18 = PropGet v0 key="name" [isFreeName]
+    ElemSet v17, v18, v17 mode=Strict
+    Return
+}
+# The cells of L0, L1 and L2 have no 8 bytes left, so no slot is widened into free bytes.
+# CHECK: L0 CompiledObject size=48 fields=6
+# CHECK-NEXT: "small" OptionalInt32 @
+# CHECK-NEXT: "nullable" OptionalInt32 @
+# CHECK-NEXT: "either" OptionalInt32 @
+# CHECK-NEXT: "last" OptionalInt32 @
+# CHECK: L1 CompiledObject size=48 fields=4
+# CHECK-NEXT: "whole" OptionalInt32 @
+# CHECK-NEXT: "lowest" OptionalInt32 @
+# CHECK-NEXT: "wide" OptionalInt64 @
+# CHECK-NEXT: "unsigned" OptionalInt64 @
+# CHECK: L2 CompiledObject size=48 fields=6
+# CHECK-NEXT: "flags" OptionalInt32 @
+# CHECK-NEXT: "maybe" OptionalInt32 @
+# CHECK-NEXT: "kind" OptionalInt32 @
+# CHECK-NEXT: "sign" OptionalInt32 @
+# CHECK: L3 CompiledObject size=48 fields=2
+# CHECK-NEXT: "fraction" OptionalDouble @
+# CHECK-NEXT: "large" OptionalDouble @

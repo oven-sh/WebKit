@@ -328,7 +328,7 @@ JSValue JSInjectedScriptHost::getOwnPrivatePropertySymbols(JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, JSValue());
 
     JSObject* object = dynamicDowncast<JSObject>(value);
-    if (!object) [[unlikely]]
+    if (!object || object->structure()->isCompiledStructure()) [[unlikely]]
         return result;
 
     unsigned index = 0;

@@ -40,6 +40,9 @@ JS_EXPORT_PRIVATE JSObject* construct(JSGlobalObject*, const JSValue& functionOb
 
 JS_EXPORT_PRIVATE JSObject* construct(JSGlobalObject*, const JSValue& constructor, const CallData&, const ArgList&, const JSValue& newTarget);
 
+// What `new` evaluates to. A host constructor may return a primitive; construct() throws a TypeError then.
+JS_EXPORT_PRIVATE JSValue constructAllowingPrimitiveResult(JSGlobalObject*, const JSValue& constructor, const CallData&, const ArgList&, const JSValue& newTarget);
+
 ALWAYS_INLINE JSObject* construct(JSGlobalObject* globalObject, const JSValue& constructorObject, const CallData& callData, const ArgList& args)
 {
     return construct(globalObject, constructorObject, callData, args, constructorObject);

@@ -1,0 +1,36 @@
+# A closure gets its prototype property at the first lookup of `prototype` or at its first construction. The guards of a constructor function describe the prototype object of the first closure that got one, so the second closure that gets one ends them: a read to the program, a write to the guards. A function that is proven to be created once has no second closure, and NewClass reports a class that is evaluated again.
+# FORM: Prepared
+# RUN: effects f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None}
+layout L1 kind=Instance name="Once" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L2 kind=Instance name="Capturing" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L3 kind=Instance name="Many" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None} classFlow={prototypeProperty=Fixed}
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
+function f1 name="Once" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f2 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=object} results=[{type=undefined}]
+function f3 name="Many" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f4 name="reads" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=f3}, {type=f2|f3}] results=[{type=undefined}] {
+    v5 = GetConstructPrototype v0 layout=L0
+    v6 = GetConstructPrototype v1 layout=L1
+    v7 = GetConstructPrototype v2 layout=L2
+    v8 = GetConstructPrototype v3 layout=L3
+    v9 = GetConstructPrototype v4 layout=L3
+    v10 = ResolveHeritage v1
+    v11 = ResolveHeritage v3
+    v12 = PropGet v3 key="prototype"
+    v13 = AreMembersUnchanged conditions=[{layout=L3 key="size"}]
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v5 GetConstructPrototype: {{*}} writes(AllocatorState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 GetConstructPrototype: {{*}} writes(AllocatorState) throwsForLackOfMemory collects
+# A closure with captures is one that only the program creates, as often as it likes
+# CHECK-NEXT: v7 GetConstructPrototype: {{*}} writes(MemberGuards/1, AllocatorState) throwsForLackOfMemory collects
+# CHECK-NEXT: v8 GetConstructPrototype: {{*}} writes(MemberGuards/1, AllocatorState) throwsForLackOfMemory collects
+# CHECK-NEXT: v9 GetConstructPrototype: {{*}} writes(MemberGuards/2, AllocatorState) throwsForLackOfMemory collects
+# CHECK-NEXT: v10 ResolveHeritage: {{*}} writes(AllocatorState) throws collects
+# CHECK-NEXT: v11 ResolveHeritage: {{*}} writes(MemberGuards/1, AllocatorState) throws collects
+# CHECK-NEXT: v12 PropGet: unknownCode
+# CHECK-NEXT: v13 AreMembersUnchanged: reads(MemberGuards/1)

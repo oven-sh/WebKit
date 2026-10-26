@@ -1,0 +1,121 @@
+# hide(Bun); globalThis[key] = hide(); holder0 = { next: () => { Bun.serve = unused } }; holder1 = { next: () => holder0.next() }; and so on
+# Bun is in unknown hands before the store is reached. The store is written on Bun, so it writes Bun.serve
+# RUN: valueflow-results
+# CHECK: builtin-use BunServe [{{*}}Written
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="next" declared={type=anything}}]
+layout L1
+variable g0 name="open" module=m0 declared={type=anything}
+variable g1 name="holder0" module=m0 declared={type=anything}
+variable g2 name="holder1" module=m0 declared={type=anything}
+variable g3 name="holder2" module=m0 declared={type=anything}
+variable g4 name="holder3" module=m0 declared={type=anything}
+variable g5 name="holder4" module=m0 declared={type=anything}
+variable g6 name="holder5" module=m0 declared={type=anything}
+variable g7 name="holder6" module=m0 declared={type=anything}
+variable g8 name="holder7" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hide" [isFreeName]
+    v2 = PropGet v0 key="Bun" [isFreeName]
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="key" [isFreeName]
+    ElemSet v0, v4, v3
+    v6 = NewClosure function=f2
+    v7 = NewObject layout=L0
+    PropDefine v7, v6 key="next"
+    v9 = FinishObject v7
+    PutModuleVariable v9 variable=g1
+    v11 = NewClosure function=f3
+    v12 = NewObject layout=L0
+    PropDefine v12, v11 key="next"
+    v14 = FinishObject v12
+    PutModuleVariable v14 variable=g2
+    v16 = NewClosure function=f4
+    v17 = NewObject layout=L0
+    PropDefine v17, v16 key="next"
+    v19 = FinishObject v17
+    PutModuleVariable v19 variable=g3
+    v21 = NewClosure function=f5
+    v22 = NewObject layout=L0
+    PropDefine v22, v21 key="next"
+    v24 = FinishObject v22
+    PutModuleVariable v24 variable=g4
+    v26 = NewClosure function=f6
+    v27 = NewObject layout=L0
+    PropDefine v27, v26 key="next"
+    v29 = FinishObject v27
+    PutModuleVariable v29 variable=g5
+    v31 = NewClosure function=f7
+    v32 = NewObject layout=L0
+    PropDefine v32, v31 key="next"
+    v34 = FinishObject v32
+    PutModuleVariable v34 variable=g6
+    v36 = NewClosure function=f8
+    v37 = NewObject layout=L0
+    PropDefine v37, v36 key="next"
+    v39 = FinishObject v37
+    PutModuleVariable v39 variable=g7
+    v41 = NewClosure function=f9
+    v42 = NewObject layout=L0
+    PropDefine v42, v41 key="next"
+    v44 = FinishObject v42
+    PutModuleVariable v44 variable=g8
+    v46 = PropGet v44 key="next"
+    v47 = Call v46, v44
+    Return v47
+}
+function f1 name="unused" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key="serve"
+    Return
+}
+function f3 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f4 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f5 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f6 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g4
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f7 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g5
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f8 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g6
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f9 name="next" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g7
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}

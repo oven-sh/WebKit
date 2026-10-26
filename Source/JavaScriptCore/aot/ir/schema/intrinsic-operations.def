@@ -1,0 +1,58 @@
+enum GeneratorStepCheck { IsUnmodifiedGenerator IsGenerator | engine IsUnmodified None }
+enum GeneratorStepStatus { Yielded Completed NotStepped }
+enum StepGeneratorResult { | engine Value Status }
+enum StepArrayIteratorResult { | engine Done Value }
+enum MapNextResult { | engine HasEntry Entry Key Value }
+enum SetNextResult { | engine HasEntry Entry Element }
+
+family EngineIntrinsic AsRead..Placed ; isIntrinsic = true
+operation IsConstructor (value: Any/inspects) -> natural(boolean) ; none ; runtime = IsConstructor ; flow = TableProves
+operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species)) -> unknown ; Allocates throws ; runtime = ArraySpeciesCreate ; flow = Copies
+operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis ; flow = Copies ; flowRule = Heap
+operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty ; flow = Copies ; flowRule = Heap
+operation ToLength (value: Any/Converted) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToLength ; flow = TableProves
+operation ThrowNewError (errorKind: ErrorKind, message: String, engine throwPosition?: UInt32) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowAtSite ; replaces = CallBuiltin, Throw ; flow = TableProves
+operation ResumeGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains) -> unknown ; unknownCode ; runtime = ResumeGenerator ; flow = Copies ; flowRule = Generator
+operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains, check: GeneratorStepCheck) -> results(StepGeneratorResult: unknown, natural(GeneratorStepStatus)) ; unknownCode ; flow = Copies ; flowRule = Generator
+operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart ; flow = TableProves
+operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; flow = TableProves
+operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects, engine allocationSite?: AllocationSite) -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; removedBy = ResolveBuiltins ; flow = Allocates ; flowRule = Heap
+operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration ; flow = Copies ; flowRule = StepOfLibrary
+
+family RuntimeIntrinsic AsRead..Placed ; isIntrinsic = true
+operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unknownCode ; runtime = RequireBuiltinModule ; flow = Copies ; flowRule = Module
+operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime throws ; runtime = NativeBinding ; flow = Unsound ; flowRule = Module
+operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant ; flow = Unsound
+operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May ; flow = Checks
+operation FindsDeclaredMember (object: Any/inspects, key: PropertyKey, with AccessStamp) -> natural(boolean) ; reads(MemberGuards) ; access = Has ; receiver = object ; branches = May ; flow = TableProves
+operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ; reads(InternalFields, PromiseState, CollectionStorage) ; flow = Copies ; flowRule = Heap
+operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap
+
+family PromiseIntrinsic AsRead..Placed ; isIntrinsic = true
+operation NewPromise (engine allocationSite?: AllocationSite) -> allocation(Promise) ; Allocates ; runtime = NewPromise ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CallBuiltin ; flow = Allocates
+operation CreatePromise (constructor: Any/inspects+runs(Named(prototype)), engine allocationSite?: AllocationSite) -> allocation(Promise) ; Allocates reads(NamedProperties) throws ; newTarget = constructor ; runtime = CreatePromise ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; flow = Allocates ; flowRule = Promise
+operation ResolvePromise (promise: Object/inspects+writesContents, value: Any/retains(promise)+runs(Thenable)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = ResolvePromise ; replaces = CallBuiltin ; flow = Copies ; flowRule = Promise
+operation RejectPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = RejectPromise ; flow = Copies ; flowRule = Promise
+
+family ArrayIntrinsic AsRead..Placed ; isIntrinsic = true
+operation IsPristineArray (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ArrayStorage) ; proves = Pristine ; branches = May ; flow = TableProves
+operation ArrayStorageKind (array: Array/inspects) -> natural(ArrayStorage) ; reads(ArrayStorage) ; flow = TableProves
+operation HasContiguousIndex (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves
+operation GetContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array]) ; flow = Copies ; flowRule = Heap
+operation GetDoubleIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> natural(number) ; reads(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap
+operation PutContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap
+operation PutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap
+operation NewContiguousArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
+operation NewDoubleArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
+operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
+operation NewArrayWithCapacity (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
+operation TryPutByValDirect (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine arrayStorage: ArrayStorage) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap
+operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap
+operation TryPutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap
+operation GrowNewArray (array: Array/inspects+writesContents, length: Integer/inspects) -> none ; GrowsArray ; runtime = GrowNewArray ; flow = Copies ; flowRule = Heap
+operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) ; GrowsArray ; runtime = TruncateNewArray ; flow = Copies ; flowRule = Heap
+
+family CollectionIntrinsic AsRead..Placed ; isIntrinsic = true
+operation CollectionTable (collection: Object/inspects) -> unknown ; reads(CollectionStorage) ; flow = Copies
+operation MapNext (map: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(MapNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(map), unknown => declared(map)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; runtime = MapNext ; flow = Copies ; flowRule = StepOfLibrary
+operation SetNext (set: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(SetNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(set)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) writes(CollectionStorage) ; runtime = SetNext ; flow = Copies ; flowRule = StepOfLibrary

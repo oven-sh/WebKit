@@ -1,0 +1,49 @@
+# Each reached operation that lets in code the build has not seen, or that names a module at run time, leaves a record. The records are in a fixed order: by cause, then by built-in, with the operations that apply no built-in last,
+# then by function and by value. An operation in a function that nothing reaches leaves none, and no record names a cause that did not occur.
+# A load under a name that is put together at run time lets in no code. The build warns about it once for each such operation of the program
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
+# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# RUN: valueflow-results
+# CHECK: unseen-code EvaluatesText f0:v3 Function
+# CHECK-NEXT: unseen-code EvaluatesText f0:v4 Function
+# CHECK: unseen-code EvaluatesText f0:v6
+# CHECK-NEXT: unseen-code EvaluatesText f0:v7
+# CHECK-NEXT: unseen-code EvaluatesText f1:v2
+# CHECK: unseen-code LoadsModuleByName f0:v8
+# RUN(UNREACHED): valueflow-results
+# UNREACHED-NOT: unseen-code {{*}} f2:
+# RUN(OTHER): valueflow-results
+# OTHER-NOT: unseen-code ImportsUncompiledModule
+# OTHER-NOT: unseen-code RunsUnseenCode
+# OTHER-NOT: unseen-code OptionAdmitsCode
+# OTHER-NOT: unseen-code LimitReached
+# OTHER-NOT: unseen-code FlowResultDisabled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+evalscope e0 mode=Strict
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Construct v2, -, v1
+    v5 = Undefined
+    v6 = DirectEval v1, v5 evalScope=e0
+    v7 = DirectEval v1, v5 evalScope=e0
+    v8 = ImportDynamic v1 referrer=m0
+    v9 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="evaluatesAgain" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return v2
+}
+function f2 name="unreached" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = ImportDynamic v0 referrer=m0
+    Return v2
+}

@@ -31,6 +31,8 @@
 #include "B3Value.h"
 #include "B3ValueRep.h"
 #include "RegisterSet.h"
+#include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC {
@@ -222,6 +224,36 @@ public:
     
     void setConstraint(unsigned index, const ValueRep&);
 
+    void freezeConstraints() { m_areConstraintsFrozen = true; }
+    bool areConstraintsFrozen() const { return m_areConstraintsFrozen; }
+
+    void setRunsWithoutFrame(bool runsWithoutFrame) { m_runsWithoutFrame = runsWithoutFrame; }
+    bool runsWithoutFrame() const { return m_runsWithoutFrame; }
+
+    // Of a patchpoint that runs without a frame: a frame has been set up, and torn down again, on every path to it. It relies on the stack check of the setup.
+    void setFollowsFrameSetup(bool followsFrameSetup) { m_followsFrameSetup = followsFrameSetup; }
+    bool followsFrameSetup() const { return m_followsFrameSetup; }
+
+    // What the generator emits, or what that calls, takes the frame pointer register for the frame of this function.
+    void setNeedsFrameRecord(bool needsFrameRecord) { m_needsFrameRecord = needsFrameRecord; }
+    bool needsFrameRecord() const { return m_needsFrameRecord; }
+
+    // The function may go on behind it in another frame, which holds only the stack slots that are live across it.
+    void setIsSuspension(bool isSuspension) { m_isSuspension = isSuspension; }
+    bool isSuspension() const { return m_isSuspension; }
+
+    // Of a suspension: the words of the frame, counted down from the frame pointer, first word 1, that nothing reads behind it before it is written. Air reports them where it knows them.
+    void setFrameWordsDeadAcrossSuspension(BitVector&& words) { m_frameWordsDeadAcrossSuspension = WTF::move(words); }
+    const std::optional<BitVector>& frameWordsDeadAcrossSuspension() const { return m_frameWordsDeadAcrossSuspension; }
+
+    // Of a suspension: how many of the lowest words that suspensions keep have to be cleared, if the function is suspended here for the first time. They are dead across it, and not every path to it has stored to them.
+    void setNumberOfFrameWordsToClearAtFirstSuspension(unsigned numberOfWords) { m_numberOfFrameWordsToClearAtFirstSuspension = numberOfWords; }
+    unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return m_numberOfFrameWordsToClearAtFirstSuspension; }
+
+    // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
+    void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
+    bool sharesLatePath() const { return m_sharesLatePath; }
+
     class ConstrainedValueCollection {
     public:
 
@@ -308,7 +340,15 @@ private:
     RefPtr<StackmapGenerator> m_generator;
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
+    std::optional<BitVector> m_frameWordsDeadAcrossSuspension;
+    unsigned m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
+    bool m_areConstraintsFrozen { false };
+    bool m_runsWithoutFrame { false };
+    bool m_followsFrameSetup { false };
+    bool m_needsFrameRecord { false };
+    bool m_isSuspension { false };
+    bool m_sharesLatePath { false };
 };
 
 } } // namespace JSC::B3

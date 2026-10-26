@@ -1,0 +1,97 @@
+# isFinite and Number.isSafeInteger of an integer are constants, as Number.isFinite and Number.isInteger are, and String of a string is the string, as Number of a number is the number
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="testsOfInt32" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = CallBuiltin -, v0 overload=IsFinite/0
+    v2 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f0 name="testsOfInt32"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: true = Boolean boolean=true
+
+function f1 name="testsOfLargestSafeIntegers" parameters=[{type=int[-9007199254740991, 9007199254740991]}] results=[{type=anything}] {
+  b0(v0: int[-9007199254740991, 9007199254740991]):
+    v1 = CallBuiltin -, v0 overload=IsFinite/0
+    v2 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f1 name="testsOfLargestSafeIntegers"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: true = Boolean boolean=true
+
+function f2 name="testsOfIntegerThatMayBeUnsafe" parameters=[{type=int[0, 9007199254740992]}] results=[{type=anything}] {
+  b0(v0: int[0, 9007199254740992]):
+    v1 = CallBuiltin -, v0 overload=IsFinite/0
+    v2 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f2 name="testsOfIntegerThatMayBeUnsafe"
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: boolean = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+
+function f3 name="testsOfUnsafeInteger" parameters=[{type=int[9007199254740992, 9007199254740994]}] results=[{type=anything}] {
+  b0(v0: int[9007199254740992, 9007199254740994]):
+    v1 = CallBuiltin -, v0 overload=IsFinite/0
+    v2 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f3 name="testsOfUnsafeInteger"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: false = Boolean
+
+function f4 name="testsOfNumber" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=IsFinite/0
+    v2 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f4 name="testsOfNumber"
+# CHECK-NOT: = Boolean
+# CHECK: v1: boolean = CallBuiltin -, v0 overload=IsFinite/0
+# CHECK-NEXT: v2: boolean = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+
+function f5 name="stringOfString" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = CallBuiltin -, v0 overload=String/0
+    Return v1
+}
+# CHECK-LABEL: function f5 name="stringOfString"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: string = Upcast v0 castType=string
+
+function f6 name="stringOfNumber" parameters=[{type=number}] results=[{type=string}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=String/0
+    Return v1
+}
+# CHECK-LABEL: function f6 name="stringOfNumber"
+# CHECK: v1: string = CallBuiltin -, v0 overload=String/0
+
+function f7 name="stringOfStringOrSymbol" parameters=[{type=string|symbol}] results=[{type=string}] {
+  b0(v0: string|symbol):
+    v1 = CallBuiltin -, v0 overload=String/0
+    Return v1
+}
+# CHECK-LABEL: function f7 name="stringOfStringOrSymbol"
+# CHECK: v1: string = CallBuiltin -, v0 overload=String/0
+
+function f8 name="stringObjectOfString" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = CallBuiltin -, v0 overload=String/2
+    Return v1
+}
+# CHECK-LABEL: function f8 name="stringObjectOfString"
+# CHECK: = CallBuiltin -, v0 overload=String/2

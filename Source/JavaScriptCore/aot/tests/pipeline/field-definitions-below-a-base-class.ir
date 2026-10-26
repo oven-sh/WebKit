@@ -1,0 +1,91 @@
+# An instance of a class below a compiled base class that reaches unknown JavaScript: the caller allocates, super(..) hands the object on, and the definitions and stores of both classes become the field list of the allocation.
+# Unknown code can give the class another parent, so the link is tested at super(..); the arm that fails starts the constructor over and joins nothing
+# TODO: flow-termination: the object of a derived class is no longer allocated with the fields of both classes at once
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"raw"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="env" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Heir" base=L0 constructor=f3 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"status"@L1 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="last" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+variable g0 name="tokenOfBase" module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 name="Base" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="tokenOfHeir" module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g3 name="Heir" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    PutModuleVariable v4 variable=g1
+    v6 = NewClassToken layout=L1
+    PutModuleVariable v6 variable=g2
+    v8 = NewClosure function=f3
+    v9 = ResolveHeritage v4
+    v10 = NewClass v8, v4, v9 layout=L1
+    v11 = FinishClass v10 layout=L1
+    PutModuleVariable v11 variable=g3
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="sink" [isFreeName]
+    v15 = NewClosure function=f5
+    v16 = Call v14, -, v15
+    v17 = PropGet v13 key="eval" [isFreeName]
+    v18 = Call v17, -, v16
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = GetModuleVariable variable=g0
+    PrivateSet v4, v6, v1 layout=L0 field=1
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    PrivateDefine v0, v1, v1 layout=L0
+    v3 = Undefined
+    PrivateDefine v0, v1, v3 layout=L0 field=1
+    v5 = Integer integer=1
+    PropDefine v0, v5 key="env"
+    Return v3
+}
+function f3 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f4
+    v7 = GetModuleVariable variable=g2
+    v8 = Integer integer=200
+    PrivateSet v5, v7, v8 layout=L1 field=1
+    Return v5
+}
+function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g2
+    PrivateDefine v0, v1, v1 layout=L1
+    v3 = Undefined
+    PrivateDefine v0, v1, v3 layout=L1 field=1
+    v5 = Integer integer=2
+    PropDefine v0, v5 key="last"
+    Return v3
+}
+function f5 name="handle" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g3
+    v2 = Construct v1, -, v0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    Return v5
+# CHECK: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1 side=Static}]
+# CHECK-NEXT: TestAndBranch [[unchanged]] -> taken [[fast]](), notTaken [[slow]]()
+# CHECK-NEXT: [[fast]]():
+# CHECK-NOT: Define
+# CHECK-NOT: PrivateSet
+# CHECK-NOT: CallDirect
+# CHECK: [[heir]]: L1 = NewObject -, {{*}}, v0, {{*}} layout=L1 fields=[3, 4, 5, 0, 1, 2]
+# CHECK-NEXT: Jump -> next [[after]]([[heir]])
+# CHECK-NEXT: [[slow]]() frequency=Rare:
+# CHECK: = SuperConstruct
+}

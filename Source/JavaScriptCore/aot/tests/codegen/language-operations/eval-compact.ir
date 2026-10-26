@@ -1,0 +1,5 @@
+# A direct eval passes the back-end checks in compact code, with and without an environment it can name
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+# PROGRAM-OF: eval-fast.ir

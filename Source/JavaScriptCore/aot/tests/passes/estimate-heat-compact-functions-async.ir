@@ -1,0 +1,125 @@
+# A cold async function of a very large program waits between its steps: it is compact, small or large, with one caller or with several.
+# It is not where a loop calls it, where what a loop calls calls it every time, or where it has a loop of its own. Behind an unlikely branch of what a loop calls it is.
+# A function that does not wait and that two functions call may run, as ever
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce
+# CHECK-NEXT: f1 Cold 10 1
+# CHECK-NEXT: f2 Cold 10 1
+# CHECK-NEXT: f3 Compact 10 1
+# CHECK-NEXT: f4 Cold 10 1
+# CHECK-NEXT: f5 Compact 10 1
+# CHECK-NEXT: f6 Compact 10 1
+# CHECK-NEXT: f7 Cold 10 1
+# CHECK-NEXT: f8 Cold 10 1
+# CHECK-NEXT: f9 Compact 10 1
+# CHECK-NEXT: f10 Compact 10 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f6
+    v3 = CallDirect v0 function=f6
+    v4 = CallDirect v0 function=f7
+    v5 = CallDirect v0 function=f7
+    v6 = CallDirect v0 function=f9
+    v7 = CallDirect v0 function=f9
+    v8 = CallDirect v0 function=f10
+    v9 = CallDirect v0 function=f10
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = CallDirect v0 function=f1
+    v12 = CallDirect v0 function=f4
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v41 = CallDirect v0 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v42 = CallDirect v0 function=f3
+    Return v42
+  b2():
+    Return v41
+}
+
+function f2 name="asyncCalledEveryTimeByIt" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f3 name="asyncCalledOnItsUnlikelyPath" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f4 name="asyncThatALoopCalls" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f5 name="asyncCalledByTwo" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f6 name="smallAsync" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f7 name="asyncWithLoop" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 3..42
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+}
+
+function f8 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f9 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v41 = CallDirect v0 function=f5
+    v42 = CallDirect v0 function=f8
+    Return v41
+}
+
+function f10 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..40
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v41 = CallDirect v0 function=f5
+    v42 = CallDirect v0 function=f8
+    Return v41
+}

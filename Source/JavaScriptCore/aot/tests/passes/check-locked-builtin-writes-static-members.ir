@@ -1,0 +1,40 @@
+# The static members of the built-in constructors and namespaces are fixed, with their bindings on the global object: a store that every run reaches is an error. What real packages replace can be written, and so can a new name: no diagnostic
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 9
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Object
+    PropSet v1, v0 key="keys" mode=Strict @10
+    PropSet v1, v0 key="getOwnPropertyNames" mode=Strict @11
+    PropSet v1, v0 key="mine" mode=Strict @12
+    v5 = Builtin builtin=Array
+    PropSet v5, v0 key="isArray" mode=Strict @20
+    v7 = Builtin builtin=Number
+    PropSet v7, v0 key="isInteger" mode=Strict @30
+    PropSet v7, v0 key="parseFloat" mode=Strict @31
+    v10 = Builtin builtin=String
+    PropSet v10, v0 key="fromCharCode" mode=Strict @40
+    v12 = Builtin builtin=Reflect
+    PropSet v12, v0 key="get" mode=Strict @50
+    PropSet v12, v0 key="defineMetadata" mode=Strict @51
+    v15 = Builtin builtin=JSON
+    PropSet v15, v0 key="parse" mode=Strict @60
+    PropSet v15, v0 key="rawJSON" mode=Strict @61
+    v18 = Builtin builtin=Date
+    PropSet v18, v0 key="now" mode=Strict @70
+    PropSet v18, v0 key="UTC" mode=Strict @71
+    v21 = Builtin builtin=GlobalThis
+    PropSet v21, v0 key="Object" mode=Strict @80
+    PropSet v21, v0 key="Date" mode=Strict @81
+    PropSet v21, v0 key="Promise" mode=Strict @82
+    v25 = Builtin builtin=Error
+    PropSet v25, v0 key="captureStackTrace" mode=Strict @90
+    PropSet v25, v0 key="prepareStackTrace" mode=Strict @91
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+    Return
+}

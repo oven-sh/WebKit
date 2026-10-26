@@ -1,0 +1,38 @@
+# Past the limit on blocks times objects every query about the function answers Unknown
+# FORM: AsRead
+# OPTIONS: limit=MaxUseEffectHistoryBits:1
+# LOSS: MaxUseEffectHistoryBits x1 f0
+# RUN: analyses escape-history history-points
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point"
+function f0 name="pastTheLimit" results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1():
+    Return v0
+}
+function f1 name="withinTheLimit" results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    Return v0
+}
+# CHECK: function f0
+# CHECK: escape-history:
+# CHECK: b0 occurred at head: []
+# CHECK: b0 unknown at head: [o0]
+# CHECK: b1 occurred at head: []
+# CHECK: b1 unknown at head: [o0]
+# CHECK: history-points:
+# CHECK: b0:0 occurred: []
+# CHECK: b0:0 unknown: [o0]
+# CHECK: b0:1 unknown: [o0]
+# CHECK: b1:0 occurred: []
+# CHECK: b1:0 unknown: [o0]
+# CHECK: function f1
+# CHECK: escape-history:
+# CHECK: b0 occurred at head: []
+# CHECK: b0 unknown at head: []
+# CHECK: history-points:
+# CHECK: b0:1 occurred: []
+# CHECK: b0:1 unknown: []

@@ -1,0 +1,65 @@
+# for (let i = 0; i < n; i++) sum += callback == null ? 0 : i + 1: the test of `callback` comes out the same in every round, and both answers occur among the calls.
+# In front of the loop it would send the calls on which it fails through the copy of the failed tests, where nothing else is tested either: `i < n` would compare doubles there.
+# So the test stays in the loop for as long as `n` is not tested. Once nothing else in the loop asks for a test, one test in front decides for all the rounds, and the copy runs as often as the loop.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="loopComparesWithNumber" flags=[IsChecked] parameters=[{type=number}, {type=undefined|string}] results=[{type=number}] {
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b6()
+  b2():
+    v7 = TypeTest v1 testedType=undefined|null
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Integer
+    Jump -> next b5(v8)
+  b4():
+    v9 = Integer integer=1
+    v10 = Add v4, v9
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = Add v3, v11
+    v13 = Increment v4
+    Jump -> next b1(v12, v13)
+  b6():
+    Return v3
+# CHECK: LoopHint
+# CHECK: v7: boolean = TypeTest v1 testedType=undefined|null
+}
+
+function f1 name="loopComparesWithInteger" flags=[IsChecked] parameters=[{type=i32}, {type=undefined|string}] results=[{type=i32}] {
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b6()
+  b2():
+    v6 = TypeTest v1 testedType=undefined|null
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer integer=2
+    Jump -> next b5(v7)
+  b4():
+    v8 = Integer integer=1
+    Jump -> next b5(v8)
+  b5(v9):
+    v10 = BitOr v3, v9
+    Jump -> next b1(v10)
+  b6():
+    Return v3
+# CHECK-NOT: frequency=
+# CHECK: = TypeTest v1 testedType=undefined|null
+# CHECK-NOT: frequency=
+# CHECK: LoopHint
+# CHECK-NOT: frequency=
+# CHECK: LoopHint
+# CHECK-NOT: frequency=
+}

@@ -1,0 +1,37 @@
+# Without flow results closures are slim where the function is not expected to get properties: not those of a function that constructs a layout
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow disable=flow-results
+# RUN: plan-slots closures
+# RUN(KINDS): place
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" constructor=f3 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = Call v3
+    v5 = NewClosure v2, v2, v2, v2 function=f2
+    v6 = Call v5
+    v7 = NewClosure function=f3
+    v8 = Call v7
+    Return
+}
+function f1 name="calledOnly" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="fourCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+    Return
+}
+function f3 name="Made" results=[{type=anything}] {
+    Return
+}
+# CHECK: f1 Slim
+# CHECK-NEXT: f2 Slim
+# CHECK-NEXT: f3 Full
+# CHECK-NOT: Slim
+# KINDS: f1 isSlim callableKind=Arrow
+# KINDS-NEXT: f2 isSlim callableKind=Arrow
+# KINDS-NEXT: f3 hasInferredName

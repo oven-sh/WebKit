@@ -1,0 +1,68 @@
+# The list that Object.entries or Object.values makes is new, so the call is the guard for what holds of a new array, and an earlier pass has named it: `AllGuards v1, ..` in place of an IsPristine test.
+# A value that was named as a guard has to stay one. The expansion turns the call into a parameter of the block behind its arms, which is no allocation: that block takes a guard beside the list,
+# every arm passes its own allocation for it, and the operations that named the call name the guard. Where nobody named the call the block takes the list alone.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="entriesNamedInAllGuards" parameters=[{type=object}, {type=int[0, 1]}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: int[0, 1]):
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = AllGuards v2, v4
+    v6 = GetArrayElement v2, v1, v5 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v6
+  b2():
+    v7 = ElemGet v2, v1 [keyIsIntegral]
+    Return v7
+# CHECK: v5: guard = AllGuards [[new0]], v4
+# CHECK-NEXT: = GetArrayElement v2, v1, v5
+# CHECK: [[done0]](v2: Array<Array>, [[new0]]: guard):
+# CHECK-NEXT: v3: boolean = HasArrayStorage v2 arrayStorage=Contiguous
+# CHECK: [[call0]]: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
+# CHECK-NEXT: [[callGuard0]]: guard = AllGuards [[call0]]
+# CHECK-NEXT: Jump -> next [[done0]]([[call0]], [[callGuard0]])
+# CHECK: [[pairs0]]: Array<Array> = NewArray {{*}} contents=Array
+# CHECK-NEXT: [[pairsGuard0]]: guard = AllGuards [[pairs0]]
+# CHECK-NEXT: Jump -> next [[done0]]([[pairs0]], [[pairsGuard0]])
+}
+
+function f1 name="valuesNamedTwice" parameters=[{type=object}, {type=int[0, 1]}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: int[0, 1]):
+    v2 = CallBuiltin -, v0 overload=ObjectValues/0
+    v3 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = AllGuards v2, v4
+    v6 = GetArrayElement v2, v1, v5 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    v7 = AllGuards v4, v2
+    v8 = GetArrayElement v2, v1, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    v9 = StrictEq v6, v8
+    Return v9
+  b2():
+    v10 = ElemGet v2, v1 [keyIsIntegral]
+    Return v10
+# CHECK: v5: guard = AllGuards [[new1]], v4
+# CHECK: v7: guard = AllGuards v4, [[new1]]
+# CHECK: [[done1]](v2: Array, [[new1]]: guard):
+# CHECK: [[call1]]: Array = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NEXT: [[callGuard1]]: guard = AllGuards [[call1]]
+# CHECK-NEXT: Jump -> next [[done1]]([[call1]], [[callGuard1]])
+# CHECK: [[values1]]: Array = NewArray {{*}}
+# CHECK-NEXT: [[valuesGuard1]]: guard = AllGuards [[values1]]
+# CHECK-NEXT: Jump -> next [[done1]]([[values1]], [[valuesGuard1]])
+}
+
+function f2 name="notNamed" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectEntries/0
+    Return v1
+# CHECK: [[done2]](v1: Array<Array>):
+# CHECK-NEXT: Return v1
+}

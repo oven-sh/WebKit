@@ -22,6 +22,9 @@
 
 #include "config.h"
 
+#if ENABLE(AOT)
+#include "AOTShell.h"
+#endif
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
@@ -838,6 +841,11 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
+#if ENABLE(AOT)
+        AOT::Shell::addShellFunctions(vm, this);
+        for (auto name : AOT::Shell::shellFunctionNames())
+            filter.add(Identifier::fromString(vm, name).impl());
+#endif
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -1127,6 +1135,13 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &codeForEval,
     &canCompileStrings,
     &trustedScriptStructure,
+#if USE(BUN_JSC_ADDITIONS)
+    nullptr, // requireBuiltinModule
+    nullptr, // nativeBinding
+#if ENABLE(AOT)
+    &AOT::Shell::moduleHost,
+#endif
+#endif
 };
 
 GlobalObject::GlobalObject(VM& vm, Structure* structure)
@@ -1289,6 +1304,12 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     if (key.isSymbol())
         return key;
 
+#if ENABLE(AOT)
+    // Bun: the loader asks for a module of an image by its key.
+    if (AOT::Shell::isKeyOfCompiledModule(key.string()))
+        return key;
+#endif
+
     auto resolvePath = [&] (const URL& directoryURL) -> Identifier {
         String specifier = key.impl();
         auto filePrefix = "file://"_s;
@@ -1330,6 +1351,16 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
 
     if (referrer.isSymbol())
         return resolvePath(currentWorkingDirectory());
+
+#if ENABLE(AOT)
+    // Bun: the key of a module of an image is its path.
+    if (AOT::Shell::isKeyOfCompiledModule(referrer.string())) {
+        Identifier resolved = resolvePath(URL::fileURLWithFileSystemPath(referrer.string()));
+        RETURN_IF_EXCEPTION(scope, { });
+        String path = URL({ }, resolved.string()).fileSystemPath();
+        return AOT::Shell::isKeyOfCompiledModule(path) ? Identifier::fromString(vm, path) : resolved;
+    }
+#endif
 
     // If the referrer exists, we assume that the referrer is the correct file url.
     URL url = URL({ }, referrer.impl());
@@ -1637,6 +1668,16 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 
     String moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+
+#if ENABLE(AOT)
+    // Bun: an image has the modules that it names.
+    if (!attributes) {
+        JSPromise* compiled = AOT::Shell::fetchCompiledModule(globalObject, moduleKey);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (compiled)
+            return compiled;
+    }
+#endif
 
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());
@@ -5091,6 +5132,9 @@ int jscmain(int argc, char** argv)
     {
         Options::AllowUnfinalizedAccessScope scope;
         processConfigFile(Options::configFile(), "jsc"_s);
+#if ENABLE(AOT)
+        AOT::Shell::enableGlobalsOfBuiltinTable();
+#endif
     }
 
     JSC::initialize();
@@ -5100,6 +5144,10 @@ int jscmain(int argc, char** argv)
 #if ENABLE(JIT_OPERATION_DISASSEMBLY)
     if (Options::needDisassemblySupport()) [[unlikely]]
         JSC::JITOperationList::populateDisassemblyLabelsInEmbedder(&startOfJITOperationsInShell, &endOfJITOperationsInShell);
+#endif
+
+#if ENABLE(AOT)
+    AOT::Shell::mapImageFromOptions();
 #endif
 
     if (!Options::maxHeapSizeAsRAMSizeMultiple())

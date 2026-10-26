@@ -1,0 +1,27 @@
+# The type of the field is only expected, so its slot took every value, and a read took an empty slot for an absent property without a test. A slot that defers its closure holds objects alone:
+# a number that somebody stores (Reflect.set) lies outside the slot from then on. The field defers all the same: the read that finds the slot empty asks the object whether a field lies outside its slot.
+# It gives any value, as it did.
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 1
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="MayGetAnything" fields=[{key="run" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="reads" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="run" receivers=[L0] level=Proven
+    Return v1
+# CHECK: v1: anything ~ undefined|function = GetDeferredClosureSlotOrUndefined v0 key="run"
+}
+function f2 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
+    Return
+}

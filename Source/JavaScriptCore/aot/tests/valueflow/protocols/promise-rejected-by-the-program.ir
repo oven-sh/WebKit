@@ -1,0 +1,37 @@
+# failing = new Promise((resolve, reject) => reject({ describe })); try { await failing } catch (error) { error.describe() }
+# What the rejecting function is called with is thrown by an await of the promise.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Failure" fields=[{key="describe" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = NewClosure function=f2
+    v2 = Construct v0, -, v1
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Await v2
+    Return
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = PropGet v4 key="describe"
+    v6 = Call v5, v4
+    Return
+}
+function f2 name="executor" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v1, -, v3
+    Return
+}
+function f3 name="describe" results=[{type=anything}] {
+    Return
+}

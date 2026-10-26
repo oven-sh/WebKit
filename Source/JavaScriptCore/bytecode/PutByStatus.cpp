@@ -377,7 +377,7 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
         Structure* structure = set[i];
 
         // Every store to an object with immutable properties is refused in C++: never prove a direct store from its structure.
-        if (structure->hasImmutableProperties())
+        if (structure->mayHaveImmutableProperties())
             return PutByStatus(LikelyTakesSlowPath);
         
         if (structure->typeInfo().overridesGetOwnPropertySlot() && structure->typeInfo().type() != GlobalObjectType)

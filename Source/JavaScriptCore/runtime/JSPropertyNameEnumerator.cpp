@@ -34,7 +34,7 @@ namespace JSC {
 
 const ClassInfo JSPropertyNameEnumerator::s_info = { "JSPropertyNameEnumerator"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSPropertyNameEnumerator) };
 
-JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames)
+JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask)
 {
     unsigned propertyNamesSize = propertyNames.size();
     auto propertyNamesBufferSizeInBytes = CheckedUint32(propertyNamesSize) * sizeof(WriteBarrier<JSString>);
@@ -51,12 +51,12 @@ JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure*
             propertyNamesBuffer[i].clear();
     }
 
-    JSPropertyNameEnumerator* enumerator = new (NotNull, allocateCell<JSPropertyNameEnumerator>(vm)) JSPropertyNameEnumerator(vm, structure, indexedLength, numberStructureProperties, propertyNamesBuffer, propertyNamesSize);
+    JSPropertyNameEnumerator* enumerator = new (NotNull, allocateCell<JSPropertyNameEnumerator>(vm)) JSPropertyNameEnumerator(vm, structure, indexedLength, numberStructureProperties, propertyNamesBuffer, propertyNamesSize, cachedOrderWord, cachedOrderWordMask);
     enumerator->finishCreation(vm, propertyNames.releaseData());
     return enumerator;
 }
 
-JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, WriteBarrier<JSString>* propertyNamesBuffer, unsigned propertyNamesSize)
+JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, WriteBarrier<JSString>* propertyNamesBuffer, unsigned propertyNamesSize, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask)
     : JSCell(vm, vm.propertyNameEnumeratorStructure.get())
     , m_propertyNames(propertyNamesBuffer, WriteBarrierEarlyInit)
     , m_cachedStructureID(structure, WriteBarrierEarlyInit)
@@ -64,6 +64,8 @@ JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure,
     , m_endStructurePropertyIndex(numberStructureProperties)
     , m_endGenericPropertyIndex(propertyNamesSize)
     , m_cachedInlineCapacity(structure ? structure->inlineCapacity() : 0)
+    , m_cachedOrderWord(cachedOrderWord)
+    , m_cachedOrderWordMask(cachedOrderWordMask)
 {
     if (m_indexedLength)
         m_flags |= JSPropertyNameEnumerator::IndexedMode;
@@ -125,7 +127,7 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
 
         base->getNonReifiedStaticPropertyNames(vm, propertyNames, DontEnumPropertiesMode::Exclude);
         unsigned nonStructurePropertyCount = propertyNames.size();
-        structure->getPropertyNamesFromStructure(vm, propertyNames, DontEnumPropertiesMode::Exclude);
+        base->structure()->getPropertyNamesFromStructure(vm, propertyNames, DontEnumPropertiesMode::Exclude);
         scope.assertNoException();
 
         // |propertyNames| contains properties exclusively from the structure.
@@ -200,7 +202,7 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
             name = propertyNameAtIndex(index);
             if (!name)
                 break;
-            if (index < endStructurePropertyIndex() && base->structureID() == cachedStructureID())
+            if (index < endStructurePropertyIndex() && isCurrentFor(base))
                 break;
             auto id = name->toAtomString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -212,7 +214,8 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
         }
         scope.assertNoException();
 
-        if (index >= endStructurePropertyIndex() && index < sizeOfPropertyNames())
+        // OwnStructureMode lets the caller take the index for a property offset, which only an ordinary object has.
+        if ((index >= endStructurePropertyIndex() && index < sizeOfPropertyNames()) || !describesOrdinaryObject())
             mode = GenericMode;
         return name;
     }

@@ -1,0 +1,94 @@
+# The captured bindings of a CommonJS body become variables: the body runs at most once, also where a load of it stands under a handler that outlives its failure and loads it again
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 2
+# STATISTIC: CapturesPromotedToVariables = 2
+# CHECK: variable g0 name="count.0" module=m1
+# CHECK: variable g1 name="count.0" module=m2
+# CHECK: variable g2 module=m1
+# CHECK: variable g3 module=m2
+# CHECK-NOT: variable g4
+
+module m0 path="main.js" displayPath="main.js" flags=[KeepsError] body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}]
+module m1 path="kept.cjs" displayPath="kept.cjs" kind=CommonJs flags=[KeepsError] body=f1
+module m2 path="retried.cjs" displayPath="retried.cjs" kind=CommonJs flags=[KeepsError] body=f3
+entry module=m0
+layout L0 kind=Environment name="kept" module=m1 fields=[{key=@"count.0" declared={type=anything}}]
+layout L1 kind=Environment name="retried" module=m2 fields=[{key=@"count.0" declared={type=anything}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    Jump -> next b1()
+  b1() handler=b2():
+    EvaluateModule module=m2 referrer=m0
+    Return
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    EvaluateModule module=m2 referrer=m0
+    Return
+}
+
+function f1 name="kept" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewClosure v1, v3 function=f2
+    v5 = PropGet v2 key="publish" [isFreeName]
+    v6 = Call v5, -, v4
+    Return
+# CHECK: b0():
+# CHECK-NOT: NewObject
+# CHECK: PutModuleVariable v0 variable=g0
+# CHECK: PutModuleVariable {{*}}variable=g2
+# CHECK-NEXT: = NewClosure function=f2
+}
+
+function f2 name="next" module=m1 captures=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L0 field=0
+    PropSet v1, v4 key="last"
+    Return v4
+# CHECK-NOT: captures=
+# CHECK: b0():
+# CHECK-NEXT: [[sink]]:{{*}}= GetModuleVariable variable=g2
+# CHECK-NEXT: = GetModuleVariable variable=g0
+# CHECK: PutModuleVariable [[sum]] variable=g0
+# CHECK-NEXT: PropSet [[sink]], [[sum]] key="last"
+}
+
+function f3 name="retried" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewClosure v1, v3 function=f4
+    v5 = PropGet v2 key="publish" [isFreeName]
+    v6 = Call v5, -, v4
+    Return
+# CHECK: b0():
+# CHECK-NOT: NewObject
+# CHECK: PutModuleVariable v0 variable=g1
+# CHECK: PutModuleVariable {{*}}variable=g3
+# CHECK-NEXT: = NewClosure function=f4
+}
+
+function f4 name="next" module=m2 captures=[{type=env L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L1 field=0
+    PropSet v1, v4 key="last"
+    Return v4
+# CHECK-NOT: captures=
+# CHECK: b0():
+# CHECK-NEXT: [[sink]]:{{*}}= GetModuleVariable variable=g3
+# CHECK-NEXT: = GetModuleVariable variable=g1
+# CHECK: PutModuleVariable [[sum]] variable=g1
+# CHECK-NEXT: PropSet [[sink]], [[sum]] key="last"
+}

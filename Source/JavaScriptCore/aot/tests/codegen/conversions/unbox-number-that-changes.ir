@@ -1,0 +1,57 @@
+# The conversion of a boxed number that changes from turn to turn, or that stands in no loop, branches on the tag and computes one side: there is nothing for the back end to move
+# FORM: Placed
+# OPTIONS: check=validate-back-end validate
+# RUN: generate-code NumbersUnboxedWithoutBranch
+# CHECK-COUNT-3: : size=
+# CHECK-NOT: no code
+# CHECK: statistic NumbersUnboxedWithoutBranch 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="carriedAroundLoop" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything @JSValue, v1: anything @JSValue, v2: i32 @Int32):
+    v3 @JSValue = AssumeType v0 provenType=number
+    v4 @JSValue = AssumeType v1 provenType=number
+    v5 @Double = Double number=0.5
+    v6 @Int32 = Integer integer=0
+    Jump -> next b1(v5, v6, v3, v4)
+  b1(v7 @Double, v8 @Int32, v9 @JSValue, v10 @JSValue):
+    LoopHint
+    v12 @Boolean = Less v8, v2 form=Integers
+    TestAndBranch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 @Double = Unbox v9
+    v14 @Double = Add v7, v13 form=Numbers
+    v15 @Int32 = Integer integer=1
+    v16 @Int32 = BitXor v8, v15 form=Integers
+    Jump -> next b1(v14, v16, v10, v9)
+  b3():
+    v17 @JSValue = Box v7
+    Return v17
+}
+function f1 name="inNoLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=number
+    v2 @Double = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f2 name="neverAnInteger" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything @JSValue, v1: i32 @Int32):
+    v2 @JSValue = AssumeType v0 provenType=fractional
+    v3 @Double = Double number=0.5
+    v4 @Int32 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5 @Double, v6 @Int32):
+    LoopHint
+    v8 @Boolean = Less v6, v1 form=Integers
+    TestAndBranch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 @Double = Unbox v2
+    v10 @Double = Add v5, v9 form=Numbers
+    v11 @Int32 = Integer integer=1
+    v12 @Int32 = BitXor v6, v11 form=Integers
+    Jump -> next b1(v10, v12)
+  b3():
+    v13 @JSValue = Box v5
+    Return v13
+}

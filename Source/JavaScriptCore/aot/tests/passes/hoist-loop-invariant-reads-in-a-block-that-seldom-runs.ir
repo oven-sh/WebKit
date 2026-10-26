@@ -1,0 +1,53 @@
+# In front of a loop a read runs each time the loop is entered, and its result is kept all the way round. A read in a block that runs less often than the block in front of the loop stays where it is.
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="neverStored" declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation isUnchangedDuringActivation=true}
+variable g1 name="alsoNeverStored" declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation isUnchangedDuringActivation=true}
+
+function f0 name="readWhereTheLoopSeldomGoes" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    v4 = GetModuleVariable variable=g1
+    v5 = ToBoolean v4
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v0, v6
+    Jump -> next b4()
+  b4():
+    Jump -> next b1()
+  b5():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g1
+# CHECK-NOT: GetModuleVariable variable=g0
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: GetModuleVariable variable=g0
+}
+
+function f1 name="theWholeLoopSeldomRuns" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b5()
+  b1() frequency=Unlikely:
+    Jump -> next b2()
+  b2() frequency=Unlikely:
+    LoopHint
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v0, v4
+    Jump -> next b2()
+  b4() frequency=Unlikely:
+    Jump -> next b5()
+  b5():
+    Return v0
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NOT: GetModuleVariable
+}

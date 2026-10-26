@@ -1,0 +1,41 @@
+# const above = { plain: 1, get lazy() { return 2 } }   const heir = { __proto__: above }   function read() { return heir.lazy + above.lazy }
+# A read starts at the object itself, but the program also hangs another object below it. From an heir the run time finds an accessor faster among the extra properties of the object above
+# than in a slot of it, so the accessor of L0 stays an extra property.
+# RUN: valueflow-apply
+# CHECK: layout L0
+# CHECK-NOT: IsAccessor
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+layout L1
+variable g0 name="heir" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="above" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="lazy"
+    v4 = FinishObject v1
+    PutModuleVariable v4 variable=g1
+    v6 = NewObject layout=L1
+    SetLiteralPrototype v6, v4
+    v8 = FinishObject v6
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f1
+    v11 = Call v10, -
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="lazy"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="lazy"
+    v4 = Add v1, v3
+    Return v4
+}
+function f2 name="lazy" kind=Getter results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

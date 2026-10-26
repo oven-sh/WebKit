@@ -1,0 +1,31 @@
+# A built-in that can be called is a function, so a store of it by name is inside the type of a field of functions. A built-in object that cannot be called is outside
+# RUN: valueflow-apply
+# CHECK: layout L0 name="HoldsMethod" fields=[{key="held" {{*}}occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: layout L1 name="HoldsNamespace" fields=[{key="held" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# RUN(RESULTS): valueflow-results
+# RESULTS: class [[holdsMethod]] layout=L0 impossibleMutations=[{{*}}StoreOfOtherType
+# RESULTS-NEXT: class [[holdsNamespace]] layout=L1 impossibleMutations=[
+# RESULTS-NOT: StoreOfOtherType
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HoldsMethod" fields=[{key="held" declared={type=undefined|null|function} flags=[IsRequired]}]
+layout L1 name="HoldsNamespace" fields=[{key="held" declared={type=undefined|null|function} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=ArrayPrototypePush
+    v4 = Builtin builtin=Math
+    v5 = CallDirect v1, v3 function=f1
+    v6 = CallDirect v2, v4 function=f2
+    Return
+}
+function f1 name="storeMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f2 name="storeNamespace" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}

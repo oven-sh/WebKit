@@ -1,0 +1,62 @@
+# `{ a: first(), b: second() }` where the allocation lists some of the fields or none: nothing but the definitions reaches the new object until they are over,
+# so a field that a definition fills is in the object at every read, as one that the allocation lists: it is always filled, also beside a literal that lists every field.
+# A store to a field that the object already has is no use of the object.
+# Not so: a definition behind a use of the object, and a name that another literal of the layout leaves out.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="SomeListed" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+# CHECK: layout L1 name="NoneListed" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled
+# CHECK: layout L2 name="StoredFirst" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled
+# CHECK: layout L3 name="UsedBetween" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L4 name="LeftOutByAnother" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: layout L5 name="Holder"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="SomeListed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="NoneListed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="StoredFirst" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="UsedBetween" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="LeftOutByAnother" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Holder" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Double number=0.5
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v3, v1 key="b"
+    v5 = FinishObject v3
+    v6 = NewObject layout=L1
+    PropDefine v6, v0 key="a"
+    PropDefine v6, v1 key="b"
+    v9 = FinishObject v6
+    v10 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v10, v1 key="a"
+    PropDefine v10, v1 key="b"
+    v13 = FinishObject v10
+    v14 = NewObject -, v0 layout=L3 fields=[0]
+    v15 = NewObject -, v14 layout=L5 fields=[0]
+    PropDefine v14, v1 key="b"
+    v17 = FinishObject v14
+    v18 = NewObject -, v0 layout=L4 fields=[0]
+    PropDefine v18, v1 key="b"
+    v20 = FinishObject v18
+    v21 = NewObject -, v0 layout=L4 fields=[0]
+    v22 = PropGet v2 key="b"
+    v23 = PropGet v5 key="b"
+    v24 = PropGet v9 key="b"
+    v25 = PropGet v13 key="b"
+    v26 = PropGet v17 key="b"
+    v27 = PropGet v20 key="b"
+    v28 = PropGet v21 key="b"
+    v29 = PropGet v15 key="held"
+    v30 = PropGet v2 key="a"
+    v31 = PropGet v9 key="a"
+    v32 = PropGet v13 key="a"
+    v33 = PropGet v17 key="a"
+    v34 = PropGet v21 key="a"
+    Return
+}

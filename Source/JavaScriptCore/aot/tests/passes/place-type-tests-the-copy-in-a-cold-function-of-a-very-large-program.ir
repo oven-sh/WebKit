@@ -1,0 +1,50 @@
+# In a very large program the copy in a cold function holds the stretch alone also where a loop stands behind it: the copies of the loops of cold functions are megabytes there, and no run shows the time they save.
+# In any other program such a stretch keeps the copy that goes on: place-type-tests-the-copy-in-a-cold-function.ir
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls limit=MaxWarmCodeValues:1
+# In a very large program the tests of a cold function are placed behind the rounds: the pipeline is stopped behind that step
+# RUN: pipeline RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v1, -, v2, v3, v5
+    Return
+}
+
+function f1 name="oneCaller" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = CallDirect v0, v1 function=f3
+    Return v2
+}
+
+function f2 name="anotherCaller" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = CallDirect v0, v1 function=f3
+    Return v2
+}
+
+function f3 name="calledByTwo" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = PropGet v0 key="x"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v4, -, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-COUNT-1: LoopHint
+# CHECK-NOT: LoopHint
+}

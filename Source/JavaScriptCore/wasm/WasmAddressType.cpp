@@ -48,7 +48,7 @@ AddressType::AddressType(TypeKind typeKind)
     }
 }
 
-#if !PLATFORM(PLAYSTATION) && ENABLE(JIT)
+#if !PLATFORM(PLAYSTATION) && ENABLE(CODE_GENERATION)
 AddressType::AddressType(B3::Type type)
 {
     switch (type.kind()) {
@@ -88,7 +88,7 @@ Wasm::Type AddressType::asWasmType() const
     RELEASE_ASSERT_NOT_REACHED(invalidAddressTypeConversion);
 }
 
-#if !PLATFORM(PLAYSTATION) && ENABLE(JIT)
+#if !PLATFORM(PLAYSTATION) && ENABLE(CODE_GENERATION)
 B3::TypeKind AddressType::asB3TypeKind() const
 {
     switch (m_type) {

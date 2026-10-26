@@ -1,0 +1,39 @@
+# That a variable is stored before it is read may hang on a test in front of the read. A read that leaves a block of the loop which may not run can stand in front of that test, so in a validating build the pass marks it: the check of its type at its new place admits the empty value, and the read that is kept at the old place is checked in full. A read of the header runs whenever the loop does and gets no mark
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass HoistLoopInvariantReads
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
+
+function f0 name="readInBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK: b2():
+# CHECK-NOT: mayPrecedeItsStore
+# CHECK: ValidateSameValue
+}
+
+function f1 name="readInHeader" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK-NOT: mayPrecedeItsStore
+}
