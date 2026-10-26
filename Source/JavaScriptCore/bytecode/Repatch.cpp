@@ -803,6 +803,14 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
         break;
     }
     case GiveUpOnCache:
+        // The base of a ByIdThrowIfNotFound access is one global object. That is a dictionary from its start, so it
+        // never has a structure again that it had before: the cases here are dead, or will be at its next
+        // transition. Without them the access goes straight to its call, as a ById access does after its
+        // megamorphic case.
+        if (kind == GetByKind::ByIdThrowIfNotFound) {
+            repatchGetBySlowPathCall(codeBlock, propertyCache, kind);
+            break;
+        }
         repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
