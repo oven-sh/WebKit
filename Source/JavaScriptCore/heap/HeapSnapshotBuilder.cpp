@@ -102,6 +102,17 @@ void HeapSnapshotBuilder::analyzeNode(JSCell* cell)
     m_snapshot->appendNode(HeapSnapshotNode(cell, getNextObjectIdentifier()));
 }
 
+// Vector::append aborts when the Vector cannot grow, which a heap of tens of millions of edges reaches. The markers
+// report edges until the collection ends, so the first one that does not fit ends the recording.
+// This covers the edges only: HeapSnapshot::appendNode still aborts when the nodes do not fit.
+void HeapSnapshotBuilder::appendEdge(HeapSnapshotEdge&& edge)
+{
+    if (m_hasOverflowed) [[unlikely]]
+        return;
+    if (!m_edges.tryAppend(WTF::move(edge))) [[unlikely]]
+        m_hasOverflowed = true;
+}
+
 void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason rootMarkReason)
 {
     ASSERT(m_profiler.activeHeapAnalyzer() == this);
@@ -124,7 +135,7 @@ void HeapSnapshotBuilder::analyzeEdge(JSCell* from, JSCell* to, RootMarkReason r
         }).iterator->value.markReason = rootMarkReason;
     }
 
-    m_edges.append(HeapSnapshotEdge(from, to));
+    appendEdge(HeapSnapshotEdge(from, to));
 }
 
 void HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* propertyName)
@@ -134,7 +145,7 @@ void HeapSnapshotBuilder::analyzePropertyNameEdge(JSCell* from, JSCell* to, Uniq
 
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, EdgeType::Property, propertyName));
+    appendEdge(HeapSnapshotEdge(from, to, EdgeType::Property, propertyName));
 }
 
 void HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to, UniquedStringImpl* variableName)
@@ -144,7 +155,7 @@ void HeapSnapshotBuilder::analyzeVariableNameEdge(JSCell* from, JSCell* to, Uniq
 
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, EdgeType::Variable, variableName));
+    appendEdge(HeapSnapshotEdge(from, to, EdgeType::Variable, variableName));
 }
 
 void HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t index)
@@ -154,7 +165,7 @@ void HeapSnapshotBuilder::analyzeIndexEdge(JSCell* from, JSCell* to, uint32_t in
 
     Locker locker { m_buildingEdgeMutex };
 
-    m_edges.append(HeapSnapshotEdge(from, to, index));
+    appendEdge(HeapSnapshotEdge(from, to, index));
 }
 
 void HeapSnapshotBuilder::setOpaqueRootReachabilityReasonForCell(JSCell* cell, ASCIILiteral reason)
@@ -334,6 +345,8 @@ String HeapSnapshotBuilder::descriptionForNode(const HeapSnapshotNode& node)
 
 String HeapSnapshotBuilder::json()
 {
+    if (m_hasOverflowed)
+        return { };
     StringPrintStream string;
     dumpToStream(string);
     if (m_hasOverflowed)

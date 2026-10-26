@@ -156,6 +156,7 @@ private:
     bool LEGACY_NODELETE previousSnapshotHasNodeForCell(JSCell*, NodeIdentifier&);
 
     String descriptionForNode(const HeapSnapshotNode&);
+    void appendEdge(HeapSnapshotEdge&&) WTF_REQUIRES_LOCK(m_buildingEdgeMutex);
 
     struct RootData {
         ASCIILiteral reachabilityFromOpaqueRootReasons;

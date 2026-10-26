@@ -181,6 +181,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 | `heapProfiler/cell-butterfly-edges.js` | a heap snapshot has an edge from a `JSCellButterfly` to each cell in it: the entries of a Map or a Set (also of the table an iterator holds) and the arguments of a bound function past the third. None to a removed entry, and none from storage of doubles |
 | `heapProfiler/unnamed-scope-slot-edges.js` | a heap snapshot has an edge from a `JSLexicalEnvironment` to a cell in a slot that no name of the symbol table maps to |
+| `stress/heap-snapshot-too-many-edges.js` | a heap snapshot with more edges than `HeapSnapshotBuilder` can hold throws and does not abort. It needs 3.3 GB, so a memory-limited run skips it |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
 the programs that test ahead-of-time compilation are in Bun's `test/aot`.
