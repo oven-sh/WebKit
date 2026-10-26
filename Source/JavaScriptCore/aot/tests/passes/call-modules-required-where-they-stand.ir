@@ -2,9 +2,9 @@
 # the first site that the walk comes to calls the body of the module, every later one does nothing, and a module that only such sites lead to has no state.
 # FORM: Prepared
 # RUN: pass CallModules
-# STATISTIC: ModulesWithState = 1
-# STATISTIC: ModulesWithoutState = 4
-# STATISTIC: RequireSitesBound = 8
+# STATISTIC: ModulesWithState = 2
+# STATISTIC: ModulesWithoutState = 3
+# STATISTIC: RequireSitesBound = 7
 # CHECK: outcome: Changed
 
 variable g0 name="later" module=m0 declared={type=anything} initialization=Undefined
@@ -25,7 +25,7 @@ entry module=m0
 # CHECK: module m1 path="/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports requests=
 # CHECK: module m2 path="/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports requests=
 # CHECK: module m3 {{*}}flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f3
-# CHECK: module m4 path="/es.mjs" displayPath="es.mjs" requests=
+# CHECK: module m4 path="/es.mjs" displayPath="es.mjs" flags=[EvaluatesItself] body=f4 requests=
 # CHECK: module m5 path="/below.mjs" displayPath="below.mjs" exports=
 
 # a.cjs: the first site. b.cjs: a.cjs has required it. a.cjs again: it has run. also-later.cjs: a function requires it too, and nobody knows which comes first: it looks at its state.
@@ -87,8 +87,13 @@ function f4 name="es" module=m4 kind=Module results=[{type=anything}] {
     PutModuleVariable v0 variable=g4
     Return
 }
-# CHECK-LABEL: function f4 name="es"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
-# CHECK-NOT: ModuleEvaluation
+# The run time evaluates a required ES module, which looks at its state. What it imports runs in front of it.
+# CHECK-LABEL: function f4 name="es"{{*}}IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = BeginModuleEvaluation module=m4
+# CHECK: = CallDirect function=f6
+# CHECK-NEXT: = CallDirect function=f8
+# CHECK-NEXT: FinishModuleEvaluation module=m4
 function f5 name="later" module=m0 results=[{type=anything}] {
     EvaluateModule module=m3 referrer=m0
     v1 = GetModuleVariable variable=g3
@@ -104,17 +109,17 @@ function f6 name="below" module=m5 kind=Module results=[{type=anything}] {
 }
 # CHECK-LABEL: function f6 name="below"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
 
-# To require an ES module is to import it at that point: what it imports runs in front of it, at the site.
+# A `require` of an ES module asks the run time, which knows whether another graph is being loaded.
 # A CommonJS module begins in its code, behind the stack check of that frame: where the stack ends there, no statement has run, and the next require() evaluates the module.
 # CHECK-LABEL: function f7 name="alsoLater"{{*}}derivation={source=f3} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m3
 # CHECK-NEXT: Branch [[begins]]
 # CHECK-NEXT: b1():
-# CHECK-NEXT: = CallDirect function=f6
-# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: = RequireModule module=m4 referrer=m3 specifier="/es.mjs"
 # CHECK-NEXT: = GetModuleVariable variable=g4
 # CHECK-NEXT: PutModuleVariable
 # CHECK-NEXT: FinishModuleEvaluation module=m3
 # CHECK-NOT: EvaluateModule
-# CHECK-NOT: function f8
+# CHECK-LABEL: function f8 name="es"{{*}}derivation={source=f4} {
+# CHECK-NOT: ModuleEvaluation

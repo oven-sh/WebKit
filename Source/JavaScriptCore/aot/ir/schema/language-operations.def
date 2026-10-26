@@ -21,7 +21,7 @@ operation PrivateDefine (object: Any/inspects, token: ClassToken/inspects, layou
 operation PrivateHas (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, with AccessStamp) -> natural(boolean) ; reads(ObjectFields, NamedProperties, ShapeWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; runtime = PrivateHas ; branches = May ; flow = TableProves
 
 family Iteration AsRead..AsRead
-operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies
+operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest isDelegating] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies
 operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
 operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
 

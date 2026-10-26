@@ -593,6 +593,7 @@ private:
     void listReadersOfWatch(const WatchShard&, uint32_t watch, Vector<ValueFlowStatementID>& readers) const;
     ValueSetID withoutWhatOtherMembersCover(ValueFlowNodeID, ValueSetMaker&) const;
     ValueSetID withoutWhatOtherMembersCover(ValueSetID, ValueSetMaker&) const;
+    ValueSetID withoutMarkOfNamedBun(ValueSetID, ValueSetMaker&) const;
     ValueSetID findFamilyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
     bool maySaturate(ValueFlowNodeID) const;
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
@@ -856,6 +857,7 @@ private:
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
     ValueSetID m_objectsLookedForBesideUnknownObject { ValueSets::nothing };
+    ValueSetID m_allButMarkOfNamedBun { ValueSets::anything };
     ValueSetID m_objectsSaidToBeSomething { ValueSets::nothing };
     ValueSetID m_objectsOfProgram { ValueSets::nothing };
     Vector<KindThatCoversKeys, 2> m_kindsThatCoverKeys;

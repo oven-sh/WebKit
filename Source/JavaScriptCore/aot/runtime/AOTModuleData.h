@@ -83,7 +83,9 @@ struct ModuleData {
     Number24 firstRequiredName;
     Number24 firstLinkRequest;
     Number24 firstEvaluationRequest;
-    uint8_t hasInstalledPositions;
+    uint8_t hasInstalledPositions : 1;
+    uint8_t loadedByLoader : 1;
+    uint8_t unusedBits : 6;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -102,6 +104,7 @@ struct ModuleData {
     bool isLinkedWithEntryPoint() const { return has(Flag::IsLinkedWithEntryPoint); }
     // Its body evaluates what the module requests, runs the code of the module and stores the status, all of it once.
     bool evaluatesItself() const { return has(Flag::EvaluatesItself); }
+    bool isLoadedByLoader() const { return loadedByLoader; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.

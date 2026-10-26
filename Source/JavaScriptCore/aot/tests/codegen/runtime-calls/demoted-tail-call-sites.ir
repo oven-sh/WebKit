@@ -17,7 +17,7 @@ function f0 name="target" parameters=[{type=anything}] results=[{type=anything}]
     Return v2
 }
 function f1 name="markedCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Call v0, -, v1 [isDemotedTailCall]
+    v2 = Call v0, -, v1 @0 tail
     Return v2
 }
 function f2 name="call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -25,7 +25,7 @@ function f2 name="call" parameters=[{type=anything}, {type=anything}] results=[{
     Return v2
 }
 function f3 name="markedCallList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-    v2 = CallList v0, -, v1 [isDemotedTailCall]
+    v2 = CallList v0, -, v1 @0 tail
     Return v2
 }
 function f4 name="callList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
@@ -33,7 +33,7 @@ function f4 name="callList" parameters=[{type=anything}, {type=Array}] results=[
     Return v2
 }
 function f5 name="markedCallDirect" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = CallDirect v0 function=f0 [isDemotedTailCall]
+    v1 = CallDirect v0 function=f0 @0 tail
     Return v1
 }
 function f6 name="callDirect" parameters=[{type=anything}] results=[{type=anything}] {
@@ -41,7 +41,7 @@ function f6 name="callDirect" parameters=[{type=anything}] results=[{type=anythi
     Return v1
 }
 function f7 name="markedCallMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = CallMethod v0, v1 key="m" [isDemotedTailCall]
+    v2 = CallMethod v0, v1 key="m" @0 tail
     Return v2
 }
 function f8 name="callMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -50,7 +50,7 @@ function f8 name="callMethod" parameters=[{type=anything}, {type=anything}] resu
 }
 function f9 name="markedCallResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = ResolveCallTarget v0 argumentCount=1
-    v3 = CallResolved v0, v2, -, v1 [isDemotedTailCall]
+    v3 = CallResolved v0, v2, -, v1 @0 tail
     Return v3
 }
 function f10 name="callResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -60,7 +60,7 @@ function f10 name="callResolved" parameters=[{type=anything}, {type=anything}] r
 }
 function f11 name="markedCallForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
     v1 = GetArgument argumentIndex=0
-    v2 = CallForwardVarargs v1, v1 firstArgument=1 [isDemotedTailCall]
+    v2 = CallForwardVarargs v1, v1 firstArgument=1 @0 tail
     Return v2
 }
 function f12 name="callForwardVarargs" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
@@ -71,7 +71,7 @@ function f12 name="callForwardVarargs" role=GenericEntrypoint captures=[{type=fu
 function f13 name="markedCallMethodInRareCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
-    v3 = CallMethod v0, v1 key="m" [isDemotedTailCall]
+    v3 = CallMethod v0, v1 key="m" @0 tail
     Return v3
   b2():
     Return v1

@@ -184,6 +184,32 @@ enum class ProgramTableRule : uint32_t {
 
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramTableRule);
 
+// The record that a row of a table is written for.
+struct RowOwner {
+    RowOwner() = default;
+    RowOwner(FunctionID id)
+        : function(id)
+    {
+    }
+    RowOwner(LayoutID id)
+        : layout(id)
+    {
+    }
+    RowOwner(VariableID id)
+        : variable(id)
+    {
+    }
+    RowOwner(ModuleID id)
+        : module(id)
+    {
+    }
+
+    FunctionID function;
+    LayoutID layout;
+    VariableID variable;
+    ModuleID module;
+};
+
 constexpr size_t elementSizeOf(ProgramTableIndex index)
 {
     switch (index) {
@@ -209,7 +235,8 @@ struct TableEncoder {
     uint32_t typeOffset(TypeID) const;
     uint32_t dataNodeOf(DataID) const;
     FunctionID findEntrypoint(FunctionID) const;
-    uint32_t entrypointOf(FunctionID) const;
+    // The message of a failure reads: the function is <use> <owner>.
+    uint32_t entrypointOf(FunctionID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t checkedOffset(uint32_t offset) const;
     bool obfuscates() const { return build.options().obfuscates(); }
 
@@ -248,7 +275,7 @@ struct TableEncoder {
         writtenTables.set(static_cast<unsigned>(index));
     }
 
-    void fail(ProgramTableRule, LayoutID = { }, FunctionID = { }) const;
+    void fail(ProgramTableRule, LayoutID = { }, FunctionID = { }, const String& circumstances = { }) const;
 
     const ProgramTableInputs& inputs;
     const Program& program;

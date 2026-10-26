@@ -29,9 +29,11 @@ void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFl
 // Bun has no `then`, so it settles a promise and comes out of `await` as it went in. Beside the unknown object only the node of the operand lists it.
 ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext& context, const ValueFlowOperand& operand)
 {
-    if (!operand.node || !mayBeUnknownObject(context, context.valueOf(operand)))
+    if (!operand.node)
         return { };
-    ClimbingSet listed = context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node);
+    ClimbingSet listed = context.valueWithin(only(context, ValueFlowUniverse::markOfNamedBun()), operand.node);
+    if (mayBeUnknownObject(context, context.valueOf(operand)))
+        listed = context.unite(listed, context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node));
     return holdsSomething(context, listed) ? context.holding(listed) : ValueFlowNodeID();
 }
 

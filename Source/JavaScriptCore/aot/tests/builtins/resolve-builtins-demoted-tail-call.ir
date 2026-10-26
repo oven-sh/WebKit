@@ -11,7 +11,7 @@ function f0 name="parseInTailPosition" parameters=[{type=string}] results=[{type
     v2 = Call v1, -, v0
     ReturnCall v2 requirement=Allowed
 # CHECK-NOT: ReturnCall
-# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 [isDemotedTailCall]
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 @0 tail
 # CHECK-NEXT: Return v2
 }
 
@@ -19,23 +19,23 @@ function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     Return v2
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }
 
 function f2 name="markedParse" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=JSONParse
-    v2 = Call v1, -, v0 [isDemotedTailCall]
+    v2 = Call v1, -, v0 @0 tail
     Return v2
-# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 [isDemotedTailCall]
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 @0 tail
 }
 
 function f3 name="mapInTailPosition" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = Builtin builtin=ArrayPrototypeMap
     v3 = Call v2, v0, v1
     ReturnCall v3 requirement=Allowed
-# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0 [isDemotedTailCall]
+# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0 @0 tail
 # CHECK-NEXT: Return v3
 }
 
@@ -43,18 +43,18 @@ function f4 name="map" parameters=[{type=Array<anything, pristine[Storage, Names
     v2 = Builtin builtin=ArrayPrototypeMap
     v3 = Call v2, v0, v1
     Return v3
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }
 
 function f5 name="callInTailPosition" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Builtin builtin=FunctionPrototypeCall
     v4 = Call v3, v0, v1, v2
     ReturnCall v4 requirement=Allowed
-# CHECK: v4: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 [isDemotedTailCall]
+# CHECK: v4: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 @0 tail
 # FORWARDED-NOT: CallBuiltin
-# FORWARDED: v4: anything = Call v0, v1, v2 [isDemotedTailCall]
+# FORWARDED: v4: anything = Call v0, v1, v2 @0 tail
 # FORWARDED-NEXT: Return v4
 }
 
@@ -62,9 +62,9 @@ function f6 name="call" parameters=[{type=function}, {type=anything}, {type=anyt
     v3 = Builtin builtin=FunctionPrototypeCall
     v4 = Call v3, v0, v1, v2
     Return v4
-# FORWARDED-NOT: isDemotedTailCall
+# FORWARDED-NOT: @{{*}} tail
 # FORWARDED: v4: anything = Call v0, v1, v2
-# FORWARDED-NOT: isDemotedTailCall
+# FORWARDED-NOT: @{{*}} tail
 }
 
 function f7 name="applyInTailPosition" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
@@ -72,6 +72,6 @@ function f7 name="applyInTailPosition" parameters=[{type=function}, {type=anythi
     v4 = Call v3, v0, v1, v2
     ReturnCall v4 requirement=Allowed
 # FORWARDED-NOT: CallBuiltin
-# FORWARDED: v4: anything = CallList v0, v1, v2 [isDemotedTailCall]
+# FORWARDED: v4: anything = CallList v0, v1, v2 @0 tail
 # FORWARDED-NEXT: Return v4
 }

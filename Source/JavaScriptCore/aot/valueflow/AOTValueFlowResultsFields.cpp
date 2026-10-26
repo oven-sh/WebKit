@@ -630,7 +630,7 @@ struct FieldResults {
                     continue;
                 ValueID thisValue = function.at(entryBlock).parameters[*thisParameter];
                 for (const Value& value : function.values) {
-                    if (value.opcode == Opcode::PropSet && value.key() && definitionThroughSameValues(function, value.objectOperand()) == thisValue)
+                    if (value.opcode == Opcode::PropSet && value.key() && sameObjectThroughConversionsToObject(function, value.objectOperand()) == thisValue)
                         keys.append(value.key());
                 }
             }

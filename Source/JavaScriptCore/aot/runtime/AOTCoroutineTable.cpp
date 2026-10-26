@@ -36,6 +36,7 @@
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
 #include <wtf/CompactPointerTuple.h>
+#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -58,7 +59,7 @@ CoroutineTable::CoroutineTable(State& state)
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->asyncGeneratorPrototype());
     initializeCoroutineWords(vm);
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
-    state.caches->add(CacheKind::WeakByKey, "saved frames under validation"_s, *this);
+    state.caches->add(CacheKind::WeakByKey, "saved frames"_s, *this);
 }
 
 uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
@@ -110,12 +111,35 @@ template void CoroutineTable::visitRoots(SlotVisitor&);
 
 size_t CoroutineTable::removeDeadEntries(VM& vm, CollectionScope)
 {
+    // A dead word goes back onto the stack with the frame. There it must not name the next tenant of a cell that this collection frees.
+    const uint64_t replacement = validatesRuntime(vm) ? SavedFrame::poisonedWord : 0;
+    for (ListOfVisitedFrames& list : m_visitedFramesWithDeadWords) {
+        Locker locker { list.lock };
+        constexpr size_t prefetchDistance = 8;
+        for (size_t index = 0; index < list.frames.size(); ++index) {
+            if (index + prefetchDistance < list.frames.size()) {
+                __builtin_prefetch(list.frames[index + prefetchDistance].frame, 1);
+                __builtin_prefetch(list.frames[index + prefetchDistance].frame + 1, 1);
+            }
+            const VisitedFrameWithDeadWords& visited = list.frames[index];
+            visited.frame->overwriteDeadWords(visited.version, SavedFrameMap::fromFirstWord(visited.firstWordOfMap), replacement);
+        }
+        list.frames.clear();
+    }
+
     size_t numberOfDeadFrames = m_savedFramesForValidation.removeAllMatching([&](SavedFrame* frame) {
         return !vm.heap.isMarked(frame);
     });
     for (SavedFrame* frame : m_savedFramesForValidation)
         frame->poisonDeadUnlistedWords(vm);
     return numberOfDeadFrames;
+}
+
+void CoroutineTable::didVisitFrameWithDeadWords(SavedFrame* frame, uint32_t version, const uint32_t* firstWordOfMap)
+{
+    ListOfVisitedFrames& list = m_visitedFramesWithDeadWords[Thread::currentSingleton().uid() % m_visitedFramesWithDeadWords.size()];
+    Locker locker { list.lock };
+    list.frames.append({ frame, firstWordOfMap, version });
 }
 
 void CoroutineTable::didCreateSavedFrame(VM& vm, SavedFrame* frame)
@@ -211,7 +235,26 @@ std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) con
     CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     if (where.kind != CodeKind::Function)
         return std::nullopt;
-    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), offsetPlusOne - 1);
+    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), (offsetPlusOne & ~hasNoDeadWordsToOverwrite) - 1);
+}
+
+void SavedFrame::overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap& map)
+{
+    Instance::of(realm())->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
+}
+
+void SavedFrame::overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap& map, uint64_t replacement)
+{
+    if (m_version != versionAtVisit)
+        return;
+    RELEASE_ASSERT(!isOnStack());
+    willWrite();
+    forEachDeadWord(map, [&](uint64_t& word) {
+        word = replacement;
+        return true;
+    });
+    m_liveSlotMapOffsetPlusOne |= hasNoDeadWordsToOverwrite;
+    didWrite();
 }
 
 template<typename Visitor>

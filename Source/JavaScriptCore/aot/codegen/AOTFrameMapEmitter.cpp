@@ -158,6 +158,24 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
         return std::nullopt;
     uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.frameLayout().bytesDeadAtSuspensions / sizeof(uint64_t));
     size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
+    if (const std::optional<BitVector>& deadWords = params.value()->frameWordsDeadAcrossSuspension()) {
+        builder.setListsEveryLiveWord();
+        uint32_t lastLocationKept = static_cast<uint32_t>(numberOfWordsInFrame) - SavedFrame::numberOfWordsSkippedFor(deadWordsAtBottom);
+        // Every restore writes the save area anew.
+        uint32_t numberOfSaves = static_cast<uint32_t>(code.calleeSaveRegisterAtOffsetList().registerCount());
+        RELEASE_ASSERT(numberOfSaves >= SavedFrame::skippedAtTopFor(*savedRegisters));
+        for (uint32_t location = numberOfSaves + 1; location <= lastLocationKept; ++location) {
+            bool holdsReference = builder.listsReferenceIn(location);
+            RELEASE_ASSERT(!holdsReference || !deadWords->get(location));
+            if (!holdsReference && !deadWords->get(location))
+                builder.addOtherLiveWord(location);
+        }
+        if constexpr (SavedFrame::preservedRegister != InvalidGPRReg) {
+            bool isLive = *promiseLocation == SavedFrame::locationInRegister || params.usedRegisters().contains(SavedFrame::preservedRegister, IgnoreVectors);
+            if (isLive && !builder.listsReferenceIn(SavedFrame::locationInRegister))
+                builder.addOtherLiveWord(SavedFrame::locationInRegister);
+        }
+    }
     return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
 }
 

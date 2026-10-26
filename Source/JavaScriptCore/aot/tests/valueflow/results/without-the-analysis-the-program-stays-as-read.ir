@@ -43,7 +43,7 @@ function f1 name="identity" parameters=[{type=anything}] results=[{type=anything
 function f2 name="tailCall" parameters=[{type=anything}] results=[{type=number site=w0}] {
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=number site=w0}}]
-# CHECK: v1: anything = Call v0 [isDemotedTailCall]
+# CHECK: v1: anything = Call v0 @0 tail
 # CHECK-NEXT: [[tested]]: number = Check v1 castType=number site=w0
 # CHECK-NEXT: Return [[tested]]
 }

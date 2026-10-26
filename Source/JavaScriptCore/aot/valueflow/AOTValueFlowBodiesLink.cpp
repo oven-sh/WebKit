@@ -755,7 +755,7 @@ private:
         }
         AOT::sort(universe.m_modulesWithBodies);
 
-        universe.m_firstBuiltin = ValueFlowUniverse::untrackedObject().index() + 1;
+        universe.m_firstBuiltin = ValueFlowUniverse::markOfNamedBun().index() + 1;
         universe.m_firstModuleBuiltin = universe.m_firstBuiltin + m_program.builtins().builtinCount();
         universe.m_firstNamespace = universe.m_firstModuleBuiltin + universe.m_moduleBuiltins.size();
         universe.m_firstLayoutObject = universe.m_firstNamespace + m_program.modules.size();
@@ -1021,7 +1021,7 @@ private:
         universe.m_untrackedObjectAlone = maker.of(ValueFlowUniverse::untrackedObject());
         universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
         universe.m_objects = ValueSets::complement(universe.m_primitives);
-        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(universe.m_placeholdersAlone));
+        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.of(ValueFlowUniverse::markOfNamedBun()))));
         universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
         universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
         universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);

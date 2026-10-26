@@ -326,6 +326,19 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
     });
 }
 
+bool FlowResults::closuresGoUnnoticed(FunctionID closureFunction) const
+{
+    constexpr OptionSet<ObjectMutation> mutationsThatShowOrFill { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty, ObjectMutation::ChangePrototype };
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    if (!analyzed || !closuresAreNeverCompared(analyzed))
+        return false;
+    if (function(analyzed).closureUse == ClosureUse::CalledOnly)
+        return true;
+    return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, analyzed, [&](const AllocationClass& closures) {
+        return closures.impossibleMutations.containsAll(mutationsThatShowOrFill) && closures.addedKeysAreComplete && closures.addedKeys.isEmpty();
+    });
+}
+
 bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID key) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {

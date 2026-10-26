@@ -1238,7 +1238,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .callee = call.function(),
         .callPosition = call.position,
         .parent = call.inlineFrame,
-        .isTailCall = call.isDemotedTailCall(),
+        .isTailCall = !!call.isTailCall,
         .isConstruction = call.isConstruction(),
         .module = callee.module,
     }, callee);
@@ -1349,13 +1349,15 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
     }
 
     if (fullCallBlock) {
-        builder.setOrigin(call.origin());
+        Origin origin = call.origin();
+        // The ReturnCall that was demoted at the site owns this copy of the call.
+        if (siteReturnCall)
+            origin.isTailCall = false;
+        builder.setOrigin(origin);
         builder.moveToEndOf(fullCallBlock);
         Value fullCall = call;
         fullCall.setIsAfterInlinedHead(true);
-        // The ReturnCall that was demoted at the site owns this copy of the call.
-        if (siteReturnCall)
-            fullCall.setIsDemotedTailCall(false);
+        fullCall.isTailCall = origin.isTailCall;
         ValueID result = builder.append(WTF::move(fullCall));
         if (siteReturnCall) {
             siteReturnCall->setCallOperand(result);

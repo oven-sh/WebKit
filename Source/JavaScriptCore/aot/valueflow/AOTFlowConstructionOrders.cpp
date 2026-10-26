@@ -220,7 +220,7 @@ bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, std
         ValueID value = valuesToVisit.takeLast();
         if (isVisited.set(value.index()) || !program.typeOf(constructor, value).hasObjects())
             continue;
-        ValueID object = sameObjectThroughCasts(constructor, value);
+        ValueID object = sameObjectThroughConversionsToObject(constructor, value);
         if (std::ranges::contains(constructorRoots, object))
             continue;
 
@@ -295,6 +295,8 @@ struct ConstructionEventCollector {
 
     bool mayBeValue(ValueID stored) const { return !program.typeOf(function, stored).isUndefinedOrNull(); }
 
+    bool isObject(ValueID value) const { return escape.singleObject(value) == object || sameObjectThroughConversionsToObject(function, value) == root; }
+
     ConstructionEvent eventAt(ConstructionEventKind kind, const Use& use) const
     {
         return { .kind = kind, .point = useLists.pointOf(use), .origin = use.user, .operand = usedValueOf(function, use), .operandIndex = use.operandIndex };
@@ -354,7 +356,7 @@ struct ConstructionEventCollector {
         const Use& use = objectUse.use;
         if (use.kind != Use::Kind::Operand || storedOf(function.at(use.user).opcode) != use.operandIndex)
             return false;
-        return objectUse.retainedBy && objectUse.uses.containsOnly(namedStoreUses) && escape.singleObject(objectUse.retainedBy) == object;
+        return objectUse.retainedBy && objectUse.uses.containsOnly(namedStoreUses) && isObject(objectUse.retainedBy);
     }
 
     bool isStoredUnderNameOfObject(const Use& use) const
@@ -365,13 +367,13 @@ struct ConstructionEventCollector {
         std::optional<uint32_t> receiver = receiverOf(user.opcode);
         if (storedOf(user.opcode) != use.operandIndex || !receiver || accessEventOf(user.opcode, *receiver) != ConstructionEventKind::Store)
             return false;
-        return escape.singleObject(user.operand(*receiver)) == object;
+        return isObject(user.operand(*receiver));
     }
 
     bool isReadUnderNameOfObject(ValueID value) const
     {
         const Value& definition = function.at(sameObjectThroughCasts(function, value));
-        return accessOf(definition.opcode) == Access::Read && escape.singleObject(definition.operand(*receiverOf(definition.opcode))) == object;
+        return accessOf(definition.opcode) == Access::Read && isObject(definition.operand(*receiverOf(definition.opcode)));
     }
 
     bool mayHoldObject(ValueID value) const
@@ -390,7 +392,7 @@ struct ConstructionEventCollector {
         const Value& access = function.at(use.user);
         ConstructionEvent event = eventAt(kind, use);
         event.name = Value::opcodesWithField.contains(access.opcode) ? fieldName(program, { access.layout(), access.field() }) : ConstructionName { access.key(), { } };
-        event.isExact = escape.singleObject(event.operand) == object || isObjectWhereverItIsAllocated(event.operand);
+        event.isExact = isObject(event.operand) || isObjectWhereverItIsAllocated(event.operand);
         if (kind == ConstructionEventKind::Store) {
             ValueID stored = access.operand(*storedOf(access.opcode));
             event.storesValue = mayBeValue(stored);
@@ -447,7 +449,7 @@ struct ConstructionEventCollector {
         }
         if (isDirectOrIndirectCall(opcode)) {
             ConstructionEvent event = eventAt(ConstructionEventKind::Call, use);
-            event.isExact = escape.isExactUse(object, use);
+            event.isExact = isObject(event.operand) && escape.isOnlyOperandHolding(object, use);
             events.append(event);
             return;
         }

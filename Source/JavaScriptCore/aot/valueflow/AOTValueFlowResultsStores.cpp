@@ -689,7 +689,7 @@ static bool storesIntoThisOfConstructor(const Program& program, const Writer& wr
     std::optional<unsigned> thisParameter = function.thisParameterIndex();
     if (!function.constructedClass || !thisParameter)
         return false;
-    return definitionThroughSameValues(function, function.at(writer.statement.site).operand(*receiver)) == function.at(entryBlock).parameters[*thisParameter];
+    return sameObjectThroughConversionsToObject(function, function.at(writer.statement.site).operand(*receiver)) == function.at(entryBlock).parameters[*thisParameter];
 }
 
 uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const

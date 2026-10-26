@@ -32,6 +32,11 @@ ValueID sameObjectThroughCasts(const Function& function, ValueID value)
     return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); });
 }
 
+ValueID sameObjectThroughConversionsToObject(const Function& function, ValueID value)
+{
+    return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode) || opcode == Opcode::Convert || conversionsToObject.contains(opcode); });
+}
+
 ValueID definitionThroughUpcasts(const Function& function, ValueID value)
 {
     return stripCasts(function, value, [](Opcode opcode) { return opcode == Opcode::Upcast; });

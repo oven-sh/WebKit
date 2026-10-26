@@ -170,6 +170,7 @@ public:
 
     enum class Predecessors : bool { AreReleased, AreKept };
     void releaseSolvingState(Predecessors);
+    void removeFromEveryNode(ValueFlowObjectID lowMember);
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
@@ -282,6 +283,7 @@ private:
 
     struct Covering {
         ValueFlowObjectID placeholder;
+        bool isFirstOfPlaceholder { true };
         uint32_t covered { 0 };
         uint64_t lowMembersOfWhole { 0 };
         ValueSetID listedMembersOfWhole;

@@ -28,7 +28,7 @@ layout L11 name="StoredAfterCreation" fields=[{key="run" declared={type=anything
 # CHECK: layout L9 name="SecondOfTwo" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L10 name="PresenceObserved" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L11 name="StoredAfterCreation" fields=[{key="run"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
-function f0 name="neverRead" parameters=[{type=anything}] results=[{type=anything}] {
+function f0 name="neverRead" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
     Return v2
@@ -36,7 +36,7 @@ function f0 name="neverRead" parameters=[{type=anything}] results=[{type=anythin
 # CHECK: = NewObject -, v0 layout=L0 fields=[1]
 }
 
-function f1 name="onlyCalledAndEveryCallIsDirect" parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="onlyCalledAndEveryCallIsDirect" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
     v3 = CallDirect function=f13
@@ -45,7 +45,7 @@ function f1 name="onlyCalledAndEveryCallIsDirect" parameters=[{type=anything}] r
 # CHECK: = NewObject -, v0 layout=L1 fields=[1]
 }
 
-function f2 name="onlyCalledAndReadRemains" parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="onlyCalledAndReadRemains" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L2 fields=[0, 1]
     v3 = GetSlot v2, v2 key="run" receivers=[L2] level=Proven
@@ -55,14 +55,14 @@ function f2 name="onlyCalledAndReadRemains" parameters=[{type=anything}] results
 # CHECK: layout=L2 fields=[0, 1]
 }
 
-function f3 name="environmentField" parameters=[{type=anything}] results=[{type=anything}] {
+function f3 name="environmentField" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
     v2 = NewClosure v1 function=f11
     Return v2
 # CHECK: = NewObject -, v0 layout=L3 fields=[0]
 }
 
-function f4 name="lateEnvironmentStore" parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="lateEnvironmentStore" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L4 fields=[0]
     PutEnvironmentField v1, v0 layout=L4 field=1
     v3 = NewClosure v1 function=f12
@@ -71,7 +71,7 @@ function f4 name="lateEnvironmentStore" parameters=[{type=anything}] results=[{t
 # CHECK-NOT: PutEnvironmentField
 }
 
-function f5 name="sameKeyOnUntypedValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f5 name="sameKeyOnUntypedValue" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     v2 = NewClosure function=f13
     v3 = NewObject -, v2, v0 layout=L5 fields=[0, 1]
     v4 = PropGet v1 key="runLoose"
@@ -82,21 +82,21 @@ function f5 name="sameKeyOnUntypedValue" parameters=[{type=anything}, {type=anyt
 # CHECK: = PropGet v1 key="runLoose"
 }
 
-function f6 name="unknownReads" parameters=[{type=anything}] results=[{type=anything}] {
+function f6 name="unknownReads" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L6 fields=[0, 1]
     Return v2
 # CHECK: layout=L6 fields=[0, 1]
 }
 
-function f7 name="unknownWriters" parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="unknownWriters" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L7 fields=[0, 1]
     Return v2
 # CHECK: layout=L7 fields=[0, 1]
 }
 
-function f8 name="storeByNameThroughUnion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+function f8 name="storeByNameThroughUnion" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
     v2 = NewClosure function=f13
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -113,7 +113,7 @@ function f8 name="storeByNameThroughUnion" parameters=[{type=anything}, {type=bo
 # CHECK: PropSet
 }
 
-function f9 name="presenceObserved" parameters=[{type=anything}] results=[{type=anything}] {
+function f9 name="presenceObserved" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewClosure function=f13
     v2 = NewObject -, v1, v0 layout=L10 fields=[0, 1]
     v3 = PropHas v2 key="run" receivers=[L10]
@@ -121,7 +121,7 @@ function f9 name="presenceObserved" parameters=[{type=anything}] results=[{type=
 # CHECK: layout=L10 fields=[0, 1]
 }
 
-function f10 name="storedAfterCreation" parameters=[{type=anything}] results=[{type=anything}] {
+function f10 name="storedAfterCreation" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L11 fields=[0, 1]
     v2 = NewClosure function=f13
     PutSlot v1, v1, v2 key="run" receivers=[L11] level=Proven

@@ -50,11 +50,11 @@ static bool tellsNothingOfWhatItHolds(const Program& program, const Field& field
         && field.flow.location.deferral == ClosureDeferral::Unknown && !field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsHidden }) && program.at(field.key).kind == PropertyKeyKind::Text;
 }
 
-using FieldList = Vector<FieldReference, 2>;
+using FieldReferenceList = Vector<FieldReference, 2>;
 
-static FieldList findUntoldFields(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
+static FieldReferenceList findUntoldFields(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
 {
-    FieldList fields;
+    FieldReferenceList fields;
     ReceiverCandidates receivers = receiverCandidates(program, function, object);
     const LayoutList& layouts = receivers.isProven() ? receivers.proven : receivers.predicted;
     if (layouts.isEmpty() || layouts.size() > maxReceiversOfFieldRead)
@@ -72,7 +72,7 @@ static FieldList findUntoldFields(const Program& program, const Function& functi
 
 static void collectNamesAsked(const Program& program, const Function& function, Vector<NameAskedOfField>& found)
 {
-    UncheckedKeyHashMap<uint32_t, FieldList> fieldsRead;
+    UncheckedKeyHashMap<uint32_t, FieldReferenceList> fieldsRead;
     UncheckedKeyHashMap<uint32_t, FieldReference> firstFieldFilledWith;
     UncheckedKeyHashMap<uint32_t, LayoutID> allocatedInBlock;
     for (const Block& block : function.blocks) {
@@ -111,7 +111,7 @@ static void collectNamesAsked(const Program& program, const Function& function, 
             }
             if (access.opcode != Opcode::PropGet || !access.key() || program.typeOf(function, id) != Type::anything() || access.expected())
                 continue;
-            FieldList fields = findUntoldFields(program, function, access.objectOperand(), access.key());
+            FieldReferenceList fields = findUntoldFields(program, function, access.objectOperand(), access.key());
             if (!fields.isEmpty())
                 fieldsRead.add(id.index() + 1, WTF::move(fields));
         }

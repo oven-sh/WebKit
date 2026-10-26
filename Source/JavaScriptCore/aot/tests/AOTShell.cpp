@@ -14,6 +14,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTVector.h"
+#include "AbstractModuleRecord.h"
 #include "ConsoleClient.h"
 #include "CustomGetterSetter.h"
 #include "Exception.h"
@@ -384,6 +385,20 @@ std::span<const ASCIILiteral> shellFunctionNames()
 bool isKeyOfCompiledModule(const String& key)
 {
     return !!findModule(key);
+}
+
+JSPromise* fetchCompiledModule(JSGlobalObject* globalObject, const String& key)
+{
+    std::optional<ModuleID> module = findModule(key);
+    if (!module)
+        return nullptr;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    AbstractModuleRecord* record = moduleRecord(globalObject, *module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSPromise* source = JSPromise::create(vm, globalObject->promiseStructure());
+    source->fulfill(vm, record);
+    return source;
 }
 
 static ModuleID moduleOfModuleObject(JSGlobalObject* globalObject, JSObject* module)

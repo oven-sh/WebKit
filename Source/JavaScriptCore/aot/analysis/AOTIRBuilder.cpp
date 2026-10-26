@@ -281,7 +281,9 @@ ValueID IRBuilder::addValue(Value&& value)
 void IRBuilder::prepare(Value& value)
 {
     RELEASE_ASSERT(value.opcode != Opcode::Parameter);
+    bool isTailCall = value.isTailCall || m_origin.isTailCall;
     value.setOrigin(m_origin);
+    value.isTailCall = isTailCall;
     TypingMemo* memo = m_analyses ? m_analyses->typingMemo() : nullptr;
     value.type = resultTypeOf(m_context.program, m_function, value, m_types, memo);
     if (keepsExpectedTypes(m_context.program) && !value.expected())

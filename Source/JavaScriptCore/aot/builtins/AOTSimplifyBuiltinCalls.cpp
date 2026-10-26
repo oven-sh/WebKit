@@ -745,7 +745,6 @@ static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const Bu
     for (const CallWithLiteralParts& match : matches) {
         const Value& call = function.at(match.call.value);
         Value rewritten = makeBuiltinCall(match.form, BuiltinCallForm::Whole, { { }, match.arguments }, { call.expectedResult(), call.accessSite(), call.allocationSite() });
-        rewritten.setIsDemotedTailCall(call.isDemotedTailCall());
         replaceKeepingType(context, match.call.value, WTF::move(rewritten));
     }
     context.analyses.didChangeValues();

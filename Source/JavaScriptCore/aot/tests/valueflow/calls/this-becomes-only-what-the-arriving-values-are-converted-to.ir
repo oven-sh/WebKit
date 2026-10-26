@@ -1,0 +1,33 @@
+# function ofObject() { return this }   function ofNothing() { return this }   function ofText() { return this }   in code that is not strict
+# ToThis answers with the global object where undefined or null arrives and with a wrapper where a primitive arrives, and with neither where only objects arrive.
+# RUN: valueflow-apply
+# CHECK: function f1 name="ofObject" {{*}}thisType={type=L0} results=[{type=L0}]
+# CHECK: function f2 name="ofNothing" {{*}}thisType={type=undefined} results=[{type=builtin(GlobalThis)}]
+# CHECK: function f3 name="ofText" {{*}}results=[{type=String}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = Call v1, v0
+    v3 = NewClosure function=f2
+    v4 = Call v3, -
+    v5 = NewClosure function=f3
+    v6 = String string="text"
+    v7 = Call v5, v6
+    Return v7
+}
+function f1 name="ofObject" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = ToThis v0
+    Return v1
+}
+function f2 name="ofNothing" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = ToThis v0
+    Return v1
+}
+function f3 name="ofText" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = ToThis v0
+    Return v1
+}

@@ -759,6 +759,8 @@ HeatClass heatClassOf(FunctionPassContext& context, BlockID block)
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
 static constexpr size_t sitesInLongHashRun = 1024;
 
+constexpr OpcodeSet callOpcodes = builtinCallOpcodes | OpcodeSet { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs, Opcode::CallMethod, Opcode::CallResolved, Opcode::AwaitCallBySavingFrame };
+
 struct OutliningSite {
     bool isRegion() const { return !!exitBlock; }
 
@@ -770,6 +772,8 @@ struct OutliningSite {
     BlockID exitBlock { };
     std::optional<uint32_t> exitArgument { };
     ValueID root { };
+    // Whether the operations that a stack trace can show stand for a call in tail position: all of them do or none does.
+    std::optional<bool> isTailCall { };
     bool rootIsUsed { false };
     bool canPayOff { false };
     uint32_t orderOfEntryBlock { 0 };
@@ -1342,8 +1346,8 @@ struct OutliningScan {
         const Terminator& terminator = function.at(useLists.blockOf(id)).terminator;
         if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)
             return false;
-        // The mark hides the frame that makes the call, which in an outlined body is not the frame of the source function.
-        if (FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall())
+        // A call in tail position that returns here has one frame more than the program wrote. A body would add another.
+        if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {
             return field.kind == PayloadKind::Origin && value.payloadWordAt(field.firstWord + 1);
@@ -1542,10 +1546,16 @@ struct OutliningScan {
         return site.root ? function.at(site.root).origin() : function.at(site.entryBlock).terminator.origin();
     }
 
-    bool isShownAt(ValueID id, Origin origin)
+    bool isShownAt(OutliningSite& site, ValueID id, Origin origin)
     {
         const Value& value = function.at(id);
-        return value.inlineFrame == origin.inlineFrame && (value.position == origin.position || !(analyses.mayThrow(id) || analyses.mayCallUnknownCode(id)));
+        if (value.inlineFrame != origin.inlineFrame)
+            return false;
+        if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
+            return true;
+        if (!site.isTailCall)
+            site.isTailCall = site.root ? origin.isTailCall : !!value.isTailCall;
+        return value.position == origin.position && value.isTailCall == *site.isTailCall;
     }
 
     bool findRegionBlocks(OutliningSite& region, uint32_t& numberOfValues)
@@ -1568,7 +1578,7 @@ struct OutliningScan {
             if (block.terminator.inlineFrame != origin.inlineFrame)
                 return false;
             for (ValueID id : block.values) {
-                if (!isRematerializable(function.at(id)) && (!isMovable(id) || !isShownAt(id, origin)))
+                if (!isRematerializable(function.at(id)) && (!isMovable(id) || !isShownAt(region, id, origin)))
                     return false;
             }
 
@@ -1593,7 +1603,7 @@ struct OutliningScan {
             bool isConstant = isRematerializable(function.at(id));
             if (valuesInSites.quickGet(id.index()))
                 break;
-            if (!isConstant && (extension == BackwardExtension::ConstantsOnly || !isMovable(id) || !isShownAt(id, origin)))
+            if (!isConstant && (extension == BackwardExtension::ConstantsOnly || !isMovable(id) || !isShownAt(site, id, origin)))
                 break;
             if (extension == BackwardExtension::UsedValues && !useLists.useCount(id))
                 break;
@@ -2335,7 +2345,9 @@ static void replaceRegion(IRBuilder& builder, const OutliningSite& site, Functio
             constantPositions.append(position);
     }
 
-    builder.setOrigin(function.at(site.entryBlock).terminator.origin());
+    Origin origin = function.at(site.entryBlock).terminator.origin();
+    origin.isTailCall = site.isTailCall.value_or(origin.isTailCall);
+    builder.setOrigin(origin);
     builder.splitBlock({ site.entryBlock, site.firstIndex });
     ProgramPoint point { site.entryBlock, site.firstIndex };
     for (uint32_t position : constantPositions) {

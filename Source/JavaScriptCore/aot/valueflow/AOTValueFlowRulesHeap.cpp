@@ -426,24 +426,6 @@ void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, con
     callAccessors(setters, ValueFlowCallKind::Set, receiver, &value, { });
 }
 
-bool HeapRule::isBunNamedByOperations(const ValueFlowOperand& object)
-{
-    const ValueFlowStatement* statement = m_context.statementOfThisTurn();
-    if (!statement || !statement->function || !statement->site || !object.node)
-        return false;
-    const Function& function = m_program.at(statement->function);
-    const Value& value = function.at(statement->site);
-    std::span<const ValueFlowOperand> operands = m_context.operandsOf(*statement);
-    for (uint32_t index = 0; index < operands.size() && index < value.numberOfOperands(); ++index) {
-        if (operands[index].node != object.node || !value.operand(index))
-            continue;
-        BuiltinID named = entryNamedByOperations(m_program, function, value.operand(index));
-        if (named && m_builtins.canonicalID(named) == Builtins::Bun)
-            return true;
-    }
-    return false;
-}
-
 ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)

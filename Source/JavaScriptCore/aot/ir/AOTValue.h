@@ -36,6 +36,7 @@ public:
         : position(other.position)
         , inlineFrame(other.inlineFrame)
         , flags(other.flags)
+        , isTailCall(other.isTailCall)
     {
         copyWordsFrom(other);
     }
@@ -43,6 +44,7 @@ public:
         : position(other.position)
         , inlineFrame(other.inlineFrame)
         , flags(other.flags)
+        , isTailCall(other.isTailCall)
     {
         moveWordsFrom(other);
     }
@@ -55,6 +57,7 @@ public:
         position = other.position;
         inlineFrame = other.inlineFrame;
         flags = other.flags;
+        isTailCall = other.isTailCall;
         copyWordsFrom(other);
         return *this;
     }
@@ -66,6 +69,7 @@ public:
         position = other.position;
         inlineFrame = other.inlineFrame;
         flags = other.flags;
+        isTailCall = other.isTailCall;
         moveWordsFrom(other);
         return *this;
     }
@@ -92,10 +96,12 @@ public:
     uint32_t position { noPosition };
     uint32_t inlineFrame : 24 { 0 };
     uint32_t flags : 8 { 0 };
+    // The operation is a call in tail position that returns here, or stands for a part of one. A stack trace leaves out the frame that makes it.
+    uint8_t isTailCall : 1 { false };
 private:
     uint8_t m_numberOfInlinePayloadWords : 2 { 0 };
     uint8_t m_hasOutOfLineWords : 1 { false };
-    uint8_t : 2;
+    uint8_t : 1;
     uint8_t m_numberOfInlineOperands : 3 { 0 };
 
 public:
@@ -235,11 +241,12 @@ public:
     }
 
     bool hasPosition() const { return position != noPosition; }
-    Origin origin() const { return { position, inlineFrame }; }
+    Origin origin() const { return { position, inlineFrame, !!isTailCall }; }
     void setOrigin(Origin origin)
     {
         position = origin.position;
         inlineFrame = origin.inlineFrame;
+        isTailCall = origin.isTailCall;
     }
 
     uint32_t payloadWordAt(unsigned word) const

@@ -15,7 +15,7 @@ layout L5 name="ListedReceiver" fields=[{key="kind" declared={type=anything} fla
 # CHECK: layout L2 name="BesideStoreIntoOtherLayout" fields=[{key="mark"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L4 name="BesideStoreIntoListedReceivers" fields=[{key="kind"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 
-function f0 name="storedThroughAnyValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f0 name="storedThroughAnyValue" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PropSet v1, v0 key="id" mode=Strict
     Return v2
@@ -23,7 +23,7 @@ function f0 name="storedThroughAnyValue" parameters=[{type=anything}, {type=anyt
 # CHECK-NEXT: PropSet v1, v0 key="id"
 }
 
-function f1 name="definedThroughAnyObject" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+function f1 name="definedThroughAnyObject" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
     v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     PropDefine v1, v0 key="tag"
     Return v2
@@ -31,7 +31,7 @@ function f1 name="definedThroughAnyObject" parameters=[{type=anything}, {type=ob
 # CHECK-NEXT: PropDefine v1, v0 key="tag"
 }
 
-function f2 name="besideStoreIntoOtherLayout" parameters=[{type=anything}, {type=L3}] results=[{type=anything}] {
+function f2 name="besideStoreIntoOtherLayout" parameters=[{type=number}, {type=L3}] results=[{type=anything}] {
     v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     PropSet v1, v0 key="mark" mode=Strict
     Return v2
@@ -39,7 +39,7 @@ function f2 name="besideStoreIntoOtherLayout" parameters=[{type=anything}, {type
 # CHECK-NEXT: PropSet v1, v0 key="mark"
 }
 
-function f3 name="besideStoreIntoListedReceivers" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f3 name="besideStoreIntoListedReceivers" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     v2 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
     PropSet v1, v0 key="kind" mode=Strict receivers=[L5]
     Return v2

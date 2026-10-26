@@ -185,7 +185,7 @@ void ArgumentsEmitter::generateCallForwardVarargs(const ValueContext& value)
     Pointer list = restList(value->firstArgument());
     CallEmitter& calls = emitter<CallEmitter>();
     if (!value.returnCall()) {
-        define(value, calls.callWithList(value, callee, thisValue, count, list, { .isTailCall = value->isDemotedTailCall() }));
+        define(value, calls.callWithList(value, callee, thisValue, count, list));
         return;
     }
 

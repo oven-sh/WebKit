@@ -63,7 +63,7 @@ static_assert(static_cast<uint32_t>(StepArrayIteratorResult::Value) == static_ca
 namespace {
 
 enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
-enum class IterationOrigin : uint8_t { Source, Spread };
+enum class IterationOrigin : uint8_t { Source, Spread, Delegation };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
 // Proven: the plan has one arm, the arm has no test, and closing does nothing.
 enum class ExpandedIterations : uint8_t { All, OnlyProven };
@@ -273,10 +273,11 @@ struct IterationExpansion {
     ValueID appendRequireObject(ValueID value, RuntimeErrorKind kind) { return builder.append(makeWith(Opcode::RequireObject, { value }, &Value::setRuntimeError, kind)); }
     ValueID appendUnspecifiedLike(ValueID model) { return builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, function.at(model).type)); }
     ValueID appendAwaitIfAsync(IteratorKind kind, ValueID value) { return kind == IteratorKind::Async ? appendAwait(builder, value) : value; }
-    ValueID appendIteratorMethodCall(ValueID method, ValueID iterable) { return appendRequireObject(appendCall(method, iterable, { }), RuntimeErrorKind::IteratorIsNotAnObject); }
+    ValueID appendIteratorMethodCall(ValueID method, ValueID iterable, RuntimeErrorKind errorKind = RuntimeErrorKind::IteratorIsNotAnObject) { return appendRequireObject(appendCall(method, iterable, { }), errorKind); }
     IRBuilder::ProvenBranch branchOnInRange(const ArmState& state, ValueID length) { return builder.emitBranchWithProof(builder.append(Opcode::Less, { state.position->anyDefinition, length })); }
     IRBuilder::BranchBlocks branchOnNotStepped(ValueID status) { return builder.emitBranch(appendIsEqualToInteger(status, GeneratorStepStatus::NotStepped), BlockFrequency::Rare, BlockFrequency::Normal); }
-    void emitThrowOfMissingThrowMethod() { builder.emitThrow(builder.append(makeWith(Opcode::NewRuntimeError, { }, &Value::setRuntimeError, RuntimeErrorKind::IteratorWithoutThrowMethod))); }
+    void emitThrow(RuntimeErrorKind kind) { builder.emitThrow(builder.append(makeWith(Opcode::NewRuntimeError, { }, &Value::setRuntimeError, kind))); }
+    void emitThrowOfMissingThrowMethod() { emitThrow(RuntimeErrorKind::IteratorWithoutThrowMethod); }
 
     ValueID appendCall(ValueID callee, ValueID thisValue, std::span<const ValueID> arguments)
     {
@@ -393,6 +394,8 @@ static Vector<Iteration> collectIterations(FunctionPassContext& pass)
     Vector<Iteration> iterations;
     forEachValueSite(pass.analyses, function, { Opcode::IteratorOpen }, [&](const ValueSite& open) {
         Iteration iteration { .open = open.value, .kind = function.at(open.value).iteratorKind() };
+        if (function.at(open.value).isDelegating())
+            iteration.origin = IterationOrigin::Delegation;
         for (const Use& use : pass.analyses.useLists().usesOf(open.value)) {
             if (use.kind == Use::Kind::BlockSubject) {
                 RELEASE_ASSERT(function.at(use.block).role == BlockRole::IterationCleanup);
@@ -1057,10 +1060,13 @@ static bool isOpenedBySharedFunction(IterationExpansion& expansion, ValueID iter
     return !expansion.program.typeOf(expansion.function, iterable).layouts;
 }
 
-static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable)
+enum class SyncIteratorUse : uint8_t { Stepped, WrappedForAsyncIteration };
+
+static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
 {
     IRBuilder& builder = expansion.builder;
-    if (isOpenedBySharedFunction(expansion, iterable)) {
+    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
+    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
         ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
         return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
     }
@@ -1069,11 +1075,27 @@ static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID it
     IRBuilder::ProvenBranch branch = expansion.branchOnType(expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
 
     builder.moveToEndOf(branch.notTaken);
-    builder.append(makeWith(Opcode::ThrowNotIterable, { iterable }, &Value::setIsSpread, expansion.origin == IterationOrigin::Spread));
-    builder.emitUnreachable();
+    if (isWrapped)
+        expansion.emitThrow(RuntimeErrorKind::NoSyncIteratorForAsyncIteration);
+    else if (expansion.origin == IterationOrigin::Delegation) {
+        expansion.appendCall(branch.provenOnNotTaken, iterable, { });
+        expansion.emitThrow(RuntimeErrorKind::IteratorIsNotAnObject);
+    } else {
+        builder.append(makeWith(Opcode::ThrowNotIterable, { iterable }, &Value::setIsSpread, expansion.origin == IterationOrigin::Spread));
+        builder.emitUnreachable();
+    }
 
     builder.moveToEndOf(branch.taken);
-    ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable);
+    if (!isWrapped && expansion.origin != IterationOrigin::Source) {
+        // The engine's spread and `yield*` read `next` of whatever the method returns, and call it.
+        IRBuilder::ProvenBranch made = expansion.branchOnType(expansion.appendCall(branch.provenOnTaken, iterable, { }), TypeTable::object, BlockFrequency::Normal, BlockFrequency::Rare);
+        builder.moveToEndOf(made.notTaken);
+        expansion.appendCall(expansion.appendPropGet(made.provenOnNotTaken, BuiltinNames::next), made.provenOnNotTaken, { });
+        expansion.emitThrow(RuntimeErrorKind::IteratorIsNotAnObject);
+        builder.moveToEndOf(made.taken);
+        return { made.provenOnTaken, expansion.appendPropGet(made.provenOnTaken, BuiltinNames::next), { } };
+    }
+    ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable, isWrapped ? RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject : RuntimeErrorKind::IteratorIsNotAnObject);
     return { iterator, expansion.appendPropGet(iterator, BuiltinNames::next), { } };
 }
 
@@ -1081,7 +1103,7 @@ static ValueID openWrappedIterator(IterationExpansion& expansion, ValueID iterab
 {
     if (isOpenedBySharedFunction(expansion, iterable))
         return appendCallOfSharedFunction(expansion, OutlinedIteration::OpenWrappedIterator, singleElementSpan(iterable));
-    OpenedIterator sync = openSyncIterator(expansion, iterable);
+    OpenedIterator sync = openSyncIterator(expansion, iterable, SyncIteratorUse::WrappedForAsyncIteration);
     return expansion.builder.append(Opcode::CreateAsyncFromSyncIterator, { sync.iterator, sync.next });
 }
 

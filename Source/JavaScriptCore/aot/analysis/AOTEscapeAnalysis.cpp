@@ -681,17 +681,18 @@ bool EscapeAnalysis::isExactUse(ObjectID object, const Use& use) const
 {
     if (use.kind != Use::Kind::Operand)
         return false;
-    const Value& user = m_function.at(use.user);
-    if (singleObject(user.operand(use.operandIndex)) != object)
-        return false;
+    return singleObject(m_function.at(use.user).operand(use.operandIndex)) == object && isOnlyOperandHolding(object, use);
+}
 
-    bool isExact = true;
-    user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+bool EscapeAnalysis::isOnlyOperandHolding(ObjectID object, const Use& use) const
+{
+    bool isOnlyOne = true;
+    m_function.at(use.user).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (operandIndex == use.operandIndex)
             return;
-        isExact &= !pointsTo(operand).objects.contains(object);
+        isOnlyOne &= !pointsTo(operand).objects.contains(object);
     });
-    return isExact;
+    return isOnlyOne;
 }
 
 EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) const

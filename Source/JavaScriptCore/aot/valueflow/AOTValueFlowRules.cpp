@@ -51,6 +51,34 @@ static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(statement.result, context.maker().intersect(unknownValue(context, ValueFlowUnknownSource::UncheckedConversionOfUntracked), context.universe().objects()));
 }
 
+static void runConversionToObject(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (statement.thrown)
+        context.add(statement.thrown, only(context, ValueFlowUniverse::unknownObject()));
+    if (!statement.result)
+        return;
+
+    auto mayBe = [&](ClimbingSet value, uint16_t primitives) {
+        if ((primitives & Primitive::AnyString && context.meet(value, universe.strings())) || (primitives & Primitive::AnySymbol && context.meet(value, universe.symbols())))
+            return true;
+        for (uint16_t rest = primitives; rest; rest &= rest - 1) {
+            if (context.contains(value, ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(rest & -rest))))
+                return true;
+        }
+        return false;
+    };
+    ClimbingSet value = context.valueOf(context.operandsOf(statement)[0]);
+    context.add(statement.result, context.restrict(value, universe.objects()));
+    for (uint32_t ordinal = 0; ordinal < std::size(wrappersOfPrimitives); ++ordinal) {
+        ValueFlowObjectID wrapper = universe.siteObject(statement, ordinal);
+        if (wrapper && mayBe(value, wrappersOfPrimitives[ordinal].first))
+            context.add(statement.result, only(context, wrapper));
+    }
+    if (statement.opcode == Opcode::ToThis && mayBe(value, Primitive::Undefined | Primitive::Null) && !isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
+        context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
+}
+
 static void runNewDictionary(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -369,6 +397,8 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     v(SuperConstruct, runCall) \
     v(SuperConstructList, runCall) \
     v(Convert, runConvert) \
+    v(ToObject, runConversionToObject) \
+    v(ToThis, runConversionToObject) \
     v(NewDictionary, runNewDictionary) \
     v(NewClass, runNewClass) \
     v(DefineMethod, runDefineMethod) \

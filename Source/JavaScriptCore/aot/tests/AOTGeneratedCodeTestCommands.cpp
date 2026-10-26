@@ -20,6 +20,7 @@
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSavedFrameMap.h"
 #include "AOTSchemaEnums.h"
 #include "AOTScratchRegisterChecker.h"
 #include "AOTSort.h"
@@ -239,8 +240,29 @@ static void printCode(PrintStream& out, const CompiledCode& code)
         out.print(" provenToFitOnStack");
     if (!code.frame.hasFrameRecord)
         out.print(" noFrameRecord");
-    if (!sites.frameMapWords.isEmpty())
-        out.print(" deadAtSuspensions=", code.frame.bytesDeadAtSuspensions);
+    if (!sites.frameMapWords.isEmpty()) {
+        // For each map: the references that it lists, and the other live words, if it lists every live word.
+        out.print(" deadAtSuspensions=", code.frame.bytesDeadAtSuspensions, " liveWordsInMaps=");
+        CommaPrinter comma(","_s);
+        for (uint32_t offset = 0; offset < sites.frameMapWords.size();) {
+            SavedFrameMap map = *SavedFrameMap::tryCreate(sites.frameMapWords.span(), offset);
+            offset += map.numberOfWords();
+            unsigned numberOfReferences = 0;
+            unsigned numberOfOtherLiveWords = 0;
+            auto count = [](unsigned& number) {
+                return [&number](uint32_t) {
+                    ++number;
+                    return true;
+                };
+            };
+            map.forEachValue(count(numberOfReferences));
+            map.forEachNarrowReference(count(numberOfReferences));
+            map.forEachOtherLiveWord(count(numberOfOtherLiveWords));
+            out.print(comma, numberOfReferences);
+            if (map.listsEveryLiveWord())
+                out.print("+", numberOfOtherLiveWords);
+        }
+    }
     out.println();
 }
 

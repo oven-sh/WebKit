@@ -294,8 +294,8 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setIsConstruction(request.isConstruction);
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
-    call.setIsDemotedTailCall(request.isDemotedTailCall);
     call.setOrigin(insertion.origin);
+    call.isTailCall |= request.isTailCall;
     return call;
 }
 
@@ -1545,7 +1545,7 @@ struct CallResolver {
             .isConstruction = !!newTarget,
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
-            .isDemotedTailCall = !newTarget && expansion.isTailCall(),
+            .isTailCall = !newTarget && expansion.isTailCall(),
         });
     }
 
@@ -2004,7 +2004,7 @@ struct CallResolver {
                 .accessSite = original.accessSite(),
                 .isNeverInlined = original.isNeverInlined(),
                 .isAlwaysInlined = original.isAlwaysInlined(),
-                .isDemotedTailCall = FlagMask::isDemotedTailCall(original.opcode) && original.isDemotedTailCall(),
+                .isTailCall = !!original.isTailCall,
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
             becomeUpcast(function, site.position.value, result);
@@ -2457,8 +2457,7 @@ struct CallResolver {
             }
             Value call = expansion.original();
             convertListCall(call, arguments.span());
-            if (FlagMask::isDemotedTailCall(call.opcode))
-                call.setIsDemotedTailCall(expansion.isTailCall());
+            call.isTailCall = expansion.isTailCall();
             expansion.finishArm(expansion.append(WTF::move(call)));
             expansion.end();
         };
@@ -3314,7 +3313,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         ValueID thisValue = testsCallee ? call.thisValueOperand() : use->operands.receiver;
         AccessSiteID accessSite = call.accessSite();
         bool isNeverInlined = call.isNeverInlined();
-        bool isDemotedTailCall = call.isDemotedTailCall();
+        bool isTailCall = call.isTailCall;
         Vector<ValueID, 8> arguments(call.variadicOperands());
 
         Vector<ValueID, 8> captures;
@@ -3330,7 +3329,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             .arguments = arguments.span(),
             .accessSite = accessSite,
             .isNeverInlined = isNeverInlined,
-            .isDemotedTailCall = isDemotedTailCall,
+            .isTailCall = isTailCall,
         });
         break;
     }

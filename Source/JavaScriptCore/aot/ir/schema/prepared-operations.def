@@ -74,7 +74,7 @@ operation GetArgument (argumentIndex: UInt32) -> unknown ; none
 operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none
 operation CreateRest (firstArgument: UInt32, allocationSite?: AllocationSite, storage: AllocationStorage) -> allocation(Array) ; Allocates ; interpreted = Allocation ; allocatesInline = true ; runtime = NewArray
 operation GetMyArgumentByVal (property: Any/Converted, firstArgument: UInt32) [readsArgumentsObject] -> unknown ; CreatesString reads(NamedProperties) ; runtime = GetFromArguments
-operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) [isDemotedTailCall] -> unknown ; unknownCode by Call ; accessClass = IndirectCall
+operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall
 operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
 
 family Environment Prepared..Placed
@@ -84,7 +84,7 @@ operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; w
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 
 family BuiltinCall Prepared..Placed
-operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDemotedTailCall isReflectConstructSyntax] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
+operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isReflectConstructSyntax] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
 operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none
 operation ToInt32 (value: Number/inspects) -> natural(int32) ; none ; runtime = ToInt32
 operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32
@@ -121,7 +121,7 @@ operation IsUnmodifiedAsyncGenerator (value: Object/inspects) -> natural(boolean
 operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects) -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame
 operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseState) ; boundTo = Frame ; branches = May ; replaces = AwaitBySavingFrame
 operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
-operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, arguments...: Declared/retains, accessSite?: AccessSite) [isDemotedTailCall] -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect
+operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, arguments...: Declared/retains, accessSite?: AccessSite) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
 operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable)) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
 operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame

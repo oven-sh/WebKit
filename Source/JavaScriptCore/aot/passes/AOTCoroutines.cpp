@@ -1263,7 +1263,6 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
         value.setOrigin(call.origin());
         value.setAccessSite(call.accessSite());
         value.setExpected(expected);
-        value.setIsDemotedTailCall(call.isDemotedTailCall());
     };
     Value successor;
     becomeAwaitOfCall(successor);

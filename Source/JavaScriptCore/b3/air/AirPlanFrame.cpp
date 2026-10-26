@@ -110,6 +110,7 @@ private:
     unsigned wordOf(const FrameSite&, const MoveAtFrameSite&) const;
     WordsAtFrameSite chooseWords(const FrameSite&) const;
     void rewriteFrameSites();
+    void reportWordsDeadAcrossSuspensions() const;
 
     Code& m_code;
     const StackColoring& m_coloring;
@@ -165,8 +166,41 @@ void FramePlanner::run()
             placeFrame(true);
     }
     rewriteFrameSites();
+    reportWordsDeadAcrossSuspensions();
     m_code.setFrameLayout(WTF::move(m_layout));
     m_code.setStackIsAllocated(true);
+}
+
+void FramePlanner::reportWordsDeadAcrossSuspensions() const
+{
+    if (m_coloring.spillSlotsLiveAcrossEachSuspension.isEmpty() || !m_layout.hasFrameRecord || m_layout.slotArea != SlotArea::BelowFrameRecord)
+        return;
+
+    auto removeWordsOf = [](BitVector& words, const StackSlot* slot) {
+        const unsigned end = bytesBelowFramePointer(slot);
+        RELEASE_ASSERT(slot->offsetFromFP() < 0 && slot->byteSize() <= end);
+        for (unsigned word = (end - slot->byteSize()) / wordSize + 1; word <= (end + wordSize - 1) / wordSize; ++word)
+            words.quickClear(word);
+    };
+
+    const unsigned numberOfWords = m_code.frameSize() / wordSize;
+    BitVector wordsOutsideLockedSlots(numberOfWords + 1);
+    for (unsigned word = 1; word <= numberOfWords; ++word)
+        wordsOutsideLockedSlots.quickSet(word);
+    for (const StackSlot* slot : m_code.stackSlots()) {
+        if (slot->isLocked() && !slot->isDeadAtSuspensions())
+            removeWordsOf(wordsOutsideLockedSlots, slot);
+    }
+
+    for (const auto& [suspension, liveSlots] : m_coloring.spillSlotsLiveAcrossEachSuspension) {
+        BitVector deadWords = wordsOutsideLockedSlots;
+        for (size_t slotIndex : liveSlots) {
+            const StackSlot* slot = m_code.stackSlots()[slotIndex];
+            if (slot->isSpill())
+                removeWordsOf(deadWords, slot);
+        }
+        suspension->as<StackmapValue>()->setFrameWordsDeadAcrossSuspension(WTF::move(deadWords));
+    }
 }
 
 void FramePlanner::planWithoutFrame()

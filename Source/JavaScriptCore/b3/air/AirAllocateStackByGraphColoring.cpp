@@ -558,8 +558,11 @@ void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bo
                 }
                 removeDefs(group);
             }
+            BitVector& liveSlots = coloring.spillSlotsLiveAcrossEachSuspension.add(block->at(instIndex).origin, BitVector()).iterator->value;
+            liveSlots.ensureSize(code.stackSlots().size());
             workset.forEachSetBit([&](unsigned slotIndex) {
                 coloring.spillSlotsLiveAcrossSuspensions.set(slotIndex);
+                liveSlots.quickSet(slotIndex);
             });
             removeDefs(groupBehind);
         }

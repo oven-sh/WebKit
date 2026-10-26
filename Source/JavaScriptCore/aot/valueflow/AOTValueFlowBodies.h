@@ -89,6 +89,8 @@ public:
 
     static constexpr ValueFlowObjectID unknownObject() { return ValueFlowObjectID(numberOfPrimitiveKinds); }
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }
+    // Goes beside Bun from a read of Bun under its name, along every edge but those through properties of the unknown object. Rules and results never see it in a value.
+    static constexpr ValueFlowObjectID markOfNamedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 2); }
     ValueFlowObjectID objectOf(BuiltinID builtin) const { return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index()); }
     ValueFlowObjectID objectOf(BuiltinID, ModuleID) const;
     void appendObjectsOf(BuiltinID, Vector<ValueFlowObjectID, 32>&) const;
@@ -521,6 +523,16 @@ struct ValueFlowBody {
 ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
 bool startsWithoutValueInSolve(const Program&, const Variable&);
+
+// In the order of the sites of a conversion to an object.
+inline constexpr std::pair<uint16_t, NamedBuiltinClass> wrappersOfPrimitives[] {
+    { Primitive::AnyString, BuiltinClasses::String },
+    { Primitive::Number, BuiltinClasses::Number },
+    { Primitive::Boolean, BuiltinClasses::Boolean },
+    { Primitive::AnySymbol, BuiltinClasses::Symbol },
+    { Primitive::BigInt, BuiltinClasses::BigInt },
+};
+bool isUsedOnlyAsInstanceOfOwnFunction(const Program&, FunctionID, ValueID thisValue);
 
 struct ValueFlowObservedValue {
     FunctionID function;

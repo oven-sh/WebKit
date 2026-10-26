@@ -260,6 +260,7 @@ public:
     bool runsAtMostOnce(const Program&, FunctionID) const;
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
     bool closuresAreNeverCompared(FunctionID) const;
+    bool closuresGoUnnoticed(FunctionID) const;
     bool hasOneClosure(FunctionID id) const { return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index()); }
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);

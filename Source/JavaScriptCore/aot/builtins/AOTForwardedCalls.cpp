@@ -159,7 +159,6 @@ bool isAlwaysArray(const Type& type)
 void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
 {
     AccessSiteID accessSite = call.accessSite();
-    bool isDemotedTailCall = call.isDemotedTailCall();
     Vector<ValueID, 8> arguments(call.argumentsOperands().subspan(plan.firstForwardedArgument));
 
     call.become(plan.list ? Opcode::CallList : Opcode::Call);
@@ -170,7 +169,6 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     else
         call.setArgumentsOperands(arguments.span());
     call.setAccessSite(accessSite);
-    call.setIsDemotedTailCall(isDemotedTailCall);
     call.type = TypeTable::anything;
 }
 

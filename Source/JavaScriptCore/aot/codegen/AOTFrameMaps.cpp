@@ -15,6 +15,7 @@
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
+#include "AOTSavedFrameMap.h"
 #include "AOTSort.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
@@ -143,7 +144,7 @@ FrameMaps computeFrameMaps(const Program& program, const Function& function, Fun
 
 uint32_t FrameMapRecords::addMap(std::span<const uint32_t> map)
 {
-    RELEASE_ASSERT(!map.empty() && map[0] == map.size() - 1);
+    RELEASE_ASSERT(SavedFrameMap::tryCreate(map, 0)->numberOfWords() == map.size());
     for (uint32_t offset : m_offsets) {
         if (spanHasPrefix(words.subspan(offset), map))
             return offset;

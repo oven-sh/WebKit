@@ -9,7 +9,7 @@ layout L1 name="SomeStoreUnnamed" fields=[{key="id" declared={type=anything} fla
 # CHECK: layout L0 name="EveryStoreNamed" fields=[{key="id"{{*}}stores=Never{{*}}{key="n"
 # CHECK: layout L1 name="SomeStoreUnnamed" fields=[{key="id"{{*}}flow={location={writers=AllKnown reads=NeverRead}}}, {key="n"
 
-function f0 name="builds" parameters=[{type=anything}] results=[{type=anything}] {
+function f0 name="builds" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     v3 = NewArray v1, v2 contents=anything holes=[]

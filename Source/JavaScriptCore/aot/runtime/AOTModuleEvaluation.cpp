@@ -589,6 +589,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (data(root).isLoadedByLoader())
+        return false;
     // The body of a module that evaluates itself calls the files before it begins.
     if (data(root).kind != ModuleKind::SourceText || data(root).evaluatesItself() || (status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked))
         return false;
@@ -619,9 +621,92 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root)
     return didRunFile;
 }
 
+bool Modules::hasImportedCommonJSFilesToRun(ModuleID root) const
+{
+    // The files stand in front of everything else that the root requests.
+    for (const ModuleRequestData& request : m_table.imports(root)) {
+        ModuleID imported = request.targetModule();
+        if (request.isDeferred || (data(imported).kind != ModuleKind::CommonJs && !m_table.fileBehindFace(imported)))
+            return false;
+        ModuleStatus importedStatus = status(imported);
+        if (importedStatus == ModuleStatus::Unlinked || importedStatus == ModuleStatus::Linked)
+            return true;
+    }
+    return false;
+}
+
+bool Modules::hasLoadInFlight()
+{
+    m_loadsInFlight.removeAllMatching([](const Strong<JSPromise>& load) {
+        return load->status() != JSPromise::Status::Pending;
+    });
+    return !m_loadsInFlight.isEmpty();
+}
+
+void Modules::didStartLoad(JSPromise* load)
+{
+    hasLoadInFlight();
+    if (load->status() == JSPromise::Status::Pending)
+        m_loadsInFlight.append(Strong<JSPromise>(*m_instance.vm, load));
+}
+
+// `bun run` loads the graph of a required ES module in steps. A program can tell only where its own code runs in one of them, or where another graph is being loaded, whose steps may come due.
+bool Modules::needsLoaderForRequire(ModuleID module)
+{
+    if (!isLoadedWithRequests(module))
+        return false;
+    return data(module).isLoadedByLoader() || hasLoadInFlight() || hasImportedCommonJSFilesToRun(module);
+}
+
+// The loader has not linked the module, so it may not have walked what the module imports.
+bool Modules::isNotLoaded(ModuleID module) const
+{
+    if (!isLoadedWithRequests(module))
+        return false;
+    if (ModuleRecord* record = recordIfExists(module))
+        return record->status() == CyclicModuleRecord::Status::New || record->status() == CyclicModuleRecord::Status::Unlinked;
+    return storedStatus(module) == StoredModuleStatus::Unlinked && !(m_entryPointIsLinked && data(module).isLinkedWithEntryPoint());
+}
+
+ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module)
+{
+    ModuleID file = m_table.fileBehindFace(module).value_or(module);
+    if (status(file) == ModuleStatus::Evaluating)
+        ensureLoaded(file).wasLoadedWhileItRan = true;
+    ModuleRecord* record = ensureRecord(module);
+    record->retain();
+    record->setRunsWhenLoaded();
+    return record;
+}
+
+// `bun run` runs an imported CommonJS file when the loader makes the record of the file.
+void Modules::evaluateLoadedCommonJSFile(ModuleID module)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isCommonJSFileOrFace(module))
+        return;
+    ModuleStatus statusAtStart = status(module);
+    if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
+        return;
+    evaluateModuleInRecord(module);
+    Exception* exception = scope.exception();
+    if (!exception) [[likely]]
+        return;
+    if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
+        return;
+    TRY_CLEAR_EXCEPTION(scope, void());
+    if (status(module) != ModuleStatus::Failed)
+        return;
+    recordIfExists(module)->setEvaluationError(vm, JSValue());
+    setStatus(module, ModuleStatus::Evaluated);
+}
+
 // Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.
 bool Modules::wasImportedWhileItRan(ModuleID file) const
 {
+    if (LoadedModule* loaded = loadedIfExists(file); loaded && loaded->wasLoadedWhileItRan)
+        return true;
     for (unsigned index = 0; index < m_table.size(); ++index) {
         ModuleID importer(index);
         if (data(importer).kind != ModuleKind::SourceText || status(importer) <= ModuleStatus::Linked)
@@ -829,24 +914,42 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     if (isPassedOverByEvaluationInProgress(module))
         return;
 
-    evaluateImportedCommonJSFiles(module);
-    RETURN_IF_EXCEPTION(scope, void());
-    // One of the files may have required the module.
-    if (status(module) != statusAtStart)
-        RELEASE_AND_RETURN(scope, evaluateSynchronously(module, reason));
+    bool needsLoader = needsLoaderForRequire(module);
+    if (!needsLoader) {
+        evaluateImportedCommonJSFiles(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        // One of the files may have required the module.
+        if (status(module) != statusAtStart)
+            RELEASE_AND_RETURN(scope, evaluateSynchronously(module, reason));
+    }
 
     JSPromise* promise = nullptr;
-    if (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode()) {
+    if (needsLoader) {
+        SetForScope isAskingHost(m_isAskingHost, true);
+        promise = loader()->loadModuleSync(realm, moduleKey(module), nullptr, nullptr);
+    } else if (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode()) {
         ModuleRecord* record = registerWithLoader(module);
         RETURN_IF_EXCEPTION(scope, void());
         promise = loader()->loadModuleSync(realm, record->moduleKey(), nullptr, nullptr);
     } else {
         link(module);
         RETURN_IF_EXCEPTION(scope, void());
-        if (moduleData.isSynchronous())
-            RELEASE_AND_RETURN(scope, evaluateWithOwnStack(module));
         // As in JSModuleLoader::loadModuleSync(): the jobs of the loader run before require() returns. One of them resumes a module whose awaited promise is settled.
         VM::SynchronousModuleQueueScope queue(*m_instance.vm);
+        if (moduleData.isSynchronous()) {
+            evaluateWithOwnStack(module);
+            Exception* exception = scope.exception();
+            if (exception) [[unlikely]] {
+                if (m_instance.vm->isTerminationException(exception))
+                    return;
+                TRY_CLEAR_EXCEPTION(scope, void());
+            }
+            JSModuleLoader::drainSynchronousModuleQueue(realm);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (exception) [[unlikely]]
+                throwException(realm, scope, exception);
+            return;
+        }
         promise = evaluate(module, std::nullopt, nullptr);
         RETURN_IF_EXCEPTION(scope, void());
         JSModuleLoader::drainSynchronousModuleQueue(realm);

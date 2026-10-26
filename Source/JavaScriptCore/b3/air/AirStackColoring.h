@@ -9,9 +9,14 @@
 
 #include <optional>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
-namespace JSC { namespace B3 { namespace Air {
+namespace JSC { namespace B3 {
+
+class Value;
+
+namespace Air {
 
 struct StackColoring {
     static constexpr unsigned bytesPerUnit = 4;
@@ -29,6 +34,8 @@ struct StackColoring {
     Vector<unsigned> useCountOfSlot;
     bool hasSuspensions { false };
     BitVector spillSlotsLiveAcrossSuspensions;
+    // By the origin of the suspension. It is empty where the slots are too many for liveness.
+    UncheckedKeyHashMap<Value*, BitVector> spillSlotsLiveAcrossEachSuspension;
     unsigned numberOfUnits { 0 };
 };
 

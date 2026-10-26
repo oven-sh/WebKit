@@ -182,7 +182,6 @@ static void rewriteInlineCall(const Program& program, GroupRewriter& rewriter, c
             rewriter.builder().demoteReturnCall(rewriter.rootBlock());
         Value& inlineCall = rewriter.replaceRoot(Opcode::CallInline);
         fillInlineCall(inlineCall, program, original, match.builtin);
-        inlineCall.setIsDemotedTailCall(original.isDemotedTailCall());
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

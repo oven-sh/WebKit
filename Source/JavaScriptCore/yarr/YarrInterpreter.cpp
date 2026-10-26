@@ -1683,11 +1683,12 @@ public:
         return pattern->m_countsWhatJITCounts && term.atom.quantityType == QuantifierType::FixedCount && term.atom.quantityMaxCount > 1 && !term.atom.parenthesesDisjunction->m_jitCountsTurns;
     }
 
-    // The context of the first turn holds what the captures were in front of the group, that of the last turn where it matched.
+    // The context of the first turn holds what the captures were in front of the group, that of the last turn where it matched. A group without captures keeps neither.
     JSRegExpResult matchTurnsWithoutChoices(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
     {
+        bool hasCaptures = term.capture() || disjunctionBody->m_numSubpatterns;
         while (backTrack->matchAmount < term.atom.quantityMaxCount) {
-            if (backTrack->matchAmount > 1) {
+            if (hasCaptures && backTrack->matchAmount > 1) {
                 ParenthesesDisjunctionContext* previous = backTrack->lastContext;
                 backTrack->lastContext = previous->next;
                 freeParenthesesDisjunctionContext(previous);
@@ -1696,12 +1697,16 @@ public:
             if (!context) [[unlikely]]
                 return JSRegExpResult::ErrorNoMemory;
             JSRegExpResult result = matchDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
-            if (result == JSRegExpResult::Match) {
+            if (result == JSRegExpResult::Match && hasCaptures) {
                 appendParenthesesDisjunctionContext(backTrack, context);
                 continue;
             }
             resetMatches(term, context);
             freeParenthesesDisjunctionContext(context);
+            if (result == JSRegExpResult::Match) {
+                ++backTrack->matchAmount;
+                continue;
+            }
             undoTurnsWithoutChoices(term, backTrack);
             return result;
         }

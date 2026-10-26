@@ -1,0 +1,37 @@
+# ["a", "b"].forEach(name => { object[name] = function () { return name; }; });
+# The function that is handed to a call on the written array begins by asking which of the names it was handed, and has a version for each.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f1 name="each"
+# CHECK: b0([[object]]{{*}}, [[name]]{{*}}):
+# CHECK: [[a]]{{*}} = String string="a"
+# CHECK-NEXT: StrictEq [[name]], [[a]]
+# CHECK: [[b]]{{*}} = String string="b"
+# CHECK: [[first]]{{*}} = NewClosure [[a]] function=f3
+# CHECK-NEXT: ElemSet [[object]], [[a]], [[first]]
+# CHECK: [[second]]{{*}} = NewClosure [[b]] function=f4
+# CHECK-NEXT: ElemSet [[object]], [[b]], [[second]]
+# CHECK: [[other]]{{*}} = NewClosure [[rest]]{{*}} function=f2
+# CHECK-NEXT: ElemSet [[object]], [[rest]], [[other]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+data d0 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]} module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = Data data=d0
+    v2 = PropGet v1 key="forEach"
+    v3 = NewClosure v0 function=f1
+    v4 = Call v2, v1, v3
+    Return
+}
+function f1 name="each" module=m0 position=10 kind=Arrow length=1 captures=[{type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v1 function=f2
+    ElemSet v0, v1, v2
+    Return
+}
+function f2 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

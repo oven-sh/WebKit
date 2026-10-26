@@ -103,7 +103,10 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     if (hasMode)
         patchpoint->resultConstraints.append(B3::ValueRep::reg(signature.secondResult));
 
-    uint32_t site = calls.addSite(value);
+    // A function that waits is on no stack, and a trace lists it by this site.
+    Origin originOfSuspension = value.origin();
+    originOfSuspension.isTailCall = false;
+    uint32_t site = calls.addSite(value, { .origin = originOfSuspension });
     patchpoint->setGenerator([records = &m_records, build = &build(), function = m_id, valueID = value.id(), key, site, roots, driverChild, siteWordGPR = siteWordRegister.gpr()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<uint64_t> word = FrameMapEmitter::siteWordFor(records->frameMaps, params, roots, driverChild);
@@ -190,7 +193,7 @@ void SavedFrameEmitter::generateAwaitCallBySavingFrame(const ValueContext& value
     for (ValueID argument : value->argumentsOperands())
         arguments.append(get(argument));
     arguments.append(undefined());
-    Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span(), { .isTailCall = value->isDemotedTailCall() }).as<Boxed>();
+    Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span()).as<Boxed>();
     define(value, Boxed(suspend(value, awaitCallBySavingFrame(), { returned.value() }, value->promiseOperand()).first));
 }
 

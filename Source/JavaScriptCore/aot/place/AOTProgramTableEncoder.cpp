@@ -19,6 +19,7 @@
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionKinds.h"
+#include "AOTIDPrefix.h"
 #include "AOTIdentifierTable.h"
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
@@ -54,6 +55,8 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/Hasher.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -129,11 +132,41 @@ FunctionID TableEncoder::findEntrypoint(FunctionID function) const
     return inputs.pipeline.derivedFunctions->find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
 }
 
-uint32_t TableEncoder::entrypointOf(FunctionID function) const
+static String describe(const Program& program, RowOwner owner)
+{
+    auto describeRecord = [&](const auto& record, IDPrefix prefix, uint32_t index, ModuleID module, ASCIILiteral role = { }) {
+        StringBuilder builder;
+        if (record.name)
+            builder.append('\'', String::fromUTF8ReplacingInvalidSequences(program.string(record.name)), "' "_s);
+        builder.append(letterOf(prefix), index);
+        if (!role.isNull())
+            builder.append(" ("_s, role, ')');
+        if (module)
+            builder.append(" of "_s, String::fromUTF8ReplacingInvalidSequences(program.string(program.at(module).displayPath)));
+        return builder.toString();
+    };
+    if (owner.function) {
+        const Function& function = program.at(owner.function);
+        return describeRecord(function, IDPrefix::Function, owner.function.index(), function.module, nameOf(function.role));
+    }
+    if (owner.layout) {
+        const Layout& layout = program.at(owner.layout);
+        return describeRecord(layout, IDPrefix::Layout, owner.layout.index(), layout.module);
+    }
+    if (owner.variable) {
+        const Variable& variable = program.at(owner.variable);
+        return describeRecord(variable, IDPrefix::Variable, owner.variable.index(), variable.module);
+    }
+    if (owner.module)
+        return makeString(letterOf(IDPrefix::Module), owner.module.index(), ", "_s, String::fromUTF8ReplacingInvalidSequences(program.string(program.at(owner.module).displayPath)));
+    return { };
+}
+
+uint32_t TableEncoder::entrypointOf(FunctionID function, ASCIILiteral use, RowOwner owner) const
 {
     FunctionID entrypoint = findEntrypoint(function);
     if (function && !entrypoint)
-        fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, function);
+        fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, function, makeString("the function is "_s, use, ' ', describe(program, owner)));
     return indexOrNone(entrypoint);
 }
 
@@ -145,9 +178,10 @@ uint32_t TableEncoder::checkedOffset(uint32_t offset) const
     return 0;
 }
 
-void TableEncoder::fail(ProgramTableRule rule, LayoutID layout, FunctionID function) const
+void TableEncoder::fail(ProgramTableRule rule, LayoutID layout, FunctionID function, const String& circumstances) const
 {
-    build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .count = static_cast<uint32_t>(rule) });
+    String detail = circumstances.isNull() ? String(nameOf(rule)) : makeString(nameOf(rule), ": "_s, circumstances);
+    build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .count = static_cast<uint32_t>(rule), .detail = WTF::move(detail) });
 }
 
 ASCIILiteral nameOf(ProgramTableRule rule)
@@ -169,7 +203,7 @@ SlotData placedVariableSlot(const TableEncoder& encoder, VariableID id)
     if (placed.storage == VariableStorage::Statics)
         return SlotData::create(encoder.checkedOffset(placed.offset), placed.representation);
     RELEASE_ASSERT(placed.storage == VariableStorage::ClosureTable);
-    uint32_t entrypoint = encoder.entrypointOf(placed.function);
+    uint32_t entrypoint = encoder.entrypointOf(placed.function, "what a table reads from the variable"_s, id);
     return entrypoint == UINT32_MAX ? SlotData { } : SlotData::create(encoder.checkedOffset(entrypoint), SlotRepresentation::DeferredClosure);
 }
 
@@ -1085,7 +1119,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
             method.name = member.key ? encoder.identifierNumber(member.key) : 0;
             method.kindBits = static_cast<uint32_t>(member.kind);
             method.flags = (member.key ? 0 : methodHasComputedName) | (program.at(member.function).captures.isEmpty() ? 0 : methodTakesEnvironment) | (memberCreation == MemberCreation::AtDefinition ? methodIsCreatedAtDefinition : 0);
-            method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function) : indexOrNone(encoder.findEntrypoint(member.function));
+            method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function, "a member that the run time creates for the class"_s, id) : indexOrNone(encoder.findEntrypoint(member.function));
             parts.methods.append(method);
             ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
         }
@@ -1311,7 +1345,7 @@ static void encodeAllocations(TableEncoder& encoder)
     allocations.reserveInitialCapacity(encoder.placement.numberOfAllocations());
     for (const PlacedAllocation& allocation : encoder.placement.allocations().allocations) {
         if (allocation.constructedBy)
-            constructedAllocations.append({ Number24(allocations.size()), Number24(encoder.entrypointOf(allocation.constructedBy)) });
+            constructedAllocations.append({ Number24(allocations.size()), Number24(encoder.entrypointOf(allocation.constructedBy, "the constructor of an allocation"_s)) });
         allocations.append(AllocationData::create(allocation.shape, allocation.orderWord, allocation.size, leavesFieldOfBirthEmpty(encoder.program, allocation), !!allocation.constructedBy));
     }
     encoder.setTable(ProgramTableIndex::allocations, allocations);
@@ -1477,7 +1511,8 @@ static void encodeBoundFunctions(TableEncoder& encoder)
             encoder.fail(ProgramTableRule::TableOutOfBounds, { }, id);
         BoundFunctionData data { };
         data.function = entrypoint.index();
-        data.target = encoder.entrypointOf(record.target);
+        // The run time makes a closure of the target from this number only where the bound function holds none. One that is held may be of a function that no code creates a closure of.
+        data.target = record.capturesTargetClosure ? indexOrNone(encoder.findEntrypoint(record.target)) : encoder.entrypointOf(record.target, "the target of the bound function"_s, id);
         data.numberOfBoundArguments = record.numberOfBoundArguments;
         if (record.capturesTargetClosure) {
             if (!function.captures.isEmpty() && declaredRepresentationOf(program, function.captures.last()) == Representation::Cell)
@@ -2138,7 +2173,7 @@ static bool isSourceTextOrCommonJs(const Module& module)
 static uint32_t bodyEntrypointOf(const TableEncoder& encoder, const Module& module)
 {
     bool doesNothing = module.body && isSourceTextOrCommonJs(module) && encoder.inputs.bodyFacts.functionsThatOnlyReturn.get(module.body.index());
-    return hasCompiledBody(encoder.program, module) && !doesNothing ? encoder.entrypointOf(module.body) : UINT32_MAX;
+    return hasCompiledBody(encoder.program, module) && !doesNothing ? encoder.entrypointOf(module.body, "the body of the module"_s, encoder.program.at(module.body).module) : UINT32_MAX;
 }
 
 static bool mayHavePathInPieces(const Module& module)
@@ -2223,6 +2258,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     ModuleData entry { };
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
+    entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;
@@ -2438,7 +2474,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeFunctionData> runtimeFunctions;
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
         if (entry.function && isCalledByHost.get(entry.function.index()) && program.at(entry.function).hasBody())
-            runtimeFunctions.append({ entry.id.index(), encoder.entrypointOf(entry.function), static_cast<uint32_t>(entry.visibility) });
+            runtimeFunctions.append({ entry.id.index(), encoder.entrypointOf(entry.function, "a function of the run time that the host calls"_s), static_cast<uint32_t>(entry.visibility) });
     }
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
 }

@@ -19,6 +19,7 @@
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueFlowTypedResults.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -141,7 +142,7 @@ constexpr OperandUses inspectsOrReturns { OperandUse::Inspects, OperandUse::Retu
 constexpr OpcodeSet operationsWithoutRule {
     Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::KeyConstant,
     Opcode::Parameter, Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::NewClosure,
-    Opcode::CallDirect, Opcode::Results, Opcode::ResultAt, Opcode::CatchValue, Opcode::CatchException, Opcode::Yield, Opcode::ToObject, Opcode::ToThis,
+    Opcode::CallDirect, Opcode::Results, Opcode::ResultAt, Opcode::CatchValue, Opcode::CatchException, Opcode::Yield,
     Opcode::LoopHint, Opcode::InitialYield, Opcode::ReportMismatch, Opcode::RecordRequire,
 };
 
@@ -858,9 +859,6 @@ private:
         case Opcode::Yield:
             connect(value.valueOperand(), NodeName::ofBody(m_body.yielded()));
             return setNode(id, NodeName::ofBody(m_body.sent()));
-        case Opcode::ToObject:
-        case Opcode::ToThis:
-            return describeToObject(id, value);
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -901,100 +899,23 @@ private:
         addSource(id, producerID, maskInside(value.type, kindOfResultMask(producer.opcode)));
     }
 
-    bool isUsedOnlyAsInstanceOfOwnFunction(ValueID thisValue)
+    // What it makes of a value that is no object hangs on which values arrive, so a rule adds that.
+    void describeConversionToObject(ValueID id, const Value& value)
     {
-        auto isThis = [&](ValueID id) {
-            return id && definitionThroughSameValues(m_function, id) == thisValue;
-        };
-        BlockID testing;
-        ValueID test;
-        for (uint32_t index = 0; index < m_function.blocks.size() && !test; ++index) {
-            for (ValueID id : m_function.blocks[index].values) {
-                const Value& candidate = m_function.at(id);
-                if (candidate.opcode != Opcode::InstanceOf || !isThis(candidate.operand(0)))
-                    continue;
-                const Type& constructor = typeOf(candidate.operand(1));
-                if (constructor.primitives || constructor.anyObject || constructor.anyFunction || constructor.functions.size() != 1 || constructor.functions[0] != m_id)
-                    return false;
-                testing = BlockID(index);
-                test = id;
-                break;
-            }
+        const Type& type = typeOf(value.valueOperand());
+        bool mayMakeObject = value.opcode == Opcode::ToThis && type.mayBeUndefinedOrNull();
+        for (uint32_t ordinal = 0; ordinal < std::size(wrappersOfPrimitives); ++ordinal) {
+            if (!(type.primitives & wrappersOfPrimitives[ordinal].first))
+                continue;
+            addSite({ ValueFlowSiteOrigin::Operation, id, ordinal, { }, wrappersOfPrimitives[ordinal].second });
+            mayMakeObject = true;
         }
-        if (!test)
-            return false;
-        const Terminator& terminator = m_function.at(testing).terminator;
-        if (terminator.kind != TerminatorKind::Branch)
-            return false;
-        ValueID condition = terminator.operand(0);
-        if (m_function.at(condition).opcode == Opcode::ToBoolean)
-            condition = m_function.at(condition).operand(0);
-        BlockID passed = terminator.taken().block;
-        if (condition != test || passed == terminator.notTaken().block || passed == entryBlock)
-            return false;
-
-        BitVector isReachedOtherwise(m_function.blocks.size());
-        Vector<BlockID, 16> worklist { entryBlock };
-        isReachedOtherwise.quickSet(entryBlock.index());
-        while (!worklist.isEmpty()) {
-            BlockID block = worklist.takeLast();
-            for (BlockID successor : m_cfg.successors(block)) {
-                if (successor == passed) {
-                    if (block != testing)
-                        return false;
-                    continue;
-                }
-                if (!isReachedOtherwise.quickSet(successor.index()))
-                    worklist.append(successor);
-            }
+        if (mayMakeObject) {
+            at(id).role = Role::Result;
+            return;
         }
-        for (size_t index : isReachedOtherwise) {
-            const Block& block = m_function.blocks[index];
-            for (ValueID id : block.values) {
-                const Value& user = m_function.at(id);
-                if (id == test || sameValueOperandOf(user))
-                    continue;
-                for (uint32_t operand = 0; operand < user.numberOfOperands(); ++operand) {
-                    if (isThis(user.operand(operand)))
-                        return false;
-                }
-            }
-            for (uint32_t operand = 0; operand < block.terminator.numberOfOperands(); ++operand) {
-                if (isThis(block.terminator.operand(operand)))
-                    return false;
-            }
-            bool handsOnThis = false;
-            block.forEachTarget([&](const Target& target) {
-                handsOnThis |= std::ranges::any_of(target.arguments, isThis);
-            });
-            if (handsOnThis)
-                return false;
-        }
-        return true;
-    }
-
-    void describeToObject(ValueID id, const Value& value)
-    {
-        ValueID operand = value.valueOperand();
         beginSources(id);
-        addSource(id, operand, maskInside(TypeTable::object, ValueFlowMaskKind::Checked));
-
-        static constexpr std::pair<uint16_t, NamedBuiltinClass> wrappers[] {
-            { Primitive::AnyString, BuiltinClasses::String },
-            { Primitive::Number, BuiltinClasses::Number },
-            { Primitive::Boolean, BuiltinClasses::Boolean },
-            { Primitive::AnySymbol, BuiltinClasses::Symbol },
-            { Primitive::BigInt, BuiltinClasses::BigInt },
-        };
-        const Type& type = typeOf(operand);
-        Vector<ObjectName, 6> made;
-        for (uint32_t ordinal = 0; ordinal < std::size(wrappers); ++ordinal) {
-            if (type.primitives & wrappers[ordinal].first)
-                made.append(addSite({ ValueFlowSiteOrigin::Operation, id, ordinal, { }, wrappers[ordinal].second }));
-        }
-        if (value.opcode == Opcode::ToThis && type.mayBeUndefinedOrNull() && !isUsedOnlyAsInstanceOfOwnFunction(id))
-            made.append({ ValueFlowObjectKind::Builtin, m_program.builtins().canonicalID(Builtins::GlobalThis).index(), { } });
-        at(id).constant = constantOf(0, made.span());
+        addSource(id, value.valueOperand(), maskInside(TypeTable::object, ValueFlowMaskKind::Checked));
     }
 
     uint32_t maskInEveryVersion(Opcode opcode)
@@ -1057,6 +978,8 @@ private:
             at(id).role = Role::Result;
             return;
         }
+        if (conversionsToObject.contains(value.opcode))
+            return describeConversionToObject(id, value);
         if (value.opcode == Opcode::Check) {
             beginSources(id);
             addSource(id, value.valueOperand(), maskInside(value.castType(), ValueFlowMaskKind::Expected));
@@ -1981,6 +1904,80 @@ static ValueFlowBody makeBodyWithoutOperations(FunctionID id, uint32_t numberOfE
         body.nodes.append({ ValueFlowBodyNodeKind::Sent, { }, 0 });
     }
     return body;
+}
+
+bool isUsedOnlyAsInstanceOfOwnFunction(const Program& program, FunctionID functionID, ValueID thisValue)
+{
+    const Function& function = program.at(functionID);
+    auto isThis = [&](ValueID id) {
+        return id && definitionThroughSameValues(function, id) == thisValue;
+    };
+    BlockID testing;
+    ValueID test;
+    for (uint32_t index = 0; index < function.blocks.size() && !test; ++index) {
+        for (ValueID id : function.blocks[index].values) {
+            const Value& candidate = function.at(id);
+            if (candidate.opcode != Opcode::InstanceOf || !isThis(candidate.operand(0)))
+                continue;
+            const Type& constructor = program.typeOf(function, candidate.operand(1));
+            if (constructor.primitives || constructor.anyObject || constructor.anyFunction || constructor.functions.size() != 1 || constructor.functions[0] != functionID)
+                return false;
+            testing = BlockID(index);
+            test = id;
+            break;
+        }
+    }
+    if (!test)
+        return false;
+    const Terminator& terminator = function.at(testing).terminator;
+    if (terminator.kind != TerminatorKind::Branch)
+        return false;
+    ValueID condition = terminator.operand(0);
+    if (function.at(condition).opcode == Opcode::ToBoolean)
+        condition = function.at(condition).operand(0);
+    BlockID passed = terminator.taken().block;
+    if (condition != test || passed == terminator.notTaken().block || passed == entryBlock)
+        return false;
+
+    CFG cfg(function);
+    BitVector isReachedOtherwise(function.blocks.size());
+    Vector<BlockID, 16> worklist { entryBlock };
+    isReachedOtherwise.quickSet(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        for (BlockID successor : cfg.successors(block)) {
+            if (successor == passed) {
+                if (block != testing)
+                    return false;
+                continue;
+            }
+            if (!isReachedOtherwise.quickSet(successor.index()))
+                worklist.append(successor);
+        }
+    }
+    for (size_t index : isReachedOtherwise) {
+        const Block& block = function.blocks[index];
+        for (ValueID id : block.values) {
+            const Value& user = function.at(id);
+            if (id == test || sameValueOperandOf(user))
+                continue;
+            for (uint32_t operand = 0; operand < user.numberOfOperands(); ++operand) {
+                if (isThis(user.operand(operand)))
+                    return false;
+            }
+        }
+        for (uint32_t operand = 0; operand < block.terminator.numberOfOperands(); ++operand) {
+            if (isThis(block.terminator.operand(operand)))
+                return false;
+        }
+        bool handsOnThis = false;
+        block.forEachTarget([&](const Target& target) {
+            handsOnThis |= std::ranges::any_of(target.arguments, isThis);
+        });
+        if (handsOnThis)
+            return false;
+    }
+    return true;
 }
 
 ValueFlowBody reduceBody(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, const UnobservedFieldDefinitions* unobservedDefinitions)

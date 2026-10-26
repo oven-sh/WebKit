@@ -183,6 +183,10 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createStaticPrivateBrandOfNonObjectError(globalObject);
     case Typed::RuntimeErrorKind::SpreadResultNotObject:
         return createSpreadResultNotObjectError(globalObject);
+    case Typed::RuntimeErrorKind::NoSyncIteratorForAsyncIteration:
+        return createTypeError(globalObject, "iterable should have an iterator symbol"_s);
+    case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
+        return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
         if (validatesRuntime(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });

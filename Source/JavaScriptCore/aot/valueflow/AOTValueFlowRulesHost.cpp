@@ -807,7 +807,7 @@ void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext& context, ValueSet
         context.add(ValueFlowProgramNodes::escaped(), children);
 }
 
-static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
+static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, bool programNamesWaysToModuleObjects, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
 {
     const ValueFlowUniverse& universe = context.universe();
     const BuiltinTable& builtins = context.program().builtins();
@@ -821,7 +821,7 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
         if (builtins.canonicalID(member) == Builtins::ModuleObjectExports)
             continue;
         if (BuiltinID way = builtins.canonicalID(member); way == Builtins::ModuleRequireMain || way == Builtins::ModuleObjectChildren || way == Builtins::ModuleObjectParent) {
-            if (namesWaysToModuleObjects(context.program()) && !waysBetweenModuleObjectsAnswered.contains(builtins.canonicalID(member))) {
+            if (programNamesWaysToModuleObjects && !waysBetweenModuleObjectsAnswered.contains(builtins.canonicalID(member))) {
                 waysBetweenModuleObjectsAnswered.append(builtins.canonicalID(member));
                 Vector<ValueFlowObjectID, 32> answers;
                 appendModuleObjectsAnsweredBy(context, builtins.canonicalID(member), answers);
@@ -999,7 +999,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         attachments.addStartupModules();
     attachments.enter();
 
-    if (namesWaysToModuleObjects(program))
+    bool programNamesWaysToModuleObjects = namesWaysToModuleObjects(program);
+    if (programNamesWaysToModuleObjects)
         exposeModuleObjectsOfEntryPoints(context);
     bool modulesFindImportsByName = std::ranges::any_of(entriesThatInstantiateModules, [&](BuiltinID entry) {
         return context.contains(run, universe.objectOf(entry));
@@ -1012,7 +1013,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (builtins.at(builtin).origin != BuiltinOrigin::Host)
             context.use(builtin, context.contains(run, object) ? OptionSet<BuiltinUse> { BuiltinUse::Escaped, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Escaped });
         if (membersFollowHolders || builtins.at(builtin).scope != BuiltinScope::Realm)
-            exposeMembersOf(context, object, builtin, waysBetweenModuleObjectsAnswered);
+            exposeMembersOf(context, object, builtin, programNamesWaysToModuleObjects, waysBetweenModuleObjectsAnswered);
         else if (modulesFindImportsByName && builtins.at(builtin).origin != BuiltinOrigin::Host)
             letModulesImportMembersOf(context, builtin);
     });

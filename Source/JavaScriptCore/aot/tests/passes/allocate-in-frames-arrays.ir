@@ -191,7 +191,7 @@ function f17 name="tailCallOfFunctionThatReturns" parameters=[{type=anything}] r
 }
 # CHECK-LABEL: function f17 name="tailCallOfFunctionThatReturns"
 # CHECK: = NewArray {{*}}storage=Frame
-# CHECK: = CallDirect {{*}}function=f19 {{*}}[isDemotedTailCall]
+# CHECK: = CallDirect {{*}}function=f19 {{*}} @0 tail
 # CHECK-NOT: ReturnCall
 
 function f18 name="handedOnTwice" parameters=[{type=anything}] results=[{type=anything}] {

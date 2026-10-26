@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTCFG.h"
 #include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
@@ -22,6 +23,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -32,6 +34,7 @@
 #include <span>
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 #include <wtf/UnionFind.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -264,6 +267,138 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// An object lives as long as a place that holds it, whether or not the place is read.
+// A built-in function and the symbol of a key live as long as the program. A closure that is only called, that nothing tells from another and that captures nothing holds nothing, and nobody sees it go.
+static bool mayHoldObject(const Program& program, const FlowResults& flow, const Type& type)
+{
+    if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
+        return true;
+    return std::ranges::any_of(type.functions, [&](FunctionID function) {
+        return !program.at(function).captures.isEmpty() || !flow.closuresGoUnnoticed(function);
+    });
+}
+
+// Whether a store in one function keeps an object alive that would go without it.
+class StoresOfObjects {
+public:
+    StoresOfObjects(const Program& program, const FlowResults& flow, const EffectSummaries* effects, FunctionID id)
+        : m_program(program)
+        , m_flow(flow)
+        , m_effects(effects)
+        , m_id(id)
+        , m_function(program.at(id))
+    {
+    }
+
+    bool keepsObjectAlive(ValueID stored, ValueID holder, unsigned depth = 3)
+    {
+        if (stored == holder || !mayHoldObject(m_program, m_flow, m_program.typeOf(m_function, stored)))
+            return false;
+        if (!depth)
+            return true;
+        const Value& definition = m_function.at(stored);
+        switch (definition.opcode) {
+        case Opcode::NewClosure:
+            if (definition.isMadeOnDemand() || (!m_flow.closuresGoUnnoticed(definition.function()) && useLists().useCount(stored) != 1))
+                return true;
+            return std::ranges::any_of(definition.capturesOperands(), [&](ValueID capture) {
+                return keepsObjectAlive(capture, holder, depth - 1) && !isEnvironmentHeldBy(holder, capture);
+            });
+        case Opcode::FinishObject:
+            return useLists().useCount(stored) != 1 || !isSeenOnlyByItsMaker(definition.operand(OperandIndex::FinishObject::object), stored, depth);
+        case Opcode::NewObject:
+            return !isSeenOnlyByItsMaker(stored, ValueID(), depth);
+        case Opcode::Call:
+        case Opcode::Construct:
+            // The annotation says that the call may go when nobody uses its answer.
+            return !definition.isAnnotatedPure() || useLists().useCount(stored) != 1;
+        default:
+            return !isCastWithoutTest(definition.opcode) || useLists().useCount(stored) != 1 || keepsObjectAlive(definition.valueOperand(), holder, depth - 1);
+        }
+    }
+
+private:
+    const UseLists& useLists()
+    {
+        if (!m_useLists) {
+            m_cfg.emplace(m_function);
+            m_useLists.emplace(m_function, *m_cfg);
+        }
+        return *m_useLists;
+    }
+
+    // Nothing but the function that made the object has had it in hand, and all it did was to fill it with what holds no object. One use is the store that is asked about, unless the finished object has that.
+    bool isSeenOnlyByItsMaker(ValueID object, ValueID finished, unsigned depth)
+    {
+        const Value& allocation = m_function.at(object);
+        if (!m_effects || allocation.opcode != Opcode::NewObject || allocation.operand(OperandIndex::NewObject::prototype))
+            return false;
+        LayoutKind kind = m_program.at(allocation.layout()).kind;
+        if (kind != LayoutKind::Record && kind != LayoutKind::Container)
+            return false;
+        auto holdsNoObject = [&](ValueID value) {
+            return !keepsObjectAlive(value, object, depth - 1);
+        };
+        if (!std::ranges::all_of(allocation.variadicOperands(), holdsNoObject))
+            return false;
+        unsigned numberOfOwners = finished ? 1 : 0;
+        for (const Use& use : useLists().usesOf(object)) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            if (use.user == finished)
+                continue;
+            const Value& user = m_function.at(use.user);
+            if (summarizeOperand(EffectContext { m_program, *m_effects }, m_function, user, use.operandIndex).uses != OperandUses { OperandUse::Inspects }) {
+                if (++numberOfOwners > 1)
+                    return false;
+                continue;
+            }
+            bool fillsWithoutObjects = true;
+            user.forEachOperand([&](ValueID operand, uint32_t) {
+                fillsWithoutObjects &= holdsNoObject(operand);
+            });
+            if (!fillsWithoutObjects || m_program.typeOf(m_function, use.user).hasCells())
+                return false;
+        }
+        return true;
+    }
+
+    // An environment that its holder names in a field of its own, stored once, lives as long as the holder.
+    bool isEnvironmentHeldBy(ValueID holder, ValueID held)
+    {
+        if (!holder || !m_program.typeOf(m_function, held).environment)
+            return false;
+        auto keyOf = [](ValueID holder, ValueID held) {
+            return static_cast<uint64_t>(holder.index()) << 32 | held.index();
+        };
+        if (!m_environmentsHeld) {
+            m_environmentsHeld.emplace();
+            auto add = [&](ValueID holder, FieldReference field, ValueID held) {
+                if (m_program.typeOf(m_function, held).environment && fieldAt(m_program, field).flow.location.stores == StoreCount::AtMostOnce)
+                    m_environmentsHeld->add(keyOf(holder, held));
+            };
+            forEachListedValue(m_program, m_id, { Opcode::NewObject, Opcode::PutEnvironmentField }, [&](BlockID, uint32_t, ValueID valueID, const Value& value) {
+                if (value.opcode == Opcode::PutEnvironmentField) {
+                    add(value.operand(OperandIndex::PutEnvironmentField::environment), { value.layout(), value.field() }, value.operand(OperandIndex::PutEnvironmentField::value));
+                    return;
+                }
+                for (size_t listed = 0; listed < value.fields().size(); ++listed)
+                    add(valueID, { value.layout(), value.fields()[listed] }, value.variadicOperands()[listed]);
+            });
+        }
+        return m_environmentsHeld->contains(keyOf(holder, held));
+    }
+
+    const Program& m_program;
+    const FlowResults& m_flow;
+    const EffectSummaries* m_effects;
+    FunctionID m_id;
+    const Function& m_function;
+    std::optional<CFG> m_cfg;
+    std::optional<UseLists> m_useLists;
+    std::optional<HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_environmentsHeld;
+};
+
 static bool mayHaveNamespaceObject(NamespaceUse use)
 {
     switch (use) {
@@ -488,6 +623,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             return;
         bool canChangeFunction = build.isEnabled(PassID::RemoveUnreadFields, id);
         std::optional<BitVector> usedValues;
+        StoresOfObjects stores(program, inputs.flow, &inputs.effects, id);
         Vector<RemovableAccess> accesses;
         forEachListedValue(program, id, scannedOpcodes, [&](BlockID block, uint32_t, ValueID valueID, const Value& value) {
             Opcode opcode = value.opcode;
@@ -548,30 +684,35 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     return;
                 AOT::sort(found);
                 removeRepeatedElements(found);
-                addAccess(WTF::move(found), reachesOnlyCandidates && (isRemovableSlotStore(opcode) || isUnusedSlotRead()));
+                bool isRemovableStore = isRemovableSlotStore(opcode) && !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode)));
+                addAccess(WTF::move(found), reachesOnlyCandidates && (isRemovableStore || isUnusedSlotRead()));
             };
 
             if (LayoutID layout = Value::opcodesWithLayout.contains(opcode) ? value.layout() : LayoutID()) {
                 if (resultRuleOf(opcode) == ResultRule::Allocation && opcode != Opcode::NewObject)
                     markFieldsLive(layout);
-                auto addNamedField = [&](uint32_t field) {
+                auto addNamedField = [&](uint32_t field, ValueID stored, ValueID holder) {
                     if (auto candidate = candidateOf(layout, field))
-                        addAccess({ *candidate }, opcode == Opcode::NewObject || opcode == Opcode::PutEnvironmentField);
+                        addAccess({ *candidate }, stored && !stores.keepsObjectAlive(stored, holder));
                 };
                 for (const PayloadFieldInfo& field : payloadFieldsOf(opcode)) {
                     if (field.kind == PayloadKind::Field) {
-                        if (auto namedField = decodePayloadWord<std::optional<uint32_t>>(value.payloadWordAt(field.firstWord)))
-                            addNamedField(*namedField);
+                        auto namedField = decodePayloadWord<std::optional<uint32_t>>(value.payloadWordAt(field.firstWord));
+                        if (namedField && opcode == Opcode::PutEnvironmentField)
+                            addNamedField(*namedField, value.operand(OperandIndex::PutEnvironmentField::value), value.operand(OperandIndex::PutEnvironmentField::environment));
+                        else if (namedField)
+                            addNamedField(*namedField, ValueID(), ValueID());
                         continue;
                     }
                     if (field.kind != PayloadKind::List || field.elementKind != PayloadKind::Field)
                         continue;
-                    for (uint32_t namedField : value.payloadListFrom(field.firstWord))
-                        addNamedField(namedField);
+                    auto namedFields = value.payloadListFrom(field.firstWord);
+                    for (size_t listed = 0; listed < namedFields.size(); ++listed)
+                        addNamedField(namedFields[listed], opcode == Opcode::NewObject ? value.variadicOperands()[listed] : ValueID(), valueID);
                 }
             }
             if (Value::opcodesWithVariable.contains(opcode) && variables.get(value.variable().index()))
-                addAccess({ candidateOfVariable(value.variable().index()) }, opcode == Opcode::PutModuleVariable);
+                addAccess({ candidateOfVariable(value.variable().index()) }, opcode == Opcode::PutModuleVariable && !stores.keepsObjectAlive(value.operand(OperandIndex::PutModuleVariable::value), ValueID()));
             if (findsFieldByKey(opcode))
                 scanAccessByKey();
             if (opcodesStoringThroughOperands.contains(opcode)) {
@@ -742,14 +883,29 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
 
     const ParallelLoops& loops = build.parallelLoops();
     using FunctionStores = std::pair<FunctionID, Vector<VariableID, 4>>;
+    Vector<uint8_t> mayHoldObjects(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
     Vector<FunctionStores> stores = collectInParallel<FunctionStores>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionStores>& found) {
         Vector<VariableID, 4> storedVariables;
+        StoresOfObjects storesOfObjects(program, flow, nullptr, FunctionID(index));
         forEachListedValue(program, FunctionID(index), { Opcode::PutModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
-            if (unreadVariables.get(value.variable().index()))
-                storedVariables.append(value.variable());
+            if (!unreadVariables.get(value.variable().index()))
+                return;
+            storedVariables.append(value.variable());
+            if (storesOfObjects.keepsObjectAlive(value.operand(OperandIndex::PutModuleVariable::value), ValueID()))
+                WTF::atomicStore(&mayHoldObjects[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
         });
         if (!storedVariables.isEmpty())
             found.append({ FunctionID(index), WTF::move(storedVariables) });
+    });
+    for (size_t index = 0; index < mayHoldObjects.size(); ++index) {
+        if (mayHoldObjects[index])
+            unreadVariables.quickClear(index);
+    }
+    stores.removeAllMatching([&](FunctionStores& entry) {
+        entry.second.removeAllMatching([&](VariableID variable) {
+            return !unreadVariables.get(variable.index());
+        });
+        return entry.second.isEmpty();
     });
 
     Vector<Function*> editedFunctions;

@@ -33,19 +33,19 @@ function f4 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=u
     Return v2
 }
 function f5 name="marked" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=0} inlineFrames=[{}, {callee=f1 callPosition=20 module=m0}] {
-    v1 = CallDirect function=f0 [isDemotedTailCall] @10:1
+    v1 = CallDirect function=f0 @10:1 tail
     v2 = AwaitBySavingFrame v1, v0 @21
     v3 = ReturnAsyncResult v0, v2
     Return v3
 # CHECK-NOT: CallDirect
-# CHECK: v2: anything = AwaitCallBySavingFrame v0 function=f4 [isDemotedTailCall] @10:1
+# CHECK: v2: anything = AwaitCallBySavingFrame v0 function=f4 @10:1 tail
 }
 function f6 name="ordinary" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=0} {
     v1 = CallDirect function=f0 @10
     v2 = AwaitBySavingFrame v1, v0 @21
     v3 = ReturnAsyncResult v0, v2
     Return v3
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: v2: anything = AwaitCallBySavingFrame v0 function=f4 @10
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }

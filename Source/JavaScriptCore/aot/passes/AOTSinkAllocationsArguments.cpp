@@ -276,7 +276,6 @@ static void becomeForwardingCall(Value& call, ValueID thisValue, uint32_t firstA
     call.setFirstArgument(firstArgument);
     call.setAccessSite(listCall.accessSite());
     call.setCallees(listCall.callees());
-    call.setIsDemotedTailCall(listCall.isDemotedTailCall());
 }
 
 static void becomeForwardingSuperConstruct(Value& construct, uint32_t firstArgument)
@@ -756,7 +755,7 @@ void ObjectInterpreter::passListedElements(ValueID call)
             ordinary.setCalleeOperand(cursor().emit(WTF::move(*callee)));
             ordinary.setArgumentsOperands(elements.span());
             ordinary.setAccessSite(original.accessSite());
-            ordinary.setIsDemotedTailCall(original.isDemotedTailCall());
+            ordinary.isTailCall = original.isTailCall;
             ValueID result = emitReplacement(m_sinking, *this, call, WTF::move(ordinary));
             if (m_sinking.context().build.validates())
                 cursor().emit(makeValidateType(result, original.type));

@@ -71,7 +71,7 @@ public:
     Function& function() { return m_builder.function(); }
     const Value& original() const LIFETIME_BOUND { return m_original; }
     BlockFrequency frequency() const { return m_frequency; }
-    bool isTailCall() const { return m_tailCall || (FlagMask::isDemotedTailCall(m_original.opcode) && m_original.isDemotedTailCall()); }
+    bool isTailCall() const { return m_tailCall || m_original.isTailCall; }
     bool isRequiredTailCall() const { return m_tailCall && m_tailCall->requirement() == TailCallRequirement::Required; }
 
     void addReplaced(const Value&);

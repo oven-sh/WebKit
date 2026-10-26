@@ -225,11 +225,6 @@ private:
         Vector<unsigned> m_indices;
     };
 
-    struct LayoutNeighbors {
-        Vector<std::optional<unsigned>> previous;
-        Vector<std::optional<unsigned>> next;
-    };
-
     ALWAYS_INLINE static void forEachInDifference(const uint64_t* minuend, const uint64_t* subtrahend, size_t firstWord, size_t numberOfWords, NOESCAPE const Invocable<void(unsigned)> auto& func)
     {
         for (size_t wordIndex = 0; wordIndex < numberOfWords; ++wordIndex) {
@@ -331,21 +326,6 @@ private:
         return blocksInPostOrder;
     }
 
-    LayoutNeighbors computeLayoutNeighbors() const
-    {
-        LayoutNeighbors neighbors;
-        neighbors.previous.fill(std::nullopt, m_code.size());
-        neighbors.next.fill(std::nullopt, m_code.size());
-        std::optional<unsigned> previous;
-        for (BasicBlock* block : m_code) {
-            neighbors.previous[block->index()] = previous;
-            if (previous)
-                neighbors.next[*previous] = block->index();
-            previous = block->index();
-        }
-        return neighbors;
-    }
-
     void sortSegmentsByRow(const Vector<TailSegment>& segments, unsigned numberOfRows)
     {
         m_firstSegmentOfRow.fill(0, numberOfRows + 1);
@@ -366,33 +346,54 @@ private:
     // the rows of its successors, and a visit to it touches no words. Row 0 is empty.
     class SliceRows {
     public:
-        explicit SliceRows(unsigned numberOfBlocks)
-            : head(FillWith { }, numberOfBlocks, 0u)
-            , tail(FillWith { }, numberOfBlocks, 0u)
-            , gen(FillWith { }, numberOfBlocks, 0u)
+        explicit SliceRows(unsigned numberOfPositions)
+            : gen(FillWith { }, numberOfPositions, 0u)
+            , m_head(FillWith { }, numberOfPositions, 0u)
+            , m_tail(FillWith { }, numberOfPositions, 0u)
         {
         }
 
+        // No later slice is wider than the first.
         void beginSlice(size_t wordsPerRow)
         {
+            if (m_chunks.isEmpty()) {
+                constexpr size_t wordsPerChunk = 1 << 17;
+                m_wordsPerChunk = std::max(wordsPerChunk, wordsPerRow);
+                m_rowsPerChunkShift = std::bit_width(m_wordsPerChunk / wordsPerRow) - 1;
+            }
+            RELEASE_ASSERT((wordsPerRow << m_rowsPerChunkShift) <= m_wordsPerChunk);
             m_wordsPerRow = wordsPerRow;
-            m_words.shrink(0);
+            m_numberOfRows = 0;
+            m_freeRows.shrink(0);
             m_lastUnion = { };
             addRows(1);
         }
 
+        unsigned headOf(unsigned position) const { return m_head[position]; }
+        unsigned tailOf(unsigned position) const { return m_tail[position]; }
+        void setHead(unsigned position, unsigned row) { pointTo(m_head[position], row); }
+        void setTail(unsigned position, unsigned row) { pointTo(m_tail[position], row); }
+
+        void forget(unsigned position)
+        {
+            m_head[position] = 0;
+            m_tail[position] = 0;
+            gen[position] = 0;
+        }
+
         size_t wordsPerRow() const { return m_wordsPerRow; }
-        uint64_t* at(unsigned row) LIFETIME_BOUND { return m_words.mutableSpan().data() + row * m_wordsPerRow; }
-        const uint64_t* at(unsigned row) const LIFETIME_BOUND { return m_words.span().data() + row * m_wordsPerRow; }
+        uint64_t* at(unsigned row) LIFETIME_BOUND { return m_chunks[row >> m_rowsPerChunkShift].mutableSpan().data() + offsetInChunk(row); }
+        const uint64_t* at(unsigned row) const LIFETIME_BOUND { return m_chunks[row >> m_rowsPerChunkShift].span().data() + offsetInChunk(row); }
 
         unsigned addRows(unsigned count)
         {
             unsigned first = addRowsWithoutClearing(count);
-            zeroSpan(m_words.mutableSpan().subspan(first * m_wordsPerRow));
+            for (unsigned row = first; row < first + count; ++row)
+                zeroSpan(std::span { at(row), m_wordsPerRow });
             return first;
         }
 
-        void removeRowsFrom(unsigned row) { m_words.shrink(row * m_wordsPerRow); }
+        void removeRowsFrom(unsigned row) { m_numberOfRows = row; }
 
         bool isEmpty(unsigned row) const
         {
@@ -411,7 +412,7 @@ private:
             if (m_lastUnion.a == a && m_lastUnion.b == b)
                 return m_lastUnion.result;
 
-            unsigned result = addRowsWithoutClearing(1);
+            unsigned result = takeRow();
             const uint64_t* wordsOfA = at(a);
             const uint64_t* wordsOfB = at(b);
             uint64_t* wordsOfResult = at(result);
@@ -423,7 +424,7 @@ private:
                 onlyInB |= wordsOfB[i] & ~wordsOfA[i];
             }
             if (!onlyInA || !onlyInB) {
-                removeRowsFrom(result);
+                m_freeRows.append(result);
                 result = onlyInB ? b : a;
             }
             m_lastUnion = { a, b, result };
@@ -431,12 +432,12 @@ private:
         }
 
         // The row of gen | (tail & ~kill). It is `current` when that row already holds the answer.
-        unsigned applyTransfer(unsigned blockIndex, unsigned current)
+        unsigned applyTransfer(unsigned position, unsigned current)
         {
-            const unsigned tailRow = tail[blockIndex];
-            unsigned result = addRowsWithoutClearing(1);
-            const uint64_t* wordsOfGen = at(gen[blockIndex]);
-            const uint64_t* wordsOfKill = at(gen[blockIndex] + 1);
+            const unsigned tailRow = m_tail[position];
+            unsigned result = takeRow();
+            const uint64_t* wordsOfGen = at(gen[position]);
+            const uint64_t* wordsOfKill = at(gen[position] + 1);
             const uint64_t* wordsOfTail = at(tailRow);
             const uint64_t* wordsOfCurrent = at(current);
             uint64_t* wordsOfResult = at(result);
@@ -452,23 +453,45 @@ private:
             }
             if (differsFromCurrent && differsFromTail && any)
                 return result;
-            removeRowsFrom(result);
+            m_freeRows.append(result);
             if (!differsFromCurrent)
                 return current;
             return any ? tailRow : 0;
         }
 
-        // By block. The kill row of a block follows its gen row, and a block whose gen is 0 names no index of the slice.
-        Vector<unsigned> head;
-        Vector<unsigned> tail;
+        // By position in post order. The kill row of a block follows its gen row, and a block whose gen is 0 names no index of the slice.
         Vector<unsigned> gen;
 
     private:
+        size_t offsetInChunk(unsigned row) const { return (row & ((1u << m_rowsPerChunkShift) - 1)) * m_wordsPerRow; }
+
+        // Rows stay where they are, and the chunks serve every slice.
         unsigned addRowsWithoutClearing(unsigned count)
         {
-            size_t size = m_words.size();
-            m_words.grow(size + count * m_wordsPerRow);
-            return size / m_wordsPerRow;
+            unsigned first = m_numberOfRows;
+            m_numberOfRows += count;
+            while ((m_chunks.size() << m_rowsPerChunkShift) < m_numberOfRows)
+                m_chunks.append(Vector<uint64_t>(m_wordsPerChunk));
+            if (m_numberOfSlotsPointingTo.size() < m_numberOfRows)
+                m_numberOfSlotsPointingTo.grow(m_numberOfRows);
+            for (unsigned row = first; row < m_numberOfRows; ++row)
+                m_numberOfSlotsPointingTo[row] = 0;
+            return first;
+        }
+
+        unsigned takeRow() { return m_freeRows.isEmpty() ? addRowsWithoutClearing(1) : m_freeRows.takeLast(); }
+
+        // A row that no head and no tail points to any more is used again.
+        void pointTo(unsigned& slot, unsigned row)
+        {
+            if (row)
+                ++m_numberOfSlotsPointingTo[row];
+            unsigned before = std::exchange(slot, row);
+            if (!before || --m_numberOfSlotsPointingTo[before])
+                return;
+            m_freeRows.append(before);
+            if (before == m_lastUnion.a || before == m_lastUnion.b || before == m_lastUnion.result)
+                m_lastUnion = { };
         }
 
         struct Union {
@@ -478,18 +501,72 @@ private:
         };
 
         size_t m_wordsPerRow { 0 };
-        Vector<uint64_t> m_words;
+        size_t m_wordsPerChunk { 0 };
+        unsigned m_rowsPerChunkShift { 0 };
+        unsigned m_numberOfRows { 0 };
+        Vector<Vector<uint64_t>> m_chunks;
+        Vector<unsigned> m_numberOfSlotsPointingTo;
+        Vector<unsigned> m_freeRows;
+        Vector<unsigned> m_head;
+        Vector<unsigned> m_tail;
         Union m_lastUnion;
     };
 
-    void recordBoundaryAfter(const SliceRows& rows, const LayoutNeighbors& neighbors, size_t firstWord, unsigned blockIndex)
+    // The blocks by their position in post order, so that a solve walks arrays from front to back.
+    struct BlocksInPostOrder {
+        static constexpr unsigned none = UINT_MAX;
+
+        std::span<const unsigned> predecessorsOf(unsigned position) const LIFETIME_BOUND
+        {
+            return predecessors.subspan(firstPredecessor[position], firstPredecessor[position + 1] - firstPredecessor[position]);
+        }
+
+        Vector<unsigned> blockIndexes;
+        Vector<unsigned> positionOfBlock;
+        Vector<unsigned> firstPredecessor;
+        Vector<unsigned> predecessors;
+        Vector<unsigned> previousInLayout;
+        Vector<unsigned> nextInLayout;
+    };
+
+    BlocksInPostOrder orderBlocks() const
+    {
+        BlocksInPostOrder order;
+        order.blockIndexes = computeBlocksInPostOrder();
+        order.positionOfBlock.fill(0, m_code.size());
+        for (unsigned position = 0; position < order.blockIndexes.size(); ++position)
+            order.positionOfBlock[order.blockIndexes[position]] = position;
+        for (unsigned blockIndex : order.blockIndexes) {
+            order.firstPredecessor.append(order.predecessors.size());
+            for (BasicBlock* predecessor : m_code[blockIndex]->predecessors())
+                order.predecessors.append(order.positionOfBlock[predecessor->index()]);
+        }
+        order.firstPredecessor.append(order.predecessors.size());
+        if constexpr (recordsLayoutBoundaries) {
+            order.previousInLayout.fill(BlocksInPostOrder::none, order.blockIndexes.size());
+            order.nextInLayout.fill(BlocksInPostOrder::none, order.blockIndexes.size());
+            unsigned previous = BlocksInPostOrder::none;
+            for (BasicBlock* block : m_code) {
+                unsigned position = order.positionOfBlock[block->index()];
+                order.previousInLayout[position] = previous;
+                if (previous != BlocksInPostOrder::none)
+                    order.nextInLayout[previous] = position;
+                previous = position;
+            }
+        }
+        return order;
+    }
+
+    void recordBoundaryAfter(const SliceRows& rows, const BlocksInPostOrder& order, size_t firstWord, unsigned position)
     {
         const size_t words = rows.wordsPerRow();
-        std::optional<unsigned> next = neighbors.next[blockIndex];
-        if (next && rows.tail[blockIndex] == rows.head[*next])
+        const unsigned next = order.nextInLayout[position];
+        const bool hasNext = next != BlocksInPostOrder::none;
+        if (hasNext && rows.tailOf(position) == rows.headOf(next))
             return;
-        const uint64_t* tail = rows.at(rows.tail[blockIndex]);
-        const uint64_t* headOfNext = next ? rows.at(rows.head[*next]) : nullptr;
+        const unsigned blockIndex = order.blockIndexes[position];
+        const uint64_t* tail = rows.at(rows.tailOf(position));
+        const uint64_t* headOfNext = hasNext ? rows.at(rows.headOf(next)) : nullptr;
         forEachInDifference(tail, headOfNext, firstWord, words, [&](unsigned index) {
             m_liveOnlyAtTail.append(blockIndex, index);
         });
@@ -500,21 +577,21 @@ private:
         });
     }
 
-    void recordBoundariesOfSlice(const SliceRows& rows, const LayoutNeighbors& neighbors, size_t firstWord, const Vector<unsigned>& visitedBlocks, Vector<unsigned>& lastSliceRecordingBoundaryAfter, unsigned sliceNumber)
+    void recordBoundariesOfSlice(const SliceRows& rows, const BlocksInPostOrder& order, size_t firstWord, const Vector<unsigned>& visitedPositions, Vector<unsigned>& lastSliceRecordingBoundaryAfter, unsigned sliceNumber)
     {
-        auto recordOnce = [&](unsigned blockIndex) {
-            if (lastSliceRecordingBoundaryAfter[blockIndex] == sliceNumber)
+        auto recordOnce = [&](unsigned position) {
+            if (lastSliceRecordingBoundaryAfter[position] == sliceNumber)
                 return;
-            lastSliceRecordingBoundaryAfter[blockIndex] = sliceNumber;
-            recordBoundaryAfter(rows, neighbors, firstWord, blockIndex);
+            lastSliceRecordingBoundaryAfter[position] = sliceNumber;
+            recordBoundaryAfter(rows, order, firstWord, position);
         };
-        for (unsigned blockIndex : visitedBlocks) {
-            recordOnce(blockIndex);
-            if (std::optional<unsigned> previous = neighbors.previous[blockIndex]) {
-                recordOnce(*previous);
+        for (unsigned position : visitedPositions) {
+            recordOnce(position);
+            if (unsigned previous = order.previousInLayout[position]; previous != BlocksInPostOrder::none) {
+                recordOnce(previous);
                 continue;
             }
-            forEachInDifference(rows.at(rows.head[blockIndex]), nullptr, firstWord, rows.wordsPerRow(), [&](unsigned index) {
+            forEachInDifference(rows.at(rows.headOf(position)), nullptr, firstWord, rows.wordsPerRow(), [&](unsigned index) {
                 m_liveAtHeadOfFirstBlock.append(index);
             });
         }
@@ -524,9 +601,6 @@ private:
     {
         m_usesSlices = true;
         const unsigned numberOfBlocks = m_code.size();
-        const size_t wordsPerSlice = std::max(AirLimits::minWordsPerLivenessSlice, AirLimits::maxWordsPerLivenessMatrix / numberOfBlocks);
-        if constexpr (requires { this->willComputeInSlices(wordsPerSlice); })
-            this->willComputeInSlices(wordsPerSlice);
 
         m_rowOfBlock.fill(std::nullopt, numberOfBlocks);
         unsigned numberOfRows = 0;
@@ -536,33 +610,34 @@ private:
         }
         Vector<TailSegment> segments;
 
-        SliceRows rows(numberOfBlocks);
-        Vector<unsigned> lastSliceVisiting(FillWith { }, numberOfBlocks, 0u);
+        // A visit to a block that names nothing costs the same at any width, so wide slices save visits. How wide the kept tails are decides when the solve gives up.
+        const size_t minWordsPerSlice = numberOfRows ? AirLimits::minWordsPerLivenessSlice : AirLimits::minWordsPerLivenessSliceWithoutTails;
+        const size_t wordsPerSlice = std::max(minWordsPerSlice, AirLimits::maxWordsPerLivenessMatrix / numberOfBlocks);
+        if constexpr (requires { this->willComputeInSlices(wordsPerSlice); })
+            this->willComputeInSlices(wordsPerSlice);
+
+        const BlocksInPostOrder order = orderBlocks();
+        const unsigned numberOfPositions = order.blockIndexes.size();
+        SliceRows rows(numberOfPositions);
+        Vector<unsigned> lastSliceVisiting(FillWith { }, numberOfPositions, 0u);
         Vector<unsigned> lastSliceRecordingBoundaryAfter;
-        LayoutNeighbors neighbors;
-        if constexpr (recordsLayoutBoundaries) {
-            lastSliceRecordingBoundaryAfter.fill(0, numberOfBlocks);
-            neighbors = computeLayoutNeighbors();
-        }
-        Vector<unsigned> visitedBlocks;
+        if constexpr (recordsLayoutBoundaries)
+            lastSliceRecordingBoundaryAfter.fill(0, numberOfPositions);
+        Vector<unsigned> visitedPositions;
         unsigned sliceNumber = 0;
 
-        const Vector<unsigned> blocksInPostOrder = computeBlocksInPostOrder();
-        Vector<unsigned> positionOfBlock(FillWith { }, numberOfBlocks, 0u);
-        for (unsigned position = 0; position < blocksInPostOrder.size(); ++position)
-            positionOfBlock[blocksInPostOrder[position]] = position;
-        LowestFirstWorklist worklist(blocksInPostOrder.size());
+        LowestFirstWorklist worklist(numberOfPositions);
         for (size_t firstWord = 0; firstWord < m_wordsPerSet; firstWord += wordsPerSlice) {
             const size_t words = std::min(wordsPerSlice, m_wordsPerSet - firstWord);
             rows.beginSlice(words);
             ++sliceNumber;
-            visitedBlocks.shrink(0);
+            visitedPositions.shrink(0);
 
-            auto markVisited = [&](unsigned blockIndex) {
-                if (lastSliceVisiting[blockIndex] == sliceNumber)
+            auto markVisited = [&](unsigned position) {
+                if (lastSliceVisiting[position] == sliceNumber)
                     return;
-                lastSliceVisiting[blockIndex] = sliceNumber;
-                visitedBlocks.append(blockIndex);
+                lastSliceVisiting[position] = sliceNumber;
+                visitedPositions.append(position);
             };
 
             auto fillRowsOf = [&](BasicBlock* block) {
@@ -571,10 +646,14 @@ private:
                     rows.removeRowsFrom(gen);
                     return;
                 }
-                rows.gen[block->index()] = gen;
-                rows.tail[block->index()] = rows.isEmpty(gen + 2) ? 0 : gen + 2;
-                markVisited(block->index());
-                worklist.add(positionOfBlock[block->index()]);
+                unsigned position = order.positionOfBlock[block->index()];
+                rows.gen[position] = gen;
+                if (rows.isEmpty(gen + 2))
+                    rows.removeRowsFrom(gen + 2);
+                else
+                    rows.setTail(position, gen + 2);
+                markVisited(position);
+                worklist.add(position);
             };
             // There can be as many slices as blocks, so an adapter that knows which blocks name an index of the slice says so.
             if constexpr (requires { this->nextBlockInSlice(firstWord, words); }) {
@@ -586,37 +665,34 @@ private:
             }
 
             while (auto position = worklist.takeLowest()) {
-                unsigned blockIndex = blocksInPostOrder[*position];
-                unsigned head = rows.gen[blockIndex] ? rows.applyTransfer(blockIndex, rows.head[blockIndex]) : rows.tail[blockIndex];
-                if (head == rows.head[blockIndex])
+                unsigned head = rows.gen[*position] ? rows.applyTransfer(*position, rows.headOf(*position)) : rows.tailOf(*position);
+                if (head == rows.headOf(*position))
                     continue;
-                rows.head[blockIndex] = head;
-                for (BasicBlock* predecessor : m_code[blockIndex]->predecessors()) {
-                    unsigned& tail = rows.tail[predecessor->index()];
-                    unsigned united = rows.unite(tail, head);
-                    if (united == tail)
+                rows.setHead(*position, head);
+                for (unsigned predecessor : order.predecessorsOf(*position)) {
+                    unsigned united = rows.unite(rows.tailOf(predecessor), head);
+                    if (united == rows.tailOf(predecessor))
                         continue;
-                    tail = united;
-                    markVisited(predecessor->index());
-                    worklist.add(positionOfBlock[predecessor->index()]);
+                    rows.setTail(predecessor, united);
+                    markVisited(predecessor);
+                    worklist.add(predecessor);
                 }
             }
 
             if constexpr (recordsLayoutBoundaries)
-                recordBoundariesOfSlice(rows, neighbors, firstWord, visitedBlocks, lastSliceRecordingBoundaryAfter, sliceNumber);
+                recordBoundariesOfSlice(rows, order, firstWord, visitedPositions, lastSliceRecordingBoundaryAfter, sliceNumber);
 
-            for (unsigned blockIndex : visitedBlocks) {
-                std::optional<unsigned> row = m_rowOfBlock[blockIndex];
-                if (row && !rows.isEmpty(rows.tail[blockIndex])) {
-                    segments.append(TailSegment { *row, static_cast<unsigned>(firstWord), static_cast<unsigned>(words), m_store.size() });
-                    m_store.append(std::span<const uint64_t> { rows.at(rows.tail[blockIndex]), words });
+            if (numberOfRows) {
+                for (unsigned position : visitedPositions) {
+                    std::optional<unsigned> row = m_rowOfBlock[order.blockIndexes[position]];
+                    if (row && rows.tailOf(position)) {
+                        segments.append(TailSegment { *row, static_cast<unsigned>(firstWord), static_cast<unsigned>(words), m_store.size() });
+                        m_store.append(std::span<const uint64_t> { rows.at(rows.tailOf(position)), words });
+                    }
                 }
             }
-            for (unsigned blockIndex : visitedBlocks) {
-                rows.head[blockIndex] = 0;
-                rows.tail[blockIndex] = 0;
-                rows.gen[blockIndex] = 0;
-            }
+            for (unsigned position : visitedPositions)
+                rows.forget(position);
             if (m_store.size() > AirLimits::maxWordsOfLivenessAtTails) {
                 m_status = BitMatrixLivenessStatus::GaveUp;
                 return;

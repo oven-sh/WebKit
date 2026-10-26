@@ -409,6 +409,8 @@ ALWAYS_INLINE void ValueFlowGraph::pass(uint32_t node, uint32_t numberOfMask, ui
     ValueFlowCoveredObjects covered;
     for (uint32_t index = 0; index < m_coverings.size(); ++index) {
         const Covering& covering = m_coverings[index];
+        if (!covering.isFirstOfPlaceholder)
+            continue;
         bool isUntracked = covering.placeholder == m_placeholders.untracked;
         (isUntracked ? covered.byUntracked : covered.byUnknown) = ValueSets::nothing;
         if ((isUntracked || mask.kind == ValueFlowMaskKind::Checked) && !covering.hasStoppedAt.quickGet(node) && m_sets.contains(value, covering.placeholder))
@@ -781,6 +783,7 @@ void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFl
     RELEASE_ASSERT(!m_hasSolved);
     Covering covering;
     covering.placeholder = placeholder;
+    covering.isFirstOfPlaceholder = !std::ranges::contains(m_coverings, placeholder, &Covering::placeholder);
     covering.covered = covered.index();
     covering.lowMembersOfWhole = lowMembersOf(whole, *m_makers[0]);
     covering.listedMembersOfWhole = m_makers[0]->intersect(whole, ValueSets::complement(m_lowMembers));
@@ -1349,6 +1352,23 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
     if (retiredNodes == RetiredNodes::AreFoundAndConnectedInSolve)
         retireNodesAmong(moved.span());
     m_counters.waving += MonotonicTime::now() - afterRows;
+}
+
+void ValueFlowGraph::removeFromEveryNode(ValueFlowObjectID lowMember)
+{
+    RELEASE_ASSERT(lowMember.index() < numberOfLowMembers);
+    ValueSetMaker& maker = *m_makers[0];
+    uint64_t bit = 1ull << lowMember.index();
+    ValueSetID others = ValueSets::complement(maker.of(lowMember));
+    for (uint32_t node = 0; node < m_numberOfNodes; ++node) {
+        Row& row = m_rows[node];
+        if (!(row.low & bit))
+            continue;
+        row.low &= ~bit;
+        if (row.set)
+            row.set = maker.intersect(ValueSetID(row.set), others).index();
+        m_value[node] = maker.intersect(m_value[node], others);
+    }
 }
 
 void ValueFlowGraph::releaseRows()

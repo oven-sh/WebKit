@@ -836,11 +836,15 @@ private:
         throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
         if (!m_call.result)
             return;
-        connectOperands(BuiltinOperand::argument(0), escaped());
         connectOperands(BuiltinOperand::argument(1), escaped());
+        bool answersProxy = m_builtins.canonicalID(m_builtin) == Builtins::Proxy;
         forEachOperandAt(BuiltinOperand::argument(0), [&](const ValueFlowOperand& target) {
+            carryOut(m_context, target);
             if (ValueFlowNodeID exports = exportsOfHoldersIn(m_context, target))
                 m_context.connect(exports, escaped());
+            // A name read on the proxy is read on its target.
+            if (ValueFlowNodeID listedBun = answersProxy ? findNodeOfListedBun(m_context, target) : ValueFlowNodeID())
+                m_context.connect(listedBun, m_call.result);
         });
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_universe.objectsOfRealm()));
         for (BuiltinID trap : m_builtins.membersOf(Builtins::Reflect)) {
@@ -850,8 +854,8 @@ private:
         }
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         answer(undescribedObject());
-        if (m_builtins.canonicalID(m_builtin) == Builtins::Proxy)
-            m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_tables.heap().objectsThatLetInUnseenCode()));
+        if (answersProxy)
+            m_context.add(m_call.result, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_context.maker().unite(m_tables.heap().objectsThatLetInUnseenCode(), m_context.maker().of(m_universe.objectOf(Builtins::Bun)))));
     }
 
     void noteClassesOfResult(const BuiltinOverload& overload)
@@ -2621,16 +2625,14 @@ void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, Val
 void carryOut(ValueFlowRuleContext& context, ValueFlowNodeID values)
 {
     context.connect(values, ValueFlowProgramNodes::escaped());
-    context.connect(context.masked(values, context.universe().builtinTables().heap().namespacesWhoseHoldersListThem()), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
+    context.connect(values, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
 }
 
 void carryOut(ValueFlowRuleContext& context, const ValueFlowOperand& values)
 {
     context.connect(values, ValueFlowProgramNodes::escaped());
-    if (values.maskKind != ValueFlowMaskKind::Plain)
-        return;
-    ValueSetID namespaces = context.universe().builtinTables().heap().namespacesWhoseHoldersListThem();
-    context.connect(ValueFlowOperand { values.node, context.maker().intersect(values.constant, namespaces), context.maker().intersect(values.mask, namespaces) }, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
+    if (values.maskKind == ValueFlowMaskKind::Plain)
+        context.connect(values, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
 }
 
 void noteCallOfBuiltin(BuiltinID builtin, ValueFlowCallKind kind, ValueFlowRuleContext& context)

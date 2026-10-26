@@ -43,6 +43,14 @@ for (const [front, behind, flags, withCaptures] of kinds) {
     }
 }
 
+// A group without captures keeps no context, so it takes its turns in every turn of a group at the end of the pattern that is repeated without a bound.
+for (const [source, turn] of [
+    ["(?:(?<n>x)|(?<n>y))?(?:(?:ab){2})*", "abab"],
+    ["(?:(?<n>x)|(?<n>y))?(?:c(?:ab){3})*", "cababab"],
+    ["(?:(?<n>x)|(?<n>y))?(?:(?:(?:ab){2}c){2})*", "ababcababc"],
+])
+    shouldBe(describe(new RegExp(source).exec(turn.repeat(turns))), "0:" + turn.length * turns + ",-,-", source);
+
 // What a group had captured before the turns began is there again behind turns that fail, and the text is read on from where the turns began.
 const restored = [
     ["(?:(a)|b)(?:(?:(x)y){3}z|.*)", "axyxyxyw", "0:8,1,-"],

@@ -350,13 +350,14 @@ void encodeStaticsTables(TableEncoder& encoder)
     Vector<InitialWord> parts;
     Vector<uint32_t> narrowRoots;
     Vector<FunctionVariableData> functionVariables;
-    for (const PlacedVariable& placed : statics.variables) {
+    for (unsigned index = 0; index < statics.variables.size(); ++index) {
+        const PlacedVariable& placed = statics.variables[index];
         if (!placed.hasWordInStatics())
             continue;
         if (traitsOf(placed.representation).isNarrowReference)
             narrowRoots.append(placed.offset);
         if (placed.encoding == VariableEncoding::FunctionAsZero)
-            functionVariables.append({ placed.offset, encoder.entrypointOf(placed.function) });
+            functionVariables.append({ placed.offset, encoder.entrypointOf(placed.function, "what the first read makes of the variable"_s, VariableID(index)) });
         if (!placed.initialWord)
             continue;
         unsigned width = widthOf(placed.representation);

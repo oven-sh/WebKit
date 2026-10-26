@@ -40,7 +40,12 @@ inline constexpr OpcodeSet castsAndConversions = [] {
 
 constexpr bool isCastOrConversion(Opcode opcode) { return castsAndConversions.contains(opcode); }
 
+// Each answers with its operand where that is an object, and with another object where it is not.
+inline constexpr OpcodeSet conversionsToObject { Opcode::ToObject, Opcode::ToThis };
+
 ValueID sameObjectThroughCasts(const Function&, ValueID);
+// For a question about an object: where the value found is that object, so is the given one.
+ValueID sameObjectThroughConversionsToObject(const Function&, ValueID);
 ValueID definitionThroughUpcasts(const Function&, ValueID);
 
 inline bool leavesDeadZoneBehind(const Program& program, const Function& function, const Value& value)

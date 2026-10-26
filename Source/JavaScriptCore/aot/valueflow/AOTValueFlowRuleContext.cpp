@@ -165,7 +165,6 @@ void ValueFlowRuleContext::end()
 }
 
 FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
-const ValueFlowStatement* ValueFlowRuleContext::statementOfThisTurn() const { return m_keyOfStatementOfThisTurn ? nullptr : &m_solver.statementAt(m_statement); }
 std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
 void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function) { makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls()); }

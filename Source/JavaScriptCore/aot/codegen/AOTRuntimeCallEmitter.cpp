@@ -763,13 +763,9 @@ B3::Air::StackSlot* RuntimeCallEmitter::ensureRegisterStorage(B3::Air::StackSlot
 
 RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context, const CallOptions& options)
 {
-    bool isTailCall = options.isTailCall;
-    if (!isTailCall && context.valueID()) {
-        // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
-        const Value& value = m_function.at(context.valueID());
-        isTailCall = builtinCallOpcodes.contains(value.opcode) && value.isDemotedTailCall();
-    }
-    return { .origin = options.origin.value_or(context.origin()), .constructs = options.constructs, .isTailCall = isTailCall };
+    // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
+    Origin origin = options.origin.value_or(context.origin());
+    return { .origin = origin, .constructs = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)

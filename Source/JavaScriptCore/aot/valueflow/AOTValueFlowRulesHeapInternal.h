@@ -247,10 +247,10 @@ private:
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet holdersOfReplaceableMemberListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
-    // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where the operations name Bun.
+    // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
     ClimbingSet findListedBun(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node) : ClimbingSet(); }
-    bool isBunNamedByOperations(const ValueFlowOperand& object);
-    ValueSetID allButBunUnlessNamed(const ValueFlowOperand& object) { return isBunNamedByOperations(object) ? ValueSets::anything : ValueSets::complement(only(m_universe.objectOf(Builtins::Bun))); }
+    bool holdsNamedBun(const ValueFlowOperand& object) { return object.node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), object.node); }
+    ValueSetID allButBunUnlessNamed(const ValueFlowOperand& object) { return holdsNamedBun(object) ? ValueSets::anything : ValueSets::complement(only(m_universe.objectOf(Builtins::Bun))); }
     ClimbingSet hostObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_tables.holdersOfMembersThatHostMakes(), allButBunUnlessNamed(object))), object.node) : ClimbingSet(); }
     bool isInProgramCode();
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) && isInProgramCode() ? m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node) : ClimbingSet(); }

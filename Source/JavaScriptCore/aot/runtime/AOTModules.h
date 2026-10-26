@@ -15,6 +15,7 @@
 #include "RememberedSlot.h"
 #include "ScriptFetcher.h"
 #include "SourceOrigin.h"
+#include "Strong.h"
 #include <wtf/HashMap.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
@@ -139,6 +140,23 @@ public:
     void evaluateModuleInRecord(ModuleID);
     // Says whether a file ran.
     bool evaluateImportedCommonJSFiles(ModuleID root);
+    void evaluateLoadedCommonJSFile(ModuleID);
+    bool isCommonJSFileOrFace(ModuleID module) const { return data(module).kind == ModuleKind::CommonJs || m_table.fileBehindFace(module); }
+    // The loader can load a file of the program as it loads code that is not compiled.
+    bool isFileOfProgram(ModuleID module) const { return !data(module).isOfLibrary() && (data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs); }
+    bool isLoadedWithRequests(ModuleID module) const { return isFileOfProgram(module) && data(module).kind == ModuleKind::SourceText; }
+    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)); }
+    bool needsLoaderForRequire(ModuleID);
+    bool canTellHowGraphIsLoaded(ModuleID root);
+    void appendRequestsForLoader(ModuleID, ModuleRecord*);
+    ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
+    void setIsWalkingRequests(bool isWalkingRequests) { m_isWalkingRequests = isWalkingRequests; }
+    bool hasImportedCommonJSFilesToRun(ModuleID root) const;
+    bool hasLoadInFlight();
+    void didStartLoad(JSPromise*);
+    ModuleRecord* recordOfCommonJSFile(ModuleID);
+    bool isNotLoaded(ModuleID) const;
+    bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
@@ -206,6 +224,7 @@ private:
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
         std::optional<uint32_t> firstAbsentExport;
+        bool wasLoadedWhileItRan { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
@@ -302,6 +321,8 @@ private:
     const bool m_admitsInspector;
     bool m_loadsModulesByName;
     bool m_isAskingHost { false };
+    bool m_isWalkingRequests { false };
+    Vector<Strong<JSPromise>, 2> m_loadsInFlight;
     bool m_isStartingRuntimeModule { false };
     // The link of the entry point that the image has a plan for stores no status.
     bool m_entryPointIsLinked { false };

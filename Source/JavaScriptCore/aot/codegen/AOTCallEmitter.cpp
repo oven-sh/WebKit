@@ -437,7 +437,7 @@ void CallEmitter::generateCall(const ValueContext& value)
         tailCallValue(value, call);
         return;
     }
-    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
+    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

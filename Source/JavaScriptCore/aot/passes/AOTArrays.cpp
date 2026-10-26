@@ -686,7 +686,7 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
         Vector<InlineFrame>& frames = function.inlineFrames;
         if (frames.isEmpty())
             frames.append(InlineFrame { });
-        frames.append(InlineFrame { .callee = onlyCall.function(), .callPosition = onlyCall.position, .parent = onlyCall.inlineFrame, .isTailCall = onlyCall.isDemotedTailCall(), .module = builtin.module });
+        frames.append(InlineFrame { .callee = onlyCall.function(), .callPosition = onlyCall.position, .parent = onlyCall.inlineFrame, .isTailCall = !!onlyCall.isTailCall, .module = builtin.module });
         originInBuiltin = Origin { builtin.position, static_cast<uint32_t>(frames.size() - 1) };
     }
     Origin origin = originInBuiltin ? *originInBuiltin : function.at(chain.lastCall).origin();
@@ -728,8 +728,6 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     }
 
     Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
-    const Value& lastCall = function.at(chain.lastCall);
-    call.setIsDemotedTailCall(!originInBuiltin && FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
     // A step that is called calls each callback by value, and costs more than the methods that it stands for.
     call.setIsAlwaysInlined(true);
     ValueID fused = insert(WTF::move(call));

@@ -1822,7 +1822,6 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
         call.setExpectedResult(listCall.expectedResult());
-        call.setIsDemotedTailCall(listCall.isDemotedTailCall());
         break;
     case Opcode::ConstructList:
         call.become(Opcode::Construct);
@@ -2596,7 +2595,8 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
     };
 
     IRBuilder& builder = cursor().builder();
-    const ObjectState& state = *stateOf(object);
+    // An arm that builds a member by its own tag takes that member's members out of the state, which moves the entries behind them.
+    const ObjectState state = *stateOf(object);
     Vector<HeldObject, 2> heldObjectsOfArms;
     Vector<MemberOfArms, 2> membersOfArms;
     for (const HeldObject& held : state.heldObjects) {
@@ -2642,7 +2642,10 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
         const ObjectVariant& variant = state.variants[index];
         cursor().moveTo(arms[index]);
         for (const MemberOfArms& member : membersOfArms) {
-            *stateOf(member.member) = member.state;
+            if (ObjectState* stateOfMember = stateOf(member.member))
+                *stateOfMember = member.state;
+            else
+                m_state.add(member.member, ObjectState(member.state));
             values().ensure(member.member) = member.values;
         }
         for (const HeldObject& held : heldObjectsOfArms) {

@@ -117,7 +117,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers)
     ValueFlowNodeID wholeChain = m_context.lookup(start, prototypeLinkName);
     ClimbingSet chain = m_context.valueOf(wholeChain);
     ClimbingSet objects = known(chain);
-    if (mayBeUnknownObject(chain))
+    if (mayBeUnknownObject(chain) && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), wholeChain))
         objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), wholeChain));
     if (m_keepsHoldersOfExportsItStartsFrom) {
         ClimbingSet holdersOfExports(m_universe.holdersOfLibraryExports());
@@ -611,7 +611,7 @@ ClimbingSet HeapRule::prototypesOf(ClimbingSet start, ValueSetID atCreation)
     ValueFlowNodeID links = readWhereWritten(objects, prototypeLinkName);
     ClimbingSet above = m_context.unite(valueOfNodeIfAny(links), ClimbingSet(atCreation ? atCreation : prototypesAtCreationOf(start)));
     if (links && mayBeUnknownObject(above))
-        above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_context.maker().unite(m_universe.holdersOfLibraryExports(), only(m_universe.objectOf(Builtins::Bun)))), links));
+        above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_context.maker().unite(m_universe.holdersOfLibraryExports(), m_context.maker().unite(only(m_universe.objectOf(Builtins::Bun)), only(ValueFlowUniverse::markOfNamedBun())))), links));
     forEachNodeStoredThroughPlaceholdersInto(objects, prototypeLinkName, [&](ValueFlowNodeID stored) {
         above = m_context.unite(above, m_context.valueOf(stored));
     });
@@ -640,7 +640,7 @@ void HeapRule::collectChain()
     ClimbingSet above = prototypesOf(start, atCreation);
     ValueFlowNodeID chainAbove = m_context.lookup(known(above), prototypeLinkName);
     connect(chainAbove, m_statement.result);
-    add(m_statement.result, m_context.restrict(above, m_universe.placeholdersAlone()));
+    add(m_statement.result, m_context.restrict(above, m_context.maker().unite(m_universe.placeholdersAlone(), only(ValueFlowUniverse::markOfNamedBun()))));
     if (mayBeUnknownObject(above)) {
         ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
         if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
@@ -673,6 +673,8 @@ void HeapRule::readMember(BuiltinID member, ModuleID module, ValueFlowNodeID res
     case BuiltinKind::Prototype:
     case BuiltinKind::Method:
         add(result, only(objectOfMember(member, module)));
+        if (m_builtins.canonicalID(member) == Builtins::Bun)
+            add(result, only(ValueFlowUniverse::markOfNamedBun()));
         return;
     case BuiltinKind::DataProperty: {
         const Builtin& entry = m_builtins.at(member);
@@ -954,6 +956,8 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     Members getters;
     HeapChain chain = chainFrom(m_context.valueOf(object), key);
     ClimbingSet found = m_context.restrict(chain.objects, holders);
+    if (holdsNamedBun(object))
+        found = m_context.unite(found, m_context.restrict(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), holders));
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);

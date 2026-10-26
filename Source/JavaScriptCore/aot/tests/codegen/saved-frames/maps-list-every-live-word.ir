@@ -1,0 +1,37 @@
+# Four values are made before the first await and last read between the two awaits. The frame keeps their words. Each map lists every live word, and that of the second await does not list those four.
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: check=validate-back-end
+# CHECK: f2: size={{*}} liveWordsInMaps={{*}}+0,{{*}}+0
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# X64: f2: size={{*}} liveWordsInMaps=6+0,1+0
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+variable g1 declared={type=anything} initialization=Undefined
+function f0 name="exchange" parameters=[{type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g1
+    Return v2
+}
+function f1 name="readsBetweenAwaits" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f2
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f2 name="readsBetweenAwaits" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=1} {
+    v2 = CallDirect v0 function=f0
+    v3 = CallDirect v0 function=f0
+    v4 = CallDirect v0 function=f0
+    v5 = CallDirect v0 function=f0
+    v6 = AwaitBySavingFrame v0, v1 @10
+    v7 = CallDirect v2 function=f0
+    v8 = CallDirect v3 function=f0
+    v9 = CallDirect v4 function=f0
+    v10 = CallDirect v5 function=f0
+    v11 = AwaitBySavingFrame v0, v1 @20
+    v12 = ReturnAsyncResult v1, v11
+    Return v12
+}

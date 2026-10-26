@@ -111,7 +111,7 @@ struct EntryRequest {
 
 struct ConventionResultNode : WTF::UnionFind<ConventionResultNode> { };
 
-enum class CalledCode : uint8_t { Unknown, None, FunctionWithStackCheck };
+enum class CalledCodeKind : uint8_t { Unknown, None, FunctionWithStackCheck };
 
 } // anonymous namespace
 
@@ -883,15 +883,15 @@ static bool isEntranceThatLeavesByTailCallsAlone(const Function& function)
     });
 }
 
-static CalledCode classifyCalledCode(const EffectContext& context, const Function& function, const Value& value, const BitVector& isCandidate)
+static CalledCodeKind classifyCalledCode(const EffectContext& context, const Function& function, const Value& value, const BitVector& isCandidate)
 {
     Effects effects = effectsOf(context, function, value).onAnyEdge();
     if (effects.maySuspend)
-        return CalledCode::Unknown;
+        return CalledCodeKind::Unknown;
     if (!effects.mayCallUnknownCode)
-        return CalledCode::None;
+        return CalledCodeKind::None;
     if (effectRuleOf(value.opcode) != EffectRule::Call)
-        return CalledCode::Unknown;
+        return CalledCodeKind::Unknown;
 
     bool hasCallee = false;
     bool hasUncheckedCallee = false;
@@ -904,7 +904,7 @@ static CalledCode classifyCalledCode(const EffectContext& context, const Functio
         auto& callee = context.program.at(target);
         hasUncheckedCallee |= !callee.hasBody() || isCandidate.get(target.index()) || callee.creator.is<CreatorRecord::Entrypoint>();
     });
-    return hasCallee && !hasUncheckedCallee ? CalledCode::FunctionWithStackCheck : CalledCode::Unknown;
+    return hasCallee && !hasUncheckedCallee ? CalledCodeKind::FunctionWithStackCheck : CalledCodeKind::Unknown;
 }
 
 static bool canDeferStackCheck(const EffectContext& context, const Function& function, const BitVector& isCandidate)
@@ -913,11 +913,11 @@ static bool canDeferStackCheck(const EffectContext& context, const Function& fun
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             switch (classifyCalledCode(context, function, function.at(id), isCandidate)) {
-            case CalledCode::Unknown:
+            case CalledCodeKind::Unknown:
                 return false;
-            case CalledCode::None:
+            case CalledCodeKind::None:
                 break;
-            case CalledCode::FunctionWithStackCheck:
+            case CalledCodeKind::FunctionWithStackCheck:
                 hasDirectCall = true;
                 break;
             }

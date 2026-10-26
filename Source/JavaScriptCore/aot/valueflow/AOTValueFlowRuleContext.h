@@ -58,7 +58,6 @@ public:
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
     FunctionID functionOfStatement() const;
-    const ValueFlowStatement* statementOfThisTurn() const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) const LIFETIME_BOUND;
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;

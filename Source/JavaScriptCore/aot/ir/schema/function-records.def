@@ -41,7 +41,7 @@ record DerivedFunctionKey engine { role: FunctionRole target: Function(Dispatch)
 record InlineFrame engine {
     callee: Function(Dispatch)? callPosition: UInt32 parent: UInt32 isTailCall: Bool isConstruction: Bool module: Module(Referrer)?
 }
-record Origin engine { position: UInt32 inlineFrame: UInt32 }
+record Origin engine { position: UInt32 inlineFrame: UInt32 isTailCall: Bool }
 
 variant CreatorRecord engine {
     None

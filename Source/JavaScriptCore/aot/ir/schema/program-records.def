@@ -63,7 +63,7 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader
     | engine EvaluatesItself IsEvaluatedByRequire
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
@@ -107,7 +107,7 @@ enum RuntimeErrorKind {
     UninitializedBinding ConstantAssignment UninitializedThis ThisAlreadyBound DeleteSuperProperty UnresolvableReference ImportAssignment NotDestructurable
     DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorIsNotAnObject InvalidPrivateRead
     InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter PrivateStaticTestOfNonObject
-    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled
+    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled NoSyncIteratorForAsyncIteration SyncIteratorForAsyncIterationIsNotAnObject
 }
 flags RegExpFlags { HasIndices Global IgnoreCase Multiline DotAll Unicode UnicodeSets Sticky }
 

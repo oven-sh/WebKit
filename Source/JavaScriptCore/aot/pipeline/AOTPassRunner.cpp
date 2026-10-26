@@ -526,7 +526,7 @@ void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAP
 
 static bool hasSameWords(const Instruction& a, const Instruction& b)
 {
-    return a.position == b.position && a.inlineFrame == b.inlineFrame && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
+    return a.origin() == b.origin() && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
 }
 
 static OptionSet<ValueEdit> editsBetween(const Value& before, const Value& after)

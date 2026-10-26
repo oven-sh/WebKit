@@ -41,7 +41,7 @@ struct DirectCallRequest {
     bool isConstruction { false };
     bool isNeverInlined { false };
     bool isAlwaysInlined { false };
-    bool isDemotedTailCall { false };
+    bool isTailCall { false };
 };
 
 ValueID appendDirectCall(IRBuilder&, const DirectCallRequest&);

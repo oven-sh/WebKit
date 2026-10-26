@@ -436,6 +436,9 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+        // What the front end hides is a function of its own that no trace lists. What its role hides is a part of a function that traces list.
+        if (function.has(FunctionFlags::IsHiddenInStackTraces))
+            return TraceVisibility::Hidden;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
     }
     RELEASE_ASSERT_NOT_REACHED();

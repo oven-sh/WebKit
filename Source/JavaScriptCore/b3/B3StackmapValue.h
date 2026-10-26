@@ -31,6 +31,8 @@
 #include "B3Value.h"
 #include "B3ValueRep.h"
 #include "RegisterSet.h"
+#include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC {
@@ -240,6 +242,10 @@ public:
     void setIsSuspension(bool isSuspension) { m_isSuspension = isSuspension; }
     bool isSuspension() const { return m_isSuspension; }
 
+    // Of a suspension: the words of the frame, counted down from the frame pointer, first word 1, that nothing reads behind it before it is written. Air reports them where it knows them.
+    void setFrameWordsDeadAcrossSuspension(BitVector&& words) { m_frameWordsDeadAcrossSuspension = WTF::move(words); }
+    const std::optional<BitVector>& frameWordsDeadAcrossSuspension() const { return m_frameWordsDeadAcrossSuspension; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -330,6 +336,7 @@ private:
     RefPtr<StackmapGenerator> m_generator;
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
+    std::optional<BitVector> m_frameWordsDeadAcrossSuspension;
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
     bool m_areConstraintsFrozen { false };
     bool m_runsWithoutFrame { false };

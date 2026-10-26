@@ -104,6 +104,10 @@ static Origin parseOrigin(TextParser& parser)
     origin.position = parser.parseUInt32(Wire::none - 1);
     if (parser.accept(TokenKind::Colon))
         origin.inlineFrame = parser.parseUInt32();
+    if (parser.token().isWord("tail"_s)) {
+        origin.isTailCall = true;
+        parser.advance();
+    }
     return origin;
 }
 
@@ -298,11 +302,11 @@ void TextParser::parseValue()
         code().append(parseUInt32());
     }
     overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionFollows, origin.position });
-    if (engineFlags || origin.inlineFrame) {
-        addPatch([function = m_body.function, id, engineFlags, inlineFrame = origin.inlineFrame](PatchContext& context) {
+    if (engineFlags || origin.inlineFrame || origin.isTailCall) {
+        addPatch([function = m_body.function, id, engineFlags, origin](PatchContext& context) {
             Value& value = context.program.at(function).edit(id);
             value.flags |= engineFlags;
-            value.inlineFrame = inlineFrame;
+            value.setOrigin(origin);
         });
     }
     expectEndOfLine();
@@ -344,9 +348,9 @@ void TextParser::parseTerminator()
 
     Origin origin = parseOrigin(*this);
     overwriteRecord(code(), headPosition, Wire::TerminatorHead { static_cast<uint32_t>(kind), origin.position, static_cast<uint32_t>(targetNames.size()) });
-    if (origin.inlineFrame) {
-        addPatch([function = m_body.function, block = m_body.block, inlineFrame = origin.inlineFrame](PatchContext& context) {
-            context.program.at(function).edit(block).terminator.inlineFrame = inlineFrame;
+    if (origin.inlineFrame || origin.isTailCall) {
+        addPatch([function = m_body.function, block = m_body.block, origin](PatchContext& context) {
+            context.program.at(function).edit(block).terminator.setOrigin(origin);
         });
     }
     expectEndOfLine();

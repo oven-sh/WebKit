@@ -17,6 +17,7 @@
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -30,18 +31,6 @@ static ValueID skipRequests(const Function& function, ValueID id)
     while (id) {
         const Value& value = function.at(id);
         if (value.opcode != Opcode::Convert && value.opcode != Opcode::Upcast)
-            break;
-        id = value.valueOperand();
-    }
-    return id;
-}
-
-// `this` of a construction is an object, which ToThis answers with.
-static ValueID skipRequestsOnConstructedObject(const Function& function, ValueID id)
-{
-    while (id) {
-        const Value& value = function.at(id);
-        if (value.opcode != Opcode::Convert && value.opcode != Opcode::Upcast && value.opcode != Opcode::ToThis)
             break;
         id = value.valueOperand();
     }
@@ -100,7 +89,7 @@ static ValueID findParameterStoredAsTag(const Program& program, const Function& 
             const Value& value = function.at(id);
             if (value.opcode != Opcode::PropSet && value.opcode != Opcode::PropDefine)
                 continue;
-            if (value.key() != tagKey || skipRequestsOnConstructedObject(function, value.objectOperand()) != object)
+            if (value.key() != tagKey || sameObjectThroughConversionsToObject(function, value.objectOperand()) != object)
                 continue;
             if (!addStore(value.valueOperand()))
                 return { };
@@ -172,7 +161,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
             BitVector erasedIndexes(values.size());
             for (size_t index = 0; index < values.size(); ++index) {
                 const Value& value = copy.at(values[index]);
-                if (value.opcode != Opcode::ToThis || skipRequestsOnConstructedObject(copy, values[index]) != thisValue)
+                if (value.opcode != Opcode::ToThis || sameObjectThroughConversionsToObject(copy, values[index]) != thisValue)
                     continue;
                 substitution.replace(values[index], value.valueOperand());
                 erasedIndexes.set(index);

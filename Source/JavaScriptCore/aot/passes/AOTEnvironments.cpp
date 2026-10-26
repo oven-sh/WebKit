@@ -22,6 +22,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
 #include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
 #include "AOTProgramPasses.h"
@@ -53,6 +54,8 @@ struct PlannedCapture {
     bool isRemoved { false };
     // What the function reads in its place.
     VariableID variable;
+    // The primitive that every closure of the function captures.
+    KnownValue constant;
 };
 
 struct PromotedCaptureSource {
@@ -592,6 +595,16 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             return fits(entry.second);
         });
     };
+    auto findConstant = [&](FunctionID closureFunction, uint32_t capture) {
+        auto constantIn = [&](FunctionID function) {
+            return knownValueOfType(program, program.at(program.provenTypeOf(program.at(function).captures[capture])));
+        };
+        KnownValue constant = constantIn(closureFunction);
+        bool isSameInVersions = std::ranges::all_of(std::ranges::equal_range(versions, closureFunction, { }, &std::pair<FunctionID, FunctionID>::first), [&](const auto& entry) {
+            return constantIn(entry.second) == constant;
+        });
+        return isSameInVersions && !constant.isObject() ? constant : KnownValue();
+    };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
     auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
         if (source.variable)
@@ -615,10 +628,16 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
                 std::span<const PlannedCapture> planned = plan.capturesOf(closureFunction);
                 if ((!planned.empty() && planned[capture].isRemoved) || !program.at(captures[capture].type).isJavaScriptValue())
                     continue;
+                if (KnownValue constant = findConstant(closureFunction, capture); constant.isKnown()) {
+                    plannedCapture(closureFunction, capture) = { true, { }, constant };
+                    ++plan.numberOfPromotedCaptures;
+                    didChange = true;
+                    continue;
+                }
                 PromotedCaptureSource source = findCommonSource(closureFunction, capture, suppliersOfFunction);
                 if (!source || !fitsCapture(source, closureFunction, capture))
                     continue;
-                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]) };
+                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]), { } };
                 ++plan.numberOfPromotedCaptures;
                 didChange = true;
             }
@@ -736,8 +755,13 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
     BlockValues values;
     Vector<ValueID, 4> replacedParameters;
     Vector<Value, 4> reads;
+    Vector<std::pair<ValueID, KnownValue>, 2> constants;
     const auto& parameters = function.at(entryBlock).parameters;
     for (size_t capture = 0; capture < planned.size(); ++capture) {
+        if (planned[capture].constant.isKnown()) {
+            values.append(parameters[capture]);
+            constants.append({ parameters[capture], planned[capture].constant });
+        }
         if (!planned[capture].variable)
             continue;
         Value read = function.at(parameters[capture]);
@@ -762,6 +786,8 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
     removeEntryParameters(function, removedCaptures);
     for (size_t index = 0; index < reads.size(); ++index)
         function.edit(replacedParameters[index]) = WTF::move(reads[index]);
+    for (auto [parameter, constant] : constants)
+        becomeConstant(program, function, builder.types(), parameter, constant);
     values.appendVector(function.at(entryBlock).values);
     function.edit(entryBlock, BlockEdit::Values).values = WTF::move(values);
 }

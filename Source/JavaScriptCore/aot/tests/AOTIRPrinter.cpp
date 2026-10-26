@@ -111,11 +111,14 @@ static std::optional<InvalidPart> findInvalidStorage(const Instruction& instruct
 static void printOrigin(IRPrinter& printer, const Instruction& instruction)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
-    if (!instruction.hasPosition() && !inlineFrame)
+    bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
+    if (!instruction.hasPosition() && !inlineFrame && !isTailCall)
         return;
     printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
+    if (isTailCall)
+        printer.out().print(" tail"_s);
 }
 
 template<typename IDType>

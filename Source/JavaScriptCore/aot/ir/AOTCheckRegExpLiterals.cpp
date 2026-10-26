@@ -68,12 +68,16 @@ static void replaceWithConstructorCall(FunctionPassContext& context, IRBuilder& 
     Value flagsText = IRBuilder::make(Opcode::String);
     flagsText.setString(context.strings.intern(StringView { flagCharacters.span() }));
     Value call = IRBuilder::make(Opcode::Construct);
-    call.setOrigin(builder.origin());
     call.setCalleeOperand(builder.insertBefore(ProgramPoint::atHeadOf(creation), WTF::move(constructor)));
     call.appendVariadicOperand(builder.insertBefore(ProgramPoint::atHeadOf(creation), WTF::move(patternText)));
     call.appendVariadicOperand(builder.insertBefore(ProgramPoint::atHeadOf(creation), WTF::move(flagsText)));
+    // Where the literal is stored is declared to hold a RegExp, and a call has no type in this form.
+    Value created = IRBuilder::make(Opcode::Check, { builder.insertBefore(ProgramPoint::atHeadOf(creation), WTF::move(call)) });
+    created.setOrigin(builder.origin());
+    created.setCastType(context.types.intern(Type::builtinClass(BuiltinClasses::RegExp)));
+    created.setCause(CheckCause::AddedByPass);
     builder.applyInsertions();
-    function.edit(literal) = WTF::move(call);
+    function.edit(literal) = WTF::move(created);
 
     builder.moveToEndOf(failed);
     builder.append(Opcode::CatchValue, { });

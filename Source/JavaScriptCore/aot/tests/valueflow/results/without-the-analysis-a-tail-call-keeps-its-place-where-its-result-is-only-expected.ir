@@ -7,7 +7,7 @@
 # STATISTIC: ReturnCallsDemoted = 0
 # CHECK: function f1 name="loose"
 # CHECK: ReturnCall [[call]] casts=[{declared={type=number site=w0 flags=[IsExpected]} resolution=Nothing}]
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

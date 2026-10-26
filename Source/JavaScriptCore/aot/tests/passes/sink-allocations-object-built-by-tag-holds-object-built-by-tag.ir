@@ -1,0 +1,126 @@
+# An object that may be missing holds another that may be missing, and that one holds a list. Where the outermost leaves, each is made in the arm of its holder that has it
+# FORM: Prepared
+# RUN: pass ComputeEffectSummaries SinkAllocations
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="rest" declared={type=anything}}, {key="head" declared={type=anything}}]
+
+function f0 name="mayThrow" parameters=[{type=boolean}] results=[{type=boolean}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Throw v0
+  b2():
+    Return v0
+}
+
+function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boolean}] results=[{type=undefined|L0}] {
+    v3 = Undefined
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = CallDirect v2 function=f0
+    v5 = NewObject layout=L0
+    v6 = Integer integer=1
+    v7 = NewArray v6 contents=anything
+    PutSlotOrAdd v5, -, v7 key="rest" receivers=[L0] level=Proven
+    PutSlotOrAdd v5, -, v0 key="head" receivers=[L0] level=Proven
+    Jump -> next b3(v5)
+  b2() role=CatchHandler:
+    Jump -> next b3(v3)
+  b3(v10: undefined|L0):
+    Jump -> next b4()
+  b4() handler=b5():
+    v11 = CallDirect v2 function=f0
+    v12 = NewObject layout=L0
+    v13 = Integer integer=2
+    v14 = NewArray v13 contents=anything
+    PutSlotOrAdd v12, -, v14 key="rest" receivers=[L0] level=Proven
+    PutSlotOrAdd v12, -, v10 key="head" receivers=[L0] level=Proven
+    Jump -> next b6(v12)
+  b5() role=CatchHandler:
+    Jump -> next b6(v3)
+  b6(v17: undefined|L0):
+    Branch v1 -> taken b7(), notTaken b8()
+  b7():
+    Return v17
+  b8():
+    Return v3
+# CHECK: b7():
+# CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasOuter1]](), otherwise [[noOuter1]]()
+# CHECK: [[hasOuter1]]():
+# CHECK-NEXT: [[restOfOuter1]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasInner1]](), otherwise [[noInner1]]()
+# CHECK: [[noOuter1]]():
+# CHECK-NEXT: {{*}}: undefined = Undefined
+# CHECK: [[afterInner1]]([[head1]]: undefined|L0):
+# CHECK-NEXT: {{*}}: L0 = NewObject -, [[restOfOuter1]], [[head1]] layout=L0 fields=[0, 1]
+# CHECK: [[hasInner1]]():
+# CHECK-NEXT: [[restOfInner1]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: [[inner1]]: L0 = NewObject -, [[restOfInner1]], {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[afterInner1]]([[inner1]])
+# CHECK: [[noInner1]]():
+# CHECK-NEXT: [[missing1]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[afterInner1]]([[missing1]])
+}
+
+function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boolean}] results=[{type=undefined|L0}] {
+    v3 = Undefined
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = CallDirect v2 function=f0
+    v5 = NewObject layout=L0
+    v6 = Integer integer=1
+    v7 = NewArray v6 contents=anything
+    PutSlotOrAdd v5, -, v7 key="rest" receivers=[L0] level=Proven
+    PutSlotOrAdd v5, -, v0 key="head" receivers=[L0] level=Proven
+    Jump -> next b3(v5)
+  b2() role=CatchHandler:
+    Jump -> next b3(v3)
+  b3(v10: undefined|L0):
+    Jump -> next b4()
+  b4() handler=b5():
+    v11 = CallDirect v2 function=f0
+    v12 = NewObject layout=L0
+    v13 = Integer integer=2
+    v14 = NewArray v13 contents=anything
+    PutSlotOrAdd v12, -, v14 key="rest" receivers=[L0] level=Proven
+    PutSlotOrAdd v12, -, v10 key="head" receivers=[L0] level=Proven
+    Jump -> next b6(v12)
+  b5() role=CatchHandler:
+    Jump -> next b6(v3)
+  b6(v17: undefined|L0):
+    Jump -> next b7()
+  b7() handler=b8():
+    v18 = CallDirect v2 function=f0
+    v19 = NewObject layout=L0
+    v20 = Integer integer=3
+    v21 = NewArray v20 contents=anything
+    PutSlotOrAdd v19, -, v21 key="rest" receivers=[L0] level=Proven
+    PutSlotOrAdd v19, -, v17 key="head" receivers=[L0] level=Proven
+    Jump -> next b9(v19)
+  b8() role=CatchHandler:
+    Jump -> next b9(v3)
+  b9(v24: undefined|L0):
+    Branch v1 -> taken b10(), notTaken b11()
+  b10():
+    Return v24
+  b11():
+    Return v3
+# CHECK: b10():
+# CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasOuter2]](), otherwise {{*}}()
+# CHECK: [[hasOuter2]]():
+# CHECK-NEXT: [[restOfOuter2]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasMiddle2]](), otherwise {{*}}()
+# CHECK: [[afterMiddle2]]([[headOfOuter2]]: undefined|L0):
+# CHECK-NEXT: {{*}}: L0 = NewObject -, [[restOfOuter2]], [[headOfOuter2]] layout=L0 fields=[0, 1]
+# CHECK: [[hasMiddle2]]():
+# CHECK-NEXT: [[restOfMiddle2]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasInner2]](), otherwise {{*}}()
+# CHECK: [[afterInner2]]([[headOfMiddle2]]: undefined|L0):
+# CHECK-NEXT: [[middle2]]: L0 = NewObject -, [[restOfMiddle2]], [[headOfMiddle2]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[afterMiddle2]]([[middle2]])
+# CHECK: [[hasInner2]]():
+# CHECK-NEXT: [[restOfInner2]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: [[inner2]]: L0 = NewObject -, [[restOfInner2]], {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[afterInner2]]([[inner2]])
+}

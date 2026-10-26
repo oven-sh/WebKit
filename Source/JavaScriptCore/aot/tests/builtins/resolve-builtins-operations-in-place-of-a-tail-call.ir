@@ -1,0 +1,41 @@
+# The call of a built-in that takes the place of a call in tail position, and the conversions of its operands, carry the mark of the tail call
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="textInTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=String
+    v2 = Call v1, -, v0 @7
+    ReturnCall v2 requirement=Allowed @3
+# CHECK-NOT: ReturnCall
+# CHECK: = CallBuiltin -, v0 overload=String/0 {{*}}@7 tail
+# CHECK-NEXT: Return v2 @3
+}
+
+function f1 name="text" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=String
+    v2 = Call v1, -, v0 @7
+    Return v2 @3
+# CHECK-NOT: @{{*}} tail
+# CHECK: Return v2 @3
+}
+
+function f2 name="largerInTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathMax
+    v2 = Integer integer=2
+    v3 = Call v1, -, v0, v2 @7
+    ReturnCall v3 requirement=Allowed @3
+# CHECK: = ToNumber v0 @7 tail
+# CHECK-NEXT: = CallBuiltin -, {{*}}, v2 overload=MathMax/0 @7 tail
+# CHECK-NEXT: Return v3 @3
+}
+
+function f3 name="larger" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathMax
+    v2 = Integer integer=2
+    v3 = Call v1, -, v0, v2 @7
+    Return v3 @3
+# CHECK-NOT: @{{*}} tail
+# CHECK: Return v3 @3
+}

@@ -238,8 +238,7 @@ void IRBuilder::demoteReturnCall(BlockID block)
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
-    if (FlagMask::isDemotedTailCall(m_function.at(result).opcode))
-        m_function.edit(result, ValueEdit::Definition).setIsDemotedTailCall(true);
+    m_function.edit(result, ValueEdit::Definition).isTailCall = true;
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
         casts.append(cast);
