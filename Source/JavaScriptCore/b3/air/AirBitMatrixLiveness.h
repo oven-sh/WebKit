@@ -362,12 +362,134 @@ private:
         m_firstSegmentOfRow[0] = 0;
     }
 
-    void recordBoundaryAfter(const Matrices& matrices, const LayoutNeighbors& neighbors, size_t firstWord, unsigned blockIndex)
+    // The sets of one slice. A set is named by the number of its row, so a block that names no index of the slice shares
+    // the rows of its successors, and a visit to it touches no words. Row 0 is empty.
+    class SliceRows {
+    public:
+        explicit SliceRows(unsigned numberOfBlocks)
+            : head(FillWith { }, numberOfBlocks, 0u)
+            , tail(FillWith { }, numberOfBlocks, 0u)
+            , gen(FillWith { }, numberOfBlocks, 0u)
+        {
+        }
+
+        void beginSlice(size_t wordsPerRow)
+        {
+            m_wordsPerRow = wordsPerRow;
+            m_words.shrink(0);
+            m_lastUnion = { };
+            addRows(1);
+        }
+
+        size_t wordsPerRow() const { return m_wordsPerRow; }
+        uint64_t* at(unsigned row) LIFETIME_BOUND { return m_words.mutableSpan().data() + row * m_wordsPerRow; }
+        const uint64_t* at(unsigned row) const LIFETIME_BOUND { return m_words.span().data() + row * m_wordsPerRow; }
+
+        unsigned addRows(unsigned count)
+        {
+            unsigned first = addRowsWithoutClearing(count);
+            zeroSpan(m_words.mutableSpan().subspan(first * m_wordsPerRow));
+            return first;
+        }
+
+        void removeRowsFrom(unsigned row) { m_words.shrink(row * m_wordsPerRow); }
+
+        bool isEmpty(unsigned row) const
+        {
+            uint64_t any = 0;
+            for (size_t i = 0; i < m_wordsPerRow; ++i)
+                any |= at(row)[i];
+            return !any;
+        }
+
+        unsigned unite(unsigned a, unsigned b)
+        {
+            if (a == b || !b)
+                return a;
+            if (!a)
+                return b;
+            if (m_lastUnion.a == a && m_lastUnion.b == b)
+                return m_lastUnion.result;
+
+            unsigned result = addRowsWithoutClearing(1);
+            const uint64_t* wordsOfA = at(a);
+            const uint64_t* wordsOfB = at(b);
+            uint64_t* wordsOfResult = at(result);
+            uint64_t onlyInA = 0;
+            uint64_t onlyInB = 0;
+            for (size_t i = 0; i < m_wordsPerRow; ++i) {
+                wordsOfResult[i] = wordsOfA[i] | wordsOfB[i];
+                onlyInA |= wordsOfA[i] & ~wordsOfB[i];
+                onlyInB |= wordsOfB[i] & ~wordsOfA[i];
+            }
+            if (!onlyInA || !onlyInB) {
+                removeRowsFrom(result);
+                result = onlyInB ? b : a;
+            }
+            m_lastUnion = { a, b, result };
+            return result;
+        }
+
+        // The row of gen | (tail & ~kill). It is `current` when that row already holds the answer.
+        unsigned applyTransfer(unsigned blockIndex, unsigned current)
+        {
+            const unsigned tailRow = tail[blockIndex];
+            unsigned result = addRowsWithoutClearing(1);
+            const uint64_t* wordsOfGen = at(gen[blockIndex]);
+            const uint64_t* wordsOfKill = at(gen[blockIndex] + 1);
+            const uint64_t* wordsOfTail = at(tailRow);
+            const uint64_t* wordsOfCurrent = at(current);
+            uint64_t* wordsOfResult = at(result);
+            uint64_t differsFromCurrent = 0;
+            uint64_t differsFromTail = 0;
+            uint64_t any = 0;
+            for (size_t i = 0; i < m_wordsPerRow; ++i) {
+                uint64_t word = wordsOfGen[i] | (wordsOfTail[i] & ~wordsOfKill[i]);
+                wordsOfResult[i] = word;
+                differsFromCurrent |= word ^ wordsOfCurrent[i];
+                differsFromTail |= word ^ wordsOfTail[i];
+                any |= word;
+            }
+            if (differsFromCurrent && differsFromTail && any)
+                return result;
+            removeRowsFrom(result);
+            if (!differsFromCurrent)
+                return current;
+            return any ? tailRow : 0;
+        }
+
+        // By block. The kill row of a block follows its gen row, and a block whose gen is 0 names no index of the slice.
+        Vector<unsigned> head;
+        Vector<unsigned> tail;
+        Vector<unsigned> gen;
+
+    private:
+        unsigned addRowsWithoutClearing(unsigned count)
+        {
+            size_t size = m_words.size();
+            m_words.grow(size + count * m_wordsPerRow);
+            return size / m_wordsPerRow;
+        }
+
+        struct Union {
+            unsigned a { 0 };
+            unsigned b { 0 };
+            unsigned result { 0 };
+        };
+
+        size_t m_wordsPerRow { 0 };
+        Vector<uint64_t> m_words;
+        Union m_lastUnion;
+    };
+
+    void recordBoundaryAfter(const SliceRows& rows, const LayoutNeighbors& neighbors, size_t firstWord, unsigned blockIndex)
     {
-        const size_t words = matrices.wordsPerRow;
-        const uint64_t* tail = matrices.liveAtTail + blockIndex * words;
+        const size_t words = rows.wordsPerRow();
         std::optional<unsigned> next = neighbors.next[blockIndex];
-        const uint64_t* headOfNext = next ? matrices.liveAtHead + *next * words : nullptr;
+        if (next && rows.tail[blockIndex] == rows.head[*next])
+            return;
+        const uint64_t* tail = rows.at(rows.tail[blockIndex]);
+        const uint64_t* headOfNext = next ? rows.at(rows.head[*next]) : nullptr;
         forEachInDifference(tail, headOfNext, firstWord, words, [&](unsigned index) {
             m_liveOnlyAtTail.append(blockIndex, index);
         });
@@ -378,13 +500,13 @@ private:
         });
     }
 
-    void recordBoundariesOfSlice(const Matrices& matrices, const LayoutNeighbors& neighbors, size_t firstWord, const Vector<unsigned>& visitedBlocks, Vector<unsigned>& lastSliceRecordingBoundaryAfter, unsigned sliceNumber)
+    void recordBoundariesOfSlice(const SliceRows& rows, const LayoutNeighbors& neighbors, size_t firstWord, const Vector<unsigned>& visitedBlocks, Vector<unsigned>& lastSliceRecordingBoundaryAfter, unsigned sliceNumber)
     {
         auto recordOnce = [&](unsigned blockIndex) {
             if (lastSliceRecordingBoundaryAfter[blockIndex] == sliceNumber)
                 return;
             lastSliceRecordingBoundaryAfter[blockIndex] = sliceNumber;
-            recordBoundaryAfter(matrices, neighbors, firstWord, blockIndex);
+            recordBoundaryAfter(rows, neighbors, firstWord, blockIndex);
         };
         for (unsigned blockIndex : visitedBlocks) {
             recordOnce(blockIndex);
@@ -392,7 +514,7 @@ private:
                 recordOnce(*previous);
                 continue;
             }
-            forEachInDifference(matrices.liveAtHead + blockIndex * matrices.wordsPerRow, nullptr, firstWord, matrices.wordsPerRow, [&](unsigned index) {
+            forEachInDifference(rows.at(rows.head[blockIndex]), nullptr, firstWord, rows.wordsPerRow(), [&](unsigned index) {
                 m_liveAtHeadOfFirstBlock.append(index);
             });
         }
@@ -414,7 +536,7 @@ private:
         }
         Vector<TailSegment> segments;
 
-        Vector<uint64_t> scratch(FillWith { }, 4 * numberOfBlocks * std::min(wordsPerSlice, m_wordsPerSet), static_cast<uint64_t>(0));
+        SliceRows rows(numberOfBlocks);
         Vector<unsigned> lastSliceVisiting(FillWith { }, numberOfBlocks, 0u);
         Vector<unsigned> lastSliceRecordingBoundaryAfter;
         LayoutNeighbors neighbors;
@@ -432,11 +554,7 @@ private:
         LowestFirstWorklist worklist(blocksInPostOrder.size());
         for (size_t firstWord = 0; firstWord < m_wordsPerSet; firstWord += wordsPerSlice) {
             const size_t words = std::min(wordsPerSlice, m_wordsPerSet - firstWord);
-            const size_t wordsPerMatrix = numberOfBlocks * words;
-            uint64_t* liveAtHead = scratch.mutableSpan().data();
-            uint64_t* liveAtTail = liveAtHead + wordsPerMatrix;
-            uint64_t* gens = liveAtTail + wordsPerMatrix;
-            uint64_t* kills = gens + wordsPerMatrix;
+            rows.beginSlice(words);
             ++sliceNumber;
             visitedBlocks.shrink(0);
 
@@ -448,11 +566,13 @@ private:
             };
 
             auto fillRowsOf = [&](BasicBlock* block) {
-                uint64_t* tail = liveAtTail + block->index() * words;
-                uint64_t* gen = gens + block->index() * words;
-                uint64_t* kill = kills + block->index() * words;
-                if (!this->fillRows(block, firstWord, words, gen, kill, tail))
+                unsigned gen = rows.addRows(3);
+                if (!this->fillRows(block, firstWord, words, rows.at(gen), rows.at(gen + 1), rows.at(gen + 2))) {
+                    rows.removeRowsFrom(gen);
                     return;
+                }
+                rows.gen[block->index()] = gen;
+                rows.tail[block->index()] = rows.isEmpty(gen + 2) ? 0 : gen + 2;
                 markVisited(block->index());
                 worklist.add(positionOfBlock[block->index()]);
             };
@@ -465,32 +585,37 @@ private:
                     fillRowsOf(block);
             }
 
-            const Matrices matrices { liveAtHead, liveAtTail, gens, kills, words };
             while (auto position = worklist.takeLowest()) {
-                propagateLiveness(matrices, blocksInPostOrder[*position], [&](unsigned predecessorIndex) {
-                    markVisited(predecessorIndex);
-                    worklist.add(positionOfBlock[predecessorIndex]);
-                });
+                unsigned blockIndex = blocksInPostOrder[*position];
+                unsigned head = rows.gen[blockIndex] ? rows.applyTransfer(blockIndex, rows.head[blockIndex]) : rows.tail[blockIndex];
+                if (head == rows.head[blockIndex])
+                    continue;
+                rows.head[blockIndex] = head;
+                for (BasicBlock* predecessor : m_code[blockIndex]->predecessors()) {
+                    unsigned& tail = rows.tail[predecessor->index()];
+                    unsigned united = rows.unite(tail, head);
+                    if (united == tail)
+                        continue;
+                    tail = united;
+                    markVisited(predecessor->index());
+                    worklist.add(positionOfBlock[predecessor->index()]);
+                }
             }
 
             if constexpr (recordsLayoutBoundaries)
-                recordBoundariesOfSlice(matrices, neighbors, firstWord, visitedBlocks, lastSliceRecordingBoundaryAfter, sliceNumber);
+                recordBoundariesOfSlice(rows, neighbors, firstWord, visitedBlocks, lastSliceRecordingBoundaryAfter, sliceNumber);
 
             for (unsigned blockIndex : visitedBlocks) {
-                size_t offset = blockIndex * words;
-                if (std::optional<unsigned> row = m_rowOfBlock[blockIndex]) {
-                    uint64_t any = 0;
-                    for (size_t i = 0; i < words; ++i)
-                        any |= liveAtTail[offset + i];
-                    if (any) {
-                        segments.append(TailSegment { *row, static_cast<unsigned>(firstWord), static_cast<unsigned>(words), m_store.size() });
-                        m_store.append(std::span<const uint64_t> { liveAtTail + offset, words });
-                    }
+                std::optional<unsigned> row = m_rowOfBlock[blockIndex];
+                if (row && !rows.isEmpty(rows.tail[blockIndex])) {
+                    segments.append(TailSegment { *row, static_cast<unsigned>(firstWord), static_cast<unsigned>(words), m_store.size() });
+                    m_store.append(std::span<const uint64_t> { rows.at(rows.tail[blockIndex]), words });
                 }
-                for (uint64_t* matrix : { liveAtHead, liveAtTail, gens, kills }) {
-                    for (size_t i = 0; i < words; ++i)
-                        matrix[offset + i] = 0;
-                }
+            }
+            for (unsigned blockIndex : visitedBlocks) {
+                rows.head[blockIndex] = 0;
+                rows.tail[blockIndex] = 0;
+                rows.gen[blockIndex] = 0;
             }
             if (m_store.size() > AirLimits::maxWordsOfLivenessAtTails) {
                 m_status = BitMatrixLivenessStatus::GaveUp;

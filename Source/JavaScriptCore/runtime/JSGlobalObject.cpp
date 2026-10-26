@@ -2904,26 +2904,24 @@ public:
         if (hasBrokenIndexing(m_interceptor))
             return false;
         bool someStructureIsBelowInterceptor = false;
-        Vector<JSGlobalObject*, 4> realms;
-        auto visitStructure = [&](HeapCell* cell, HeapCell::Kind) {
-            SUPPRESS_MEMORY_UNSAFE_CAST auto* structure = static_cast<Structure*>(cell);
-            JSGlobalObject* realm = structure->realm();
-            if (realm && (realms.isEmpty() || realms.last() != realm) && !realms.contains(realm))
-                realms.append(realm);
+        auto visitStructure = [&](Structure* structure) {
             if (hasBrokenIndexing(structure->indexingType()))
                 someStructureIsBelowInterceptor |= structure->hasPolyProto() || inheritsFromInterceptor(structure->storedPrototypeObject());
         };
-        vm.heap.structureSpace.forEachLiveCell(visitStructure);
-        vm.heap.brandedStructureSpace.forEachLiveCell(visitStructure);
 #if ENABLE(AOT)
-        if (auto* space = vm.heap.compiledStructureSpace<SubspaceAccess::Concurrently>())
-            space->forEachLiveCell(visitStructure);
+        if (vm.hasCompiledCode()) {
+            for (Structure* structure : vm.aotState().structuresWithFastIndexing.span())
+                visitStructure(structure);
+            return !someStructureIsBelowInterceptor;
+        }
 #endif
-        if (someStructureIsBelowInterceptor)
-            return false;
-        for (JSGlobalObject* realm : realms)
-            visitRealm(realm);
-        return true;
+        HeapIterationScope iterationScope(vm.heap);
+        auto visitCell = [&](HeapCell* cell, HeapCell::Kind) {
+            SUPPRESS_MEMORY_UNSAFE_CAST visitStructure(static_cast<Structure*>(cell));
+        };
+        vm.heap.structureSpace.forEachLiveCell(visitCell);
+        vm.heap.brandedStructureSpace.forEachLiveCell(visitCell);
+        return !someStructureIsBelowInterceptor;
     }
 
 private:
@@ -3184,10 +3182,9 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     Vector<JSObject*> foundObjects;
     Vector<JSGlobalObject*> affectedRealms;
     ObjectsWithInterceptorInChainFinder finder(interceptor, foundObjects, affectedRealms);
-    {
+    if (!finder.findsNothingAmongObjects(vm)) {
         HeapIterationScope iterationScope(vm.heap);
-        if (!finder.findsNothingAmongObjects(vm))
-            vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
     }
 
     for (JSGlobalObject* realm : affectedRealms)

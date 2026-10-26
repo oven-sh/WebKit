@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTVector.h"
+#include <JavaScriptCore/CollectionScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/Lock.h>
@@ -32,6 +33,17 @@ class VMPropertyCaches;
 struct FunctionTables;
 struct Instance;
 struct RuntimeCounters;
+
+// Every live Structure whose objects store elements without asking the objects above them.
+class StructuresWithFastIndexing {
+public:
+    void add(Structure* structure) { m_structures.append(structure); }
+    size_t removeDeadEntries(VM&, CollectionScope);
+    std::span<Structure* const> span() const LIFETIME_BOUND { return m_structures.span(); }
+
+private:
+    Vector<Structure*> m_structures;
+};
 
 struct VMState {
     WTF_MAKE_NONCOPYABLE(VMState);
@@ -77,6 +89,7 @@ public:
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
+    StructuresWithFastIndexing structuresWithFastIndexing;
     LoopPollPages loopPollPages;
 };
 

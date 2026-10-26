@@ -606,11 +606,20 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
         return asObject(object);
     };
 
+    // The bindings of the class follow those of its constructor.
+    auto parentOfClass = [&](const EvalBindingData& bindingOfConstructor) {
+        const EvalBindingData* classObject = findBinding(bindings.subspan(&bindingOfConstructor - bindings.data()), EvalBindingKind::ClassObject);
+        RELEASE_ASSERT(classObject);
+        return readObject(*classObject)->getPrototypeDirect().getObject();
+    };
+
     JSObject* homeObjectHolder = nullptr;
     if (const EvalBindingData* homeObject = findBinding(bindings, EvalBindingKind::HomeObject)) {
         // `super()` in the text constructs the prototype of what it finds as the derived constructor.
         if (request.isInDerivedConstructor)
             homeObjectHolder = constructEmptyObject(globalObject, JSFunction::create(vm, globalObject, 0, String(), throwSuperCallInDirectEvalError, ImplementationVisibility::Private, NoIntrinsic, throwSuperCallInDirectEvalError));
+        else if (JSObject* parent = request.allowsSuperCall ? parentOfClass(*homeObject) : nullptr)
+            homeObjectHolder = constructEmptyObject(globalObject, parent);
         else
             homeObjectHolder = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
         homeObjectHolder->putDirect(vm, vm.propertyNames->builtinNames().homeObjectPrivateName(), read(*homeObject));
@@ -776,7 +785,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
         .thisValue = chain.thisValue,
         .sourceOrigin = instance->state->modules->sourceOrigin(ModuleID(request.module)),
         .lexicallyScopedFeatures = request.isStrict ? StrictModeLexicallyScopedFeature : NoLexicallyScopedFeatures,
-        .derivedContextType = request.isInDerivedConstructor ? DerivedContextType::DerivedConstructorContext : request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None,
+        .derivedContextType = request.allowsSuperCall ? DerivedContextType::DerivedConstructorContext : request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None,
         .evalContextType = request.isInFieldInitializer ? EvalContextType::InstanceFieldEvalContext : request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None,
         .needsClassFieldInitializer = NeedsClassFieldInitializer::No,
         .privateBrandRequirement = PrivateBrandRequirement::None,

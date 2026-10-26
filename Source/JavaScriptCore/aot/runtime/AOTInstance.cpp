@@ -817,6 +817,13 @@ const Identifier& RuntimeTable::nameOfApplyTrap(VM& vm)
     return m_nameOfApplyTrap;
 }
 
+size_t StructuresWithFastIndexing::removeDeadEntries(VM& vm, CollectionScope)
+{
+    return m_structures.removeAllMatching([&](Structure* structure) {
+        return !vm.heap.isMarked(structure);
+    });
+}
+
 VMState::VMState() = default;
 
 VMState::~VMState()
@@ -836,6 +843,7 @@ void VMState::attachImage(VM& vm)
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
     caches = makeUnique<CacheRegistry>();
+    caches->add(CacheKind::WeakByKey, "structures with fast indexing"_s, structuresWithFastIndexing);
     counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
     hasCompiledCode = true;
     vm.setMayHaveUncacheableTransitions();

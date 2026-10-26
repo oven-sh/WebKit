@@ -37,8 +37,10 @@ struct AsyncGeneratorBodyEntry {
     JSCell* outerFrame { nullptr };
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
-    bool outerAsyncContextIsPutBack { false };
+    // A whole word, so that a frame that holds an entry writes all of it.
+    uintptr_t outerAsyncContextIsPutBack { false };
 };
+static_assert(sizeof(AsyncGeneratorBodyEntry) == 5 * sizeof(void*));
 // The job loop enters a body as the last thing it does in a job.
 JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
 // The adapter may have gone on to the consumers of the body and to the jobs that follow. Returns the generator whose body returned last, or null if something else did: that is finished here.

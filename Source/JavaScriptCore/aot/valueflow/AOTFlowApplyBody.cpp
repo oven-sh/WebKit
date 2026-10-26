@@ -663,6 +663,27 @@ static bool isCheck(const TailCast& cast)
     return cast.resolution == CastResolution::Check;
 }
 
+// The result of a tail call goes to the caller and nowhere else, so nothing in this function relies on a test of it: the type is expected, and whoever receives the value tests it.
+static bool tryExpectInPlaceOfChecking(const Program& program, Function& function, TypeArena& types, BlockID block, bool resultIsProvenByFlow)
+{
+    Terminator& terminator = function.edit(block).terminator;
+    TypingContext typing { program, function, types };
+    Type returned = function.at(terminator.callOperand()).opcode == Opcode::Call ? Type::anything() : typing.typeOf(terminator.callOperand());
+    Vector<TailCast, 2> casts;
+    for (TailCast cast : terminator.casts()) {
+        if (isCheck(cast)) {
+            cast.resolution = CastResolution::Nothing;
+            cast.declared.flags.add(PositionFlags::IsExpected);
+        }
+        returned = returned.castTo(typing.typeOf(cast.declared), types);
+        casts.append(cast);
+    }
+    if (!resultIsProvenByFlow && !returned.isSubsetOf(typing.typeOf(function.result()), program))
+        return false;
+    terminator.setCasts(casts.span());
+    return true;
+}
+
 static bool applyTailChecks(const FlowBodyApplication& body, IRBuilder& builder, BlockID block, const FlowTailCallUpdate& entry, FlowBodyCounts& counts)
 {
     Terminator& terminator = body.function.edit(block).terminator;
@@ -674,6 +695,9 @@ static bool applyTailChecks(const FlowBodyApplication& body, IRBuilder& builder,
         return true;
 
     if (!entry.claimsAreRedundant && !body.provesEverything) {
+        const Vector<FlowPositionUpdate, 1>& results = body.application.signatures[body.id.index()].results;
+        if (tryExpectInPlaceOfChecking(body.program, body.function, body.types, block, results.size() == 1 && results[0].isProven))
+            return true;
         demoteTailCall(body, builder, block);
         return false;
     }
@@ -730,7 +754,7 @@ void demoteTailCallsWithChecks(const Program& program, FunctionID id, Function& 
     IRBuilder builder(context, function, types, &analyses);
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
-        if (!isTailCallWithCheck(function.at(block).terminator))
+        if (!isTailCallWithCheck(function.at(block).terminator) || tryExpectInPlaceOfChecking(program, function, types, block, false))
             continue;
         builder.demoteReturnCall(block);
         build.statistics().count(StatisticID::ReturnCallsDemoted);

@@ -910,8 +910,9 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
         if (key.namesEnumerableProperty && !hasMemberOfHost(holder))
             return;
         if (ModuleID module = m_universe.moduleOf(holder)) {
+            bool isReceiver = m_context.contains(start, holder);
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
-                if (!isFoundByNameAlone(m_builtins.canonicalID(member)))
+                if (isReceiver || !isFoundByNameAlone(m_builtins.canonicalID(member)))
                     readMember(member, module, result, getters);
             }
             return;
@@ -1295,10 +1296,10 @@ void HeapRule::noteUseOfMembers(const HeapKey& key, BuiltinUse noted)
     if (mayBeUntrackedObject(start))
         foundThroughPlaceholders = m_context.unite(foundThroughPlaceholders, lostAmong(ClimbingSet(holdersWithMemberUnder(key))));
     bool namesMember = key.keyClass == HeapKeyClass::Name;
-    forEachMemberUnder(start, key, [&](BuiltinID member, ModuleID) {
+    forEachMemberUnder(start, key, [&](BuiltinID member, ModuleID module) {
         if (noted == BuiltinUse::Read && !namesMember && m_builtins.at(member).holder && isNativeModuleThatNobodyNames(m_universe.objectOf(m_builtins.at(member).holder)))
             return;
-        if (!namesMember && isFoundByNameAlone(m_builtins.canonicalID(member)))
+        if (!namesMember && !module && isFoundByNameAlone(m_builtins.canonicalID(member)))
             return;
         if (noted == BuiltinUse::Read && !namesMember && isMemberOfBunUsedByNameAlone(member))
             return;

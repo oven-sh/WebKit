@@ -420,6 +420,7 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         checkedParameters.clear();
         function.editAllBlocks().clear();
         function.editAllValues().clear();
+        function.writtenPositions.clear();
         if (Failure failure = BodyDecoder(*this, id, wire.body, code, function, remap).run())
             return failure;
     }

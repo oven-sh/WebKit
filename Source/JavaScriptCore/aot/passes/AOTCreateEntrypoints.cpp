@@ -675,6 +675,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
             parameterTypes.append(entrypoint.at(parameter).type);
         entrypoint.editAllBlocks().clear();
         entrypoint.editAllValues().clear();
+        entrypoint.writtenPositions.clear();
         entrypoint.inlineFrames.clear();
 
         IRBuilder builder(context, entrypoint, arenas.types);

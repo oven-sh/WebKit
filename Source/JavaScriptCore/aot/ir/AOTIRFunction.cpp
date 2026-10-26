@@ -384,7 +384,7 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
 
     if (!function.writtenPositions.isEmpty()) {
         function.writtenPositions.removeAllMatching([&](WrittenPosition& written) {
-            written.value = newID[written.value.index()];
+            written.value = written.value.index() < newID.size() ? newID[written.value.index()] : ValueID();
             return !written.value;
         });
         std::ranges::sort(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });

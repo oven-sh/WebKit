@@ -63,6 +63,23 @@ static ALWAYS_INLINE void countStructureMade(VM& vm, ASCIILiteral how, const cha
 #endif
 }
 
+static ALWAYS_INLINE bool hasFastIndexing(const Structure* structure)
+{
+    IndexingType type = structure->indexingType();
+    return type && !hasSlowPutArrayStorage(type);
+}
+
+static ALWAYS_INLINE void listIfIndexingIsFast(VM& vm, Structure* structure)
+{
+#if ENABLE(AOT)
+    if (hasFastIndexing(structure) && vm.hasCompiledCode()) [[unlikely]]
+        vm.aotState().structuresWithFastIndexing.add(structure);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(structure);
+#endif
+}
+
 template<typename DetailsFunc>
 void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE const DetailsFunc& detailsFunc) const
 {
@@ -301,6 +318,7 @@ Structure::Structure(VM& vm, const Structure& templateStructure, JSValue prototy
     , m_transitionWatchpointSet(IsWatched)
 {
     ASSERT(isCompiledStructure() && !templateStructure.hasRareData() && !templateStructure.m_propertyTableUnsafe);
+    listIfIndexingIsFast(vm, this);
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
 }
 
@@ -318,6 +336,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     , m_transitionWatchpointSet(IsWatched)
 {
     countStructureMade(vm, "Structure:the_first_of_its_line"_s, classInfo->className.characters());
+    listIfIndexingIsFast(vm, this);
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
     bool isArrayStorage = hasAnyArrayStorage(indexingType);
@@ -443,6 +462,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     TypeInfo typeInfo = withoutPristine(previous->typeInfo());
     m_blob = TypeInfoBlob(previous->indexingModeIncludingHistory(), typeInfo);
     m_outOfLineTypeFlags = typeInfo.outOfLineTypeFlags();
+    listIfIndexingIsFast(vm, this);
 
     ASSERT(!previous->typeInfo().structureIsImmortal());
     RELEASE_ASSERT(!vm.hasCompiledCode() || (!previous->isCompiledStructure() && previous->typeInfo().type() != SlimClosureType));
@@ -1285,6 +1305,8 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     countStructureMade(vm, transitionKind == TransitionKind::BecomePrototype ? "Structure:becomes_a_prototype"_s : changesIndexingType(transitionKind) ? "Structure:another_indexing_type"_s : "Structure:no_property_changes"_s);
     transition->setTransitionKind(transitionKind);
     transition->m_blob.setIndexingModeIncludingHistory(indexingModeIncludingHistory);
+    if (!hasFastIndexing(structure))
+        listIfIndexingIsFast(vm, transition);
     transition->inheritPristineBits(vm, structure);
 
     if (transitionKind == TransitionKind::AllocateElementsStartOffset) {

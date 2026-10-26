@@ -22,11 +22,13 @@
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
-// The library holds the decoder only where it can print code. This copy is private to this file.
+// The library holds the decoder only where it can print code. This copy is private to this file: some of its functions are extern "C", which a namespace does not hide.
 IGNORE_CLANG_WARNINGS_BEGIN("everything")
 namespace {
 namespace Binja {
+#pragma clang attribute push(__attribute__((internal_linkage)), apply_to = function)
 #include "../../disassembler/ARM64/binja_impl.c.h"
+#pragma clang attribute pop
 } // namespace Binja
 } // anonymous namespace
 IGNORE_CLANG_WARNINGS_END

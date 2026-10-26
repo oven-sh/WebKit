@@ -501,6 +501,11 @@ String displayName(JSObject* object)
         return String();
     if (FunctionDescription(*function).isNamedBySymbol())
         return emptyString();
+    // The engine shows a built-in function by the name in its own text alone.
+    FunctionKindData kindData = functionKindData(*function);
+    bool takesNameFromOwner = kindData.hasInferredName || kindData.accessor() != MethodKind::Method;
+    if (kindData.isInRuntimeModule && takesNameFromOwner && !kindData.isBound())
+        return emptyString();
     return writtenFunctionName(*function);
 }
 

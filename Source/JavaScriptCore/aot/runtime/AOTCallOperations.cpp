@@ -343,8 +343,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     if (!(proxy->inlineTypeFlags() & ImplementsDefaultHasInstance))
         return isEngines;
     // As forwardProxyCallToTarget(): the target is called in place of the proxy, and no frame stands for the proxy.
-    if (JSObject* forwardedTo = proxy->callTargetIfKnownToHaveNoApplyTrap())
+    if (JSObject* forwardedTo = proxy->callTargetIfKnownToHaveNoApplyTrap()) {
+        while (auto* next = dynamicDowncast<ProxyObject>(forwardedTo)) {
+            JSObject* targetOfNext = next->callTargetIfKnownToHaveNoApplyTrap();
+            if (!targetOfNext)
+                break;
+            forwardedTo = targetOfNext;
+        }
         return makeUGPRPair(0, std::bit_cast<UCPURegister>(forwardedTo));
+    }
     JSObject* target = proxy->target();
     JSObject* handler = asObject(handlerValue);
     JSGlobalObject* globalObject = instance->globalObject;
@@ -352,6 +359,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     // The lookup has run no code of the program, so this one runs none. The proxy remembers the answer, as in performProxyCall(), which it only can below Object.prototype.
     auto callTargetAndRemember = [&] {
         if (handler->getPrototypeDirect().inherits<ObjectPrototype>()) {
+            // How many proxies of a chain remember after a call that ran out of stack depends on the frames between them: they are performProxyCall()'s.
+            if (target->type() == ProxyObjectType)
+                return isEngines;
             CallData callData;
             proxy->getHandlerTrap(globalObject, handler, callData, name, ProxyObject::HandlerTrap::Apply);
         }

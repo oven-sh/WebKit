@@ -760,6 +760,7 @@ void ProgramEditor::removeBody(FunctionID id)
     Function& function = at(id);
     function.editAllBlocks().clear();
     function.editAllValues().clear();
+    function.writtenPositions.clear();
     function.inlineFrames.clear();
 }
 

@@ -117,6 +117,9 @@ void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
     jit.subPtr(TrustedImm32(AdapterFrame::saveAreaSize + extraBytes), sp);
     emitSaveRegistersInAdapter(jit, instance);
+    // The word that only aligns the area.
+    if constexpr (-AdapterFrame::offsetOfNewTarget < static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize))
+        jit.store64(TrustedImm32(0), Address(fp, AdapterFrame::offsetOfNewTarget - static_cast<ptrdiff_t>(sizeof(CPURegister))));
     jit.move(instance, instanceGPR);
     if (jit.options().validates)
         jit.store64(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.didEnterCompiledCode)));

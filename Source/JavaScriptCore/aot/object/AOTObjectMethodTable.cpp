@@ -454,7 +454,7 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
         bits |= orderWordIsSealed;
     if (integrity == Integrity::Frozen)
         bits |= orderWordIsFrozen;
-    if ((orderWord() & bits) == bits && testIntegrity(vm, integrity))
+    if (testIntegrity(vm, integrity))
         return;
     validateMutation(vm, *this, ObjectMutation::ChangeIntegrity);
     bool interceptedIndexedAccesses = interceptsIndexedAccesses(*this);
@@ -475,8 +475,10 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
         return true;
     bool testsFrozen = integrity == Integrity::Frozen;
     auto fieldsHaveIntegrity = [&] {
+        const RuntimeLayoutTable& layouts = state().objects->layouts;
         for (const FieldData& field : layout().fields()) {
-            if (field.isPrivate() || !read(field))
+            bool isListed = layouts.hasStringKey(field) || layouts.hasSymbolKey(field);
+            if (!isListed || !read(field))
                 continue;
             unsigned attributes = attributesOf(field);
             if (!(attributes & PropertyAttribute::DontDelete))
