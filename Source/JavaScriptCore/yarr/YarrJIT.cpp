@@ -403,6 +403,9 @@ struct FirstCharacterSet {
     // Whether analysis reached a term that must consume a character. If false
     // the alternative can match the empty string, which for dispatch is `any`.
     bool consumed { false };
+    // Whether the alternative may begin a turn of a repeated group before it has tested its first
+    // character. The JIT takes one off matchLimit for such a turn (allocateParenContext).
+    bool mayBeginTurnFirst { false };
 #endif
     // Whether a class or a non-ASCII character of a case-insensitive pattern contributed. The
     // set is exact all the same (but see computeFirstCharacterSetForDispatch).
@@ -440,6 +443,9 @@ struct FirstCharacterSet {
         any |= other.any;
         wideAny |= other.wideAny;
         hasCaseInsensitiveMembers |= other.hasCaseInsensitiveMembers;
+#if !defined(YARR_FOR_IMAGE)
+        mayBeginTurnFirst |= other.mayBeginTurnFirst;
+#endif
         for (auto& range : other.wideRanges)
             addWide(range.first, range.second);
     }
@@ -526,6 +532,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(DispatchInfo);
 // A guard that passes is pure overhead, so one is planted only where failing is the
 // expected outcome: in a negative lookahead, and in what a search tries first at
 // every position of the subject.
+//
+// What a failed guard leaves out takes nothing off matchLimit, so a match is given up
+// exactly where it is without guards: see FirstCharacterSet::mayBeginTurnFirst.
 struct AlternativeGuard {
 private:
     WTF_MAKE_TZONE_ALLOCATED(AlternativeGuard);
@@ -9314,6 +9323,12 @@ class YarrGenerator final : public YarrJITInfo {
         case PatternTerm::Type::ParentheticalAssertion:
             // An assertion consumes no input; a positive lookahead could narrow the
             // set but ignoring it keeps the set a valid over-approximation.
+            // All of it runs, so a repeated group anywhere in it counts. Taking whatever it has in
+            // parentheses for one saves a walk through what is nested in them.
+            for (auto& alternative : term.parentheses.disjunction->m_alternatives) {
+                for (auto& nestedTerm : alternative->m_terms)
+                    set.mayBeginTurnFirst |= nestedTerm.type == PatternTerm::Type::ParenthesesSubpattern || nestedTerm.type == PatternTerm::Type::ParentheticalAssertion;
+            }
             return false;
 
         case PatternTerm::Type::PatternCharacter: {
@@ -9357,6 +9372,8 @@ class YarrGenerator final : public YarrJITInfo {
 
         case PatternTerm::Type::ParenthesesSubpattern: {
             PatternDisjunction* disjunction = term.parentheses.disjunction;
+            // Not every group that fails this test keeps a context for each turn: see opCompileParenthesesSubpattern.
+            set.mayBeginTurnFirst |= term.quantityMaxCount != 1 || term.parentheses.isCopy;
             bool allConsumed = true;
             for (auto& alternative : disjunction->m_alternatives) {
                 FirstCharacterSet nested = computeFirstCharacterSet(*alternative);
@@ -10276,6 +10293,8 @@ class YarrGenerator final : public YarrJITInfo {
             sets.append(computeFirstCharacterSet(*alternative));
             // The character is read from the input that the run's first alternative claimed.
             sets.last().any |= !alternative->m_minimumSize;
+            // A match is given up where it was without guards: no guard skips a turn that counts.
+            sets.last().any |= sets.last().mayBeginTurnFirst;
         }
 
         auto guardAlternatives = [&](unsigned begin, unsigned end) {

@@ -268,6 +268,36 @@ check(/(?:a?b|c*d|(?:e|f)+g|[h-j]{2})+!/, [
     ["efx!d!", 4, "d!"],
 ]);
 
+// An alternative that can begin a turn of a repeated group before it tests a character goes without a guard: the JIT
+// counts those turns toward the limit at which it gives a match up. The alternatives around it still form runs.
+check(/(?:(?:a1)*x|(?:b1)*?y|(?:c1|c2){2}z|(?:d1){0,2}w)!/, [
+    ["zza1a1x!", 2, "a1a1x!"],
+    ["x!", 0, "x!"],
+    ["b1y!", 0, "b1y!"],
+    ["c1c2z!", 0, "c1c2z!"],
+    ["c1z!", null],
+    ["d1d1d1w!", 2, "d1d1w!"],
+    ["a1!", null],
+    ["qqqq", null],
+]);
+check(/(?:a1|b2|c3|(?:d4)*e|f5|g6|h7)+!/, [
+    ["a1d4d4eh7!", 0, "a1d4d4eh7!"],
+    ["e!", 0, "e!"],
+    ["zzg6!", 2, "g6!"],
+    ["d4!", null],
+    ["c3d4f5!", 4, "f5!"],
+]);
+check(/^(?:(?!a1|b2|c3|(?=(?:d4)+)d|(?!(?:e5)*f)e|g6|h7|i8)..)+$/, [
+    ["a2b3", 0, "a2b3"],
+    ["xxa1", null],
+    ["d4", null],
+    ["d5", 0, "d5"],
+    ["e5fx", 0, "e5fx"],
+    ["e6", null],
+    ["i8", null],
+    ["i9", 0, "i9"],
+]);
+
 // Case-insensitive patterns.
 check(/^(?:(?!ab|cd|ef|gh)..)*$/i, [
     ["XAXC", 0, "XAXC"],
