@@ -41,6 +41,18 @@ static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults&
     return function.mayBeCalledByHost() || !function.hasOnlyDirectCallers();
 }
 
+// A closure is entered at an entrypoint, which may hold the only copy of the body. Flow names the function of the closure.
+static bool isDerivedFromAny(const Program& program, const Function& function, const BitVector& functions)
+{
+    if (function.hasOnlyDirectCallers())
+        return false;
+    for (FunctionID source = function.derivation.source; source; source = program.at(source).derivation.source) {
+        if (functions.get(source.index()))
+            return true;
+    }
+    return false;
+}
+
 static uint32_t numberOfNode(const SummaryNode& node)
 {
     switch (node.part) {
@@ -638,7 +650,7 @@ void EffectSummarizer::findFunctionsEnteredByUnknownCode()
     m_kept.m_isEnteredByUnknownCode.insertFill(m_kept.m_isEnteredByUnknownCode.size(), 0, numberOfFunctions - m_kept.m_isEnteredByUnknownCode.size());
     Vector<uint32_t> functionsWithAnotherAnswer = findIndicesInParallel(m_build.parallelLoops(), numberOfFunctions, [&](unsigned index) {
         const Function& function = m_program.functions[index];
-        bool isEntered = function.hasBody() && (isCalledIndirectly.get(index) || mayBeEnteredByUnknownCode(m_program, m_flow, FunctionID(index), function, m_kept.m_bodies[index]));
+        bool isEntered = function.hasBody() && (isCalledIndirectly.get(index) || isDerivedFromAny(m_program, function, isCalledIndirectly) || mayBeEnteredByUnknownCode(m_program, m_flow, FunctionID(index), function, m_kept.m_bodies[index]));
         return isEntered != !!m_kept.m_isEnteredByUnknownCode[index];
     });
     if (functionsWithAnotherAnswer.isEmpty())

@@ -62,6 +62,7 @@ public:
     bool didMissBefore(SiteCache);
     void didMissRepeatedly(SiteCache site) { didMissBefore(site); }
     void didFailToFill(SiteCache);
+    void didFindNothingToFill(SiteCache);
     void fill(SiteCache, const Slot&);
     void fill(SiteCache, const Slot&, const NamedFill&);
     void fill(SiteCache, const Slot&, std::span<const ChainDependence>);
@@ -319,6 +320,8 @@ public:
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
+    // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
+    JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
 
     template<typename Visitor> void visitRoots(Visitor&);

@@ -1188,32 +1188,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
         }
     });
 
-    auto comparesAccessors = [](BuiltinPropertyActionKind kind) {
-        return kind == BuiltinPropertyActionKind::TakesDescriptor || kind == BuiltinPropertyActionKind::TakesDescriptorMap || kind == BuiltinPropertyActionKind::DefinesGetter || kind == BuiltinPropertyActionKind::DefinesSetter;
-    };
-    BitVector builtinsThatCompareAccessors = builtinsWithOverload(builtins, [&](const BuiltinOverload& overload) {
-        return std::ranges::any_of(overload.flow.propertyActions, comparesAccessors, &BuiltinPropertyAction::kind);
-    });
-    forEachBuiltinApplication(inputs, heap, builtinsThatCompareAccessors, [&](const ValueFlowBuiltinApplication& application) {
-        Teller teller { application.function, application.builtin, { } };
-        for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
-            if (overload.mode != application.mode())
-                continue;
-            for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-                if (!comparesAccessors(action.kind) || !action.value.operand)
-                    continue;
-                ValueSetID handed = application.valueAt(*action.value.operand, heap.maker());
-                if (action.kind == BuiltinPropertyActionKind::DefinesGetter || action.kind == BuiltinPropertyActionKind::DefinesSetter) {
-                    if (handed != ValueSets::anything)
-                        keep(0, closuresIn(0, handed), teller);
-                    continue;
-                }
-                ValueSetID descriptors = action.kind == BuiltinPropertyActionKind::TakesDescriptor ? handed : ValueSets::anything;
-                for (BuiltinName member : { BuiltinNames::get, BuiltinNames::set, BuiltinNames::value })
-                    keep(0, closuresIn(0, heap.writtenUnder(descriptors, ValueFlowName::property(program.keyOf(member)))), teller);
-            }
-        }
-    });
+    keep(0, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare)), { { }, builtins.canonicalID(Builtins::ObjectDefineProperty), { } });
 
     for (uint32_t index = 0; index < builtins.slotCount(); ++index) {
         const BuiltinSlot& slot = builtins.at(BuiltinSlotID(index));

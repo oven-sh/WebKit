@@ -30,6 +30,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::RecordsCallee,
     FunctionCapabilities::RecordsCalleeOnceRenamed,
     FunctionCapabilities::NotesLooksForName,
+    FunctionCapabilities::IsLongConstructor,
 };
 
 bool isSentByFrontEnd(FunctionRole role)

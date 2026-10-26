@@ -913,9 +913,8 @@ static bool runsAsCoroutine(const Function& target)
 
 bool hasAllocatingConstructEntrypoint(const Program& program, const Function& target)
 {
-    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line. The length of the source never changes.
-    AOT_THRESHOLD(uint32_t, mostCharactersOfShortConstructor, 1000);
-    if (target.text.end - target.text.start > mostCharactersOfShortConstructor)
+    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line.
+    if (target.has(FunctionCapabilities::IsLongConstructor))
         return false;
     // The constructor functions of the runtime's own modules are constructed by name.
     if (target.role == FunctionRole::Library || target.enclosingRuntimeFunction || (target.module && program.at(target.module).kind == ModuleKind::RuntimeSource))

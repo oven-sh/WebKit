@@ -37,10 +37,13 @@ static Vector<uint32_t> findLargestFirst(const Program& program, const ParallelL
     });
 }
 
-void editFunctionsInParallelImpl(ProgramEditor& editor, BuildContext& build, KindOfEdit kind, BehindEdit behindEdit, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const FunctionEdit& edit)
+void editFunctionsInParallelImpl(ProgramEditor& editor, BuildContext& build, KindOfEdit kind, BehindEdit behindEdit, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const FunctionEdit& edit, NOESCAPE const ScopedLambda<void()>* beside)
 {
-    if (functions.empty())
+    if (functions.empty()) {
+        if (beside)
+            (*beside)();
         return;
+    }
     auto functionAt = [&](FunctionID id) -> Function& {
         return kind == KindOfEdit::Lowering ? editor.atForLowering(id) : editor.at(id);
     };
@@ -58,16 +61,22 @@ void editFunctionsInParallelImpl(ProgramEditor& editor, BuildContext& build, Kin
     {
         // An edit changes functions only: layouts, variables and what flow found stay as they are until all edits are done.
         ProgramCaches caches(editor.program(), build);
-        forEachIndexInParallel(loops, count, findLargestFirst(editor.program(), loops, functions).span(), [&](unsigned index) {
-            TaskArenas arenas(*phases, index);
-            Function& function = functionAt(functions[index]);
-            edit(index, functions[index], function, arenas);
-            if (behindEdit == BehindEdit::Nothing)
-                return;
-            shrinkToFit(function);
-            if (!arenas.types.hasUsedProvisionalRecords())
-                writeRow(functions[index], function);
-        });
+        auto editAll = [&] {
+            forEachIndexInParallel(loops, count, findLargestFirst(editor.program(), loops, functions).span(), [&](unsigned index) {
+                TaskArenas arenas(*phases, index);
+                Function& function = functionAt(functions[index]);
+                edit(index, functions[index], function, arenas);
+                if (behindEdit == BehindEdit::Nothing)
+                    return;
+                shrinkToFit(function);
+                if (!arenas.types.hasUsedProvisionalRecords())
+                    writeRow(functions[index], function);
+            });
+        };
+        if (beside)
+            runTasksInParallel(loops, { editAll, [&] { (*beside)(); } });
+        else
+            editAll();
     }
 
     BodyRemaps remaps = phases->finish(&loops);

@@ -368,6 +368,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
+            .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
             .callSites = callSites[position].span(),
         };
         SideTableParts::append(streams[position], inputs);

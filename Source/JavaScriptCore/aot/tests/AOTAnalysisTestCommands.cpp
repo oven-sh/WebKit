@@ -120,6 +120,9 @@ static bool beginRewrite(CommandWords& words, Session& session)
     if (!words.finish())
         return false;
     computeAnalyses(session.analyses, allAnalyses);
+    // Behind a change of few blocks, use lists read only the blocks that have changed.
+    session.analyses.didChangeBlock(entryBlock);
+    computeAnalyses(session.analyses, allAnalyses);
     return true;
 }
 

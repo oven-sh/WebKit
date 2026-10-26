@@ -1,0 +1,133 @@
+# The frames of some functions are named by their function objects, so such a function is called by value. A function object that the caller made itself and that it has handed to nobody on any way to the call has the names it was made with: the call is direct, without a test, and says so.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="renamedWhereNobodySees" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    Return v1
+}
+function f1 name="renamedInSight" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee] {
+    Return v0
+}
+
+function f2 name="onlyCalls" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f0
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    Return v5
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: = CallDirect v0, v1 function=f0 [callsOwnFunctionObject]
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+}
+
+function f3 name="handsOnOnTheOtherSide" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f1
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    Jump -> next b2(v1)
+  b2(v4: anything):
+    LoopHint
+    v6 = Call v3, -, v4
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(v6), notTaken b4(v6)
+  b3() frequency=Rare:
+    v8 = Call v2, -, v3
+    Jump -> next b4(v8)
+  b4(v9: anything):
+    Return v9
+# CHECK: LoopHint
+# CHECK-NEXT: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = Call v2, -, v3
+}
+
+function f4 name="handsOnFirst" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f1
+    v3 = Call v0, -, v2
+    v4 = Call v2, -, v1
+    Return v4
+# CHECK: [[closureOfHandsOnFirst]]: f1 = NewClosure function=f1
+# CHECK: = Call v0, -, [[closureOfHandsOnFirst]]
+# CHECK-NEXT: = Call [[closureOfHandsOnFirst]], -, v1
+}
+
+function f5 name="handsOnInTheLoopOfTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f1
+    Jump -> next b1(v1)
+  b1(v3: anything):
+    LoopHint
+    v5 = Call v2, -, v3
+    v6 = Call v0, -, v2
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v5
+# CHECK: [[closureOfHandsOnInTheLoopOfTheCall]]: f1 = NewClosure function=f1
+# CHECK: LoopHint
+# CHECK-NEXT: = Call [[closureOfHandsOnInTheLoopOfTheCall]], -,
+}
+
+function f6 name="sidesMeetAhead" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v2, -, v3
+    Jump -> next b2()
+  b2():
+    v5 = Call v3, -, v1
+    Return v5
+# CHECK: [[closureOfSidesMeetAhead]]: f1 = NewClosure function=f1
+# CHECK: = Call v2, -, [[closureOfSidesMeetAhead]]
+# CHECK: = Call [[closureOfSidesMeetAhead]], -, v1
+}
+
+function f7 name="handsOnToTheCalleeItself" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v1
+    Return v2
+# CHECK: [[closureOfHandsOnToTheCalleeItself]]: f1 = NewClosure function=f1
+# CHECK-NEXT: = Call [[closureOfHandsOnToTheCalleeItself]], -, [[closureOfHandsOnToTheCalleeItself]]
+}
+
+function f8 name="oneEdgeOfTheBranchCarriesIt" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f1
+    Branch v0 -> taken b1(), notTaken b2(v3)
+  b1():
+    v4 = Call v3, -, v1
+    Return v4
+  b2(v5: f1) frequency=Rare:
+    v6 = Call v2, -, v5
+    Return v6
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = Call v2, -, v5
+}
+
+function f9 name="theEdgeLeadsWhereAnotherWayLeadsToo" parameters=[{type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    v4 = NewClosure function=f1
+    Branch v1 -> taken b2(), notTaken b4(v4)
+  b2():
+    v5 = Call v4, -, v2
+    Return v5
+  b3() frequency=Rare:
+    v6 = NewClosure function=f1
+    Jump -> next b4(v6)
+  b4(v7: f1) frequency=Rare:
+    v8 = Call v3, -, v7
+    Return v8
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = Call v3, -, v7
+}
+
+function f10 name="testsAtTheHead" kind=Arrow role=EntryChecks parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f1 fallback=f1} {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1
+}
+function f11 name="callsTheTestsAtTheHead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: = CallDirect v0 function=f10 [callsOwnFunctionObject]
+}

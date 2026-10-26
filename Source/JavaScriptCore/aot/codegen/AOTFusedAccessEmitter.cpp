@@ -180,14 +180,8 @@ Condition FusedAccessEmitter::tryPutByIds(const ValueContext& store)
             return boolean(true);
         }, refuse);
     }, [&] {
-        // What countSiteCacheMiss() does in a stub. A site that sees several Structures in turn takes the single stores between its refills.
-        Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
-        LValue offset = m_out.bitAnd(m_out.lShr(cache.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
-        LValue state = m_out.add(states.value(), offset);
-        TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
-        Word32 count(m_out.load8ZeroExt32(missesLeft));
-        m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
-        return either<Condition>(equal(count, word32(0)), [&] {
+        // A site that sees several Structures in turn takes the single stores between its refills.
+        return either<Condition>(emitter<AccessEmitter>().countMissAtSite(cache), [&] {
             return storeByOperation(cache, true);
         }, refuse);
     });

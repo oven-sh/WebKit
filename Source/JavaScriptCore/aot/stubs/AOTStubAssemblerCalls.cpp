@@ -80,6 +80,7 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     RegisterSet lostAnyway = m_recording.clobbered();
     lostAnyway.merge(RegisterSet::macroClobberedGPRs());
     lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
+    RELEASE_ASSERT(!preservingCall.cellToKeep || !lostAnyway.contains(*preservingCall.cellToKeep, IgnoreVectors));
     preservingRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, [&](unsigned) {
         emitCall();
     });

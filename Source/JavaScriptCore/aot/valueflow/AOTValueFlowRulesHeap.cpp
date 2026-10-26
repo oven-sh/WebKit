@@ -233,9 +233,6 @@ void HeapRule::noteTestOfMembers(const ValueFlowOperand& object, const HeapKey& 
 void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOperand& value)
 {
     connect(value, m_context.written(known(objects), name));
-    // The unknown object stands for an object that has escaped, and for no object that lets in unseen code: a read through it finds such a one under the name it is written under.
-    if (value.node && m_context.holdsAnyOf(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), value.node) && hasEscaped(known(objects)))
-        connect(m_context.masked(value.node, m_tables.objectsThatLetInUnseenCode()), m_context.written(unknownObjectAlone(), name));
     bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
     if (namesProperty && m_tables.isSymbolUsedOnlyAsKey(PropertyKeyID(name.payload)))
         add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsHoldingSymbolsUsedOnlyAsKeys), known(objects));

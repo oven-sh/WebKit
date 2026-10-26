@@ -146,6 +146,10 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
             return;
         }
     }
+    if (looksAtPrototypeBeforeAllocating(value)) {
+        define(value, allocateInstance(value, allocation, value->prototypeOperand()));
+        return;
+    }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), storage);
     if (ValueID prototype = value->prototypeOperand())
         storePrototype(value, cell, prototype);
@@ -388,6 +392,34 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
     }
     if (barrier == OwnerBarrier::Emitted)
         emitter<BarrierEmitter>().barrierAfterStores(value, cell, storedOutOfLine.span());
+}
+
+// An object of another layout takes the place of one in which nothing is stored yet, so that one need not be made.
+bool AllocationEmitter::looksAtPrototypeBeforeAllocating(const ValueContext& value)
+{
+    LayoutID layout = m_placement.allocation(value->allocation()).layout;
+    return mayAllocateOtherLayout(m_program, value.value()) && value->fields().empty() && value->storage() == AllocationStorage::Heap && m_placement.layout(layout).hasSlots() && !m_placement.freeCellOffset(layout);
+}
+
+CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, AllocationID id, ValueID prototype)
+{
+    LayoutID layout = m_placement.allocation(id).layout;
+    auto [cell, isCellOfAllocation] = emitter<CellAllocationEmitter>().allocateInstance(value, id, in<CellPointer>(prototype));
+    if (!wordsOfEmptyObject(layout).isEmpty()) {
+        LBasicBlock fill = newBlock();
+        LBasicBlock isWhole = newBlock();
+        m_out.branch(isCellOfAllocation.value(), normalEdge(fill), normalEdge(isWhole));
+        m_out.appendTo(fill);
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub);
+            storeEmptySlots(cell, layout, BitVector(m_placement.layout(layout).numberOfFields()), ZeroedBy::Stub);
+        }
+        m_out.jump(isWhole);
+        m_out.appendTo(isWhole);
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    return cell;
 }
 
 // The operation returns the object to use: the prototype of a subclass selects the layout of that subclass.

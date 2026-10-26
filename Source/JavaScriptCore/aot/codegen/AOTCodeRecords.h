@@ -48,6 +48,8 @@ struct RecordedSite {
     Origin origin;
     CallSiteKind kind { CallSiteKind::Plain };
     BuiltinID calledBuiltin { };
+    // The function has made the function object that it calls here itself and has handed it to nobody.
+    bool callsOwnFunctionObject { false };
 };
 
 struct SiteRecords {

@@ -788,8 +788,8 @@ static bool hasFailedTestOfPrototype(FunctionAnalyses& analyses, ValueID object,
     return analyses.findEarlierTest(makeObjectTest(Proof::PrototypeLinkUnchanged, object, { }), block) == EarlierTest::Failed;
 }
 
-// The arms cost bytes at every store. Code that seldom runs keeps one test for all the stores of a stretch.
-static bool isWorthArmsOfStore(FunctionPassContext& context, BlockID block)
+// The arms cost bytes at every access. Code that seldom runs keeps one test for all the accesses of a stretch.
+static bool isWorthArms(FunctionPassContext& context, BlockID block)
 {
     return context.function.at(block).frequency == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest() && !isCold(heatClassOf(context, block));
 }
@@ -805,9 +805,34 @@ static bool leavesTestOfPrototypeToStore(FunctionPassContext& context, const Val
 static bool testsPrototypeOfStoreWhereItStands(FunctionPassContext& context, const ValueSite& site, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
 {
     const Value& store = context.function.at(site.value);
-    if (!mayTestPrototypeOfStoreWhereItStands(plan) || !leavesTestOfPrototypeToStore(context, store, query, plan) || !isWorthArmsOfStore(context, site.block))
+    if (!mayTestPrototypeOfStoreWhereItStands(plan) || !leavesTestOfPrototypeToStore(context, store, query, plan) || !isWorthArms(context, site.block))
         return false;
     return !hasFailedTestOfPrototype(context.analyses, store.objectOperand(), site.block);
+}
+
+// Nothing above the layout has the name, and flow has seen the read find something: an object that was handed another prototype finds it there.
+static bool mayTestPrototypeOfReadWhereItStands(const PropertyAccessPlan& plan)
+{
+    return plan.form == AccessForm::Constant && plan.operation == Opcode::Undefined && plan.receiverTest == ReceiverTest::None && plan.conditions.isEmpty()
+        && plan.requiredProofs.contains(Proof::PrototypeLinkUnchanged) && !plan.requiredProofs.contains(Proof::NotNullish);
+}
+
+static bool isProvenToFindMoreThanUndefined(FunctionPassContext& context, ValueID read)
+{
+    return std::ranges::any_of(context.analyses.useLists().usesOf(read), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = context.function.at(use.user);
+        return user.opcode == Opcode::AssumeType && user.provenType() != TypeTable::undefined;
+    });
+}
+
+static bool testsPrototypeOfReadWhereItStands(FunctionPassContext& context, const ValueSite& site, const PropertyAccessPlan& plan)
+{
+    const Value& read = context.function.at(site.value);
+    if (read.opcode != Opcode::PropGet || !mayTestPrototypeOfReadWhereItStands(plan) || !isWorthArms(context, site.block))
+        return false;
+    return !hasFailedTestOfPrototype(context.analyses, read.objectOperand(), site.block) && isProvenToFindMoreThanUndefined(context, site.value);
 }
 
 static bool answersWithoutLookup(AccessForm form)
@@ -901,6 +926,75 @@ static void expandStoresUnderPrototypesThatMayBeReplaced(FunctionPassContext& co
             builder.moveToEndOf(byName);
             expansion.appendOriginal();
             expansion.finishArmWithoutResult();
+        }
+        expansion.end();
+    }
+    context.analyses.didChangeValues();
+}
+
+static FunctionID findOnlyGetterCalledAt(FunctionPassContext& context, AccessSiteID site)
+{
+    if (!site)
+        return { };
+    FunctionID getter;
+    for (const FlowIndirectCall& call : context.inputs.flow.indirectCallsFrom(context.inputs.flow.at(site).function)) {
+        if (call.site != site || call.kind != FlowIndirectCallKind::Accessor)
+            continue;
+        if (getter && getter != call.callee)
+            return { };
+        getter = call.callee;
+    }
+    return getter && context.program.at(getter).kind == FunctionKind::Getter && mayBeCalledDirectly(context.program, getter) ? getter : FunctionID();
+}
+
+static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& context, IRBuilder& builder, Vector<NamedAccessSite>& reads)
+{
+    if (reads.isEmpty())
+        return;
+
+    sortFromLastToFirst(context, reads);
+    SiteExpansion expansion(context, builder);
+    for (const NamedAccessSite& read : reads) {
+        SlotStamp stamp = createSlotStamp(context, context.function.at(read.site.value), read.plan);
+        expansion.begin(read.site);
+        ValueID object = expansion.original().objectOperand();
+        BlockFrequency frequency = expansion.frequency();
+        BlockFrequency unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+        // Whoever reads the name expects to find it, and only an object that was handed another prototype does.
+        BlockID underAnotherPrototype = builder.addBlock(frequency);
+        BlockID otherwise;
+        for (Value& test : createAccessTests(context, read.plan, { object, { }, stamp }).tests) {
+            bool asksForPrototype = test.opcode == Opcode::HasLayoutPrototype;
+            if (!asksForPrototype && !otherwise)
+                otherwise = builder.addBlock(unlikelyFrequency);
+            BlockID whenFailed = asksForPrototype ? underAnotherPrototype : otherwise;
+            ValueID passed = builder.append(WTF::move(test));
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(passed, testedOperandIndex, unlikelyFrequency, context.function.at(whenFailed).frequency, { { }, Target { whenFailed, { }, { } } });
+            builder.moveToEndOf(branch.taken);
+        }
+        expansion.finishArm(expansion.append(IRBuilder::make(Opcode::Undefined)));
+
+        builder.moveToEndOf(underAnotherPrototype);
+        if (FunctionID getter = findOnlyGetterCalledAt(context, stamp.accessSite)) {
+            // What the site found for the last object holds for every object with the same Structure.
+            Value lookup = IRBuilder::make(Opcode::GetCachedGetter, { object });
+            lookup.setKey(stamp.key);
+            ValueID isGetter = builder.appendTypeTest(expansion.append(WTF::move(lookup)), Type::forFunction(getter));
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isGetter, OperandIndex::TypeTest::value, frequency, unlikelyFrequency);
+            Vector<ValueID, 8> captures = appendCaptures(builder, getter, branch.provenOnTaken);
+            expansion.finishArm(appendDirectCall(builder, {
+                .callee = getter,
+                .captures = captures.span(),
+                .thisValue = object,
+                .calleeValue = context.program.at(getter).has(FunctionFlags::TakesCallee) ? branch.provenOnTaken : ValueID(),
+                .accessSite = stamp.accessSite,
+            }));
+            builder.moveToEndOf(branch.notTaken);
+        }
+        expansion.finishArm(expansion.appendOriginal());
+        if (otherwise) {
+            builder.moveToEndOf(otherwise);
+            expansion.finishArm(expansion.appendOriginal());
         }
         expansion.end();
     }
@@ -1004,6 +1098,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
     Vector<NamedAccessSite> namedSites;
     Vector<NamedAccessSite> readsOfFieldsThatMayBeEmpty;
     Vector<NamedAccessSite> storesUnderPrototypesThatMayBeReplaced;
+    Vector<NamedAccessSite> readsUnderPrototypesThatMayBeReplaced;
     Vector<ElementAccessSite> elementSites;
     PropertyAccessCache* cache = program.propertyAccessCache();
     context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
@@ -1061,6 +1156,8 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
                 readsOfFieldsThatMayBeEmpty.append({ site, WTF::move(*query), WTF::move(plan) });
             else if (testsPrototypeOfStoreWhereItStands(context, site, *query, plan))
                 storesUnderPrototypesThatMayBeReplaced.append({ site, WTF::move(*query), WTF::move(plan) });
+            else if (testsPrototypeOfReadWhereItStands(context, site, plan))
+                readsUnderPrototypesThatMayBeReplaced.append({ site, WTF::move(*query), WTF::move(plan) });
             else
                 refuse(plan.limit);
             return;
@@ -1077,7 +1174,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
         } else
             refuse();
     });
-    bool hasSites = !namedSites.isEmpty() || !elementSites.isEmpty() || !readsOfFieldsThatMayBeEmpty.isEmpty() || !storesUnderPrototypesThatMayBeReplaced.isEmpty();
+    bool hasSites = !namedSites.isEmpty() || !elementSites.isEmpty() || !readsOfFieldsThatMayBeEmpty.isEmpty() || !storesUnderPrototypesThatMayBeReplaced.isEmpty() || !readsUnderPrototypesThatMayBeReplaced.isEmpty();
     if (!hasSites && !didListStores)
         return PassOutcome::Unchanged;
 
@@ -1110,6 +1207,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
 
         expandReadsOfFieldsThatMayBeEmpty(context, builder, readsOfFieldsThatMayBeEmpty);
         expandStoresUnderPrototypesThatMayBeReplaced(context, builder, storesUnderPrototypesThatMayBeReplaced);
+        expandReadsUnderPrototypesThatMayBeReplaced(context, builder, readsUnderPrototypesThatMayBeReplaced);
         // Narrowing may renumber the values, and the planned sites name them.
         if (!rewritten.isEmpty())
             narrowValueTypes(TypePropagationInputs { program, context.id, function, context.analyses, context.types, context.build, &context.typingMemo }, rewritten.span());
@@ -1441,7 +1539,7 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
         if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested))
             return;
         const Value* receiverTest = tested->tests.findReceiverLayoutTest();
-        if (receiverTest && leavesTestOfPrototypeToStore(reporter.context(), access, *query, tested->plan) && isWorthArmsOfStore(reporter.context(), reporter.point().block)) {
+        if (receiverTest && leavesTestOfPrototypeToStore(reporter.context(), access, *query, tested->plan) && isWorthArms(reporter.context(), reporter.point().block)) {
             // Once the layouts of the receiver are proven, ResolveAccesses gives the store its arms.
             reporter.report({ *receiverTest }, reporter.analyses().effectsOf(reporter.use()).normal);
             return;

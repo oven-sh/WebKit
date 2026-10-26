@@ -514,6 +514,32 @@ static BuiltImage buildWholeProgram(ParsedProgram& parsed)
     return built;
 }
 
+static void testCachesOfProgramLastAsLongAsCodeGenerationJob()
+{
+    ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = Wire::HeatOverride::EverythingIsHot });
+    BuildContext& context = parsed.context;
+    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
+    AOT_TEST_CHECK(pipeline && pipeline->isComplete);
+    const Typed::Program& program = *pipeline->program;
+    CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
+    Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(*pipeline, plan);
+    auto hasCachesAndOpenPhase = [&] {
+        return program.propertyAccessCache() && program.sharedFieldTypes() && program.types.hasOpenPhase();
+    };
+    auto hasNeither = [&] {
+        return !program.propertyAccessCache() && !program.sharedFieldTypes() && !program.types.hasOpenPhase();
+    };
+    AOT_TEST_CHECK(hasNeither());
+    {
+        CodeGenerationJob job(inputs, *pipeline->program, context);
+        AOT_TEST_CHECK(hasCachesAndOpenPhase());
+        GeneratedCode generated = job.run();
+        AOT_TEST_CHECK(!generated.functions.isEmpty());
+        AOT_TEST_CHECK(hasCachesAndOpenPhase());
+    }
+    AOT_TEST_CHECK(hasNeither());
+}
+
 static void testSymbolSpacesOfProgram()
 {
     using enum SymbolSpace;
@@ -692,6 +718,7 @@ std::span<const NativeTest> programInputTests()
         { "image/regexp-queue/no-unicode-properties"_s, testNoUnicodeProperties },
         { "image/regexp-queue/none"_s, testNoRegExps },
         { "image/programs/symbol-spaces"_s, testSymbolSpacesOfProgram },
+        { "image/programs/caches-last-as-long-as-code-generation-job"_s, testCachesOfProgramLastAsLongAsCodeGenerationJob },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },

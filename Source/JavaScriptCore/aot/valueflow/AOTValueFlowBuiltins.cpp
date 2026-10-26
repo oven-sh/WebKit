@@ -208,7 +208,7 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
     members = receivers.withCalleesFoundAlone(members);
 
     // A built-in is applied to the operands of this call and answers to this call alone, whoever else calls it.
-    ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped() };
+    ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped(), .isFoundOnReceiver = true };
     Vector<ValueFlowObjectID, 4> applied;
     context.forEachMember(context.restrict(members, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = universe.builtinOf(callee);

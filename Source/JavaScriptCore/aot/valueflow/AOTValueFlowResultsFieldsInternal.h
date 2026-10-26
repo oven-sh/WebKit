@@ -239,8 +239,19 @@ public:
     // A layout may come more than once. A list that many members share is walked once.
     SharedLists forEachLayoutListedForMembers(ValueSetID objects, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        SharedLists shared;
         Vector<uint32_t, 4> lists;
+        SharedLists shared = forEachLayoutNamedByMembers(objects, lists, functor);
+        for (uint32_t list : lists) {
+            for (LayoutID layout : m_listsOfSelectedLayouts[list])
+                functor(layout);
+        }
+        return shared;
+    }
+
+    // What each member names by itself, which may come more than once, and the lists that the members select from, each once.
+    SharedLists forEachLayoutNamedByMembers(ValueSetID objects, Vector<uint32_t, 4>& lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
+    {
+        SharedLists shared;
         m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
             LayoutID named = namedLayoutOf(object);
             if (!named)
@@ -256,12 +267,10 @@ public:
         });
         AOT::sort(lists);
         removeRepeatedElements(lists);
-        for (uint32_t list : lists) {
-            for (LayoutID layout : m_listsOfSelectedLayouts[list])
-                functor(layout);
-        }
         return shared;
     }
+
+    std::span<const LayoutID> listOfSelectedLayouts(uint32_t list) const LIFETIME_BOUND { return m_listsOfSelectedLayouts[list].span(); }
 
     std::span<const LayoutID> escapedClasses() const LIFETIME_BOUND { return m_escapedClasses.span(); }
     std::span<const LayoutID> lostClasses() const LIFETIME_BOUND { return m_lostClasses.span(); }
@@ -548,7 +557,14 @@ private:
     LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
     void listWrites();
     void forEachWriteAmong(std::span<const uint32_t>, NOESCAPE const Invocable<void(const Writer&, const ValueFlowNodeKey&, ValueSetID value)> auto&) const;
-    ObjectsOfSet findObjectsOf(ValueSetID) const;
+    // `layouts` of a set whose members select from lists, in its parts: the lists, and what the members name that is in none of them.
+    struct PartsOfLayouts {
+        uint32_t position { 0 };
+        Vector<LayoutID> named;
+        Vector<uint32_t, 4> lists;
+    };
+
+    ObjectsOfSet findObjectsOf(ValueSetID, PartsOfLayouts* = nullptr) const;
     std::optional<uint32_t> positionOfSetLookedAt(ValueSetID) const;
     const ObjectsOfSet& objectsOfSetOfWrite(ValueSetID) const;
     void forEachLayoutListedAmong(const ObjectsOfSet&, const Writer&, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
@@ -562,7 +578,15 @@ private:
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
     ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;
     void noteWrites();
-    void noteWritesInto(ValueSetMaker&, LayoutID, const WritesThroughSet&);
+    void noteWritesInto(ValueSetMaker&, StoresIntoObjects&, LayoutID, const WritesThroughSet&);
+    std::span<const uint32_t> sharedStoresOf(LayoutID layout) const LIFETIME_BOUND
+    {
+        if (m_firstSharedStoresOfLayout.isEmpty())
+            return { };
+        uint32_t first = m_firstSharedStoresOfLayout[layout.index()];
+        return m_sharedStoresOfLayouts.subspan(first, m_firstSharedStoresOfLayout[layout.index() + 1] - first);
+    }
+    void forEachTableOfKnownObjects(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
     void noteNamesStoredThroughDeclaredReceivers();
     using AccessesByKeyAndLayout = HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
@@ -591,6 +615,12 @@ private:
     Vector<ObjectsOfSet> m_objectsOfOtherSets;
     HashedIndex m_positionOfSetLookedAt;
     Vector<StoresIntoObjects> m_storesOfLayout;
+    // What is stored under keys through sets that reach many layouts together, once for all of them: the objects of a layout hold what its own table says and what these say.
+    Vector<StoresIntoObjects> m_storesSharedByLayouts;
+    Vector<Vector<PropertyKeyID>> m_keysOfSharedStores;
+    Vector<Vector<PropertyKeyID>> m_keysNamedInSharedStores;
+    Vector<uint32_t> m_firstSharedStoresOfLayout;
+    Vector<uint32_t> m_sharedStoresOfLayouts;
     Vector<Vector<LayoutID>> m_layoutsExpectedDirectlyBelow;
     HashMap<uint32_t, Vector<LayoutID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsAdmittedBy;
     Lock m_lockOfLayoutsAdmittedBy;
@@ -904,9 +934,16 @@ void StoresByLayout::forEachLayoutListedAmong(const ObjectsOfSet& objects, const
     }
 }
 
-void StoresByLayout::forEachSourceOf(LayoutID layout, ObjectsOfLayout objects, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
+void StoresByLayout::forEachTableOfKnownObjects(LayoutID layout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
 {
     functor(m_storesOfLayout[layout.index()]);
+    for (uint32_t table : sharedStoresOf(layout))
+        functor(m_storesSharedByLayouts[table]);
+}
+
+void StoresByLayout::forEachSourceOf(LayoutID layout, ObjectsOfLayout objects, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
+{
+    forEachTableOfKnownObjects(layout, functor);
     functor(m_storesIntoEveryObject);
     if (m_isEscapedClass.quickGet(layout.index()))
         functor(m_storesIntoEveryEscapedClass);

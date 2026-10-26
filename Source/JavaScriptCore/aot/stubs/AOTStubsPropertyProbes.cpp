@@ -863,6 +863,7 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     RELEASE_ASSERT(result != m_header);
     switch (Slot::payloadOf(m_kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         jit.move(TrustedImm32(0), result);
         return;
     case SlotPayload::Holder: {

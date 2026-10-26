@@ -35,6 +35,8 @@ public:
     // By the stub, in code of every shape: in line it is 130 bytes a site, eleven by the stub, and no faster where the code around it has to be fetched.
     CellPointer allocate(const OperationContext&, AllocationID, ZeroedBy = ZeroedBy::Nobody);
     CellPointer allocateZeroedByNumber(const OperationContext&, Word32 numberOfAllocation);
+    // The object that the prototype selects. Only where the condition holds is it the cell of the allocation, zeroed behind its words, and the caller's to fill.
+    std::pair<CellPointer, Condition> allocateInstance(const OperationContext&, AllocationID, CellPointer prototype);
     // Sixteen bytes of zero take one store. Somebody writes them where that takes no more instructions than the stores of zero that the caller then leaves out.
     ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
     CellPointer allocateObjectCopy(const OperationContext&, AllocationID, CellPointer source, unsigned fieldBytes);

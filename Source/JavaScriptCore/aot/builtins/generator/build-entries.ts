@@ -976,7 +976,9 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
 // The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it. aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
 // A constructor has `prototype` besides. The comparison loads no module, so a constructor that only a module hands out lists what the table knows of it and may have more, and so does one that is itself what a module exports: the module puts members on it when it is loaded.
 function closeFunctions({ builder, ownPropertyLists }: EntryContext): void {
-  const moduleObjects = new Set(builder.modules.map(module => builder.find(joinPath(module.namespace.path))));
+  const moduleObjects = new Set<ModelBuiltin | undefined>(
+    builder.modules.map(module => builder.find(joinPath(module.namespace.path))),
+  );
   const rootOf = (builtin: ModelBuiltin): ModelBuiltin => (builtin.holder === null ? builtin : rootOf(builtin.holder));
   const isHandedOutByModule = (builtin: ModelBuiltin): boolean =>
     moduleObjects.has(builtin) || rootOf(builtin).scope !== "Realm" || moduleObjects.has(rootOf(builtin));

@@ -33,6 +33,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     notePrototypeObjectsThatWriteMayReach(target, targets, unknownHeapKey);
     noteClosuresThatMayBeRenamed(target, unknownHeapKey, targets);
     connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));
+    if (keepsAccessors) {
+        for (ValueFlowName name : { everyValue, everyGetter, everySetter })
+            compareWithPropertyThatIsThere(operandOf(m_context.read(withSourcesOfCopies(m_context, known(sources)), name)));
+    }
 
     ValueFlowNodeID copied = m_context.written(known(targets), valueUnderUnknownKey);
     Vector<ValueFlowNodeID, 3> nodesTakingCopies { copied };
@@ -140,13 +144,21 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     mayThrow();
 }
 
-void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors)
+// A property that cannot be configured takes a definition only of the value, the getter and the setter that it has.
+void HeapRule::compareWithPropertyThatIsThere(const ValueFlowOperand& defined)
+{
+    connect(defined, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare));
+}
+
+void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
 {
     auto define = [&](HeapPropertyPart part, BuiltinName member) {
         ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program.keyOf(member)));
         if (part != HeapPropertyPart::Value && !m_context.meet(m_context.valueOf(described), ValueSets::complement(m_universe.undefinedValue())))
             return;
         this->define(object, key, part, operandOf(described));
+        if (definedObject == DefinedObject::MayHoldProperty)
+            compareWithPropertyThatIsThere(operandOf(described));
     };
     define(HeapPropertyPart::Value, BuiltinNames::value);
     define(HeapPropertyPart::Getter, BuiltinNames::get);
@@ -243,6 +255,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         forEachKey([&](const HeapKey& key) {
             define(object, key, action.kind == BuiltinPropertyActionKind::DefinesGetter ? HeapPropertyPart::Getter : HeapPropertyPart::Setter, value);
         }, &value);
+        compareWithPropertyThatIsThere(value);
         return;
     case BuiltinPropertyActionKind::DeletesByKey:
         forEachKey([&](const HeapKey& key) {
@@ -275,13 +288,13 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         return;
     case BuiltinPropertyActionKind::TakesDescriptor:
         forEachKey([&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(value));
+            defineAsDescribed(object, key, m_context.valueOf(value), DefinedObject::MayHoldProperty);
         }, &value);
         return;
     case BuiltinPropertyActionKind::TakesDescriptorMap:
     case BuiltinPropertyActionKind::DescribesResult: {
         auto defineUnder = [&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(m_context.lookup(m_context.valueOf(value), foundName(key, HeapPropertyPart::Value))));
+            defineAsDescribed(object, key, m_context.valueOf(m_context.lookup(m_context.valueOf(value), foundName(key, HeapPropertyPart::Value))), action.kind == BuiltinPropertyActionKind::DescribesResult ? DefinedObject::IsNew : DefinedObject::MayHoldProperty);
         };
         for (PropertyKeyID name : operands.namesInMap.value_or(std::span<const PropertyKeyID>()))
             defineUnder(keyNamed(name));

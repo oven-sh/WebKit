@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTValueFlowBuiltins.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

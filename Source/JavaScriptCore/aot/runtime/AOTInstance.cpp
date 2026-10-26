@@ -1018,7 +1018,7 @@ static size_t sizeOfPagesForNewThread(const Image& image)
 }
 
 // The allocator keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread. So does a heap.
-// Other threads allocate meanwhile, so it stops where less than this much address space is left.
+// Other threads allocate meanwhile, so it stops where less than this much address space is left, and it reads what is left: to map as much would take it from them.
 static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
 #if USE(MIMALLOC)
@@ -1033,13 +1033,14 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
     // It asks the system for an arena whenever its arenas are full, and each time it is refused it goes on at addresses far from the last.
     AOT_THRESHOLD(size_t, smallestStep, 128 * MB);
     static const size_t largestStep = mi_option_get_size(mi_option_arena_reserve);
-    size_t step = canMap(largestStep + sizeToLeaveFree) ? largestStep : largestStep > smallestStep && canMap(smallestStep + sizeToLeaveFree) ? smallestStep : 0;
+    size_t left = addressSpaceLeft();
+    size_t step = largestStep + sizeToLeaveFree <= left ? largestStep : largestStep > smallestStep && smallestStep + sizeToLeaveFree <= left ? smallestStep : 0;
     mi_option_set(mi_option_arena_reserve, step / KB);
 
     size_t sizeOfPagesOfThread = 0;
     for (auto [size, count] : pagesOfThread)
         sizeOfPagesOfThread += count * (size + alignmentOfPages);
-    if (canMap(numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree))
+    if (numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree <= left)
         return true;
 
     mi_heap_t* heap = mi_heap_new();
@@ -1051,7 +1052,7 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
             for (unsigned page = 0; hasRoom && page < count; ++page) {
                 for (unsigned piece = 0; hasRoom && piece < piecesInPage; ++piece)
                     hasRoom = !!mi_heap_malloc(heap, size / (piecesInPage + 1));
-                hasRoom = hasRoom && canMap(sizeToLeaveFree);
+                hasRoom = hasRoom && addressSpaceLeft() >= sizeToLeaveFree;
             }
         }
     }
@@ -1065,11 +1066,13 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
 }
 
 // Until a thread adopts them the pages begin with their size.
-static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads)
+static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
     size_t size = sizeOfPagesForNewThread(image);
+    if (addressSpaceLeft() < size + sizeToLeaveFree)
+        return nullptr;
     void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
     if (pages)
         *static_cast<size_t*>(pages) = size;
@@ -1081,7 +1084,7 @@ PagesForNewThread tryReservePagesForFirstThread()
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
-    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting);
+    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting, 0);
     if (!pages)
         --s_numberOfThreadsStarting;
     return { pages, !pages };
@@ -1095,7 +1098,7 @@ PagesForNewThread tryReservePagesForNewThread()
     if (!hasAddressSpaceLimit() || !image)
         return { };
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
-    void* pages = tryReservePagesForTables(*image, numberOfThreads);
+    void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
     if (!pages) {
         --s_numberOfThreadsStarting;
         return { nullptr, true };

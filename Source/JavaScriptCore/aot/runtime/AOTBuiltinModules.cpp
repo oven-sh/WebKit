@@ -14,6 +14,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
+#include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
@@ -123,6 +124,11 @@ JSC_DEFINE_HOST_FUNCTION(callCompiledBuiltin, (JSGlobalObject* globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(constructCompiledBuiltin, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSObject* closure = compiledClosureOfCallee(globalObject, callFrame);
+    // Compiled code of the realm goes to the closure by itself from now on.
+    if (RealmWords& words = Instance::of(globalObject)->realm; !words.functionOfEngineOverCompiledFunction) [[unlikely]] {
+        words.compiledFunctionUnderFunctionOfEngine = closure;
+        words.functionOfEngineOverCompiledFunction = callFrame->jsCallee();
+    }
     return JSValue::encode(JSC::constructAllowingPrimitiveResult(globalObject, closure, JSC::getConstructData(closure), ArgList(callFrame), callFrame->newTarget()));
 }
 

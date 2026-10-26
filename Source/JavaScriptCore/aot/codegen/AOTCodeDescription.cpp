@@ -192,7 +192,7 @@ static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain;
+        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -328,6 +328,16 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
     return flaggedSites;
 }
 
+static Vector<uint32_t> collectCallsOfOwnFunctionObjects(const Vector<RecordedSite>& renumbered)
+{
+    Vector<uint32_t> sites;
+    for (uint32_t i = 0; i < renumbered.size(); ++i) {
+        if (renumbered[i].callsOwnFunctionObject)
+            sites.append(i + 1);
+    }
+    return sites;
+}
+
 static uint32_t ensureCalleeIndex(CodeBody& body, FunctionID callee)
 {
     size_t index = body.callees.find(callee);
@@ -374,6 +384,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
         return sites;
     }
     sites.inlineFrames = describeInlineFrames(described.function, records.sites, body);
+    sites.callsOfOwnFunctionObjects = collectCallsOfOwnFunctionObjects(renumbered);
     return sites;
 }
 

@@ -472,7 +472,7 @@ static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
     return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
 }
 
-// The layout of a literal that somebody keeps, and that has no property yet when a spread without excluded keys fills it.
+// The layout of a literal that has no property yet when a spread without excluded keys fills it.
 static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Spread || !context.function.at(site.value).excludedKeys().empty())
@@ -489,7 +489,7 @@ static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const Unchange
         if (!hasPlainSlot)
             return { };
     }
-    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }) || isKeptByNobody(context, site.target))
+    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
         return { };
     return layout;
 }
@@ -579,7 +579,15 @@ static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context
             return plan;
         }
     }
-    return planWalkByLayouts(context, site, layoutOfEmptyTarget(context, unchanged, site));
+    LayoutID emptyTarget = layoutOfEmptyTarget(context, unchanged, site);
+    if (emptyTarget && isKeptByNobody(context, site.target)) {
+        // The operation behind the arms takes the object as it is, so it is made there. A hot loop leaves for a copy of itself on that way. Other code goes on behind the arms, where an object that is made on one way is made on all.
+        const NaturalLoop* loop = context.analyses.naturalLoops().innerMostLoopOf(site.block);
+        std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, site);
+        if (plan && (!plan->needsOriginalCall || (loop && isHotLoop(context, *loop))))
+            return plan;
+    }
+    return planWalkByLayouts(context, site, emptyTarget);
 }
 
 // A copy is an ordinary object with ordinary properties under the same names in the same order.

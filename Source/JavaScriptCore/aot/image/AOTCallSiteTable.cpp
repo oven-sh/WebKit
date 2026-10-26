@@ -372,6 +372,14 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     return findCallSite(&*head, returnOffset);
 }
 
+bool Image::callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex site) const
+{
+    const ImageFunction& record = this->function(function);
+    if (!record.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) [[likely]]
+        return false;
+    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).callsOwnFunctionObjectAt(site.bits());
+}
+
 ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
 {
     const ImageFunction& record = this->function(function);

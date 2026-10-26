@@ -125,7 +125,7 @@ enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
 flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed ClaimsToBackEnd MovedLoads }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections }
 enum Sabotage {
     None
     NoCallCollects StoresNeedNoBarrier

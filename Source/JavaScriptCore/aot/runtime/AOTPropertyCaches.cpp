@@ -1169,6 +1169,12 @@ void initializePropertyCacheWords(Instance& instance)
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
+    auto setNumberOfName = [&](TrapOfProxy trap, const Identifier& name) {
+        words.numbersOfNamesOfTraps[static_cast<unsigned>(trap)] = vm.aotState().identifiers->numberOf(name.impl()).value_or(0);
+    };
+    setNumberOfName(TrapOfProxy::Get, vm.propertyNames->get);
+    setNumberOfName(TrapOfProxy::Has, vm.propertyNames->has);
+    setNumberOfName(TrapOfProxy::Set, vm.propertyNames->set);
     words.defaultHasInstanceFunction = globalObject->functionProtoHasInstanceSymbolFunction();
     const Image& image = *vm.aotState().image;
     if (image.sharedCodeCopies().empty())
@@ -1516,6 +1522,36 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
     }
     ensureChangesAreReported(walk.changeableObjects.span());
     m_siteCaches.fill(site, *slot, { name.uid, access, walk.changeableObjects.span() });
+}
+
+JSValue PropertyCaches::findGetterAndFillSiteCache(SiteCache site, JSCell* base, uint32_t identifierNumber)
+{
+    VM& vm = *m_state.instance.vm;
+    DeferGCForAWhile deferGC(vm);
+    Structure* structure = base->structure();
+    CachedName name = nameOf(identifierNumber);
+    auto find = [&]() -> JSValue {
+        Object* object = compiledObjectOrNull(base);
+        if (!object || !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object))
+            return { };
+        JSGlobalObject* globalObject = m_state.instance.globalObject;
+        ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing }, name.uid);
+        if (walk.result != ChainWalkResult::Found || !isValidOffset(walk.offset) || !(walk.attributes & PropertyAttribute::Accessor))
+            return { };
+        auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
+        PropertyAnswer answer = classifyRead({ globalObject, object, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+        if (answer.kind != PropertyAnswerKind::Accessor || !canCache(structure, answer))
+            return { };
+        m_siteCaches.didMissRepeatedly(site);
+        cache({ structure, name, SlotAccess::Read, site }, answer);
+        return accessor->getter();
+    };
+    if (JSValue getter = find())
+        return getter;
+    m_siteCaches.didFindNothingToFill(site);
+    return jsUndefined();
 }
 
 void PropertyCaches::cacheFreeName(SiteCache site, UniquedStringImpl* uid, SlotAccess access, const PropertyAnswer& answer)
@@ -1922,6 +1958,12 @@ void SiteCaches::didFailToFill(SiteCache site)
         waitLongerForNextFill(stateOf(site));
 }
 
+// Whoever asks on behalf of an empty site looks the name up each time, so it asks more and more seldom.
+void SiteCaches::didFindNothingToFill(SiteCache site)
+{
+    waitLongerForNextFill(stateOf(site));
+}
+
 bool SiteCaches::tryWrite(SiteCache site, const Slot& slot)
 {
     if (!didMissBefore(site)) {
@@ -2005,6 +2047,7 @@ static void forEachStructureNamedBy(const Slot& slot, const Invocable<void(Struc
     case SlotPayload::Holder:
     case SlotPayload::FieldAndHolder:
     case SlotPayload::Constant:
+    case SlotPayload::Key:
         return;
     }
 }

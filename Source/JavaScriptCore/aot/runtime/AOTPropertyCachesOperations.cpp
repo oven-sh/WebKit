@@ -25,12 +25,28 @@
 #include "AOTStaticFields.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
+#include "ProxyObject.h"
 
 namespace JSC { namespace AOT {
 
 static void fileRead(Instance* instance, JSValue base, Structure* structureBefore, const CachedName& name, const PropertySlot& slot, SiteCache site = nullptr)
 {
-    instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, classifyRead({ instance->globalObject, base, structureBefore, name.uid, slot }));
+    PropertyAnswer answer = classifyRead({ instance->globalObject, base, structureBefore, name.uid, slot });
+    // What the first look changes (a dictionary is made flat, members are made, an absent field is marked as read) it changes once. A second look, which runs no code, sees what every later read sees.
+    if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
+        VM& vm = *instance->vm;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        Structure* structureNow = asObject(base)->structure();
+        PropertySlot again(slot.thisValue(), PropertySlot::InternalMethodType::VMInquiry, &vm);
+        asObject(base)->getPropertySlot(instance->globalObject, Identifier::fromUid(vm, name.uid), again);
+        scope.assertNoException();
+        if (!again.isTaintedByOpaqueObject()) {
+            instance->state->propertyCaches->cache({ structureNow, name, SlotAccess::Read, site }, classifyRead({ instance->globalObject, base, structureNow, name.uid, again }));
+            ensureStillAliveHere(structureNow);
+            return;
+        }
+    }
+    instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
 }
 
@@ -328,6 +344,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindGetterAndFillSiteCache, EncodedJSValue, (Instance* instance, JSCell* base, uint32_t key, SiteCache cache))
+{
+    LeafOperationScope leaf(*instance->vm);
+    return JSValue::encode(instance->state->propertyCaches->findGetterAndFillSiteCache(cache, base, key));
+}
+
 // What JSObject::hasInstance() refuses, in a message that quotes the expression.
 static JSObject* tryCreateErrorOfConstructorThatNeverAnswers(JSGlobalObject* globalObject, JSObject* constructor, JSValue hasInstance)
 {
@@ -420,6 +442,53 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByVal);
     OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, heapValueOf(instance, JSValue::decode(encodedBase)), JSValue::decode(encodedProperty))));
+}
+
+static const ProxyAccessWords& proxyAccessWords(EncodedJSValue* words) { return *std::bit_cast<const ProxyAccessWords*>(words); }
+
+JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetWithProxyTrap);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfProxyTrap);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), words.target, words.key);
+    OPERATION_RETURN(scope, answer);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTHasWithProxyTrap, size_t, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasWithProxyTrap);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    OPERATION_RETURN(scope, ProxyObject::hasWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishHasThroughProxy, size_t, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishHasThroughProxy);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    OPERATION_RETURN(scope, ProxyObject::finishHas(globalObject, JSValue::decode(answer), words.target, words.key));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetWithProxyTrap, void, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetWithProxyTrap);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    ProxyObject::setWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, JSValue::decode(words.storedValue), words.proxy, words.storeIsStrict);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishSetThroughProxy);
+    const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    ProxyObject::finishSet(globalObject, JSValue::decode(answer), words.target, words.key, JSValue::decode(words.storedValue), words.storeIsStrict);
+    OPERATION_RETURN(scope);
 }
 
 static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue property, JSValue value, bool isStrict)

@@ -21,11 +21,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = NewClosure function=f5
     v9 = NewClosure function=f6
     v10 = NewClosure function=f7
-    v11 = Builtin builtin=QueueMicrotask
-    v12 = Call v11, -, v7
-    v13 = Call v11, -, v8
-    v14 = Call v11, -, v9
-    v15 = Call v11, -, v10
+    v11 = Builtin builtin=FinalizationRegistry
+    v12 = Construct v11, -, v7
+    v13 = Construct v11, -, v8
+    v14 = Construct v11, -, v9
+    v15 = Construct v11, -, v10
     Return
 }
 function f1 name="makeClass" results=[{type=anything}] {

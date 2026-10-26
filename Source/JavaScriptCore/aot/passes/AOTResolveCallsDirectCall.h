@@ -43,6 +43,8 @@ struct DirectCallRequest {
     bool isNeverInlined { false };
     bool isAlwaysInlined { false };
     bool isTailCall { false };
+    // The caller has made the function object itself and has handed it to nobody.
+    bool callsOwnFunctionObject { false };
 };
 
 ValueID appendDirectCall(IRBuilder&, const DirectCallRequest&);

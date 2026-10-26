@@ -51,6 +51,7 @@ family Access Prepared..Placed
 operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding
 operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding
+operation GetCachedGetter (object: Object/inspects, key: PropertyKey, from Placed siteCache?: SiteCache) -> unknown ; reads(ShapeWords, NamedProperties, ObjectFields, PrototypeLinks, RuntimeState) writes(RuntimeState) ; replaces = PropGet ; runtime = FindGetterAndFillSiteCache ; siteCaches = 1
 
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read

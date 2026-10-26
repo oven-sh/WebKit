@@ -180,9 +180,10 @@ StringBuilderStorage::Limits::Limits(VM& vm)
 {
 }
 
-StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackManager::Mirror& levelLimit)
+StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackManager::Mirror& levelLimit, StringBuilderWords& words)
     : Base(vm, structure)
     , m_levelLimit(levelLimit)
+    , m_words(words)
     , m_limits(vm)
 {
 }
@@ -190,7 +191,7 @@ StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackMa
 StringBuilderStorage* StringBuilderStorage::create(Instance& instance)
 {
     VM& vm = *instance.vm;
-    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.jsonLevels.limit.get());
+    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.jsonLevels.limit.get(), instance.stringBuilder);
     storage->finishCreation(vm);
     storage->tryEnsureRoom(1);
     return storage;
@@ -268,16 +269,19 @@ void StringBuilderStorage::reset()
         Locker locker { cellLock() };
         m_segments.shrink(0);
     }
+    size_t longestTextInBuffer = std::max(m_position, std::exchange(m_positionWhenSegmentsWereJoined, 0));
     m_position = 0;
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
     m_jsonHolders = nullptr;
     m_watchedLevels.stop();
     m_lastString.clear();
-    bool isTooLargeToRetain = capacity() > m_limits.maxRetainedCapacity;
-    if (isTooLargeToRetain)
+    if (capacity() > m_limits.maxRetainedCapacity) {
         countLimitHit(vm(), LimitID::MaxRetainedStringBuilderCapacity);
-    if (isTooLargeToRetain || (m_buffer && !m_buffer->hasOneRef())) {
+        dropLargeBuffer(longestTextInBuffer);
+        return;
+    }
+    if (m_buffer && !m_buffer->hasOneRef()) {
         dropBuffer();
         return;
     }
@@ -314,7 +318,13 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
     if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders))
         return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
-    return tryReplaceBuffer(std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength)));
+    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength));
+    if (needed > m_limits.minCapacity) {
+        size_t expectedCapacity = std::exchange(m_words.capacityOfLastLargeBuffer, 0);
+        if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
+            return true;
+    }
+    return tryReplaceBuffer(newCapacity);
 }
 
 NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
@@ -324,6 +334,8 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     if (!buffer)
         return false;
     StringImpl::copyCharacters(characters, std::span<const Latin1Character> { m_characters, m_position });
+    if (m_buffer)
+        count(vm(), RuntimeCounterID::StringBuilderGrowths);
     {
         Locker locker { cellLock() };
         m_buffer = WTF::move(buffer);
@@ -331,7 +343,8 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     m_characters = characters.data();
     m_sharedLength = 0;
     updateLimit();
-    watchLevelsAfterGrowth(newCapacity);
+    if (length())
+        watchLevelsAfterGrowth(newCapacity);
     vm().heap.reportExtraMemoryAllocated(this, newCapacity);
     return true;
 }
@@ -345,6 +358,16 @@ void StringBuilderStorage::dropBuffer()
     m_characters = nullptr;
     m_sharedLength = 0;
     updateLimit();
+}
+
+void StringBuilderStorage::dropLargeBuffer(size_t longestTextInBuffer)
+{
+    size_t fittingCapacity = longestTextInBuffer > capacity() / 2 ? capacity() : std::max<size_t>(roundUpToPowerOfTwo(longestTextInBuffer), m_limits.minCapacity);
+    dropBuffer();
+    if (fittingCapacity > m_limits.maxRetainedCapacity)
+        m_words.capacityOfLastLargeBuffer = static_cast<uint32_t>(fittingCapacity);
+    else
+        tryReplaceBuffer(fittingCapacity);
 }
 
 bool StringBuilderStorage::ensureRoom(JSGlobalObject* globalObject, size_t size)
@@ -577,11 +600,11 @@ RefPtr<StringImpl> StringBuilderStorage::tryShareOrGiveAwayBuffer(bool mayGiveBu
         m_sharedLength = std::max(m_sharedLength, m_position);
         return StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position);
     }
-    if (capacity() <= m_limits.maxRetainedCapacity)
+    if (capacity() <= m_limits.maxRetainedCapacity || m_position <= capacity() / 2)
         return nullptr;
     countLimitHit(vm(), LimitID::MaxRetainedStringBuilderCapacity);
     RefPtr<StringImpl> impl = m_position == capacity() ? m_buffer : RefPtr<StringImpl> { StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position) };
-    dropBuffer();
+    dropLargeBuffer(m_position);
     return impl;
 }
 
@@ -777,6 +800,7 @@ bool StringBuilderStorage::collapseSegments(JSGlobalObject* globalObject)
         m_segments.append(Segment { 0, length, WriteBarrier<JSString>(vm, this, all) });
     }
     m_lengthOutsideBuffer = length;
+    m_positionWhenSegmentsWereJoined = std::max(m_positionWhenSegmentsWereJoined, m_position);
     m_position = 0;
     m_lastString.set(vm, this, all);
     m_lengthOfLastString = length;

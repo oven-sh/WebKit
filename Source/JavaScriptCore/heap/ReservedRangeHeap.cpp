@@ -296,7 +296,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // same rationale as the Linux MADV_DOFORK branch above.
     vm_inherit(mach_task_self(), static_cast<vm_address_t>(start), static_cast<vm_size_t>(size), VM_INHERIT_COPY);
 #endif
-    return Backing { BackEnd::Malloc, heap, size };
+    return Backing { BackEnd::Malloc, heap, size, arena };
 #else
     UNUSED_PARAM(start);
     UNUSED_PARAM(request);
@@ -320,6 +320,7 @@ ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing
     if (m_backEnd != BackEnd::Granules) {
         Locker locker { m_lock };
         m_segmentHeaps.append(backing.mallocHeap);
+        m_segmentArenas.append(backing.mallocArena);
         m_segmentsEnd = backing.size;
         return;
     }
@@ -436,6 +437,51 @@ void ReservedRangeHeap::releaseFreeMemory()
 #endif
 }
 
+bool ReservedRangeHeap::tryEnsureRoomForNewThreads(unsigned numberOfThreads, std::span<const Pieces> piecesOfThread)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    if (m_backEnd != BackEnd::Malloc)
+        return true;
+
+    // What a thread takes from a segment begins with a page for its own records in that segment, and it shares no page with another thread.
+    // So does a heap: each thread is stood in for by a heap of its own in each segment.
+    Locker locker { m_lock };
+    Vector<mi_heap_t*, 16> heaps;
+    bool hasRoom = true;
+    for (unsigned thread = 0; hasRoom && thread < numberOfThreads; ++thread) {
+        size_t firstHeapOfThread = heaps.size();
+        auto tryTakeFromSegment = [&](size_t segment, size_t size) {
+            while (heaps.size() <= firstHeapOfThread + segment)
+                heaps.append(mi_heap_new_in_arena(static_cast<mi_arena_id_t>(m_segmentArenas[heaps.size() - firstHeapOfThread])));
+            mi_heap_t* heap = heaps[firstHeapOfThread + segment];
+            return heap && mi_heap_malloc(heap, size);
+        };
+        auto tryTake = [&](size_t size) {
+            for (size_t segment = m_segmentArenas.size(); segment--;) {
+                if (tryTakeFromSegment(segment, size))
+                    return true;
+            }
+            return tryAddSegment(size) && tryTakeFromSegment(m_segmentArenas.size() - 1, size);
+        };
+        for (auto [size, count] : piecesOfThread) {
+            for (unsigned i = 0; hasRoom && i < count; ++i)
+                hasRoom = tryTake(size);
+        }
+    }
+    for (mi_heap_t* heap : heaps) {
+        if (heap)
+            mi_heap_destroy(heap);
+    }
+    for (void* heap : m_segmentHeaps)
+        mi_heap_collect(static_cast<mi_heap_t*>(heap), true);
+    return hasRoom;
+#else
+    UNUSED_PARAM(numberOfThreads);
+    UNUSED_PARAM(piecesOfThread);
+    return true;
+#endif
+}
+
 void* ReservedRangeHeap::tryAllocateSlow(size_t alignment, size_t size)
 {
 #if OS(LINUX) && USE(MIMALLOC)
@@ -501,6 +547,7 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
             return false;
         }
         m_segmentHeaps.append(backing->mallocHeap);
+        m_segmentArenas.append(backing->mallocArena);
         m_segmentsEnd = offset + size;
         m_reservedSize.fetch_add(size, std::memory_order_relaxed);
         return true;

@@ -26,6 +26,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
 #include "ExceptionHelpers.h"
 #include "InternalFunction.h"
@@ -133,10 +134,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     DeferGC deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
-    Object* allocated = cellArgument<Object>(object, entry);
-    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
+    // The stub that looks at the prototype first has allocated nothing.
+    Object* allocated = object ? cellArgument<Object>(object, entry) : uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
+    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField, allocation);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
     OPERATION_RETURN(scope, result);

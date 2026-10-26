@@ -386,7 +386,7 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
-        uint32_t numberOfPlace = (m_function.position + value.id().index()) % ArrayWords::numberOfCounts;
+        uint32_t numberOfPlace = (m_id.index() + value.id().index()) % ArrayWords::numberOfCounts;
         TypedPointer count = mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.shortYoungArraysConverted) + numberOfPlace);
         branch(below(Word32(m_out.load8ZeroExt32(count)), word32(ArrayWords::maxShortYoungArraysConverted)), { normalEdge(stillConverts), normalEdge(continuation) });
 

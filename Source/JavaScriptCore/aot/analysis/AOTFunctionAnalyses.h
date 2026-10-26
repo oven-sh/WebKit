@@ -216,6 +216,7 @@ private:
     struct ControlFlowResults {
         size_t numberOfBlocks { 0 };
         bool mayDescribeFormerGraph { false };
+        bool isReadByUseLists { false };
         std::optional<CFG> cfg;
         std::optional<Vector<Edge>> edgesFromUnreachableBlocks;
         std::optional<Dominators> dominators;

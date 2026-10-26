@@ -1,0 +1,61 @@
+# an allocation that lists a number proves the raw read of its slot where what may be undefined is stored under the key only behind the read, and no way leads from the store back to the read with the same object
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=undefined|number}}]
+
+function f0 name="goodStoreBehindTheReadInItsBlock" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    PutSlot v2, v2, v1 key="y" receivers=[L0] level=Proven
+    Return v3
+}
+function f1 name="goodStoreInABlockBehindTheRead" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2(v0)
+  b1():
+    v4 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Jump -> next b2(v4)
+  b2(v5: number):
+    PutSlot v3, v3, v1 key="y" receivers=[L0] level=Proven
+    Return v5
+}
+function f2 name="badStoreBehindTheReadInALoopAroundBoth" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    PutSlot v3, v3, v1 key="y" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+function f3 name="badStoreInALaterBlockOfALoopAroundBoth" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    PutSlot v3, v3, v1 key="y" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b3():
+    Return v5
+}
+function f4 name="goodStoreBehindTheReadInALoopThatMakesTheObjectAnew" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = GetSlot v4, v4 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    PutSlot v4, v4, v1 key="y" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b3():
+    Return v5
+}

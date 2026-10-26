@@ -11,6 +11,7 @@ v(DistinctStringsAreEqual, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoCho
 v(CompareStrings, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), CompareStrings)
 v(StringCodePointAt, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringCodePointAt)
 v(StringBuilderAppendString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StringBuilderAppendString)
+v(StringBuilderDiscard, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StringBuilderDiscard)
 v(StackStringBuilderAppendString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StackStringBuilderAppendString)
 
 // AOTStubsStringConversions.cpp

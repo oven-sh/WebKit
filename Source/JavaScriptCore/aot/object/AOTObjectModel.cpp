@@ -1123,7 +1123,7 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
         .orderAndShapeWords = orderAndShapeWordsFor(allocation.shape, allocation.orderWord()),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
-        .unused = 0,
+        .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
     m_writtenRecords.record(&record);
     count(vm, RuntimeCounterID::AllocationSiteRecordsFilled);
@@ -1141,6 +1141,7 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     if (!usual || !record || !usual->hasOtherPrototype() || structureIDOf(number) != usual->id())
         return;
     record->header = objectHeaderFor(structure, allocation);
+    record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
     m_writtenRecords.record(record);
 }
 

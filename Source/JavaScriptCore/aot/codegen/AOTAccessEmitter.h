@@ -26,6 +26,7 @@ public:
     void generatePropDelete(const ValueContext&);
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
+    void generateGetCachedGetter(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemSet(const ValueContext&);
     void generateElemHas(const ValueContext&);
@@ -45,12 +46,17 @@ public:
     void generateSuperSet(const ValueContext&);
 
     Boxed getById(const OperationContext&, Boxed receiver, PropertyKeyID, SiteCacheID, std::optional<Origin> = std::nullopt);
+    Boxed getMemberAboveLayouts(const ValueContext&);
+    // What the slot at the site finds for every object with its Structure, where the object has that Structure and the slot is of the kind.
+    Boxed loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure);
     void putById(const OperationContext&, Boxed receiver, PropertyKeyID, Boxed value, PutMode, SiteCacheID);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
     void putByVal(const OperationContext&, Boxed receiver, Boxed key, Boxed value, PutMode);
     Condition hasByVal(const OperationContext&, Boxed receiver, Boxed key);
     void recordArrival(const OperationContext&, Boxed receiver, uint32_t part = 0);
+    // What countSiteCacheMiss() does in a stub: whether the site has missed often enough to be filled again.
+    Condition countMissAtSite(Pointer site);
     // The Structure that the same change of prototype led to before. Storing it is the whole change only for an object that is extensible and is no prototype itself.
     Word32 findPrototypeTransition(CellPointer object, Boxed prototype, LBasicBlock isUnknown);
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);

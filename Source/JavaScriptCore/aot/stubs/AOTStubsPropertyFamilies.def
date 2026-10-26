@@ -16,6 +16,7 @@ v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, 
 // AOTStubsPropertyReadHandlers.cpp
 v(ReadSlot, Handler, (ById, ByIdPacked, ByVal, FreeName, FreeNameForTypeOf), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
 v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached, FreeNameMiss, FreeNameUncached, FreeNameForTypeOfMiss, FreeNameForTypeOfUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
+v(ThroughProxy, InternalEntry, (Get, Has, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThroughProxy)
 
 // AOTStubsPropertyCannot.cpp
 v(SlotCannot, InternalEntry, (ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SlotCannot)

@@ -1159,7 +1159,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
             if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
                 found = m_context.unite(found, m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))), m_context.maker().intersect(holders, allButBunUnlessNamed(operandOf(sourcesOfCopies)))));
             ClimbingSet next(prototypesAtCreationOf(above));
-            if (ValueFlowNodeID links = readWhereWritten(above, prototypeLinkName)) {
+            if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(above, ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName)) {
                 next = m_context.unite(next, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), links));
                 mayAnswerMemberLeftOut = mayAnswerMemberLeftOut || holdsMarkOfMemberLeftOut(links);
             }
@@ -1444,8 +1444,6 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
 
     if (mayBeUnknownObject(start)) {
         add(result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
-        if (handsOutEvaluators)
-            connect(m_context.masked(m_context.read(unknownObjectAlone(), value), m_tables.objectsThatLetInUnseenCode()), result);
         if (key.keyClass == HeapKeyClass::Name) {
             ClimbingSet holdersOfExports = letMembersOfHeldPrototypeObjectsEscape(key.name, { value, getter });
             if (holdsAnything(holdersOfExports)) {

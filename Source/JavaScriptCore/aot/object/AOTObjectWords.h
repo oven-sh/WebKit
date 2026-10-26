@@ -27,11 +27,13 @@ struct AllocationSiteRecord {
     uint64_t header;
     uint64_t orderAndShapeWords;
     void* allocator;
-    uint64_t unused;
+    // What the Structure of the header holds as its prototype, for an object. Zero for any other cell and where there is no header.
+    uint64_t prototype;
 
     static constexpr ptrdiff_t offsetOfHeader() { return offsetof(AllocationSiteRecord, header); }
     static constexpr ptrdiff_t offsetOfOrderAndShapeWords() { return offsetof(AllocationSiteRecord, orderAndShapeWords); }
     static constexpr ptrdiff_t offsetOfAllocator() { return offsetof(AllocationSiteRecord, allocator); }
+    static constexpr ptrdiff_t offsetOfPrototype() { return offsetof(AllocationSiteRecord, prototype); }
     static constexpr unsigned sizeShift = 5;
 };
 static_assert(sizeof(AllocationSiteRecord) == 1u << AllocationSiteRecord::sizeShift);
@@ -204,10 +206,25 @@ struct PrototypeOfClassObject {
 constexpr unsigned numberOfPrototypesOfClassObjects = 32;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
 
+// What the constructor of a base class makes where new.target is a class below it: an object of the layout of that class in which nothing is stored yet.
+struct InstanceOfClassBelow {
+    JSCell* prototype;
+    uint64_t header;
+    // The cell without its header, in whole chunks of sixteen bytes. The subspace of objects has an allocator for so many bytes.
+    const uint8_t* cellAtBirth;
+    uint32_t allocation;
+    uint32_t bytesInChunks;
+};
+constexpr unsigned numberOfInstancesOfClassesBelow = 16;
+constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 4;
+// With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
+constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
+
 struct ClassWords {
     JSCell** classPrototypes;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
+    const InstanceOfClassBelow* instancesOfClassesBelow;
 };
 
 static_assert(sizeof(KeyOrderTransition) == 16);
@@ -216,6 +233,7 @@ static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));
 static_assert(sizeof(EnumeratorCacheEntry) == 16);
 static_assert(!(numberOfCachedEnumerators & (numberOfCachedEnumerators - 1)));
 static_assert(sizeof(PrototypeTransition) == 16);
+static_assert(sizeof(InstanceOfClassBelow) == 32 && !(numberOfInstancesOfClassesBelow & (numberOfInstancesOfClassesBelow - 1)));
 static_assert(!(numberOfPrototypeTransitions & (numberOfPrototypeTransitions - 1)));
 static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
 

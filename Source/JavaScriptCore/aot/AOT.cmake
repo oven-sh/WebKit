@@ -307,6 +307,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageTextTests.cpp
     aot/tests/AOTImageUnitPlacementTests.cpp
     aot/tests/AOTInlinedSerializerTests.cpp
+    aot/tests/AOTInnerPointerValidationTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
     aot/tests/AOTListedFieldsTests.cpp

@@ -265,7 +265,9 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - A value is `vN = Operation operands.. name=value.. [flag, flag] @position`. Operands come first, in declaration order, separated by
   commas, with `-` for an absent optional operand that another operand follows. An operation without a result has no `vN =` and
   still takes the next id. The position is the offset in the module's text that a stack trace names. A second one, `@position @written`,
-  says where the text has the operation if that is elsewhere: the build report lists an access there.
+  says where the text has the operation if that is elsewhere: the build report lists an access there. `@position @written callers` is an
+  operation that reports its own errors at the first and whatever it calls at the second. `round-trip wire` prints what a front end sends,
+  as `testaot print --wire` does, which is where the second position of such an operation and of a construction shows.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
 - The head of `b0` may be left out. The block then has the parameters that the function's line gives it, `v0` onward: the captures, `this`, the
@@ -425,10 +427,21 @@ Every optional pass but the named ones and `AnalyzeFlow` is off.
 
 ## Built-ins in IR text
 
-There is one built-ins table, and `testaot` has all of it, the host's entries included. IR text names an entry, a class, a slot, a
-result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`, `overload=MathMax/0`). A test that
-needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads `this`) names a real entry that
-has it.
+A program has one built-ins table, and whoever links `testaot` compiles it: the engine's entries (`aot/builtins/*.builtins.ts`) and a
+host's. WebKit's own build links the stand-in host's (`aot/tests/host`), which has few entries. Bun's build links Bun's. IR text names an
+entry, a class, a slot, a result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`,
+`overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
+`this`) names a real entry that has it.
+
+A test in this folder says the same under both tables:
+
+- It names entries of the engine and of the stand-in host alone. A token that only Bun's table has (`builtin=QueueMicrotask`) does not
+  parse in WebKit's build. To hand a function to the host, which calls it later and ignores what it returns:
+  `Construct` of `builtin=FinalizationRegistry`.
+- It pins nothing that hangs on what else the table holds: the number of a name or of an object, or how an entry that both hosts
+  declare (`BunServe`) treats an operand the test is not about.
+- A test that needs an entry of Bun lies in Bun's `test/aot/engine-tests`. A native test that does is listed in
+  `AOTNativeTestsOfHostEntries.inc`, and `testaot` with the stand-in host's table leaves it out and counts it.
 
 ## Native tests
 

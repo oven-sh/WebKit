@@ -78,6 +78,7 @@ ClassTable::ClassTable(State& state)
     state.instance.classes.classPrototypes = state.tableArena.allocate<JSCell*>(m_tables.numberOfClasses());
     state.instance.classes.placesOfPrototypeProperties = m_placesOfPrototypeProperties.data();
     state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
+    state.instance.classes.instancesOfClassesBelow = m_instancesOfClassesBelow.data();
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
@@ -1132,9 +1133,9 @@ JSObject* ClassTable::createMethodClosure(VM& vm, Closure* classObject, const La
 {
     ClosureTable& closures = m_state.objects->closures;
     FunctionID function(method.function);
-    if (hasOneClassObject(classLayout))
-        return asObject(closures.closure(vm, function));
     bool takesEnvironment = method.flags & methodTakesEnvironment;
+    if (classLayout.evaluation() == EvaluationState::ProvenOnce && !takesEnvironment)
+        return asObject(closures.closure(vm, function));
     return closures.createClosure(vm, function, classObject->captures().first(takesEnvironment), takesEnvironment);
 }
 

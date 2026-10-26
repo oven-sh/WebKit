@@ -3938,6 +3938,7 @@ bool ValueFlowSolver::solve()
             if (m_input.nodes && m_input.universe) {
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), m_input.universe->closures());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
             }
         },
         [&] {

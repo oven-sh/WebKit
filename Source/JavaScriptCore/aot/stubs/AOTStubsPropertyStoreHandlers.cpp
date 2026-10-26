@@ -286,7 +286,7 @@ void generateStoreSlot(StubAssembler& jit)
             loadIdentifier(jit, name, uid, miss);
         }
         slot.loadFirstPayloadWord(jit, accessorIndex);
-        callCustomSetterAndReturn(jit, receiver, value, accessorIndex, uid);
+        callCustomSetterAndReturn(jit, receiver, value, accessorIndex, uid, origin == SlotOrigin::ByVal ? std::optional<GPRReg>(name) : std::nullopt);
         break;
     }
     case Slot::Kind::Field:
@@ -526,6 +526,14 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
+        if (slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal)) {
+            static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
+            uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
+            jit.move(value, T10);
+            jit.move(TrustedImm32(traits.operation == SlotOperation::StoreStrict), T14);
+            jit.jumpToStub(throughProxy(TrapOfProxy::Set));
+            break;
+        }
         uncached.append(jit.jump());
         break;
     case Slot::Kind::Empty:

@@ -14,7 +14,9 @@
 #include "AOTStubHelpers.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
+#include "InternalFunctionAllocationProfile.h"
 #include "JSFunction.h"
+#include "JSPromise.h"
 #include "NativeExecutable.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
@@ -184,6 +186,53 @@ PreludeExit emitGetConstructPrototypePrelude(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotRemembered.link(&jit);
+    return PreludeExit::CallsOperation;
+}
+
+// As InternalFunction::createSubclassStructure() where new.target has been constructed before: its rare data names the Structure until its `prototype` changes.
+PreludeExit emitCreatePromisePrelude(StubAssembler& jit)
+{
+    // A call that preserves registers has none to look with.
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::GPR)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg newTarget = operationArgumentGPR(1);
+    const GPRReg structure = jit.allocateScratch(StubRegister::A2);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::A3);
+    const GPRReg allocator = jit.allocateScratch(StubRegister::A4);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::A5);
+    const GPRReg promise = jit.result();
+    static_assert(JSPromise::offsetOfSlot() == JSPromise::offsetOfPacked() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
+    static_assert(JSObject::butterflyOffset() == sizeof(uint64_t) && !JSValue::ValueEmpty);
+    constexpr ptrdiff_t offsetOfTypeInStructure = Structure::indexingModeIncludingHistoryOffset() + JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset();
+
+    JumpList callsOperation;
+    callsOperation.append(jit.branchIfNotCell(newTarget));
+    jit.load8(Address(newTarget, JSCell::typeInfoTypeOffset()), scratch);
+    jit.sub32(TrustedImm32(jsFunctionTypes.first), scratch);
+    callsOperation.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(jsFunctionTypes.last - jsFunctionTypes.first)));
+    jit.loadPtr(Address(newTarget, JSFunction::offsetOfExecutableOrRareData()), structure);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, structure, TrustedImm32(JSFunction::rareDataTag)));
+    jit.load32(Address(structure, FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID() - JSFunction::rareDataTag), structureID);
+    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, structureID));
+    jit.move(structureID, structure);
+    decodeStructureID(jit, structure);
+    callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(structure, offsetOfTypeInStructure), TrustedImm32(JSPromiseType)));
+    jit.loadPtr(Address(structure, Structure::realmOffset()), scratch);
+    callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].allocator)), allocator);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, promise, allocator, scratch, callsOperation);
+    jit.store32(structureID, Address(promise, JSCell::structureIDOffset()));
+    jit.load32(Address(structure, Structure::indexingModeIncludingHistoryOffset()), scratch);
+    jit.store32(scratch, Address(promise, JSCell::indexingTypeAndMiscOffset()));
+    jit.store64(TrustedImm32(0), Address(promise, JSObject::butterflyOffset()));
+    jit.store64(TrustedImm32(0), Address(promise, JSPromise::offsetOfPacked()));
+    jit.store64(TrustedImm32(0), Address(promise, JSPromise::offsetOfSlot()));
+    fenceAfterAllocation(jit);
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
 }
 

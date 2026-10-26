@@ -51,7 +51,7 @@ constexpr SlotAccess accessFor(PutMode mode)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolder, ExtraProperty, ExtraPropertyAddition, Transition, Removal, OrderWords, CustomAccessor, Constant };
+enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolder, ExtraProperty, ExtraPropertyAddition, Transition, Removal, OrderWords, CustomAccessor, Constant, Key };
 enum class SlotLocation : uint8_t { None, WordIndex, HiddenWordOffset };
 enum class SlotPresence : uint8_t { Unknown, Present, Absent, ReadsSlot };
 
@@ -114,7 +114,7 @@ enum class SlotKindFlag : uint8_t {
     v(ClosureLength, None, None, Present, None) \
     v(ClosureName, None, None, Unknown, None) \
     v(Constant, Constant, None, Present, None) \
-    v(Uncacheable, None, None, Unknown, None) \
+    v(Uncacheable, Key, None, Unknown, None) \
     v(Removal, Removal, WordIndex, Unknown, None) \
     v(ExtraPropertyRemoval, Removal, WordIndex, Unknown, None) \
     v(FieldRemoval, OrderWords, HiddenWordOffset, Unknown, None) \
@@ -221,7 +221,7 @@ struct alignas(16) Slot {
     }
     static Slot createWithoutPayload(StructureID structureID, Kind kind, uint8_t flags)
     {
-        ASSERT(payloadOf(kind) == SlotPayload::None);
+        ASSERT(payloadOf(kind) == SlotPayload::None || payloadOf(kind) == SlotPayload::Key);
         return create(structureID, kind, flags, 0);
     }
     static Slot createInStorage(StructureID, Kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset);
@@ -278,6 +278,13 @@ struct alignas(16) Slot {
         ASSERT(payloadOf(kind) == SlotPayload::CustomAccessor);
         Slot slot = create(structureID, kind, flags, 0);
         slot.customAccessor = { index, 0 };
+        return slot;
+    }
+    // The receivers are proxies, whose handlers answer. The key is what a read hands to the trap.
+    static Slot createForProxies(StructureID structureID, JSCell* key)
+    {
+        Slot slot = create(structureID, Kind::Uncacheable, 0, 0);
+        slot.holder = key;
         return slot;
     }
     static Slot createConstant(StructureID structureID, uint8_t flags, JSValue value)
@@ -453,6 +460,7 @@ bool Slot::namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uin
     case SlotPayload::CustomAccessor:
         return true;
     case SlotPayload::Holder:
+    case SlotPayload::Key:
         return !holder || isMarked(holder);
     case SlotPayload::FieldAndHolder:
         return isMarked(MarkedBlockCage::decode(cageBase, fieldAndHolder.holder));
@@ -559,6 +567,10 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
     case SlotPayload::CustomAccessor:
         payload = slot.customAccessor.index;
         break;
+    case SlotPayload::Key:
+        if (slot.holder)
+            return std::nullopt;
+        break;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
     case SlotPayload::Removal:
@@ -588,6 +600,7 @@ inline bool PackedSlot::canOutliveWhatItNames() const
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
     case SlotPayload::ExtraProperty:
+    case SlotPayload::Key:
         return false;
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
@@ -616,6 +629,7 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
     uint16_t hiddenWordOffset = static_cast<uint16_t>(location << hiddenWordOffsetShift);
     switch (Slot::payloadOf(kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         return Slot::create(structureID, kind, flags, 0);
     case SlotPayload::Holder: {
         if (kind == Slot::Kind::InheritedField)

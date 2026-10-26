@@ -1305,6 +1305,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .isTailCall = !!call.isTailCall,
         .isConstruction = call.isConstruction(),
         .callIsPartOfConstruction = !!call.isPartOfConstruction,
+        .callsOwnFunctionObject = call.callsOwnFunctionObject(),
         .module = callee.module,
     }, callee);
     IRBuilder::Expansion expansion = resultReads ? builder.beginExpansion(point, *resultReads) : builder.beginExpansion(point);
@@ -1919,9 +1920,10 @@ static FunctionID functionAsWritten(const Program& program, FunctionID id)
 }
 
 // The call stands behind the test that no function object was renamed, beside the call by value that is made once one was. The forms of the callee itself enter one another as those of any function do.
+// The caller's own function object is called without the test.
 static bool standsBesideCallByValue(const FunctionPassContext& context, const Value& call)
 {
-    return context.program.at(call.function()).capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
+    return !call.callsOwnFunctionObject() && context.program.at(call.function()).capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
 }
 
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
@@ -2018,8 +2020,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         bool makesOrFillsNewObject = callee.role == FunctionRole::ConstructBody || callee.role == FunctionRole::AllocatedThisVersion || callee.has(FunctionFlags::AllocatesOwnThis);
         if (cost <= InlineModel::constructorBytes && makesOrFillsNewObject)
             addBenefit(InlineBenefit::SunkAllocation, cost);
-        // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing.
-        isTooDeep = cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call);
+        // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing to the code, but each level is one more look at all of the caller.
+        isTooDeep = (cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call)) || context.exceeds(LimitID::MaxInlineNesting, inlineDepthOf(program, caller, value.inlineFrame) + 1, call);
         // Where code runs seldom, an allocation that goes is worth its own bytes and no more.
         if (!isTooDeep && !isWithinBudget() && (!isCold(heat) || callerIsEntrypoint)) {
             uint64_t bytesOfAllocation = isCold(heat) ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);

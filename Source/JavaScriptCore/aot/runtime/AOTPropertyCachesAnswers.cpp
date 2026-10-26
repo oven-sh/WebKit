@@ -385,6 +385,8 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if (type == GlobalProxyType && structure->classInfoForCells() == JSGlobalProxy::info() && mayAllocate && receiver->structure() == structure
         && structure->realm() == query.globalObject && uncheckedDowncast<JSGlobalProxy>(receiver)->target() == query.globalObject)
         return classifyGlobalProxyRead(query);
+    if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName())
+        return PropertyAnswer::handlerOfProxyAnswers(access, identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, uid)).asCell());
     if ((structure->typeInfo().prohibitsPropertyCaching() && !structure->isCompiledStructure()) || isProxyType(type) || structure->needImpurePropertyWatchpoint())
         return PropertyAnswer::uncacheable(access);
     if (structure->isDictionary()) {
@@ -866,6 +868,8 @@ PropertyAnswer classifyStore(const StoreQuery& query)
             return WTF::move(*answer);
         return PropertyAnswer::uncacheable(access, flattenOnce(vm, query.base));
     }
+    if (access == SlotAccess::Store && structureBefore->typeInfo().type() == ProxyObjectType && !isNeverCachedName(vm, query.uid) && !PropertyName(query.uid).isPrivateName())
+        return PropertyAnswer::handlerOfProxyAnswers(access, identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, query.uid)).asCell());
     if (isNeverCached)
         return PropertyAnswer::uncacheable(access);
     if (access == SlotAccess::Store && isCompiledClosure(query.base)) {
@@ -993,7 +997,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     uint8_t flags = (answer.isOwn ? Slot::isOwn : 0) | (answer.dependsOnChain() ? Slot::dependsOnChain : 0);
     switch (answer.kind) {
     case PropertyAnswerKind::Uncacheable:
-        return uncacheableSlot(id, flags);
+        return answer.keyForTrap ? Slot::createForProxies(id, answer.keyForTrap) : uncacheableSlot(id, flags);
     case PropertyAnswerKind::Value:
         return Slot::createInStorage(id, Kind::Value, flags, answer.holder, answer.offset);
     case PropertyAnswerKind::Accessor:

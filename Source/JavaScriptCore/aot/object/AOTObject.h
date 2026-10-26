@@ -311,7 +311,7 @@ public:
     JSValue readListedField(const FieldAsProperty&) const;
     const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSValue readPropertyListEntry(const PropertyListEntry&, JSObject* extraProperties) const;
-    JSCellButterfly* keys(VM&) const;
+    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);

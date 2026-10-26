@@ -14,6 +14,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowResults.h"
+#include "AOTFunctionEditing.h"
 #include "AOTFunctionQueue.h"
 #include "AOTIR.h"
 #include "AOTIRParser.h"
@@ -34,11 +35,14 @@
 #include "LineColumn.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
+#include <span>
+#include <wtf/EnumTraits.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/WeakRandom.h>
 
@@ -294,6 +298,34 @@ static void testDerivedFunctionIDsFromManyThreads()
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
     table.recordFunctionsOf(*program);
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
+}
+
+static void testCachesOfProgramLastAsLongAsWhatRunsBesideEdits()
+{
+    BuildContext build(optionsWith({ "threads=8"_s }));
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    ProgramEditor editor(*program);
+    auto hasCachesAndOpenPhases = [&] {
+        return program->propertyAccessCache() && program->sharedFieldTypes() && program->types.hasOpenPhase() && program->strings.hasOpenPhase();
+    };
+    auto hasNone = [&] {
+        return !program->propertyAccessCache() && !program->sharedFieldTypes() && !program->types.hasOpenPhase() && !program->strings.hasOpenPhase();
+    };
+    std::array functions { FunctionID(0u), FunctionID(1u) };
+    for (size_t numberOfFunctions = 0; numberOfFunctions <= functions.size(); ++numberOfFunctions) {
+        std::atomic<unsigned> numberOfEdits { 0 };
+        unsigned numberOfRunsBeside = 0;
+        AOT_TEST_CHECK(hasNone());
+        editFunctionsInParallel(editor, build, std::span<const FunctionID>(functions).first(numberOfFunctions), [&](unsigned, FunctionID, Function&, TaskArenas&) {
+            AOT_TEST_CHECK(hasCachesAndOpenPhases());
+            numberOfEdits.fetch_add(1, std::memory_order_relaxed);
+        }, [&] {
+            AOT_TEST_CHECK(numberOfFunctions ? hasCachesAndOpenPhases() : hasNone());
+            ++numberOfRunsBeside;
+        });
+        AOT_TEST_CHECK(hasNone());
+        AOT_TEST_CHECK(numberOfEdits.load() == numberOfFunctions && numberOfRunsBeside == 1);
+    }
 }
 
 static void testStatisticsFromManyThreads()
@@ -788,6 +820,21 @@ static void testCurrentWorkFitsItsBuffer()
     }
 }
 
+enum class EnumWithGap : uint8_t { First, Second, Last = 4 };
+enum class WideEnum : uint16_t { Only };
+
+static void testNamesOfEnumeratorsEndAtTheLastOne()
+{
+    static_assert(WTF::enumNamesSize<EnumWithGap>() == 256 && WTF::enumNamesSizeUpToLastName<EnumWithGap>() == 5);
+    static_assert(WTF::enumNamesSize<WideEnum>() == 511 && WTF::enumNamesSizeUpToLastName<WideEnum>() == 1);
+    AOT_TEST_CHECK(WTF::enumName(EnumWithGap::First) == "First"_s && WTF::enumName(EnumWithGap::Second) == "Second"_s && WTF::enumName(EnumWithGap::Last) == "Last"_s);
+    for (unsigned value = 0; value < 256; ++value)
+        AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(value)) == WTF::enumNames<EnumWithGap>()[value]);
+    AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(3)).isNull() && WTF::enumName(static_cast<EnumWithGap>(5)).isNull() && WTF::enumName(static_cast<EnumWithGap>(255)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(WideEnum::Only) == "Only"_s && WTF::enumName(static_cast<WideEnum>(510)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(static_cast<WideEnum>(511)) == "enum out of range"_s);
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -795,6 +842,7 @@ std::span<const NativeTest> supportTests()
         { "function-queue/many-threads"_s, testFunctionQueueOnManyThreads },
         { "function-queue/behind-long-function"_s, testFunctionQueueBehindLongFunction },
         { "derived-functions/ids-from-many-threads"_s, testDerivedFunctionIDsFromManyThreads },
+        { "function-editing/caches-last-as-long-as-what-runs-beside-edits"_s, testCachesOfProgramLastAsLongAsWhatRunsBesideEdits },
         { "diagnostics/order-by-text-position"_s, testDiagnosticsOrderByTextPosition },
         { "diagnostics/text-position-is-last-context-clause"_s, testTextPositionIsLastContextClause },
         { "diagnostics/two-lists"_s, testDiagnosticsKeepTwoLists },
@@ -815,6 +863,7 @@ std::span<const NativeTest> supportTests()
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
+        { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };
     return tests;
 }

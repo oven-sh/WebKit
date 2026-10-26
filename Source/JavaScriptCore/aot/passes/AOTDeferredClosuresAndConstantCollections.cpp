@@ -225,6 +225,9 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     bool isConstructorOfClass = callee.constructedClass || callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
+    // A call of a field whose closure is not made yet enters the function through a closure in the frame of the stub, and the list of recorded callees, which the collector visits, holds the closure that the function is entered through.
+    if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+        return false;
     if (!callee.captures.isEmpty()) {
         const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)

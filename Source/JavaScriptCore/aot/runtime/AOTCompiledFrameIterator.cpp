@@ -250,6 +250,28 @@ bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction)
     return description.visibility() != TraceVisibility::Visible && description.sourceFunction() == sourceFunction;
 }
 
+// The tests at the head of a function leave by a tail call into its body, which runs under the same function object.
+static bool isFormThatLeftByTailCall(FunctionID candidate, FunctionID sourceFunction, bool leftByTailCall)
+{
+    return leftByTailCall && FunctionDescription(candidate).sourceFunction() == sourceFunction;
+}
+
+bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
+{
+    if (frame.isOfCalledBuiltin)
+        return false;
+    FunctionID source = FunctionDescription(frame.function).sourceFunction();
+    while (frame.inlineFrame) {
+        InlineFrameRecord record = reader.at(image, code.index(), frame.inlineFrame);
+        if (image.callsOwnFunctionObjectAt(code.index(), record.callSite))
+            return true;
+        frame = callerOfInlinedFrame(image, reader, code, frame);
+        if (!isEntrypointOf(frame.function, source) && !isFormThatLeftByTailCall(frame.function, source, record.isTailCall))
+            return false;
+    }
+    return false;
+}
+
 static std::optional<SourcePosition> findPosition(const CompiledFrame& frame)
 {
     const VMState& state = frame.instance->vm->aotState();
@@ -539,13 +561,17 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     FunctionID source = FunctionDescription(frame().function).sourceFunction();
     auto hasOnlyEntrypoints = [&](CompiledFunctionID code, LogicalFrame logical) {
         while (logical.inlineFrame) {
+            bool leftByTailCall = m_inlineFrames.at(*m_image, code.index(), logical.inlineFrame).isTailCall;
             logical = callerOfInlinedFrame(*m_image, m_inlineFrames, code, logical);
-            if (!isEntrypointOf(logical.function, source))
+            if (!isEntrypointOf(logical.function, source) && !isFormThatLeftByTailCall(logical.function, source, leftByTailCall))
                 return false;
         }
         return true;
     };
-    if (!hasOnlyEntrypoints(m_frame.code, { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted }))
+    LogicalFrame logical { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
+    if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, m_frame.code, logical))
+        return nullptr;
+    if (!hasOnlyEntrypoints(m_frame.code, logical))
         return std::nullopt;
 
     Cursor cursor = m_cursor;
@@ -553,7 +579,15 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (!isEntrypointOf(entry->innermostFunction, source) || !hasOnlyEntrypoints(entry->code, { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false }))
+        if (m_image->callsOwnFunctionObjectAt(entry->code.index(), entry->site.callSite))
+            return nullptr;
+        // A function object of the same function that is called by value in tail position has a record of its own.
+        if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
+            break;
+        LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
+        if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, entry->code, caller))
+            return nullptr;
+        if (!hasOnlyEntrypoints(entry->code, caller))
             break;
         stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
     }

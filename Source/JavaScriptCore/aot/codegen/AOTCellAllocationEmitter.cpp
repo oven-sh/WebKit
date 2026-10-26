@@ -235,6 +235,12 @@ CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext
     return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { zeroExtended(numberOfAllocation).value() }).first);
 }
 
+std::pair<CellPointer, Condition> CellAllocationEmitter::allocateInstance(const OperationContext& context, AllocationID id, CellPointer prototype)
+{
+    StubCallResult result = callStub(context, AOT::allocateInstance(knownCellSizeFor(m_placement.allocation(id).size)), { m_out.constInt64(id.index()), prototype.value() });
+    return { CellPointer(result.first), Condition(m_out.notZero64(result.second)) };
+}
+
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(fieldBytes && !(fieldBytes % copyChunkBytes));

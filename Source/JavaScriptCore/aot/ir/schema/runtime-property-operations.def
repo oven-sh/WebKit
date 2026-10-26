@@ -6,6 +6,7 @@ runtime InByIdAndCache, HasOwnByIdAndCache : size_t (EncodedJSValue base, uint32
 runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, SiteCache cache) ; unknownCode
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
 runtime FillSiteCache : void (JSCell* base, uint32_t key, SiteCache cache, uint32_t access) ; reads(all) writes(RuntimeState)
+runtime FindGetterAndFillSiteCache : EncodedJSValue (JSCell* base, uint32_t key, SiteCache cache) ; reads(all) writes(RuntimeState)
 runtime RecordArrival : void (EncodedJSValue receiver, uint32_t site) ; reads(all) writes(RuntimeState)
 
 runtime GetFreeName, GetFreeNameForTypeOf : EncodedJSValue (uint32_t key, SiteCache cache) ; unknownCode
@@ -21,6 +22,10 @@ runtime PutByValAndCache, PutByValAndCacheSloppy : void (EncodedJSValue base, En
 runtime InByValAndCache, HasOwnByValAndCache, DeleteByVal, DeleteByValSloppy : size_t (EncodedJSValue base, EncodedJSValue property) ; unknownCode
 runtime GetByValWithThis : EncodedJSValue (EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property) ; unknownCode
 runtime GetOwnProperty : EncodedJSValue (EncodedJSValue object, uint32_t key) ; unknownCode
+runtime GetWithProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue trap) ; unknownCode
+runtime ValidateAnswerOfProxyTrap : EncodedJSValue (EncodedJSValue* wordsOfAccess, EncodedJSValue answer) ; unknownCode
+runtime HasWithProxyTrap, FinishHasThroughProxy : size_t (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
+runtime SetWithProxyTrap, FinishSetThroughProxy : void (EncodedJSValue* wordsOfAccess, EncodedJSValue trapOrAnswer) ; unknownCode
 
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)

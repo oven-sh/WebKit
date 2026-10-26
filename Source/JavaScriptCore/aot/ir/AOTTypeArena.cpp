@@ -13,6 +13,7 @@
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -612,7 +613,7 @@ TypeInterningPhase::TypeInterningPhase(const TypeTable& table, unsigned numberOf
 {
     if (numberOfTasks)
         m_firstUses.grow(numberOfTasks);
-    RELEASE_ASSERT(!table.m_openPhase);
+    RELEASE_ASSERT(!table.m_openPhase && !ParallelLoops::isInsideLoop());
     table.destroyPhaseOfScratchArenas();
     table.m_openPhase = this;
 }

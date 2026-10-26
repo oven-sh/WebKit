@@ -10,6 +10,7 @@
 # CHECK-NEXT: sort: ok
 # CHECK-NEXT: sort and remove duplicates: ok
 # CHECK-NEXT: tasks: ok
+# CHECK-NEXT: a thread knows whether it is inside a loop: ok
 # CHECK-NEXT: width one is serial: ok
 # CHECK-NEXT: worker numbers are below the width and unique at one time: ok
 # CHECK-NEXT: build thread has the worker stack size: ok

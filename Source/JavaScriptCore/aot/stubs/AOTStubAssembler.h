@@ -69,6 +69,8 @@ struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
     bool returnsValue { true };
     bool checksException { true };
+    // The stub has not written it, so it is saved with the registers of the caller or by the callee.
+    std::optional<GPRReg> cellToKeep { };
 };
 
 void readTagsFromInstance(CCallHelpers&);

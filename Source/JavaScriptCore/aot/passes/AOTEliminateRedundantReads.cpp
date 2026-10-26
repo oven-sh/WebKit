@@ -13,6 +13,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTDominators.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -1305,6 +1306,67 @@ static PassOutcome dropRepeatedMapSets(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// An object keeps the brand that it has taken. `this.#method()` behind another one, or behind the definition in the constructor, has nothing left to ask.
+static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PrivateGet))
+        return PassOutcome::Unchanged;
+
+    struct Brand {
+        ValueID object;
+        ValueID token;
+        LayoutID layout;
+        uint32_t field;
+        BlockID block;
+    };
+    const Program& program = context.program;
+    Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Brand, 8> taken;
+    Vector<size_t, 16> numberTakenAtEntry;
+    Vector<std::pair<BlockID, BitVector>> erased;
+    ValueSubstitution substitution(function);
+    dominators.walkTree([&](BlockID block) {
+        numberTakenAtEntry.append(taken.size());
+        const BlockValues& values = function.at(block).values;
+        BitVector erasedIndexes;
+        for (size_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::PrivateGet && value.opcode != Opcode::PrivateDefine)
+                continue;
+            if (!program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand))
+                continue;
+            Brand brand { sameObjectThroughCasts(function, value.objectOperand()), sameObjectThroughCasts(function, value.tokenOperand()), value.layout(), value.field(), block };
+            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
+            bool isTaken = std::ranges::any_of(taken, [&](const Brand& earlier) {
+                return earlier.object == brand.object && earlier.token == brand.token && earlier.layout == brand.layout && earlier.field == brand.field
+                    && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
+            });
+            if (!isTaken) {
+                taken.append(brand);
+                continue;
+            }
+            // The second definition throws.
+            if (value.opcode == Opcode::PrivateDefine)
+                continue;
+            substitution.replace(values[index], value.tokenOperand());
+            erasedIndexes.set(index);
+        }
+        if (!erasedIndexes.isEmpty())
+            erased.append({ block, WTF::move(erasedIndexes) });
+    }, [&](BlockID) {
+        taken.shrink(numberTakenAtEntry.takeLast());
+    });
+    if (erased.isEmpty())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (auto& [block, erasedIndexes] : erased)
+        builder.eraseValues(block, erasedIndexes);
+    substitution.apply(function, &context.analyses);
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 } // anonymous namespace
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
@@ -1312,7 +1374,7 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome = RedundantReadElimination { context }.run();
-    return outcome | dropRepeatedMapSets(context);
+    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context);
 }
 
 namespace {
@@ -2741,17 +2803,22 @@ struct LoopPathSeparator : LoopEditor {
         // A type that a test cannot establish (proven contents, a range of integers) keeps the copy from coming back.
         Vector<TypeID> testedEveryTurn = findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
         Vector<TypeID> testedTypes = testedEveryTurn;
+        Vector<TypeID> typesTakenFromCopy(numberOfParameters);
         for (size_t index = 0; index < numberOfParameters; ++index) {
             const Type& given = types.at(plan.typesOfCarriedValues[index]);
-            const Type& wanted = typeOf(m_function.at(header).parameters[index]);
-            if (testedTypes[index] || given.isSubsetOf(wanted, m_program) || plan.carriedValuesThatMayBeUnspecified.get(index))
+            const Type& typeInLoop = typeOf(m_function.at(header).parameters[index]);
+            if (testedTypes[index] || given.isSubsetOf(typeInLoop, m_program) || plan.carriedValuesThatMayBeUnspecified.get(index))
                 continue;
-            if (!given.isJavaScriptValue() || !wanted.isJavaScriptValue())
+            if (!given.isJavaScriptValue() || !typeInLoop.isJavaScriptValue())
                 return false;
+            // A test for literal strings reads the characters of a string that is none of the program's own. What the copy carries may be any string, so the loop takes any.
+            Type wanted = typeInLoop.withLiteralStringsWidened();
             Type testable = testableStoredTypeOf(PropertyAccessContext { m_program, &m_context.inputs.flow }, given, wanted, types);
             if (testable.isNever() || !given.castTo(testable, types).isSubsetOf(wanted, m_program))
                 return false;
             testedTypes[index] = types.intern(testable);
+            if (typeInLoop.hasLiteralStrings())
+                typesTakenFromCopy[index] = types.intern(wanted);
         }
 
         builder.setOrigin(m_function.at(header).terminator.origin());
@@ -2768,6 +2835,8 @@ struct LoopPathSeparator : LoopEditor {
                 typeInLoop = types.intern(types.at(typeInLoop).castTo(types.at(tested), types));
             else if (plan.carriedValuesThatMayBeUnspecified.get(index))
                 typeInLoop = types.unionOf(typeInLoop, plan.typesOfCarriedValues[index]);
+            else if (TypeID taken = typesTakenFromCopy[index])
+                typeInLoop = taken;
             parametersOfEntry.append(builder.addParameter(entry, typeInLoop));
             carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index]));
         }

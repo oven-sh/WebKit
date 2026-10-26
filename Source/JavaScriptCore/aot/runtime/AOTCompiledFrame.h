@@ -180,6 +180,8 @@ struct LogicalFrameSite {
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
+// The frame, or a hidden one of the same function below it, stands in the code of a caller that made the function object itself and handed it to nobody.
+bool isCopiedForOwnFunctionObject(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
 // The frame is that of the stub that stepped the body of an async generator. Behind an await of the body its callers wait for the step, though they are still on the stack.
 bool callersWaitForStep(CallFrame* frameOfStepStub);
 

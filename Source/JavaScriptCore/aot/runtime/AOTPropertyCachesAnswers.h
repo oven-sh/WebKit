@@ -56,6 +56,7 @@ enum class PropertyAnswerKind : uint8_t {
 
 struct PropertyAnswer {
     static PropertyAnswer uncacheable(SlotAccess access, bool didFlatten = false) { return { .access = access, .didFlatten = didFlatten }; }
+    static PropertyAnswer handlerOfProxyAnswers(SlotAccess access, JSCell* key) { return { .access = access, .keyForTrap = key }; }
     static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk) { return { .access = access, .didFlatten = walk.didFlatten, .changeableObjects = WTF::move(walk.changeableObjects) }; }
     static PropertyAnswer own(PropertyAnswerKind kind, SlotAccess access, PropertyOffset offset = invalidOffset) { return { .kind = kind, .access = access, .isOwn = true, .offset = offset }; }
     static PropertyAnswer above(PropertyAnswerKind kind, SlotAccess access, ChainWalk&& walk) { return { .kind = kind, .access = access, .offset = walk.offset, .holder = walk.holder, .changeableObjects = WTF::move(walk.changeableObjects) }; }
@@ -80,6 +81,8 @@ struct PropertyAnswer {
     SlotData variable { };
     uint32_t customAccessor { 0 };
     JSValue constant { };
+    // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
+    JSCell* keyForTrap { nullptr };
     ChainObjects changeableObjects { };
 };
 

@@ -341,9 +341,10 @@ enum class ValueFlowHostNode : uint8_t {
     MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses,
     SourcesOfCopiesIntoUnknownObject,
     SourcesOfCopiesIntoUntrackedObject,
+    ClosuresThatDefinitionsCompare,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 52;
+inline constexpr unsigned numberOfValueFlowHostNodes = 53;
 
 class ValueFlowProgramNodes {
 public:

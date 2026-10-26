@@ -11,6 +11,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCallGraph.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectSummaries.h"
@@ -330,20 +331,65 @@ static PropertyKeyID nameOfCallee(const Program&, const Function&, const Termina
 static bool isCall(const Value& value) { return effectRuleOf(value.opcode) == EffectRule::Call; }
 static bool isCall(const Terminator& terminator) { return effectRuleOf(terminator.kind) == EffectRule::Call; }
 
+// A read under a name that runs code nobody knows runs what a descriptor holds under `get`, and a store what one holds under `set`.
+static PropertyKeyID nameOfAccessorInDescriptor(const Program& program, const Value& access)
+{
+    if (!PayloadWord::key(access.opcode) || !access.key())
+        return { };
+    if (accessOf(access.opcode) == Access::Read)
+        return program.keyOf(BuiltinNames::get);
+    return accessOf(access.opcode) == Access::Store ? program.keyOf(BuiltinNames::set) : PropertyKeyID();
+}
+
+static PropertyKeyID nameOfAccessorInDescriptor(const Program&, const Terminator&) { return { }; }
+
+static bool constructsUnknownCallee(const Program& program, const Function& function, const Value& value)
+{
+    std::optional<unsigned> callee = OperandPosition::callee(value.opcode);
+    return callee && OperandPosition::newTarget(value.opcode) && !calleesOf(program, program.typeOf(function, value.operand(*callee))).isComplete;
+}
+
+static bool constructsUnknownCallee(const Program&, const Function&, const Terminator&) { return false; }
+
+enum class EnteredAsValueBy : uint8_t { Nothing, Calls, Constructions };
+
+static EnteredAsValueBy whatEntersAsValue(const Function& function)
+{
+    switch (function.kind) {
+    case FunctionKind::Plain:
+    case FunctionKind::Arrow:
+    case FunctionKind::Method:
+        return EnteredAsValueBy::Calls;
+    case FunctionKind::BaseConstructor:
+    case FunctionKind::DerivedConstructor:
+        return EnteredAsValueBy::Constructions;
+    case FunctionKind::Getter:
+    case FunctionKind::Setter:
+    case FunctionKind::Initializer:
+    case FunctionKind::Module:
+    case FunctionKind::CommonJsModule:
+        return EnteredAsValueBy::Nothing;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 namespace {
 
 struct SeenCode {
     BitVector isReached;
     BitVector mayBeCalledAsValue;
+    BitVector hasSiteThatMayEnter;
     bool reachesEverything { false };
+    bool seesWhatRuns { false };
 
     bool reaches(FunctionID function) const { return reachesEverything || isReached.get(function.index()); }
+    bool mayEnter(FunctionID function) const { return !seesWhatRuns || hasSiteThatMayEnter.get(function.index()); }
 };
 
 } // anonymous namespace
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
-static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, EstimateOf estimate)
+static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
 {
     unsigned count = graph.numberOfFunctions();
     bool isForClasses = estimate == EstimateOf::Classes;
@@ -415,6 +461,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     auto mayStandWhereValueIsCalled = [&](FunctionID function) {
         return hasEscaped.quickGet(function.index()) && (!names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
     };
+    bool constructsValue = false;
     Vector<Vector<FunctionID>> functionsWaitingFor(program.modules.size());
     BitVector isWaiting(count);
     auto reachIfCalled = [&](FunctionID function) {
@@ -459,6 +506,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
             continue;
         }
         FunctionID function(node);
+        constructsValue |= !!constructsUnknownValue[node];
         for (ModuleID module : modulesLoadedBy[node]) {
             if (FunctionID body = program.at(module).body)
                 reach(body.index());
@@ -519,9 +567,16 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         }
     }
     seen.mayBeCalledAsValue = BitVector(count);
+    seen.hasSiteThatMayEnter = WTF::move(isUnderNameThatIsCalled);
+    bool callsValue = isReached.quickGet(graph.unknownCodeNode().index());
+    seen.seesWhatRuns = flow.hasResults() && !program.entries.isEmpty();
     for (size_t function : hasEscaped) {
-        if (isReached.quickGet(function) && mayStandWhereValueIsCalled(FunctionID(function)))
-            seen.mayBeCalledAsValue.quickSet(function);
+        if (!isReached.quickGet(function) || !mayStandWhereValueIsCalled(FunctionID(function)))
+            continue;
+        seen.mayBeCalledAsValue.quickSet(function);
+        EnteredAsValueBy enteredBy = whatEntersAsValue(program.functions[function]);
+        if ((enteredBy == EnteredAsValueBy::Calls && callsValue) || (enteredBy == EnteredAsValueBy::Constructions && constructsValue))
+            seen.hasSiteThatMayEnter.quickSet(function);
     }
     return seen;
 }
@@ -661,7 +716,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     auto callOf = [&](FunctionID callee) {
         if (isCalledPerEvent.get(callee.index()))
             return WeightedCall { graph.nodeOf(callee).index(), eventsOfHandlers[callee.index()] };
-        bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && !flow.runsAtMostOnce(program, callee);
+        bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && seen.mayEnter(callee) && !flow.runsAtMostOnce(program, callee);
         return WeightedCall { graph.nodeOf(callee).index(), std::max(runsAsLoopDoes ? frequencyConstants.iterationsPerLoop : 1.0, comesWithEvents(callee) ? entriesPerEvent[callee.index()] : 0.0) };
     };
     WeightedCallList calls;
@@ -759,6 +814,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     Vector<Vector<uint32_t>> namesReadBy(countWhereNamesAreFollowed);
     Vector<Vector<uint32_t>> holdersReadBy(countWhereNamesAreFollowed);
     Vector<Vector<ModuleID>> modulesLoadedBy(countWhereNamesAreFollowed);
+    Vector<uint8_t> constructsUnknownValue(FillWith { }, countWhereNamesAreFollowed, static_cast<uint8_t>(0));
     Vector<ModuleID> moduleOfRuntimeModule(program.builtins().moduleCount());
     for (uint32_t module = 0; module < program.modules.size(); ++module) {
         RuntimeModuleID runtimeModule = program.modules[module].runtimeModule;
@@ -815,11 +871,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 addUnknownCode(weight);
                 return;
             }
-            if (!isCall(instruction))
-                return;
-            PropertyKeyID name = nameOfCallee(program, function, instruction);
+            PropertyKeyID name = isCall(instruction) ? nameOfCallee(program, function, instruction) : nameOfAccessorInDescriptor(program, instruction);
             if (!name) {
+                if (!isCall(instruction))
+                    return;
                 addUnknownCode(weight);
+                constructsUnknownValue[index] |= !isLibraryCode(program, function) && constructsUnknownCallee(program, function, instruction);
                 return;
             }
             if (std::optional<size_t> position = names.find(name))
@@ -1097,7 +1154,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             if (flow.mayRunUnseenCode())
                 calls[graph.unknownCodeNode().index()] = shareAmong(program, flow, graph, isCalledPerEvent, seen, callGraph.functionsCalledByUnknownCode());
         } else
-            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, estimate);
+            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate);
         Vector<double> eventsOfHandlers(FillWith { }, count, 0.0);
         if (!isForClasses) {
             forEachIndexInParallel(loops, graph.m_numberOfNames, [&](unsigned position) {

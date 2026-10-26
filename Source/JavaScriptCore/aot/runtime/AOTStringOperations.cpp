@@ -289,6 +289,11 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringImplEquals
     return Image::current()->text().equals(StringID(string), StringView { *static_cast<StringImpl*>(impl) });
 }
 
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTCharactersEqualImageString(const Latin1Character* characters, uint32_t length, uint32_t string)
+{
+    return Image::current()->text().equals(StringID(string), StringView { std::span { characters, length } });
+}
+
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTHashStringImpl(void* impl)
 {
     return static_cast<StringImpl*>(impl)->hash();

@@ -525,6 +525,76 @@ static void testFinishGivesLargeBufferAway(LoadedProgram& program)
     AOT_TEST_CHECK(charactersOf(whole) == fullBuffer && !whole->tryGetValueImpl()->isSubString() && whole->length() == large);
 }
 
+static void testNextLargeTextGrowsOnce(LoadedProgram& program)
+{
+    uint32_t least = limitValue(program, LimitID::MinStringBuilderCapacity);
+    uint32_t retained = limitValue(program, LimitID::MaxRetainedStringBuilderCapacity);
+    uint32_t large = retained * 4;
+    auto write = [&](Builder& builder, uint32_t length) {
+        for (uint32_t written = 0; written < length; written += 1000)
+            builder.appendRepeated('a', 1000);
+    };
+
+    Builder first(program);
+    write(first, large - retained);
+    AOT_TEST_CHECK(first.limit() == large);
+    first.finish();
+
+    Builder shortText(program);
+    shortText.append("short"_s);
+    AOT_TEST_CHECK(shortText.limit() == least);
+    shortText.finish();
+
+    Builder second(program);
+    second.appendRepeated('a', least);
+    AOT_TEST_CHECK(second.limit() == least);
+    second.append("a"_s);
+    AOT_TEST_CHECK(second.limit() == large);
+    const Latin1Character* buffer = second.characters();
+    write(second, large - retained);
+    AOT_TEST_CHECK(second.characters() == buffer && charactersOf(second.finish()) == buffer);
+
+    program.instance().stringBuilder.freeStorage = nullptr;
+    Builder half(program);
+    AOT_TEST_CHECK(half.storage() != second.storage());
+    write(half, retained + 1000);
+    AOT_TEST_CHECK(half.limit() == large);
+    buffer = half.characters();
+    JSString* result = half.finish();
+    AOT_TEST_CHECK(charactersOf(result) != buffer && !result->tryGetValueImpl()->isSubString());
+
+    Builder fitting(program);
+    write(fitting, retained + 1000);
+    AOT_TEST_CHECK(fitting.limit() == retained * 2);
+    buffer = fitting.characters();
+    AOT_TEST_CHECK(charactersOf(fitting.finish()) == buffer);
+
+    Builder shorter(program);
+    write(shorter, retained / 4 + 1000);
+    AOT_TEST_CHECK(shorter.limit() == retained * 2);
+    buffer = shorter.characters();
+    AOT_TEST_CHECK(charactersOf(shorter.finish()) != buffer);
+    AOT_TEST_CHECK(shorter.limit() == retained / 2 && !shorter->length());
+
+    Builder kept(program);
+    AOT_TEST_CHECK(kept.storage() == shorter.storage());
+    buffer = kept.characters();
+    write(kept, retained / 4 + 1000);
+    AOT_TEST_CHECK(kept.characters() == buffer);
+    kept.finish();
+    AOT_TEST_CHECK(kept.characters() == buffer);
+
+    Builder wide(program);
+    write(wide, large - retained);
+    wide.append(std::span(japan));
+    AOT_TEST_CHECK(wide.limit() == large);
+    wide.finish();
+    Builder afterWide(program);
+    write(afterWide, least + 1000);
+    AOT_TEST_CHECK(afterWide.limit() == large);
+    afterWide->release(program.instance());
+}
+
 // Pieces of one width that follow each other become one flat part. Where the width changes a new part begins.
 static void testSegmentsKeepTheirWidth(LoadedProgram& program)
 {
@@ -1318,6 +1388,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/short-read-copies"_s, withInstance<testShortReadCopies> },
         { "string-builder-storage/finish-keeps-pooled-buffer"_s, withInstance<testFinishKeepsPooledBuffer> },
         { "string-builder-storage/finish-gives-large-buffer-away"_s, withInstance<testFinishGivesLargeBufferAway> },
+        { "string-builder-storage/next-large-text-grows-once"_s, withInstance<testNextLargeTextGrowsOnce> },
         { "string-builder-storage/segments-keep-their-width"_s, withInstance<testSegmentsKeepTheirWidth> },
         { "string-builder-storage/segments-by-reference"_s, withInstance<testSegmentsByReference> },
         { "string-builder-storage/long-first-string-is-not-copied"_s, withInstance<testLongFirstStringIsNotCopied> },

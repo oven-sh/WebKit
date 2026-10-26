@@ -92,6 +92,8 @@ private:
     void barrierIfCellWasStored(const ValueContext&, CellPointer, const InitialFields&);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);
+    bool looksAtPrototypeBeforeAllocating(const ValueContext&);
+    CellPointer allocateInstance(const ValueContext&, AllocationID, ValueID prototype);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);
     ValueID findOnlyAllocationIn(BlockID from, const Target&);
     std::optional<AllocationsByCase> findAllocationsByCase(const TerminatorContext&);

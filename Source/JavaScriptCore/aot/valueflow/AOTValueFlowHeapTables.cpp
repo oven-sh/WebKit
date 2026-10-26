@@ -710,7 +710,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects keysOfMembersOfBun;
         for (const NamedMember& named : namedMembers) {
             PropertyKeyID key = program.keyOf(named.name);
-            if (key && builtins.canonicalID(named.member.holder) == Builtins::Bun)
+            if (key && builtins.canonicalID(named.member.holder) == Builtins::Bun && !letsInUnseenCode(builtins.canonicalID(named.member.member)))
                 keysOfMembersOfBun.append(universe.keyConstant(key));
         }
         m_keysOfMembersOfBun = maker.of(keysOfMembersOfBun.span());

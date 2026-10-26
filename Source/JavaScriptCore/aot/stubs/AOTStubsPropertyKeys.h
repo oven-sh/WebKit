@@ -34,6 +34,8 @@ constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmp
 constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
+// The operands: the proxy, the key as its trap takes it, and of a store the value and whether the code is strict.
+constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey getByIdChain() { return StubKey(StubFamily::GetByIdChain); }
 constexpr StubKey getByIdPair(SecondReceiver receiver) { return StubKey(StubFamily::GetByIdPair).withForm(static_cast<uint8_t>(receiver)); }

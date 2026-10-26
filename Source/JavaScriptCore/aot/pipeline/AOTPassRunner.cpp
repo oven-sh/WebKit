@@ -496,7 +496,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
-    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
+    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PrivateGet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
     { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },

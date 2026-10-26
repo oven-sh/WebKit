@@ -17,9 +17,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PutModuleVariable v5 variable=g0
     v7 = NewClosure function=f4
     v8 = NewClosure function=f5
-    v9 = Builtin builtin=QueueMicrotask
-    v10 = Call v9, -, v7
-    v11 = Call v9, -, v8
+    v9 = Builtin builtin=FinalizationRegistry
+    v10 = Construct v9, -, v7
+    v11 = Construct v9, -, v8
     Return
 }
 function f1 name="makeClass" results=[{type=anything}] {

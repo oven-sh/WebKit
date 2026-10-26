@@ -776,7 +776,7 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
     std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
     RELEASE_ASSERT(kind);
-    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin };
+    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .callsOwnFunctionObject = options.callsOwnFunctionObject };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)

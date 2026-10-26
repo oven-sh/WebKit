@@ -170,6 +170,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     VariableReadBeforeSet(GenerateCode, "{function}: a B3 variable is read before it is set at {value}")
     FrameAddressAcrossSuspension(GenerateCode, "{function}: the frame address {value} is live across a suspension")
     NarrowReferenceWithoutPointer(GenerateCode, "{function}: only the 32-bit reference {value} names its cell where operation {count} can run the collector")
+    InnerPointerWithoutOwner(GenerateCode, "{function}: {value} points into what a cell owns and is read behind operation {count}, which can run the collector, and the cell is not")
     DisplacedNarrowReference(GenerateCode, "{function}: the 32-bit reference {value} is live, moved by a constant, where operation {count} can run the collector")
 
     InvalidCodeUnits(BuildImage, "the recorded code units do not cover the code (reason {count})")

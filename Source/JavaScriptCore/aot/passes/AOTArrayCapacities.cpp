@@ -24,6 +24,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTKnownValue.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
@@ -1463,8 +1464,8 @@ static void collectTestsRepeatedForValidation(FunctionPassContext& context, cons
     });
 }
 
-// An element that is no number leaves where an absent one does: nothing has happened since that test.
-static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBehindStorageTest& found, ValueID id)
+// An element that is no number leaves where an absent one does: nothing has happened since that test. Answers the test.
+static ValueID findPositionTestInFrontOf(FunctionPassContext& context, const ReadsBehindStorageTest& found, ValueID id)
 {
     const Function& function = context.function;
     const Value& read = function.at(id);
@@ -1472,13 +1473,15 @@ static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBe
     std::span<const BlockID> predecessors = context.analyses.cfg().predecessors(location.block);
     bool isDense = pristineAspectsProvenBy(context.program.typeOf(function, read.arrayOperand()), BuiltinClasses::Array).contains(PristineAspects::Dense);
     if (predecessors.size() != 1 || !(read.isPresent() || (read.isInBounds() && isDense && !read.readsHoleAsNaN())))
-        return false;
+        return { };
     const Terminator& terminator = function.at(predecessors.front()).terminator;
     if (!terminator.isConditionalBranch() || terminator.taken().block != location.block || terminator.notTaken().block == location.block || numberOfEdgeResults(function, predecessors.front(), 1))
-        return false;
+        return { };
     const Value& test = function.at(terminator.conditionOperand());
     if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
-        return false;
+        return { };
+    if (context.analyses.identityOf(test.positionOperand()) != context.analyses.identityOf(read.positionOperand()))
+        return { };
     // What a validating build asks again changes nothing, and nobody but the validation takes the answer.
     auto isThereForValidationAlone = [&](ValueID earlier) {
         if (familyOf(function.at(earlier).opcode) == OperationFamily::RuntimeValidation)
@@ -1488,9 +1491,66 @@ static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBe
             return use.kind == Use::Kind::Operand && familyOf(function.at(use.user).opcode) == OperationFamily::RuntimeValidation;
         });
     };
-    return std::ranges::all_of(function.at(location.block).values.span().first(location.index), [&](ValueID earlier) {
+    bool nothingHasHappened = std::ranges::all_of(function.at(location.block).values.span().first(location.index), [&](ValueID earlier) {
         return found.proofs.contains(earlier) || isThereForValidationAlone(earlier);
     });
+    return nothingHasHappened ? terminator.conditionOperand() : ValueID();
+}
+
+// What is asked of an element of Double storage may be answered by its type: `list[0] === null` is false whether there is an element or none. The read is gone then, and nothing is left of it.
+// In storage that holds any value the answer is the same only if the list holds nothing but numbers and undefined, which a read that finds no element gives too.
+static bool holdsNumbersInAnyStorage(FunctionPassContext& context, ValueID array)
+{
+    const Program& program = context.program;
+    const ClassPart* part = program.typeOf(context.function, array).singleBuiltinClass();
+    return part && part->contentsAreProven && program.at(part->contentsAt(program.builtins(), ContentsSlot::Element)).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+}
+
+// Behind the test of its position an element of Double storage is no undefined either: `list[0] === undefined` is false, and the test is all that is left of the read.
+// The copy asks an element where it reads it, so it reads behind each of these too.
+static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(FunctionPassContext& context, const ReadsBehindStorageTest& found, const Vector<ValueID, 8>& testsInFrontOfReads)
+{
+    const UseLists& useLists = context.analyses.useLists();
+    Vector<ValueID, 4> tests;
+    for (ValueID read : found.reads) {
+        if (context.function.at(read).opcode != Opcode::IsElementPresent || testsInFrontOfReads.contains(read))
+            continue;
+        for (const Use& use : useLists.usesOf(read)) {
+            if (use.kind != Use::Kind::TerminatorOperand)
+                continue;
+            // The branch is copied with the test.
+            if (use.block != useLists.locationOf(read).block)
+                return std::nullopt;
+            tests.appendIfNotContains(read);
+        }
+    }
+    return tests;
+}
+
+// A test of the bounds names no kind of storage, so it does not say whose read it has lost. There is no copy where a read may have relied on such a test together with the proof.
+static bool mayHaveLostReadBehindBoundsTest(FunctionPassContext& context, BlockID tested, const Value& storageTest, const ReadsBehindStorageTest& found, const Vector<ValueID, 8>& testsInFrontOfReads)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::IsInBounds))
+        return false;
+    ValueID array = analyses.identityOf(storageTest.arrayOperand());
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch() || testsInFrontOfReads.contains(terminator.conditionOperand()))
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::IsInBounds || analyses.identityOf(test.arrayOperand()) != array)
+            continue;
+        BlockID inBounds = terminator.taken().block;
+        if (analyses.dominators().dominates(inBounds, tested)) {
+            // A proof that nobody relies on any more is no longer handed on.
+            if (!numberOfEdgeResults(function, block, 0) || analyses.guards().stateAt(function.at(inBounds).parameters.last(), ProgramPoint::atHeadOf(found.passed)) != GuardState::Unavailable)
+                return true;
+        } else if (analyses.dominators().dominates(found.passed, block) && analyses.guards().stateAt(found.guard, ProgramPoint::atHeadOf(inBounds)) != GuardState::Unavailable)
+            return true;
+    }
+    return false;
 }
 
 // The blocks between the passed test and the last use of its proof. A block that nothing of the kind follows is cut behind its last use.
@@ -1573,14 +1633,21 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { }, { } };
     if (numberOfEdgeResults(function, tested, 0) != 1 || analyses.cfg().predecessors(found.passed).size() != 1)
         return { };
+    if (other == ArrayStorage::Contiguous && !holdsNumbersInAnyStorage(context, test.arrayOperand()))
+        return { };
     found.guard = function.at(found.passed).parameters.last();
     if (!collectReadsRelyingOn(context, test, found))
         return { };
     collectTestsRepeatedForValidation(context, test, found);
+    Vector<ValueID, 8> testsInFrontOfReads;
     // Double storage is asked for where numbers are expected.
     auto fitsOtherStorage = [&](ValueID read) {
-        if (other == ArrayStorage::Contiguous)
-            return standsBehindPresenceTest(context, found, read);
+        if (other == ArrayStorage::Contiguous) {
+            ValueID positionTest = findPositionTestInFrontOf(context, found, read);
+            if (positionTest)
+                testsInFrontOfReads.append(positionTest);
+            return !!positionTest;
+        }
         TypeID predicted = function.at(read).expected().predicted();
         const Type& type = predicted ? context.types.at(predicted) : context.program.typeOf(function, read);
         return type.withoutPrimitives(Primitive::Undefined).isNumber();
@@ -1593,7 +1660,14 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
             return { };
         ++numberOfElementReads;
     }
-    if (!numberOfElementReads || !cutOutRegionOfReads(context, builder, found))
+    if (!numberOfElementReads)
+        return { };
+    std::optional<Vector<ValueID, 4>> testsThatLostTheirRead = Vector<ValueID, 4> { };
+    if (other == ArrayStorage::Contiguous)
+        testsThatLostTheirRead = findPresenceTestsThatLostTheirRead(context, found, testsInFrontOfReads);
+    if (!testsThatLostTheirRead || !cutOutRegionOfReads(context, builder, found))
+        return { };
+    if (other == ArrayStorage::Contiguous && mayHaveLostReadBehindBoundsTest(context, tested, test, found, testsInFrontOfReads))
         return { };
     uint64_t bytes = 0;
     for (BlockID block : found.region)
@@ -1624,13 +1698,32 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     builder.emitJump(cloner.cloneOf(found.region.first()));
     cloner.repairSSA(analyses);
 
-    // What a read gives follows its kind of storage.
+    Vector<ValueID, 8> copiedReads;
     for (ValueID original : found.reads) {
-        if (function.at(original).opcode != Opcode::GetArrayElement)
-            continue;
-        ValueLocation location = analyses.useLists().locationOf(cloner.cloneOf(original));
+        if (function.at(original).opcode == Opcode::GetArrayElement)
+            copiedReads.append(cloner.cloneOf(original));
+    }
+    for (ValueID original : *testsThatLostTheirRead) {
+        Value presenceTest = function.at(cloner.cloneOf(original));
+        Edge whenPresent { analyses.useLists().locationOf(cloner.cloneOf(original)).block, 0 };
+        builder.setOrigin(presenceTest.origin());
+        ValueID isPresent = ensureEdgeResult(builder, analyses, whenPresent, testedOperandIndex);
+        ProgramPoint behindTest = ProgramPoint::atHeadOf(targetOf(function, whenPresent).block);
+        Value read = IRBuilder::make(Opcode::GetArrayElement, { presenceTest.arrayOperand(), presenceTest.positionOperand() });
+        read.setGuardOperand(builder.insertBefore(behindTest, IRBuilder::make(Opcode::AllGuards, { presenceTest.guardOperand(), isPresent })));
+        read.setArrayStorage(other);
+        read.setLevel(KnowledgeLevel::Expected);
+        read.setKeyIsIntegral(presenceTest.keyIsIntegral());
+        read.setIsPresent(true);
+        copiedReads.append(builder.insertBefore(behindTest, WTF::move(read)));
+        builder.applyInsertions();
+    }
+
+    // What a read gives follows its kind of storage.
+    for (ValueID copied : copiedReads) {
+        ValueLocation location = analyses.useLists().locationOf(copied);
         Target whenAbsent = function.at(analyses.cfg().predecessors(location.block).front()).terminator.targets.last();
-        Value read = function.at(cloner.cloneOf(original));
+        Value read = function.at(copied);
         read.setExpected({ });
         builder.setOrigin(read.origin());
         IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });

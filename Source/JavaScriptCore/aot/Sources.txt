@@ -136,6 +136,7 @@ aot/codegen/AOTGuardEmitter.cpp
 aot/codegen/AOTHeaps.cpp
 aot/codegen/AOTImpliedBranchMerging.cpp
 aot/codegen/AOTInlineBuiltinEmitter.cpp
+aot/codegen/AOTInnerPointerValidation.cpp
 aot/codegen/AOTIntegerUpdatesInMemory.cpp
 aot/codegen/AOTNarrowReferenceValidation.cpp
 aot/codegen/AOTOperationEmitter.cpp

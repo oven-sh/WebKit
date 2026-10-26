@@ -652,32 +652,51 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
     if (!listsValue)
         return false;
 
+    struct MarkerStore {
+        BlockID block;
+        ValueID id;
+        bool followsUserInBlock;
+    };
     BlockID blockOfAllocation;
-    Vector<std::pair<BlockID, ValueID>, 4> markerStores;
+    BlockID blockOfUser;
+    Vector<MarkerStore, 4> markerStores;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
             const Value& store = function.at(id);
             if (id == allocationID)
                 blockOfAllocation = block;
+            if (&store == &user)
+                blockOfUser = block;
             if (store.opcode == Opcode::PutSlots) {
                 PayloadListView<PlacedKey> keys = store.placedKeys();
                 std::span<const ValueID> stored = store.variadicOperands();
                 for (uint32_t index = 0; index < keys.size() && index < stored.size(); ++index) {
                     if (keys[index].key == key && mayBeMarker(stored[index]))
-                        markerStores.append({ block, id });
+                        markerStores.append({ block, id, blockOfUser == block });
                 }
                 continue;
             }
             if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)))
-                markerStores.append({ block, id });
+                markerStores.append({ block, id, blockOfUser == block });
         }
     }
     if (markerStores.isEmpty())
         return true;
     // Who names the allocation means the object that it made last. From a store that can be reached without making one, every way to such a user makes a new one.
     bool namesAllocation = blockOfAllocation && analyses.identityOf(guardedOperandOf(user)) == analyses.identityOf(allocationID);
-    return std::ranges::none_of(markerStores, [&](const auto& store) {
-        return (!namesAllocation || analyses.dominators().dominates(blockOfAllocation, store.first)) && analyses.escape().mayAlias(function.at(store.second).objectOperand(), allocationID);
+    BitVector blocksThatMakeAnother;
+    if (namesAllocation)
+        blocksThatMakeAnother.set(blockOfAllocation.index());
+    // A store from which no way leads to the user has not run when the user does.
+    auto mayRunBeforeUser = [&](const MarkerStore& store) {
+        if (!blockOfUser)
+            return true;
+        if (!store.followsUserInBlock)
+            return analyses.cfg().blocksReachableFrom(store.block, blocksThatMakeAnother).get(blockOfUser.index());
+        return namesAllocation ? analyses.cfg().isInCycleAvoiding(blockOfUser, blockOfAllocation) : analyses.isInCycle(blockOfUser);
+    };
+    return std::ranges::none_of(markerStores, [&](const MarkerStore& store) {
+        return (!namesAllocation || analyses.dominators().dominates(blockOfAllocation, store.block)) && analyses.escape().mayAlias(function.at(store.id).objectOperand(), allocationID) && mayRunBeforeUser(store);
     });
 }
 

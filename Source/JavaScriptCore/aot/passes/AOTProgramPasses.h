@@ -66,8 +66,8 @@ inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
     return opcodes;
 }();
 
-// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it. A body that holds none of these gives it nothing to do.
-inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin };
+// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it and a test for a brand that the object has taken. A body that holds none of these gives it nothing to do.
+inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::PrivateGet };
 
 enum class ExpansionStep : uint8_t {
     ForInPositions = 1 << 0,

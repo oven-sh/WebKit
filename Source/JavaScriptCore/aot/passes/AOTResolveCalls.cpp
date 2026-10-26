@@ -8,10 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBlockCycles.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
+#include "AOTCFG.h"
 #include "AOTCreateBoundFunctions.h"
+#include "AOTDominators.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFlowApply.h"
@@ -20,6 +23,7 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTHeat.h"
 #include "AOTInlineCopy.h"
+#include "AOTLayout.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
@@ -29,6 +33,7 @@
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestSite.h"
+#include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -241,7 +246,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     const Function& callee = program.at(request.callee);
     RELEASE_ASSERT(request.captures.size() == callee.captures.size());
     RELEASE_ASSERT(request.calleeValue || !callee.has(FunctionFlags::TakesCallee));
-    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint);
+    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint || request.callsOwnFunctionObject);
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
@@ -330,6 +335,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setIsConstruction(request.isConstruction);
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
+    call.setCallsOwnFunctionObject(request.callsOwnFunctionObject);
     call.setOrigin(insertion.origin);
     call.isTailCall |= request.isTailCall;
     return call;
@@ -1597,6 +1603,9 @@ struct CallResolver {
         BlockID block = site.position.block;
         if (function.at(block).frequency != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)))
             return false;
+        // What a function of the library is handed is mostly the caller's own function object. Where the body is copied into the caller, that one is called without a test.
+        if (isLibraryCode(program, function) && function.at(sameObjectThroughCasts(function, function.at(site.position.value).calleeOperand())).opcode == Opcode::Parameter)
+            return false;
         return !hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site);
     }
 
@@ -2066,6 +2075,75 @@ struct CallResolver {
         };
     }
 
+    // Whether a way leads from the use to the call on which the function object is not made anew.
+    bool leadsToCall(const Use& use, const CallSite& site, BlockID made)
+    {
+        // What an edge carries is handed on where the edge leads.
+        BlockID from = use.isEdgeUse() ? targetOf(function, use.edge()).block : use.block;
+        BlockID to = site.position.block;
+        if (from == to && (use.isEdgeUse() || (use.kind == Use::Kind::Operand && context.analyses.useLists().locationOf(use.user).index <= site.position.index)))
+            return true;
+        CFG& cfg = context.analyses.cfg();
+        if (!cfg.isReachable(from) || !cfg.isReachable(to))
+            return cfg.isReachable(from);
+        Dominators& dominators = context.analyses.dominators();
+        // The creation stands in front of the call on every way to it.
+        if (!dominators.dominates(made, from))
+            return false;
+        BlockID fork = dominators.nearestCommonDominator(from, to);
+        if (fork == from && from != to)
+            return true;
+        // Where the side of the call is entered from the fork alone, the way comes by the fork once more.
+        if (fork != to) {
+            bool isEnteredFromForkAlone = std::ranges::any_of(cfg.successors(fork), [&](BlockID side) {
+                return side != fork && dominators.dominates(side, to) && std::ranges::all_of(cfg.predecessors(side), [&](BlockID predecessor) {
+                    return predecessor == fork || dominators.dominates(side, predecessor);
+                });
+            });
+            if (!isEnteredFromForkAlone)
+                return true;
+        }
+        if (fork == made)
+            return false;
+        // The one entry of a cycle stands in front of all of it. So a way round that leaves the creation out lies in a cycle that leaves it out.
+        const BlockCycles& cycles = context.analyses.blockCycles();
+        std::optional<unsigned> innermost = cycles.innermostCycleOf(fork);
+        return innermost && (!cycles.forest()[*innermost].isReducible() || !cycles.forest().contains(*innermost, made));
+    }
+
+    // A function object that the function makes itself, and that has only been called on every way to the call, has the names it was made with.
+    bool isHandedToNobodyBefore(const CallSite& site, ValueID closureCreation)
+    {
+        if (!closureCreation)
+            return false;
+        const Value& creation = function.at(closureCreation);
+        const Function& callee = program.at(creation.function());
+        if (creation.isMadeOnDemand() || namesClosureOfTable(program, creation) || callee.has(FunctionFlags::TakesCallee))
+            return false;
+
+        const UseLists& uses = context.analyses.useLists();
+        BlockID made = uses.blockOf(closureCreation);
+        Vector<ValueID, 4> sameObject { closureCreation };
+        for (size_t position = 0; position < sameObject.size(); ++position) {
+            for (const Use& use : uses.usesOf(sameObject[position])) {
+                if (use.kind == Use::Kind::Operand) {
+                    const Value& user = function.at(use.user);
+                    if (isCast(user.opcode) && !use.operandIndex) {
+                        sameObject.append(use.user);
+                        continue;
+                    }
+                    // A construction hands the function object to its body as new.target.
+                    bool isCalled = (user.opcode == Opcode::Call && use.operandIndex == OperandIndex::Call::callee) || (user.opcode == Opcode::CallList && use.operandIndex == OperandIndex::CallList::callee);
+                    if (isCalled || user.operandUses(use.operandIndex).containsOnly(OperandUse::Inspects))
+                        continue;
+                }
+                if (leadsToCall(use, site, made))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     // A call of the one function that its callee can be, whose result is what the call gives: no test, no arm, no block.
     // There is a plan only where planCalleeDispatch() plans one arm without a test and that arm ends with the result of the call as it is.
     Rewriting planCallOfOnlyCallee(const CallSite& site)
@@ -2076,7 +2154,10 @@ struct CallResolver {
         // Where calleeCandidates() proves one function and admits nothing else, not even undefined: that function, and the value whose type says it.
         ValueID closure = findStrongestLink(program, function, call.calleeOperand());
         FunctionID only = typeOf(closure).singleFunction();
-        if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectly(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
+        if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
+            return nullptr;
+        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only);
+        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyBefore(site, findClosureCreation(function, closure, only))))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
@@ -2085,7 +2166,7 @@ struct CallResolver {
         if (TypeTable::isProvisional(result) || result == TypeTable::never || !program.at(result).isSubsetOf(typeOf(site.position.value), program))
             return nullptr;
 
-        return [this, &site, only, closure, closureCreation = findClosureCreation(function, closure, only)] {
+        return [this, &site, only, closure, callsOwnFunctionObject, closureCreation = findClosureCreation(function, closure, only)] {
             const Value original = function.at(site.position.value);
             const Function& callee = program.at(only);
             builder.setOrigin(original.origin());
@@ -2110,6 +2191,7 @@ struct CallResolver {
                 .isNeverInlined = original.isNeverInlined(),
                 .isAlwaysInlined = original.isAlwaysInlined(),
                 .isTailCall = !!original.isTailCall,
+                .callsOwnFunctionObject = callsOwnFunctionObject,
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
             becomeUpcast(function, site.position.value, result);

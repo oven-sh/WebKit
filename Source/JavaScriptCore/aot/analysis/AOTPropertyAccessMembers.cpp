@@ -344,17 +344,32 @@ MemberAnswer findBuiltinObjectMember(const PropertyAccessContext& context, Built
     }
 }
 
+static uint32_t hashOf(const PropertyAccessCache::InheritedMemberKey&);
+
 static MemberAnswer findOnce(const PropertyAccessContext& context, const PropertyAccessCache::InheritedMemberKey& key, NOESCAPE const Invocable<MemberAnswer()> auto& find)
 {
     PropertyAccessCache* cache = context.program.propertyAccessCache();
     if (!cache || TypeTable::isProvisional(key.key) || TypeTable::isProvisional(key.declaredClass))
         return find();
 
-    const MemberAnswer& kept = findOrCompute(cache->inheritedMembers, key, computeHash(key.declaredClass, key.builtinClass, key.isOfInstances, key.key, key.access, key.flow), [&] {
+    const MemberAnswer& kept = findOrCompute(cache->inheritedMembers, key, hashOf(key), [&] {
         return PropertyAccessCache::InheritedMember { key, find() };
     }).value;
     RELEASE_ASSERT(!cache->checksAnswers || kept == find());
     return kept;
+}
+
+static uint32_t hashOf(const PropertyAccessCache::InheritedMemberKey& key)
+{
+    return computeHash(key.declaredClass, key.builtinClass, key.isOfInstances, key.key, key.access, key.flow);
+}
+
+static const MemberAnswer* findKeptAnswer(const PropertyAccessCache& cache, const PropertyAccessCache::InheritedMemberKey& key)
+{
+    const PropertyAccessCache::InheritedMember* kept = cache.inheritedMembers.find(hashOf(key), [&](const PropertyAccessCache::InheritedMember& entry) {
+        return entry.key == key;
+    });
+    return kept ? &kept->value : nullptr;
 }
 
 static MemberAnswer findMemberFromPrototypeOf(const PropertyAccessContext& context, BuiltinClassID builtinClass, PropertyKeyID key, Access access)
@@ -392,7 +407,14 @@ MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
     return WTF::move(chainEnd);
 }
 
-MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const MemberQuery& query)
+// A walk that has noted nothing when it comes to a class goes on as the walk that begins there, step for step. The two name their first class in what they note, and nowhere else.
+// So an answer without conditions is the answer of both, and a row of classes is walked once for a name, not once from each of its classes.
+struct ClassesPassed {
+    PropertyAccessCache* cache { nullptr };
+    Vector<LayoutID, 8> classes;
+};
+
+static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const MemberQuery& query, ClassesPassed& passed)
 {
     const Program& program = context.program;
     PropertyKeyID key = query.key;
@@ -420,6 +442,21 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
     LayoutID current = query.layout;
     for (size_t unvisitedClasses = program.layouts.size(); unvisitedClasses; --unvisitedClasses) {
         const Layout& layout = program.at(current);
+        if (passed.cache && current != query.layout) {
+            bool hasNotedNothing = walked.conditions.isEmpty() && walked.cause == UnprovenCause::Unknown && !mayBeHidden;
+            bool asksRunTimeFromHere = query.access == Access::Store && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
+            if (!hasNotedNothing || asksRunTimeFromHere != asksRunTime || TypeTable::isProvisional(current))
+                passed.cache = nullptr;
+            else {
+                const MemberAnswer* kept = findKeptAnswer(*passed.cache, { current, { }, false, key, query.access, context.flow });
+                if (kept && kept->conditions.isEmpty())
+                    return *kept;
+                if (kept)
+                    passed.cache = nullptr;
+                else
+                    passed.classes.append(current);
+            }
+        }
         bool isOfCreatedObject = layout.has(LayoutFlags::IsOfCreatedObject);
         if (layout.kind != LayoutKind::Instance || (!layout.constructor && (!isOfCreatedObject || layout.classFlow.evaluations != ExecutionCount::AtMostOnce)))
             return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
@@ -473,6 +510,28 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
         RELEASE_ASSERT_NOT_REACHED();
     }
     return MemberAnswer::unknown(UnprovenCause::UnknownBase);
+}
+
+MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const MemberQuery& query)
+{
+    ClassesPassed passed { TypeTable::isProvisional(query.key) ? nullptr : context.program.propertyAccessCache(), { } };
+    PropertyAccessCache* cache = passed.cache;
+    MemberAnswer answer = walkPrototypes(context, query, passed);
+    if (!cache)
+        return answer;
+    if (cache->checksAnswers) {
+        ClassesPassed none;
+        RELEASE_ASSERT(answer == walkPrototypes(context, query, none));
+    }
+    if (!answer.conditions.isEmpty())
+        return answer;
+    for (LayoutID passedClass : passed.classes) {
+        PropertyAccessCache::InheritedMemberKey key { passedClass, { }, false, query.key, query.access, context.flow };
+        cache->inheritedMembers.add(hashOf(key), PropertyAccessCache::InheritedMember { key, answer }, [&](const PropertyAccessCache::InheritedMember& entry) {
+            return entry.key == key;
+        });
+    }
+    return answer;
 }
 
 static bool isTupleLayout(const Program& program, LayoutID id)

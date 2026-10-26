@@ -61,6 +61,9 @@ public:
     JS_EXPORT_PRIVATE void schedule(TaskPriority, void (*run)(void* argument), void* argument) const;
     bool shouldYield(TaskPriority) const;
 
+    // Whether the current thread is at one of several indices of a loop or at one of several tasks, whatever the width.
+    JS_EXPORT_PRIVATE static bool isInsideLoop();
+
 private:
     class RestingThreads;
 

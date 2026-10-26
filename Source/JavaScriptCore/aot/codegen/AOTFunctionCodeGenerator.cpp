@@ -305,6 +305,13 @@ CompiledCode FunctionCodeGenerator::emitCode()
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
 
+    if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
+        overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
+    // Checks that a build adds to the generated code read addresses in ways that no product does.
+    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads;
+    if (options.validatesReferences && isX86_64() && isCodeOfProduct)
+        findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
+
     ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
     m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
     proc.code().setInstObserver(&m_records.observer);
@@ -383,6 +390,8 @@ bool FunctionCodeGenerator::reportBackEnd()
         });
     }
     appendFindings(collected, m_narrowReferenceFindings.violations.span());
+    appendFindings(collected, m_innerPointerFindings.violations.span());
+    build.statistics().count(StatisticID::InnerPointersAcrossSafepoints, m_innerPointerFindings.numberOfPointersAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferencesAcrossSafepoints, m_narrowReferenceFindings.numberOfReferencesAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferenceGuards, m_numberOfLateReferenceGuards);
     build.statistics().count(StatisticID::NarrowReferencesStoredInFrames, m_narrowReferenceFindings.numberOfReferencesStoredInFrame);

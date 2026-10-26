@@ -176,7 +176,9 @@ public:
         return prototype.isObject() ? asObject(prototype) : nullptr;
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
-    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false);
+    Object* createInstanceOfClassBelow(VM&, size_t indexOfRecord);
+    // What an allocation makes for a prototype is remembered under its number.
+    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false, std::optional<uint32_t> allocation = std::nullopt);
 
 private:
     using ByIndex = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -203,13 +205,7 @@ private:
 
     std::array<PlaceOfPrototypeProperty, numberOfPlacesOfPrototypeProperties> m_placesOfPrototypeProperties { };
     std::array<PrototypeOfClassObject, numberOfPrototypesOfClassObjects> m_prototypesOfClassObjects { };
-    struct InstanceOfClassBelow {
-        JSObject* prototype;
-        const LayoutData* allocatedLayout;
-        CompiledStructure* structure;
-    };
-    static constexpr size_t numberOfInstancesOfClassesBelow = 16;
-    static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> 4 & (numberOfInstancesOfClassesBelow - 1); }
+    static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> shiftOfPrototypeForInstanceOfClassBelow & (numberOfInstancesOfClassesBelow - 1); }
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
     State& m_state;
     const ProgramTables& m_tables;

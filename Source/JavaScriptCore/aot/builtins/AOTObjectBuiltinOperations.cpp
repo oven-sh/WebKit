@@ -106,9 +106,7 @@ static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, O
         cacheKeyListByStructure(vm, &compiled);
         return compiled.tryCreateKeysArrayWithExtraProperties(globalObject);
     }
-    if (kind == OwnKeysKind::Symbols || (kind == OwnKeysKind::All && compiled.layout().hasFieldsWithSymbolKeys))
-        return nullptr;
-    JSCellButterfly* keys = compiled.keys(vm);
+    JSCellButterfly* keys = compiled.keys(vm, kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings);
     if (!keys)
         return nullptr;
     return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
@@ -145,8 +143,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTOwnPropertyKeys, JSCell*, (Instance* instan
     case OwnKeysKind::Names:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Include));
     case OwnKeysKind::Symbols:
-        if (compiled && !compiled->hasExtraProperties() && !compiled->layout().hasFieldsWithSymbolKeys)
-            OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Symbols, DontEnumPropertiesMode::Include));
     case OwnKeysKind::All:
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include));

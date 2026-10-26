@@ -129,7 +129,7 @@ static_assert(MissesOfPairs::missesBetweenFilings > 12);
 
 #define ASK_QUESTIONS R"JS(
 const operations = [
-    "GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache",
+    "GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache", "GetWithProxyTrap", "HasWithProxyTrap",
     "InByIdAndCache", "InByValGeneric", "InByValAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache",
     "PutByValGeneric", "PutByValAndCache", "PutByValAndCacheSloppy",
 ];

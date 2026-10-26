@@ -48,6 +48,7 @@ class CodeGenerationJob {
     WTF_MAKE_NONCOPYABLE(CodeGenerationJob);
 public:
     // Takes the bodies out of the program, so no other thread may be reading its functions.
+    // The caches of the program and its open interning phase last as long as the job: threads may read the program beside run().
     CodeGenerationJob(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&, const BitVector* bodiesWithoutCode = nullptr);
     ~CodeGenerationJob();
 

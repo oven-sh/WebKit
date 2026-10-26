@@ -451,18 +451,10 @@ static FunctionID compiledFunctionAt(const WTF::Vector<StackFrame>& frames, size
     return frames[index].compiledFrame().function;
 }
 
-static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>& otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
+static void validateFrames(VM& vm, JSCell* owner, const WTF::Vector<StackFrame>& actual, size_t maxStackSize, JSCell* lastConstructorToSkip)
 {
     WTF::Vector<StackFrame> expected;
     vm.interpreter.getStackTrace(owner, expected, 0, maxStackSize, lastConstructorToSkip);
-
-    WTF::Vector<StackFrame> actual;
-    size_t firstOtherFrame = trace.numberOfFramesOnTop;
-    actual.append(otherFrames.span().first(firstOtherFrame));
-    forEachShownFrame(trace, [&](const TraceFrame& frame) {
-        actual.append(StackFrame(frame));
-    });
-    actual.append(otherFrames.span().subspan(firstOtherFrame));
 
     size_t numberCompared = std::min(expected.size(), actual.size());
     size_t index = 0;
@@ -474,6 +466,18 @@ static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrac
     if (!function)
         function = compiledFunctionAt(actual, index);
     crashOnValidationFailure(vm, { ValidationFailureKind::StackTraceDiffers, function, { }, { } });
+}
+
+static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>& otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
+{
+    WTF::Vector<StackFrame> actual;
+    size_t firstOtherFrame = trace.numberOfFramesOnTop;
+    actual.append(otherFrames.span().first(firstOtherFrame));
+    forEachShownFrame(trace, [&](const TraceFrame& frame) {
+        actual.append(StackFrame(frame));
+    });
+    actual.append(otherFrames.span().subspan(firstOtherFrame));
+    validateFrames(vm, owner, actual, maxStackSize, lastConstructorToSkip);
 }
 
 static void fillTrace(ReturnAddressTrace& trace, Instance* instance, const CapturedRun& run, size_t maxStackSize, const FramesAboveRun& framesAbove, bool calleeOfFirstFrameWasEntered)
@@ -653,14 +657,16 @@ bool tryGetStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<St
         return false;
     }
     size_t onTop = trace->numberOfFramesOnTop;
-    if (results.size() == onTop) [[likely]] {
+    if (results.size() == onTop) [[likely]]
         StackFrame::appendCompiledFrames(*trace, results);
-        return true;
+    else {
+        WTF::Vector<StackFrame> compiledFrames;
+        StackFrame::appendCompiledFrames(*trace, compiledFrames);
+        if (!compiledFrames.isEmpty())
+            results.insertVector(onTop, compiledFrames);
     }
-    WTF::Vector<StackFrame> compiledFrames;
-    StackFrame::appendCompiledFrames(*trace, compiledFrames);
-    if (!compiledFrames.isEmpty())
-        results.insertVector(onTop, compiledFrames);
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateFrames(vm, owner, results, maxStackSize, nullptr);
     return true;
 }
 
@@ -708,7 +714,7 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
                     if (numberShown == trace.limit)
                         return;
                     ++numberShown;
-                    pending = TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller };
+                    pending = TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller, isCopiedForOwnFunctionObject(image, reader, code, frame) };
                     pendingSource = description.sourceFunction();
                 }
             }
@@ -730,7 +736,7 @@ void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, Show
     InlineFrameReader reader;
     for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, false });; frame = callerOfInlinedFrame(image, reader, code, frame)) {
         if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted))
-            functor(TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, frame.isInlinedConstructCall });
+            functor(TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, frame.isInlinedConstructCall, false, false, false, isCopiedForOwnFunctionObject(image, reader, code, frame) });
         if (!frame.inlineFrame)
             break;
     }

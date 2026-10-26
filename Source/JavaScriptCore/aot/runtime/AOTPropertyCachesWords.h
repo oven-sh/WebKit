@@ -180,6 +180,19 @@ struct KeyedValuePlace {
     };
 };
 
+enum class TrapOfProxy : uint8_t { Get, Has, Set };
+inline constexpr unsigned numberOfTrapsOfProxies = 3;
+
+// What the stub that goes through a proxy keeps in its frame while code of the program runs.
+struct ProxyAccessWords {
+    JSObject* proxy;
+    JSCell* key;
+    JSObject* target;
+    JSObject* handler;
+    EncodedJSValue storedValue;
+    uint64_t storeIsStrict;
+};
+
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
     static constexpr uint32_t missesBetweenFilings = 16;
@@ -215,6 +228,8 @@ struct PropertyCacheWords {
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
+    // By TrapOfProxy. Zero where the image does not have the name.
+    uint32_t numbersOfNamesOfTraps[numberOfTrapsOfProxies];
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
     JSCell* defaultHasInstanceFunction;

@@ -11,10 +11,12 @@
 #include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
@@ -40,6 +42,10 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* instance, uint32_t allocation))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlow);
+    if (allocation & allocatesInstanceOfClassBelow) [[unlikely]] {
+        ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
+        OPERATION_RETURN(scope, instance->state->objects->classes.createInstanceOfClassBelow(vm, allocation & ~allocatesInstanceOfClassBelow));
+    }
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocate(*instance, allocation);
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {

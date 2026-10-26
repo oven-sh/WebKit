@@ -37,6 +37,7 @@ struct CallOptions {
     BuiltinID calledBuiltin { };
     bool constructs { false };
     bool isTailCall { false };
+    bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
     // The callee runs code of the host, which the effects of the IR say nothing about: it may give a cell another Structure or another butterfly.

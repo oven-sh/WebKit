@@ -989,7 +989,14 @@ void generateInById(StubAssembler& jit)
     loadIdentifier(jit, name, T10, miss);
     JumpList isInNoTable;
     findHashedSlot(jit, SlotAccess::Read, { structureID, T10, T14, T12, T13, T13 }, isInNoTable);
-    emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, miss);
+    JumpList slotDoesNotSay;
+    emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, slotDoesNotSay);
+    slotDoesNotSay.link(&jit);
+    if (question == PresenceQuestion::In) {
+        miss.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, T12, T13 }, Slot::Kind::Uncacheable, T10));
+        jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, T13), throughProxy(TrapOfProxy::Has));
+    }
+    miss.append(jit.jump());
 
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, T10, T12, miss);
