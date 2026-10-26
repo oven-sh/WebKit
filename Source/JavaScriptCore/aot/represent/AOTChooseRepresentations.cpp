@@ -148,6 +148,7 @@ public:
         uniteCopies();
         numberWebs();
         restrictToLegalRepresentations();
+        findRepeatedArguments();
         collectProducers();
         collectUses();
         admitNarrowReferences();
@@ -163,6 +164,16 @@ public:
 
 private:
     using Votes = std::array<uint64_t, numberOfEnumerators<Representation>>;
+
+    // A value that one edge passes more than once.
+    struct RepeatedArgument {
+        uint32_t from;
+        uint32_t targetIndex;
+        uint32_t value;
+        uint32_t timesPassed;
+
+        std::tuple<uint32_t, uint32_t, uint32_t> place() const { return { from, targetIndex, value }; }
+    };
 
     struct Web {
         RepresentationSet legal;
@@ -419,8 +430,45 @@ private:
 
     uint64_t votesOfArgument(Edge edge, ValueID argument) const
     {
-        uint64_t timesPassed = std::ranges::count(targetOf(m_function, edge).arguments, argument);
+        uint64_t timesPassed = 1;
+        if (edge.isHandlerEdge())
+            timesPassed = std::ranges::count(targetOf(m_function, edge).arguments, argument);
+        else if (!m_repeatedArguments.isEmpty()) {
+            RepeatedArgument key { edge.from.index(), edge.targetIndex, argument.index(), 0 };
+            auto found = std::ranges::lower_bound(m_repeatedArguments, key.place(), { }, &RepeatedArgument::place);
+            if (found != m_repeatedArguments.end() && found->place() == key.place())
+                timesPassed = found->timesPassed;
+        }
         return std::max<uint64_t>(votesOf(edge) / std::max<uint64_t>(timesPassed, 1), 1);
+    }
+
+    void findRepeatedArguments()
+    {
+        constexpr uint32_t notRepeated = UINT32_MAX;
+        Vector<uint32_t> lastEdgePassing(FillWith { }, m_function.values.size(), 0u);
+        Vector<uint32_t> entryOfValue(FillWith { }, m_function.values.size(), notRepeated);
+        uint32_t edgeNumber = 0;
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            const auto& targets = m_function.at(block).terminator.targets;
+            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+                ++edgeNumber;
+                for (ValueID argument : targets[targetIndex].arguments) {
+                    if (!argument)
+                        continue;
+                    uint32_t& entry = entryOfValue[argument.index()];
+                    if (std::exchange(lastEdgePassing[argument.index()], edgeNumber) != edgeNumber) {
+                        entry = notRepeated;
+                        continue;
+                    }
+                    if (entry == notRepeated) {
+                        entry = m_repeatedArguments.size();
+                        m_repeatedArguments.append({ block.index(), targetIndex, argument.index(), 1 });
+                    }
+                    ++m_repeatedArguments[entry].timesPassed;
+                }
+            }
+        }
+        std::ranges::sort(m_repeatedArguments, { }, &RepeatedArgument::place);
     }
 
     void admitNarrowReferences()
@@ -762,6 +810,7 @@ private:
     // By ascending value.
     Vector<Member> m_members;
     Vector<Link> m_links;
+    Vector<RepeatedArgument> m_repeatedArguments;
 };
 
 struct UsesOfCopies {

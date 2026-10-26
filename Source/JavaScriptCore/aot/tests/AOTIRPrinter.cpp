@@ -423,6 +423,8 @@ void IRPrinter::printValue(const Function& function, ValueID id)
         m_out.print("]"_s);
     }
     printOrigin(*this, value);
+    if (auto written = function.writtenPositionOf(id))
+        m_out.print(" @"_s, *written);
 }
 
 void IRPrinter::printEngineValueFields(const Value& value)

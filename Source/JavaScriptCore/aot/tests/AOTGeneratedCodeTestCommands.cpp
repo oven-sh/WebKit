@@ -15,17 +15,20 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTInterningPhases.h"
+#include "AOTNativeTest.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaEnums.h"
+#include "AOTScratchRegisterChecker.h"
 #include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTStubDescriptor.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -327,6 +330,23 @@ static void printStatistics(PrintStream& out, const Statistics& statistics, std:
         out.println("statistic ", nameOf(statistic), " ", values[static_cast<size_t>(statistic)]);
 }
 
+#if ENABLE(AOT_SCRATCH_REGISTER_CHECKER)
+static void checkScratchRegisters(const CompiledCode& code)
+{
+    std::span<const uint8_t> bytes = code.body.bytes.span();
+    Vector<uint32_t> entryOffsets = code.body.entries.map([](const CodeEntry& entry) {
+        return entry.offset;
+    });
+    Vector<ScratchRegisterConflict> conflicts = findScratchRegisterConflicts(bytes, entryOffsets);
+    for (const ScratchRegisterConflict& conflict : conflicts) {
+        bool isReplaced = conflict.kind == ScratchRegisterConflict::Kind::ReplacedUnread;
+        dataLogLn("f", code.function.index(), ": x", static_cast<unsigned>(conflict.reg), isReplaced ? " is written twice and not read in between:" : " is two operands of one instruction:");
+        printInstructions(WTF::dataFile(), bytes, isReplaced ? conflict.offsetOfWrite : conflict.offset, conflict.offset);
+    }
+    AOT_TEST_CHECK(conflicts.isEmpty());
+}
+#endif
+
 static void runGenerateCode(TestCommandContext& context)
 {
     std::optional<PrintedParts> parts = parsePrintedParts(context);
@@ -344,6 +364,9 @@ static void runGenerateCode(TestCommandContext& context)
     if (!build.diagnostics().hasErrors()) {
         for (const CompiledCode& code : compileAllFunctions(*output, plan, build)) {
             printCode(context.out, code);
+#if ENABLE(AOT_SCRATCH_REGISTER_CHECKER)
+            checkScratchRegisters(code);
+#endif
             if (parts->units)
                 printUnits(context.out, code.body);
             if (parts->calls)

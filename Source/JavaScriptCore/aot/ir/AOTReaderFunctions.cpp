@@ -233,7 +233,7 @@ void BodyDecoder::decodeValue(Block& block)
         return;
 
     auto head = nextRecord<Wire::ValueHead>();
-    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode);
+    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~Wire::WrittenPositionFollows);
     adoptCheckerFailure();
     if (opcode == Opcode::Parameter)
         fail(InternalErrorKind::EngineOnlyOnWire);
@@ -246,6 +246,8 @@ void BodyDecoder::decodeValue(Block& block)
         value.flags = nextFlags(wireFlags, declaredFlagsOf(opcode));
     decodeFields(*this, value);
     adoptCheckerFailure();
+    if (head.opcode & Wire::WrittenPositionFollows)
+        m_function.writtenPositions.append({ id, next() });
     if (opcode == Opcode::Convert && !hasFailed())
         checkConvertedAllocation(value);
     if (opcode == Opcode::Builtin && !hasFailed())

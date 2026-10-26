@@ -117,6 +117,8 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers)
     ValueFlowNodeID wholeChain = m_context.lookup(start, prototypeLinkName);
     ClimbingSet chain = m_context.valueOf(wholeChain);
     ClimbingSet objects = known(chain);
+    if (mayBeUnknownObject(chain))
+        objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), wholeChain));
     if (m_keepsHoldersOfExportsItStartsFrom) {
         ClimbingSet holdersOfExports(m_universe.holdersOfLibraryExports());
         objects = m_context.unite(objects, m_context.unite(m_context.restrict(start, m_universe.holdersOfLibraryExports()), m_context.valueWithin(holdersOfExports, wholeChain)));
@@ -609,7 +611,7 @@ ClimbingSet HeapRule::prototypesOf(ClimbingSet start, ValueSetID atCreation)
     ValueFlowNodeID links = readWhereWritten(objects, prototypeLinkName);
     ClimbingSet above = m_context.unite(valueOfNodeIfAny(links), ClimbingSet(atCreation ? atCreation : prototypesAtCreationOf(start)));
     if (links && mayBeUnknownObject(above))
-        above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), links));
+        above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_context.maker().unite(m_universe.holdersOfLibraryExports(), only(m_universe.objectOf(Builtins::Bun)))), links));
     forEachNodeStoredThroughPlaceholdersInto(objects, prototypeLinkName, [&](ValueFlowNodeID stored) {
         above = m_context.unite(above, m_context.valueOf(stored));
     });

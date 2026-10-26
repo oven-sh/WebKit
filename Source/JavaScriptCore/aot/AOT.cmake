@@ -377,6 +377,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRuntimeReporterTests.cpp
     aot/tests/AOTRuntimeTypeTests.cpp
     aot/tests/AOTSavedFrameTests.cpp
+    aot/tests/AOTScratchRegisterChecker.cpp
     aot/tests/AOTSelectionFormTestCommands.cpp
     aot/tests/AOTSelectionGroupTestCommands.cpp
     aot/tests/AOTSelectionTestCommands.cpp
@@ -407,6 +408,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTStubPropertyStoreTests.cpp
     aot/tests/AOTStubRegExpTests.cpp
     aot/tests/AOTStubRuntimeTests.cpp
+    aot/tests/AOTStubScratchRegisterTests.cpp
     aot/tests/AOTStubStringTests.cpp
     aot/tests/AOTStubTests.cpp
     aot/tests/AOTStubValueTests.cpp

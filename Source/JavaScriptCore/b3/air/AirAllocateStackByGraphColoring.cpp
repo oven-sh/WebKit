@@ -500,6 +500,72 @@ size_t numberOfWordsInSlots(Code& code)
     return numberOfWords;
 }
 
+bool isSuspension(const Inst& inst)
+{
+    if (inst.kind.opcode != Patch || !inst.origin)
+        return false;
+    auto* stackmap = inst.origin->as<StackmapValue>();
+    return stackmap && stackmap->isSuspension();
+}
+
+void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bool hasTooManySlotsForLiveness)
+{
+    if (code.calleeSavesClobberedAtSuspensions().isEmpty())
+        return;
+
+    Vector<BasicBlock*, 8> suspendingBlocks;
+    for (BasicBlock* block : code) {
+        if (std::ranges::any_of(*block, isSuspension))
+            suspendingBlocks.append(block);
+    }
+    if (suspendingBlocks.isEmpty())
+        return;
+
+    CompilerTimingScope timingScope("Air"_s, "StackAllocator::suspensions"_s);
+    coloring.hasSuspensions = true;
+    if (hasTooManySlotsForLiveness) {
+        for (StackSlot* slot : code.stackSlots())
+            coloring.spillSlotsLiveAcrossSuspensions.set(slot->index());
+        return;
+    }
+    StackSlotActions actions(code, false);
+    StackSlotLiveness liveness(code, actions);
+    auto workset = liveness.makeWorkset();
+    auto addUses = [&](std::span<const StackSlotActions::Action> group) {
+        StackSlotLivenessAdapter::forEachUseInGroup(group, [&](unsigned slotIndex) {
+            workset.add(slotIndex);
+        });
+    };
+    auto removeDefs = [&](std::span<const StackSlotActions::Action> group) {
+        StackSlotLivenessAdapter::forEachDefInGroup(group, [&](unsigned slotIndex) {
+            workset.remove(slotIndex);
+        });
+    };
+    for (BasicBlock* block : suspendingBlocks) {
+        liveness.copyLiveAtTailInto(workset, block);
+        auto blockActions = actions.actionsFor(block);
+        for (unsigned instIndex = block->size(); instIndex--;) {
+            if (!isSuspension(block->at(instIndex)))
+                continue;
+            const uint32_t boundaryBehind = instIndex + 1;
+            std::span<const StackSlotActions::Action> groupBehind;
+            while (!blockActions.empty() && blockActions.back().boundary >= boundaryBehind) {
+                auto group = StackSlotActions::consumeLastGroup(blockActions);
+                addUses(group);
+                if (group.front().boundary == boundaryBehind) {
+                    groupBehind = group;
+                    break;
+                }
+                removeDefs(group);
+            }
+            workset.forEachSetBit([&](unsigned slotIndex) {
+                coloring.spillSlotsLiveAcrossSuspensions.set(slotIndex);
+            });
+            removeDefs(groupBehind);
+        }
+    }
+}
+
 template<typename InterferenceGraph, typename SlotLiveness>
 class GraphColoringStackAllocator final : public StackAllocatorBase {
     using IndexType = typename InterferenceGraph::IndexType;
@@ -530,6 +596,8 @@ public:
         buildInterferenceGraph(liveness);
 
         coalesceSlots(coalesceSpillSlots, actions.sawUselessMove());
+        if (m_placement == SlotPlacement::OnlyColors)
+            findSpillSlotsLiveAcrossSuspensions(m_code, coloring, false);
         assignStackLocations(assignedEscapedStackSlots, coloring);
 
         m_stats.frameSize = m_code.frameSize();
@@ -755,7 +823,7 @@ private:
     struct FirstFitState {
         Vector<StackColoring::UnitRange> unitsOfSlot;
         Vector<uint64_t> hasUnits;
-        Vector<uint64_t> unitsOfEscapedSlots;
+        Vector<uint64_t> reservedUnits;
         Vector<uint64_t> unitsOfAssignedSlots;
         Vector<uint64_t> occupiedUnits;
         Vector<unsigned> numberOfSlotsAtUnit;
@@ -818,7 +886,16 @@ private:
                 recordUnits(state, slot, computeUnitsFromOffset(slot));
         }
         for (StackSlot* slot : assignedEscapedStackSlots)
-            markOccupied(state.unitsOfEscapedSlots, state.unitsOfSlot[slot->index()]);
+            markOccupied(state.reservedUnits, state.unitsOfSlot[slot->index()]);
+    }
+
+    static void reserveWordsOfAssignedSlots(FirstFitState& state)
+    {
+        static_assert(StackColoring::unitsPerWord == 2);
+        constexpr uint64_t firstUnitOfEachWord = 0x5555555555555555ULL;
+        RELEASE_ASSERT(state.reservedUnits.isEmpty());
+        for (uint64_t units : state.unitsOfAssignedSlots)
+            state.reservedUnits.append(units | (units & firstUnitOfEachWord) << 1 | (units >> 1 & firstUnitOfEachWord));
     }
 
     void fillOccupiedUnits(FirstFitState& state, StackSlot* slot)
@@ -837,11 +914,11 @@ private:
                         state.occupiedUnits[unit / 64] &= ~(static_cast<uint64_t>(1) << (unit % 64));
                 }
             });
-            for (size_t word = 0; word < state.unitsOfEscapedSlots.size(); ++word)
-                state.occupiedUnits[word] |= state.unitsOfEscapedSlots[word];
+            for (size_t word = 0; word < state.reservedUnits.size(); ++word)
+                state.occupiedUnits[word] |= state.reservedUnits[word];
             return;
         }
-        state.occupiedUnits.appendVector(state.unitsOfEscapedSlots);
+        state.occupiedUnits.appendVector(state.reservedUnits);
         m_interference.forEachInterferingIn(slot->index(), state.hasUnits.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
             markOccupied(state.occupiedUnits, state.unitsOfSlot[otherSlotIndex]);
         });
@@ -888,11 +965,11 @@ private:
         // overlap with other StackSlots that this overlaps with.
         FirstFitState state;
         prepareFirstFit(state, assignedEscapedStackSlots);
-        for (StackSlot* slot : slotsInAssignmentOrder()) {
+        auto assignUnits = [&](StackSlot* slot) {
             if (!slot->isSpill() || isRemappedSlotIndex(slot->index()))
-                continue;
+                return;
             if (state.hasUnits[slot->index() / 64] >> (slot->index() % 64) & 1)
-                continue;
+                return;
 
             const unsigned unitsNeeded = (slot->byteSize() + StackColoring::bytesPerUnit - 1) / StackColoring::bytesPerUnit;
             const unsigned unitsPerAlignment = std::max(1u, slot->alignment() / StackColoring::bytesPerUnit);
@@ -901,7 +978,18 @@ private:
             recordUnits(state, slot, { end - unitsNeeded, end - 1 });
             if (m_placement == SlotPlacement::AssignsOffsets)
                 slot->setOffsetFromFP(-static_cast<intptr_t>(end) * static_cast<intptr_t>(StackColoring::bytesPerUnit));
+        };
+        Vector<StackSlot*> slotsInOrder = slotsInAssignmentOrder();
+        if (coloring.hasSuspensions) {
+            // A word that a suspension keeps holds only what some suspension keeps.
+            for (StackSlot* slot : slotsInOrder) {
+                if (coloring.spillSlotsLiveAcrossSuspensions.get(slot->index()))
+                    assignUnits(slot);
+            }
+            reserveWordsOfAssignedSlots(state);
         }
+        for (StackSlot* slot : slotsInOrder)
+            assignUnits(slot);
 
         switch (m_placement) {
         case SlotPlacement::AssignsOffsets:
@@ -1538,69 +1626,6 @@ bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots)
 
 } // anonymous namespace
 
-static bool isSuspension(const Inst& inst)
-{
-    if (inst.kind.opcode != Patch || !inst.origin)
-        return false;
-    auto* stackmap = inst.origin->as<StackmapValue>();
-    return stackmap && stackmap->isSuspension();
-}
-
-static void findSpillSlotsLiveAcrossSuspensions(Code& code, StackColoring& coloring, bool hasTooManySlotsForLiveness)
-{
-    Vector<BasicBlock*, 8> suspendingBlocks;
-    for (BasicBlock* block : code) {
-        if (std::ranges::any_of(*block, isSuspension))
-            suspendingBlocks.append(block);
-    }
-    if (suspendingBlocks.isEmpty())
-        return;
-
-    CompilerTimingScope timingScope("Air"_s, "StackAllocator::suspensions"_s);
-    coloring.hasSuspensions = true;
-    if (hasTooManySlotsForLiveness) {
-        for (StackSlot* slot : code.stackSlots())
-            coloring.spillSlotsLiveAcrossSuspensions.set(slot->index());
-        return;
-    }
-    StackSlotActions actions(code, false);
-    StackSlotLiveness liveness(code, actions);
-    auto workset = liveness.makeWorkset();
-    auto addUses = [&](std::span<const StackSlotActions::Action> group) {
-        StackSlotLivenessAdapter::forEachUseInGroup(group, [&](unsigned slotIndex) {
-            workset.add(slotIndex);
-        });
-    };
-    auto removeDefs = [&](std::span<const StackSlotActions::Action> group) {
-        StackSlotLivenessAdapter::forEachDefInGroup(group, [&](unsigned slotIndex) {
-            workset.remove(slotIndex);
-        });
-    };
-    for (BasicBlock* block : suspendingBlocks) {
-        liveness.copyLiveAtTailInto(workset, block);
-        auto blockActions = actions.actionsFor(block);
-        for (unsigned instIndex = block->size(); instIndex--;) {
-            if (!isSuspension(block->at(instIndex)))
-                continue;
-            const uint32_t boundaryBehind = instIndex + 1;
-            std::span<const StackSlotActions::Action> groupBehind;
-            while (!blockActions.empty() && blockActions.back().boundary >= boundaryBehind) {
-                auto group = StackSlotActions::consumeLastGroup(blockActions);
-                addUses(group);
-                if (group.front().boundary == boundaryBehind) {
-                    groupBehind = group;
-                    break;
-                }
-                removeDefs(group);
-            }
-            workset.forEachSetBit([&](unsigned slotIndex) {
-                coloring.spillSlotsLiveAcrossSuspensions.set(slotIndex);
-            });
-            removeDefs(groupBehind);
-        }
-    }
-}
-
 StackColoring allocateStackByGraphColoring(Code& code)
 {
     PhaseScope phaseScope(code, "allocateStackByGraphColoring"_s);
@@ -1647,7 +1672,7 @@ StackColoring allocateStackByGraphColoring(Code& code)
         code.setStackIsAllocated(true);
     else if (coloring.useCountOfSlot.isEmpty() && shouldOrderSlotsByUse(code) && numberOfWordsInSlots(code) >= AirLimits::minSlotsToOrderByUse)
         coloring.useCountOfSlot = useCountsOfSlots(code);
-    if (placement == SlotPlacement::OnlyColors && !code.calleeSavesClobberedAtSuspensions().isEmpty())
+    if (placement == SlotPlacement::OnlyColors && !coloring.hasSuspensions)
         findSpillSlotsLiveAcrossSuspensions(code, coloring, hasTooManySlotsForLiveness);
     return coloring;
 }

@@ -144,11 +144,11 @@ SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
 
-SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords, uint32_t skippedAtTop, uint32_t skippedAtBottom)
+SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords, uint32_t savedRegistersOrPairs, uint32_t skippedAtBottom)
 {
-    RELEASE_ASSERT(numberOfWords <= maxNumberOfWords && skippedAtTop <= UINT8_MAX && skippedAtBottom <= UINT8_MAX);
+    RELEASE_ASSERT(numberOfWords <= maxNumberOfWords && !(savedRegistersOrPairs >> savedRegisterBits) && skippedAtBottom <= maxNumberOfWords);
     CoroutineTable& coroutineTable = *instance.state->coroutines;
-    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, coroutineTable.savedFrameStructure(), kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(skippedAtTop), static_cast<uint8_t>(skippedAtBottom));
+    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, coroutineTable.savedFrameStructure(), kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(savedRegistersOrPairs), static_cast<uint16_t>(skippedAtBottom));
     saved->finishCreation(vm);
     saved->m_promiseOrWaiter = saved;
     coroutineTable.didCreateSavedFrame(vm, saved);
@@ -158,7 +158,7 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, s
 SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, const SuspendedMachineFrame& machineFrame)
 {
     uint64_t siteWord = machineFrame.words->siteWord;
-    return create(vm, instance, kind, machineFrame.numberOfWords(), skippedAtTopOf(siteWord), skippedAtBottomOf(siteWord));
+    return create(vm, instance, kind, machineFrame.numberOfWords(), savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
@@ -172,7 +172,6 @@ SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const
         saved->m_promiseOrWaiter = std::bit_cast<JSCell*>(promise);
         saved->m_continuation = Continuation::Promise;
     }
-    saved->m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
     return saved;
 }
 
@@ -190,7 +189,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
     size_t numberOfWords = machineFrame.numberOfWords();
     uint64_t siteWord = machineFrame.words->siteWord;
     RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
-    RELEASE_ASSERT(m_numberOfWordsSkippedAtTop == skippedAtTopOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
+    RELEASE_ASSERT(m_numberOfSavedRegisterPairs == savedRegistersOrPairsOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
     willWrite();
     uint64_t* words = this->words();
     const uint64_t* source = machineFrame.firstSavedWord();
@@ -198,7 +197,6 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
         words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
-    m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
     m_resumeAddress = machineFrame.resumeAddress;
     m_flags = kind == SuspensionKind::Yield ? isSuspendedAtYieldFlag : 0;
     m_liveSlotMapOffsetPlusOne = liveSlotMapOffsetOf(siteWord) + 1;
@@ -236,13 +234,13 @@ void SavedFrame::poisonDeadUnlistedWords(VM& vm)
     auto poisonDeadUnlistedWord = [&](uint32_t location) {
         if (map->listsValue(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
             return;
-        uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + m_numberOfWordsSkippedAtTop - location];
+        uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + numberOfWordsSkippedAtTop() - location];
         if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)
             word = poisonedWord;
     };
     willWrite();
-    uint32_t lastLocation = m_numberOfWords + m_numberOfWordsSkippedAtTop;
-    for (uint32_t location = m_numberOfWordsSkippedAtTop + 1; location <= lastLocation; ++location)
+    uint32_t lastLocation = m_numberOfWords + numberOfWordsSkippedAtTop();
+    for (uint32_t location = numberOfWordsSkippedAtTop() + 1; location <= lastLocation; ++location)
         poisonDeadUnlistedWord(location);
     if constexpr (preservedRegister != InvalidGPRReg)
         poisonDeadUnlistedWord(locationInRegister);

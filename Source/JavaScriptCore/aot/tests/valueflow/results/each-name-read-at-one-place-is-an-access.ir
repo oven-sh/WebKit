@@ -1,0 +1,40 @@
+# function spanOf({ start, end, low, high }) { return end - start + high - low }  function twice(v) { return v.start - v.start }, both reads written at one place
+# Every name of an object pattern is read at one place, that of the pattern's source. Each name is an access of its own.
+# Two reads of one name at one place are the copies of one access.
+# RUN: flow-report through=Select
+# OPTIONS: report=Flow
+# CHECK: access-count m0 accesses=[5, 0, 0] accessCosts=[5, 0, 0, 0]
+# CHECK: access m0:110 Read Unknown ByName
+# CHECK-NEXT: access m0:110 Read Unknown ByName
+# CHECK-NEXT: access m0:110 Read Unknown ByName
+# CHECK-NEXT: access m0:110 Read Unknown ByName
+# CHECK-NEXT: access m0:210 Read Unknown ByName
+# CHECK-NOT: access m0:210
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+function f1 name="spanOf" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = PropGet v0 key="start" @110
+    v2 = PropGet v0 key="end" @110
+    v3 = PropGet v0 key="low" @110
+    v4 = PropGet v0 key="high" @110
+    v5 = Sub v2, v1 @120
+    v6 = Add v5, v4 @120
+    v7 = Sub v6, v3 @120
+    Return v7
+}
+function f2 name="twice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = PropGet v0 key="start" @210
+    v2 = PropGet v0 key="start" @210
+    v3 = Sub v2, v1 @220
+    Return v3
+}

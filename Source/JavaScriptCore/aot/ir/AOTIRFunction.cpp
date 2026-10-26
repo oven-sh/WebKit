@@ -46,6 +46,7 @@ void Function::releaseBody()
     RELEASE_ASSERT(bodyIsReleased && !blocks.isEmpty());
     editAllBlocks().clear();
     editAllValues().clear();
+    writtenPositions.clear();
 }
 
 bool Function::isModuleBody() const
@@ -117,6 +118,14 @@ Wire::SourceLocation Function::locationOf(Origin origin) const
         outermostFrame = parent;
     }
     return locationInModule(module, inlineFrames[outermostFrame].callPosition);
+}
+
+std::optional<uint32_t> Function::writtenPositionOf(ValueID id) const
+{
+    auto found = std::ranges::lower_bound(writtenPositions, id.index(), { }, [](const WrittenPosition& written) { return written.value.index(); });
+    if (found == writtenPositions.end() || found->value != id)
+        return std::nullopt;
+    return found->position;
 }
 
 Wire::SourceLocation Function::declarationLocation() const
@@ -372,6 +381,14 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
         block.forEachChildOutsideValues(remapChild);
 
     formerValues = WTF::move(values);
+
+    if (!function.writtenPositions.isEmpty()) {
+        function.writtenPositions.removeAllMatching([&](WrittenPosition& written) {
+            written.value = newID[written.value.index()];
+            return !written.value;
+        });
+        std::ranges::sort(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });
+    }
     return newID;
 }
 

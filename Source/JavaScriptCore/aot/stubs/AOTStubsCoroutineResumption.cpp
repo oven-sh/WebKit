@@ -406,15 +406,21 @@ void emitMoveRegistersSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shi
 
 struct RestoredFrame { GPRReg saved, mode, value, count, scratch; };
 
-// The frame has the words kept, the words skipped above them and the words skipped below them. The three numbers lie in one word of the cell.
+// The frame has the words kept, the words skipped above them, which SavedFrame::skippedAtTopFor counts, and the words skipped below them.
 static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept, GPRReg skippedAtBottom, GPRReg inFrame)
 {
-    static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtTop() == SavedFrame::offsetOfNumberOfWords() + 2 && SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 3);
-    jit.load32(Address(saved, SavedFrame::offsetOfNumberOfWords()), kept);
-    jit.urshift32(kept, TrustedImm32(24), skippedAtBottom);
-    extractBits(jit, kept, 16, 8, inFrame);
-    jit.and32(TrustedImm32(UINT16_MAX), kept);
-    jit.add32(skippedAtBottom, inFrame);
+    jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWords()), kept);
+    jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), skippedAtBottom);
+    jit.load8(Address(saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), inFrame);
+#if CPU(X86_64)
+    static_assert(SavedFrame::skippedAtTopFor(3) == 2 && !SavedFrame::skippedAtTopFor(2) && !SavedFrame::skippedAtTopFor(1) && !SavedFrame::skippedAtTopFor(0));
+    jit.add32(TrustedImm32(1), inFrame);
+    jit.urshift32(TrustedImm32(2), inFrame);
+    jit.getEffectiveAddress(BaseIndex(skippedAtBottom, inFrame, CCallHelpers::TimesTwo), inFrame);
+#elif CPU(ARM64)
+    static_assert(SavedFrame::skippedAtTopFor(3) == 6 && SavedFrame::skippedAtTopFor(1) == 2);
+    jit.addLeftShift64(skippedAtBottom, inFrame, TrustedImm32(1), inFrame);
+#endif
     jit.add32(kept, inFrame);
 }
 
@@ -429,22 +435,23 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     RELEASE_ASSERT(saved == X86Registers::edi && mode == X86Registers::esi && second == X86Registers::ecx);
     RELEASE_ASSERT(noOverlap(saved, mode, value, count, scratch, second, destination, instanceGPR));
 
-    emitLoadNumbersOfWords(jit, saved, count, destination, scratch);
+    const GPRReg skippedAtBottom = second;
+    emitLoadNumbersOfWords(jit, saved, count, skippedAtBottom, scratch);
     jit.lshift64(TrustedImm32(3), scratch);
-    jit.subPtr(sp, scratch, second);
-    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), second);
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, second, softStackLimit()), throwStackOverflow());
+    jit.subPtr(sp, scratch, destination);
+    jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), destination);
+    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, destination, softStackLimit()), throwStackOverflow());
 
     jit.emitFunctionPrologue();
     jit.subPtr(scratch, sp);
-    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, destination);
+    jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), destination);
+    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom);
+    jit.move(TrustedImm32(0), scratch);
     Label clearNext = jit.label();
-    jit.store64(TrustedImm32(0), BaseIndex(sp, destination, CCallHelpers::TimesEight, -8));
-    jit.store64(TrustedImm32(0), BaseIndex(sp, destination, CCallHelpers::TimesEight, -16));
-    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), destination).linkTo(clearNext, &jit);
-    jit.load8(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), destination);
+    jit.store64(scratch, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -8));
+    jit.store64(scratch, BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight, -16));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), skippedAtBottom).linkTo(clearNext, &jit);
     skipsNothing.link(&jit);
-    jit.getEffectiveAddress(BaseIndex(sp, destination, CCallHelpers::TimesEight), destination);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
     Jump isSmall = jit.branch32(CCallHelpers::Below, count, TrustedImm32(SavedFrame::minWordsForStringMove));
     jit.move(count, X86Registers::ecx);

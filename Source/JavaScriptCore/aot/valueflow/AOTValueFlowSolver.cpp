@@ -245,21 +245,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::Symbol), ValueSets::complement(maker.intersect(m_input.universe->symbols(), keys)) });
     }
 
-    if (placeholders.unknown && m_input.ignoresUnseenCode && m_input.nodes) {
-        AOT_THRESHOLD(uint32_t, maxSeenListLength, 8);
-        m_graph.limitListLength(maxSeenListLength, placeholders.unknown, [](const void* context, ValueFlowNodeID node) {
-            const ValueFlowSolver& solver = *static_cast<const ValueFlowSolver*>(context);
-            if (node == solver.m_input.escaped || node == solver.m_input.lost)
-                return false;
-            if (node.index() < solver.m_input.numberOfNodes) {
-                uint32_t firstOfHost = solver.m_input.nodes->ofHost(static_cast<ValueFlowHostNode>(0)).index();
-                return node.index() < firstOfHost || node.index() >= firstOfHost + numberOfValueFlowHostNodes;
-            }
-            const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
-            return key && key->kind != ValueFlowMadeNodeKind::Marked && key->kind != ValueFlowMadeNodeKind::Constant;
-        }, this);
-    }
-    if (placeholders.unknown && m_input.escaped && !m_input.ignoresUnseenCode) {
+    if (placeholders.unknown && m_input.escaped) {
         m_coverings.append({ placeholders.unknown, m_input.escaped, maker.intersect(m_objectsThatPlaceholdersMayCover, ValueSets::complement(m_objectsAlwaysFollowed)) });
         if (m_input.universe) {
             const ValueFlowHeapTables& heap = m_input.universe->builtinTables().heap();
@@ -331,8 +317,6 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
     for (unsigned written = 0; written < mostKindsOfNames; ++written) {
         for (unsigned read = 0; read < mostKindsOfNames; ++read) {
             if (!mayBeTheSameName(static_cast<ValueFlowNameKind>(written), static_cast<ValueFlowNameKind>(read)))
-                continue;
-            if (m_input.ignoresUnseenCode && shapeOf(static_cast<ValueFlowNameKind>(read)).reach == ValueFlowNameReach::OneKey && shapeOf(static_cast<ValueFlowNameKind>(written)).reach == ValueFlowNameReach::UnknownKey)
                 continue;
             m_kindsOfNames[written].readKindsThatMayFindIt |= 1ull << read;
             m_kindsOfNames[read].writtenKindsItMayFind |= 1ull << written;
@@ -3609,7 +3593,7 @@ Subject ValueFlowSolver::subjectOf(ValueFlowNodeID node) const
 
 void ValueFlowSolver::report()
 {
-    if (!m_input.build || m_input.ignoresUnseenCode)
+    if (!m_input.build)
         return;
     BuildContext& build = *m_input.build;
     if (m_counters.isPastEdgeBudget)
@@ -3666,8 +3650,6 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(mask.node, mask.mask, mask.kind, mask.familyObjects);
             if (m_input.lost)
                 m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
-            if (m_input.ignoresUnseenCode)
-                m_graph.setMask(m_input.escaped, ValueSets::nothing);
         },
         [&] {
             m_graph.addInitialEdges(m_input.edges);
@@ -3678,12 +3660,6 @@ bool ValueFlowSolver::solve()
     for (uint32_t body = 0; body < numberOfBodies; ++body)
         makeStatementsDue(m_input.ranges[body].statement, m_input.ranges[body].statementLeavingBody);
     reach(numberOfBodies - 1, { });
-    if (m_input.fullSolver) {
-        for (uint32_t body = 0; body < numberOfBodies; ++body) {
-            if (m_input.fullSolver->m_isReached.get(body))
-                reach(body, { });
-        }
-    }
     if (m_input.escaped) {
         ValueFlowStatement statement;
         statement.kind = ValueFlowStatementKind::Escape;

@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTBuiltinMembers.h"
 #include "AOTPropertyAccess.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -30,20 +29,15 @@ AOT_THRESHOLD(size_t, maxLayoutsComparedForField, 8);
 
 namespace {
 
-// One of: a name that is asked of what the field holds, a layout that is stored in it, another field that was filled with the same value, that the code that allocates the object fills the field,
-// the built-in class of a value that is stored in it, or another field that its value was read from.
+// One of: a name that is asked of what the field holds, a layout that is stored in it, another field that was filled with the same value, or that the code that allocates the object fills the field.
 struct NameAskedOfField {
     FieldReference field;
     PropertyKeyID name;
     LayoutID layoutStored;
     FieldReference fieldWithSameValue;
     bool isFilledByCreator { false };
-    BuiltinClassID classStored;
-    bool storesOtherKind { false };
-    bool isCopyOfField { false };
 
-    bool namesFieldWithSameValue() const { return !name && !layoutStored && !isFilledByCreator && !tellsKindStored(); }
-    bool tellsKindStored() const { return classStored || storesOtherKind; }
+    bool namesFieldWithSameValue() const { return !name && !layoutStored && !isFilledByCreator; }
 
     friend auto operator<=>(const NameAskedOfField&, const NameAskedOfField&) = default;
 };
@@ -76,29 +70,6 @@ static FieldList findUntoldFields(const Program& program, const Function& functi
     return fields;
 }
 
-static void collectKindStored(const Program& program, const Function& function, const UncheckedKeyHashMap<uint32_t, FieldList>& fieldsRead, ValueID object, PropertyKeyID key, ValueID stored, Vector<NameAskedOfField>& found)
-{
-    stored = sameObjectThroughCasts(function, stored);
-    // `{ items: other.items }`
-    if (auto read = fieldsRead.find(stored.index() + 1); read != fieldsRead.end()) {
-        for (FieldReference field : findUntoldFields(program, function, object, key)) {
-            for (FieldReference source : read->value) {
-                if (source != field)
-                    found.append({ source, { }, { }, field, false, { }, false, true });
-            }
-        }
-        return;
-    }
-    TypeID expected = function.at(stored).expected();
-    Type type = (expected ? program.at(expected) : program.typeOf(function, stored)).withoutNullish();
-    if (type.anyObject || type.isNever() || type.layouts)
-        return;
-    BuiltinReceiver receiver = builtinReceiverOf(program, type);
-    BuiltinClassID classStored = receiver.kind == BuiltinReceiverKind::Instance && receiver.builtinClass != BuiltinClasses::Function ? receiver.builtinClass : BuiltinClassID();
-    for (FieldReference field : findUntoldFields(program, function, object, key))
-        found.append({ field, { }, { }, { }, false, classStored, !classStored });
-}
-
 static void collectNamesAsked(const Program& program, const Function& function, Vector<NameAskedOfField>& found)
 {
     UncheckedKeyHashMap<uint32_t, FieldList> fieldsRead;
@@ -110,14 +81,8 @@ static void collectNamesAsked(const Program& program, const Function& function, 
             const Value& access = function.at(id);
             if (access.opcode == Opcode::NewObject && access.layout()) {
                 allocatedInBlock.add(id.index() + 1, access.layout());
-                const Vector<Field>& fields = program.at(declaredLayoutOf(program, access.layout())).fields;
-                std::span<const uint32_t> listed = access.fields();
-                for (size_t position = 0; position < listed.size(); ++position)
-                    collectKindStored(program, function, fieldsRead, id, fields[listed[position]].key, access.operand(OperandIndex::NewObject::values + position), found);
                 continue;
             }
-            if ((access.opcode == Opcode::PropSet || access.opcode == Opcode::PropDefine) && access.key())
-                collectKindStored(program, function, fieldsRead, access.operand(OperandIndex::PropSet::object), access.key(), access.operand(OperandIndex::PropSet::value), found);
             if (access.opcode == Opcode::PropSet && access.key()) {
                 // `const context = Object.create(prototype); context.request = request;`
                 LayoutID allocated = allocatedInBlock.get(sameObjectThroughCasts(function, access.objectOperand()).index() + 1);
@@ -217,37 +182,6 @@ static Vector<FieldAndGroup> groupFieldsWithSameValue(std::span<const NameAskedO
     return Vector<FieldAndGroup>(fields.size(), [&](size_t index) { return FieldAndGroup { fields[index], fields[rootOf(fields[index])] }; });
 }
 
-// Fields that are copies of one another hold the same thing. Where arrays are all that the program stores in them, an array is expected.
-static void expectClassesStored(Vector<NameAskedOfField>& kindsStored, std::span<const FieldReference> fieldsWithExpectation, NOESCAPE const Invocable<void(FieldReference, BuiltinClassID)> auto& expect)
-{
-    for (FieldReference field : fieldsWithExpectation)
-        kindsStored.append({ field, { }, { }, { }, false, { }, true });
-    Vector<FieldAndGroup> groups = groupFieldsWithSameValue(kindsStored.span());
-    kindsStored.removeAllMatching([](const NameAskedOfField& entry) { return entry.isCopyOfField; });
-    for (NameAskedOfField& entry : kindsStored) {
-        auto grouped = std::ranges::lower_bound(groups, entry.field, { }, &FieldAndGroup::first);
-        if (grouped != groups.end() && grouped->first == entry.field)
-            entry.field = grouped->second;
-    }
-    AOT::stableSort(groups, { }, &FieldAndGroup::second);
-    AOT::sort(kindsStored);
-    std::span<const NameAskedOfField> remaining = kindsStored.span();
-    while (!remaining.empty()) {
-        FieldReference reference = remaining.front().field;
-        size_t count = std::ranges::find_if_not(remaining, [&](const NameAskedOfField& entry) { return entry.field == reference; }) - remaining.begin();
-        BuiltinClassID classStored = remaining.front().classStored;
-        bool storesOneClass = std::ranges::all_of(remaining.first(count), [&](const NameAskedOfField& entry) { return !entry.storesOtherKind && entry.classStored == classStored; });
-        remaining = remaining.subspan(count);
-        if (!storesOneClass)
-            continue;
-        auto fieldsOfGroup = std::ranges::equal_range(groups, reference, { }, &FieldAndGroup::second);
-        for (auto [field, group] : fieldsOfGroup)
-            expect(field, classStored);
-        if (fieldsOfGroup.empty())
-            expect(reference, classStored);
-    }
-}
-
 void expectFieldsByNamesAsked(Program& program, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -263,15 +197,6 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
             editor.at(entry.field).flags.add(FieldFlags::IsFilledByCreator);
     }
     asked.removeAllMatching([](const NameAskedOfField& entry) { return entry.isFilledByCreator; });
-    Vector<NameAskedOfField> kindsStored;
-    asked.removeAllMatching([&](const NameAskedOfField& entry) {
-        if (entry.layoutStored)
-            kindsStored.append({ entry.field, { }, { }, { }, false, { }, true });
-        if (!entry.tellsKindStored() && !entry.isCopyOfField)
-            return false;
-        kindsStored.append(entry);
-        return true;
-    });
     Vector<FieldAndGroup> groups = groupFieldsWithSameValue(asked.span());
     asked.removeAllMatching([](const NameAskedOfField& entry) { return entry.namesFieldWithSameValue(); });
     for (NameAskedOfField& entry : asked) {
@@ -319,11 +244,6 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
         if (fieldsOfGroup.empty())
             expect(reference, expectedID);
     }
-    expectClassesStored(kindsStored, changed.span(), [&](FieldReference field, BuiltinClassID classStored) {
-        Type expected = Type::builtinClass(classStored);
-        expected.primitives |= Primitive::UndefinedOrNull;
-        expect(field, types.intern(WTF::move(expected)));
-    });
     AOT::sort(changed);
     if (changed.isEmpty())
         return;

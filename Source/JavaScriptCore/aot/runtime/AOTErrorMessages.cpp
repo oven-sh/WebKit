@@ -586,14 +586,23 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
     return holder == Builtins::GlobalThis ? String(key) : makeString(text, '.', StringView(key));
 }
 
+// Fuzzilli's loop in Bun compares a compiled program with `bun run`, where these errors are never thrown, also when the program catches them.
+static String printForFuzzilli(String&& message)
+{
+#if ENABLE(FUZZILLI)
+    dataLogLn(message);
+#endif
+    return WTF::move(message);
+}
+
 String deletionFromLockedBuiltinMessage(const String& property)
 {
-    return withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 String assignmentToLockedBuiltinMessage(const String& property)
 {
-    return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
@@ -603,7 +612,7 @@ String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder)
 {
-    return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 } } // namespace JSC::AOT

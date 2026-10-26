@@ -1040,8 +1040,10 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
 
             std::optional<unsigned> cycle = m_cycles ? m_cycles->outermostCycleOf(location.block) : std::nullopt;
             if (uint32_t component = cycle ? componentOf(id, *cycle) : noComponent; component != noComponent) {
-                if (!m_isWaitingComponent.set(component))
+                if (!m_isWaitingComponent.set(component)) {
                     m_waitingComponents.append(component);
+                    std::ranges::push_heap(m_waitingComponents, std::greater<>());
+                }
                 continue;
             }
 
@@ -1060,10 +1062,8 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
         if (m_waitingComponents.isEmpty())
             return;
 
-        size_t position = std::ranges::min_element(m_waitingComponents) - m_waitingComponents.begin();
-        uint32_t component = m_waitingComponents[position];
-        m_waitingComponents[position] = m_waitingComponents.last();
-        m_waitingComponents.removeLast();
+        std::ranges::pop_heap(m_waitingComponents, std::greater<>());
+        uint32_t component = m_waitingComponents.takeLast();
         m_isWaitingComponent.quickClear(component);
         typeComponent(component);
     }

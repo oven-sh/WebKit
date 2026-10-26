@@ -439,12 +439,14 @@ std::optional<uint32_t> ValueIdentities::expectLessOfParametersThatDoNotHold(con
 {
     std::optional<uint32_t> firstChangedBlock;
     std::span<const BlockID> order = cfg.reversePostOrder();
+    Vector<uint32_t> indexInParameters;
     for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
         BlockID block = order[orderIndex];
         auto& parameters = function.at(block).parameters;
         if (m_takesShortcuts && cfg.incomingEdges(block).size() == 1)
             continue;
         std::optional<PassedValues> passedValues;
+        bool didIndexParameters = false;
         for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
             ValueID parameter = parameters[parameterIndex];
             ValueID identity = m_identities[parameter.index()];
@@ -460,10 +462,14 @@ std::optional<uint32_t> ValueIdentities::expectLessOfParametersThatDoNotHold(con
             if (isPassedOneValue)
                 continue;
 
-            uint32_t earlierIndex = 0;
-            while (earlierIndex < parameterIndex && parameters[earlierIndex] != identity)
-                ++earlierIndex;
-            bool followsEarlierParameter = earlierIndex < parameterIndex;
+            if (!std::exchange(didIndexParameters, true)) {
+                if (indexInParameters.isEmpty())
+                    indexInParameters.fill(0, function.values.size());
+                for (uint32_t index = 0; index < parameters.size(); ++index)
+                    indexInParameters[parameters[index].index()] = index;
+            }
+            uint32_t earlierIndex = indexInParameters[identity.index()];
+            bool followsEarlierParameter = earlierIndex < parameterIndex && parameters[earlierIndex] == identity;
             if (followsEarlierParameter && receiveSameValues(*passedValues, earlierIndex, parameterIndex))
                 continue;
 

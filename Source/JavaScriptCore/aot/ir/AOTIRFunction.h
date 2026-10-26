@@ -96,12 +96,19 @@ public:
     bool valuesAreTypedAsDefined { false };
 };
 
+struct WrittenPosition {
+    ValueID value;
+    uint32_t position { 0 };
+};
+
 struct Function : FunctionRecord {
     using Blocks = BodyTable<Block, 2>;
     using Values = BodyTable<Value, 4>;
 
     Blocks blocks;
     Values values;
+    // Sorted by value. A value's position is where an error is reported; only a value that the source text has elsewhere is listed.
+    Vector<WrittenPosition> writtenPositions;
     bool representationsAreChosen { false };
     bool bodyIsReleased { false };
 
@@ -225,6 +232,7 @@ struct Function : FunctionRecord {
 
     Wire::SourceLocation locationOf(ValueID) const;
     Wire::SourceLocation locationOf(Origin) const;
+    std::optional<uint32_t> writtenPositionOf(ValueID) const;
     Wire::SourceLocation declarationLocation() const;
 
     unsigned numberOfEntryParameters() const;

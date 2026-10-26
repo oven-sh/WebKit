@@ -161,8 +161,15 @@ struct FlowFunctionTables {
     BitVector functionsWithOneClosure;
 };
 
+struct WrittenPositionOfSite {
+    AccessSiteID site;
+    uint32_t position { 0 };
+};
+
 struct FlowSiteTables {
     Vector<AccessSite> accessSites;
+    // Sorted by site. The location of a site is where an error is reported; only a site that the source text has elsewhere is listed.
+    Vector<WrittenPositionOfSite> writtenPositionsOfSites;
     Vector<FlowSiteLoss> accessSiteLosses;
     Vector<bool> callsOfBoundFunctions;
     // Sorted by site, use, target and number of bound arguments.
@@ -288,6 +295,7 @@ public:
     unsigned numberOfAllocationSites() const { return m_tables.sites.allocationSites.size(); }
     unsigned numberOfAllocationClasses() const { return m_tables.sites.allocationClasses.size(); }
     const AccessSite& at(AccessSiteID) const LIFETIME_BOUND;
+    Wire::SourceLocation writtenLocationOf(AccessSiteID) const;
     const AllocationSite& at(AllocationSiteID) const LIFETIME_BOUND;
     const AllocationClass& at(AllocationClassID) const LIFETIME_BOUND;
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }

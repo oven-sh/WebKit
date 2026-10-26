@@ -1060,7 +1060,7 @@ static std::optional<AwaitOfMergedValues> findAwaitOfMergedValues(FunctionPassCo
 {
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
-    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
+    if (function.at(await).takesExtraTurn() || function.kind == FunctionKind::Module)
         return std::nullopt;
 
     Vector<ValueID, 1> casts;
@@ -1199,8 +1199,8 @@ static bool giveCallersOfNextTheirOwnAwait(FunctionPassContext& context, IRBuild
 static std::optional<AwaitedCall> findAwaitedCall(FunctionPassContext& context, ValueID await, TestsAtHeadOfCallee tests = TestsAtHeadOfCallee::AreNoCallee)
 {
     const Function& function = context.function;
-    // Whether the body of a module goes on inside a require() depends on whether it awaits a promise, so the callee makes one.
-    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
+    // Which queue resumes the body of a module depends on whether it awaits a promise, so the callee makes one.
+    if (function.at(await).takesExtraTurn() || function.kind == FunctionKind::Module)
         return std::nullopt;
 
     Vector<ValueID, 1> casts;

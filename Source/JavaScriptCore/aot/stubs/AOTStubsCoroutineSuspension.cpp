@@ -251,7 +251,7 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     const auto [subject, saved, count, cursor, word, second] = registers;
     const GPRReg source = cursor;
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWords()), count);
-    jit.load8(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
+    jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
 #if CPU(X86_64)
     constexpr int32_t offsetOfBottom = sizeof(void*);
     RELEASE_ASSERT(subject == X86Registers::esi && second == X86Registers::edi && count == X86Registers::ecx);
@@ -347,7 +347,7 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     const GPRReg skippedAtBottom = scratch;
     static_assert(hasOneBitSet(MarkedSpace::sizeStep) && sizeof(Allocator) == sizeof(void*));
     static_assert(JSObject::butterflyOffset() == sizeof(uint64_t));
-    static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtTop() == SavedFrame::offsetOfNumberOfWords() + 2 && SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 3);
+    static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 2);
     static_assert(SavedFrame::offsetOfVersion() == SavedFrame::offsetOfNumberOfWords() + 4 && !(SavedFrame::offsetOfNumberOfWords() % sizeof(uint64_t)));
     static_assert(SavedFrame::offsetOfContinuation() == SavedFrame::offsetOfKind() + 1 && SavedFrame::offsetOfNumberOfSavedRegisterPairs() == SavedFrame::offsetOfKind() + 2 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3);
     static_assert(SavedFrame::offsetOfPromiseOrWaiter() == SavedFrame::offsetOfResumeAddress() + 8 && SavedFrame::offsetOfAsyncContext() == SavedFrame::offsetOfPreservedRegister() + 8);
@@ -365,15 +365,15 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.sub64(fp, scratch, count);
     jit.urshift64(TrustedImm32(3), count);
     emitLoadNumberOfWordsSkippedAtTop(jit, siteWord, skippedAtTop, saved);
-    extractBits(jit, siteWord, SavedFrame::skippedAtBottomShift, SavedFrame::skippedAtBottomBits, skippedAtBottom);
+    extractBits(jit, siteWord, SavedFrame::skippedPairsShift, SavedFrame::skippedPairsBits, skippedAtBottom);
+    needsOperation.append(jit.branch32(CCallHelpers::Equal, skippedAtBottom, TrustedImm32(SavedFrame::manySkippedPairs)));
+    jit.lshift32(TrustedImm32(1), skippedAtBottom);
     jit.sub32(skippedAtTop, count);
     jit.sub32(skippedAtBottom, count);
     needsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(SavedFrame::maxWordsAllocatedInStub)));
 
-    // From here on count has the three counts as the cell has them.
-    jit.lshift32(TrustedImm32(16), skippedAtTop);
-    jit.lshift32(TrustedImm32(24), skippedAtBottom);
-    jit.or32(skippedAtTop, skippedAtBottom);
+    // From here on count has the two counts as the cell has them.
+    jit.lshift32(TrustedImm32(16), skippedAtBottom);
     jit.lshift32(count, TrustedImm32(3), allocator);
     jit.add32(TrustedImm32(sizeof(SavedFrame) + MarkedSpace::sizeStep - 1), allocator);
     jit.urshift32(TrustedImm32(sizeStepShift), allocator);

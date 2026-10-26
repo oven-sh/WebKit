@@ -1458,7 +1458,7 @@ public:
         // Handle fixed matches and the minimum part of a variable length match.
         if (minimumMatchCount) {
             // Match the mandatory iterations, backtracking earlier ones as needed.
-            JSRegExpResult result = refillParenthesesContextsToMinCount(term, backTrack, disjunctionBody);
+            JSRegExpResult result = keepsContextsOfFirstAndLastTurn(term) ? matchTurnsWithoutChoices(term, backTrack, disjunctionBody) : refillParenthesesContextsToMinCount(term, backTrack, disjunctionBody);
             if (result != JSRegExpResult::Match)
                 return result;
 
@@ -1513,6 +1513,11 @@ public:
         case QuantifierType::FixedCount: {
             ASSERT(backTrack->matchAmount == term.atom.quantityMaxCount);
             ASSERT(term.atom.quantityMinCount == term.atom.quantityMaxCount);
+
+            if (keepsContextsOfFirstAndLastTurn(term)) {
+                undoTurnsWithoutChoices(term, backTrack);
+                return JSRegExpResult::NoMatch;
+            }
 
             JSRegExpResult result = parenthesesDoBacktrack(term, backTrack);
             if (result != JSRegExpResult::Match)
@@ -1670,6 +1675,48 @@ public:
                 return result;
         }
         return JSRegExpResult::Match;
+    }
+
+    // The JIT keeps no context for a group that is repeated a fixed number of times and has nothing to go back into: see jitCountsTurnsOf().
+    bool keepsContextsOfFirstAndLastTurn(const ByteTerm& term) const
+    {
+        return pattern->m_countsWhatJITCounts && term.atom.quantityType == QuantifierType::FixedCount && term.atom.quantityMaxCount > 1 && !term.atom.parenthesesDisjunction->m_jitCountsTurns;
+    }
+
+    // The context of the first turn holds what the captures were in front of the group, that of the last turn where it matched.
+    JSRegExpResult matchTurnsWithoutChoices(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
+    {
+        while (backTrack->matchAmount < term.atom.quantityMaxCount) {
+            if (backTrack->matchAmount > 1) {
+                ParenthesesDisjunctionContext* previous = backTrack->lastContext;
+                backTrack->lastContext = previous->next;
+                freeParenthesesDisjunctionContext(previous);
+            }
+            ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
+            if (!context) [[unlikely]]
+                return JSRegExpResult::ErrorNoMemory;
+            JSRegExpResult result = matchDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
+            if (result == JSRegExpResult::Match) {
+                appendParenthesesDisjunctionContext(backTrack, context);
+                continue;
+            }
+            resetMatches(term, context);
+            freeParenthesesDisjunctionContext(context);
+            undoTurnsWithoutChoices(term, backTrack);
+            return result;
+        }
+        return JSRegExpResult::Match;
+    }
+
+    void undoTurnsWithoutChoices(ByteTerm& term, BackTrackInfoParentheses* backTrack)
+    {
+        while (ParenthesesDisjunctionContext* context = backTrack->lastContext) {
+            resetMatches(term, context);
+            backTrack->lastContext = context->next;
+            freeParenthesesDisjunctionContext(context);
+        }
+        backTrack->matchAmount = 0;
+        input.setPos(backTrack->begin);
     }
 
     // Greedy extension appends as many additional iterations as possible up

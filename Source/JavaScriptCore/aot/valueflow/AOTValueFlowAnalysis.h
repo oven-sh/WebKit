@@ -79,8 +79,6 @@ private:
     mutable ValueSetMakerPool m_makerPool;
     std::unique_ptr<ValueFlowInstancedFunctions> m_instancedFunctions;
     ValueFlowSolverInput m_input;
-    ValueFlowSolverInput m_seenCodeInput;
-    std::unique_ptr<ValueFlowSolver> m_seenCodeSolver;
     std::unique_ptr<ValueFlowSolver> m_solver;
     bool m_hasResult { false };
 };

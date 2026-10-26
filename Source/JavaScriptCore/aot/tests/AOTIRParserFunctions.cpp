@@ -292,7 +292,12 @@ void TextParser::parseValue()
     auto engineFlags = static_cast<uint16_t>(flags & ~wireFlags);
 
     Origin origin = parseOrigin(*this);
-    overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode), origin.position });
+    uint32_t writtenPositionFollows = 0;
+    if (accept(TokenKind::At)) {
+        writtenPositionFollows = Wire::WrittenPositionFollows;
+        code().append(parseUInt32());
+    }
+    overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionFollows, origin.position });
     if (engineFlags || origin.inlineFrame) {
         addPatch([function = m_body.function, id, engineFlags, inlineFrame = origin.inlineFrame](PatchContext& context) {
             Value& value = context.program.at(function).edit(id);

@@ -58,6 +58,7 @@ public:
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
     FunctionID functionOfStatement() const;
+    const ValueFlowStatement* statementOfThisTurn() const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) const LIFETIME_BOUND;
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
@@ -152,8 +153,6 @@ public:
     void noteUnknownSource(ValueFlowUnknownSource source) { m_unknownSource = source; }
     bool leavesOut(ValueFlowUnknownSource) const;
     bool leavesOutSomeUnknownSource() const;
-    bool ignoresUnseenCode() const;
-    ClimbingSet dropUnknownObject(ClimbingSet);
     RefusedCode refusedCode() const;
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;

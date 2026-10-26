@@ -1,5 +1,6 @@
 constant Magic = 0x52495442
 constant MaxTrackedInteger = 4611686018427387903
+constant WrittenPositionFollows = 0x80000000
 
 enum IRForm { | engine AsRead Prepared Selected Placed }
 enum ResultRule { | engine None Constant Natural Allocation Declared Unknown Cast Results }

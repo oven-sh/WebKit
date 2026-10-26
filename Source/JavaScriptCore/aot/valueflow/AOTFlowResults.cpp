@@ -171,6 +171,16 @@ std::optional<uint32_t> FlowResults::findDerivedParameter(FunctionID derived, ui
 const FunctionFlow& FlowResults::function(FunctionID id) const { return recordAt(m_tables.functions.functions, findAnalyzedFunction(id), m_unknown.function); }
 const ModuleFlow& FlowResults::module(ModuleID id) const { return recordAt(m_tables.wholeProgram.modules, id, m_unknown.module); }
 const AccessSite& FlowResults::at(AccessSiteID id) const { return recordAt(m_tables.sites.accessSites, id, m_unknown.accessSite); }
+
+Wire::SourceLocation FlowResults::writtenLocationOf(AccessSiteID id) const
+{
+    Wire::SourceLocation location = at(id).location;
+    const Vector<WrittenPositionOfSite>& written = m_tables.sites.writtenPositionsOfSites;
+    auto found = std::ranges::lower_bound(written, id.index(), { }, [](const WrittenPositionOfSite& entry) { return entry.site.index(); });
+    if (found != written.end() && found->site == id)
+        location.position = found->position;
+    return location;
+}
 const AllocationSite& FlowResults::at(AllocationSiteID id) const { return recordAt(m_tables.sites.allocationSites, id, m_unknown.allocationSite); }
 const AllocationClass& FlowResults::at(AllocationClassID id) const { return recordAt(m_tables.sites.allocationClasses, id, m_unknown.allocationClass); }
 const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss); }

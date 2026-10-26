@@ -77,8 +77,6 @@ public:
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
     using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
-    using HasListLimit = bool (*)(const void* context, ValueFlowNodeID);
-    void limitListLength(uint32_t maxListLength, ValueFlowObjectID overflowMember, HasListLimit, const void* context);
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     struct StoppedPlaceholder {
         ValueFlowNodeID node;
@@ -377,7 +375,6 @@ private:
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
     bool takesNoMore(uint32_t node) const;
     void noteWhatCoveredNodesHold();
-    void cutLongLists();
     bool didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const;
     ValueSetID whatRetiredNodeTakes(uint32_t node, ValueSetMaker&) const;
     bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
@@ -412,10 +409,6 @@ private:
     Vector<uint32_t> m_nodesWoken;
 
     Vector<Covering, 2> m_coverings;
-    uint32_t m_maxListLength { 0 };
-    uint64_t m_overflowMemberBit { 0 };
-    HasListLimit m_hasListLimit { nullptr };
-    const void* m_listLimitContext { nullptr };
     IsMadeForPlaceholder m_isMadeForPlaceholder { nullptr };
     const void* m_contextOfIsMadeForPlaceholder { nullptr };
     ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };

@@ -52,12 +52,6 @@ struct ValueFlowGraph::Worker {
     ValueSetMaker& maker;
     Vector<ValueSetID, 16> setsArrived;
     Vector<uint32_t> movedNodes;
-    struct RowBeforeSolve {
-        uint64_t low;
-        uint32_t node;
-        uint32_t set;
-    };
-    Vector<RowBeforeSolve> rowsBeforeSolve;
     HashMap<uint64_t, ValueSetID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> setsOfLowMembers;
     std::array<LatestSetOfLowMembers, 256> latestSetsOfLowMembers;
     uint64_t evaluations { 0 };
@@ -808,34 +802,6 @@ void ValueFlowGraph::keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, Value
     m_lowMembersKeptOutOfNodesMadeForPlaceholders = lowMembersOf(keptOut, *m_makers[0]);
 }
 
-void ValueFlowGraph::limitListLength(uint32_t maxListLength, ValueFlowObjectID overflowMember, HasListLimit hasListLimit, const void* context)
-{
-    RELEASE_ASSERT(!m_hasSolved && overflowMember.index() < numberOfLowMembers);
-    m_maxListLength = maxListLength;
-    m_overflowMemberBit = 1ull << overflowMember.index();
-    m_hasListLimit = hasListLimit;
-    m_listLimitContext = context;
-}
-
-// Runs once the waves of a solve have ended, so which members a long list keeps does not depend on the order of arrival.
-void ValueFlowGraph::cutLongLists()
-{
-    for (const std::unique_ptr<Worker>& worker : m_workers) {
-        for (const Worker::RowBeforeSolve& before : worker->rowsBeforeSolve) {
-            Row& row = m_rows[before.node];
-            ValueSetID set(row.set);
-            if (set == ValueSets::nothing || ValueSets::isComplement(set) || m_sets.size(set) <= m_maxListLength + static_cast<uint32_t>(std::popcount(row.low)) || !m_hasListLimit(m_listLimitContext, ValueFlowNodeID(before.node)))
-                continue;
-            m_gates[before.node].flags |= IgnoresArrivals;
-            row.low = before.low | m_overflowMemberBit;
-            ValueSetID kept = ValueSetID(before.set) == ValueSets::nothing ? ValueSets::nothing : worker->maker.unite(ValueSetID(before.set), worker->setOfLowMembers(m_overflowMemberBit));
-            row.set = kept.index();
-            m_value[before.node] = kept == ValueSets::nothing ? worker->setOfLowMembers(row.low) : kept;
-        }
-        worker->rowsBeforeSolve.shrink(0);
-    }
-}
-
 bool ValueFlowGraph::flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID node) const
 {
     for (const Covering& covering : m_coverings) {
@@ -1142,11 +1108,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     row.low = lowAfter;
     row.set = after.index();
     m_value[node] = value;
-    if (!m_hasMoved.quickSet(node)) {
+    if (!m_hasMoved.quickSet(node))
         worker.movedNodes.append(node);
-        if (m_maxListLength)
-            worker.rowsBeforeSolve.append({ lowBefore, node, before.index() });
-    }
 
     const Links& successors = m_successors[node];
     if (!successors.count)
@@ -1342,8 +1305,6 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
         runWaves();
     }
     m_nodesWoken.shrink(0);
-    if (m_maxListLength)
-        cutLongLists();
     size_t numberMoved = 0;
     for (const std::unique_ptr<Worker>& worker : m_workers) {
         m_counters.evaluations += std::exchange(worker->evaluations, 0);

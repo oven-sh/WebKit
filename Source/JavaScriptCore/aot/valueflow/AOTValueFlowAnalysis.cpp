@@ -484,18 +484,6 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     times.didFinish("solve: rounds"_s);
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
-    if (!m_hasResult || !unknownSourcesLeftOut.isEmpty())
-        return;
-
-    m_seenCodeInput = m_input;
-    m_seenCodeInput.ignoresUnseenCode = true;
-    m_seenCodeInput.fullSolver = m_solver.get();
-    m_seenCodeInput.remembersWhoLoggedEachEdge = false;
-    m_seenCodeInput.isAskedHowValuesCame = false;
-    m_seenCodeSolver = makeUnique<ValueFlowSolver>(m_seenCodeInput, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
-    if (m_seenCodeSolver->solve())
-        m_solver->setSeenCodeSolver(m_seenCodeSolver.get());
-    times.didFinish("solve: rounds of seen code"_s);
 }
 
 ValueFlowSolution::~ValueFlowSolution() = default;

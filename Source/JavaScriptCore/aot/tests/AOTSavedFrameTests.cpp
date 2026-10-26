@@ -207,10 +207,11 @@ static void testMapRejectsBadOffsets()
 static void testSiteWord()
 {
     constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
     static_assert(SavedFrame::liveSlotMapOffsetBits == 18 && SavedFrame::savedRegisterBits == 2);
 
     for (uint32_t offset : { 0u, 1u, 4097u, maxOffset }) {
-        for (uint32_t promiseLocation : { 0u, 1u, 77u, 1u << 20, UINT32_MAX }) {
+        for (uint32_t promiseLocation : { 0u, 1u, 77u, 1u << 12, maxLocation }) {
             for (uint32_t savedRegisters : { 0u, 1u, 2u, 3u }) {
                 std::optional<uint64_t> word = SavedFrame::siteWord(offset, promiseLocation, savedRegisters);
                 AOT_TEST_CHECK(word);
@@ -226,6 +227,8 @@ static void testSiteWord()
     AOT_TEST_CHECK(!SavedFrame::siteWord(UINT32_MAX, 0, 0));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 4));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, UINT32_MAX));
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, maxLocation + 1, 0));
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, UINT32_MAX, 0));
 
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesPreservedRegister) == 1);
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesR15) == 2);
@@ -234,20 +237,25 @@ static void testSiteWord()
 static void testSkippedWordsInSiteWord()
 {
     constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
     struct Case {
         uint32_t deadWordsAtBottom;
         uint32_t skippedAtBottom;
     };
-    // The number of words kept stays even, and what does not fit the field is kept.
-    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 126, 126 }, { 127, 126 }, { 128, 126 }, { UINT32_MAX, 126 } };
+    // The number of words kept stays even.
+    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 126, 126 }, { 127, 126 }, { 128, 128 }, { 252, 252 }, { 253, 252 }, { 254, 254 }, { 255, 254 }, { 256, 256 }, { 4098, 4098 }, { maxLocation, maxLocation - 1 } };
     for (const Case& testCase : cases) {
-        uint64_t word = *SavedFrame::siteWord(maxOffset, UINT32_MAX, 3, testCase.deadWordsAtBottom);
-        AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
-        AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == UINT32_MAX && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+        for (uint32_t promiseLocation : { 0u, 1u, maxLocation }) {
+            uint64_t word = *SavedFrame::siteWord(maxOffset, promiseLocation, 3, testCase.deadWordsAtBottom);
+            AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
+            AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == promiseLocation && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+        }
     }
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, maxLocation + 1));
+    AOT_TEST_CHECK(!(*SavedFrame::siteWord(maxOffset, 31, 3, 252) >> 32) && *SavedFrame::siteWord(maxOffset, 31, 3, 254) >> 32);
 
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 2u, 3u }) {
-        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, UINT32_MAX, savedRegistersOrPairs, 126));
+        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, maxLocation, savedRegistersOrPairs, 126));
 #if CPU(X86_64)
         AOT_TEST_CHECK(skippedAtTop == (savedRegistersOrPairs == 3 ? 2u : 0u));
 #else
@@ -479,7 +487,7 @@ static void checkSkippedWords(LoadedProgram& program)
     VM& vm = program.vm();
     uint32_t function = findFunctionWithMap(*Image::current()).function;
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 3u }) {
-        for (uint32_t skippedAtBottom : { 0u, 4u }) {
+        for (uint32_t skippedAtBottom : { 0u, 4u, 252u, 254u, 600u }) {
             uint64_t siteWord = *SavedFrame::siteWord(0, 1, savedRegistersOrPairs, skippedAtBottom);
             uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(siteWord);
             AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(siteWord) == skippedAtBottom);

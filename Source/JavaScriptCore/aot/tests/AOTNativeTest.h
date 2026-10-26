@@ -214,6 +214,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(stubPropertyStoreTests) \
     v(stubRegExpTests) \
     v(stubRuntimeTests) \
+    v(stubScratchRegisterTests) \
     v(stubStringTests) \
     v(stubValueTests) \
     v(stubVectorGrowthTests) \

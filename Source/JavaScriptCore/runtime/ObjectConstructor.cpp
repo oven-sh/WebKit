@@ -1177,14 +1177,16 @@ bool setIntegrityLevel(JSGlobalObject* globalObject, VM& vm, JSObject* object)
     if (!success) [[unlikely]]
         return false;
 
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, false);
 
     PropertyNameArrayBuilder::const_iterator end = properties.end();
     for (PropertyNameArrayBuilder::const_iterator iter = properties.begin(); iter != end; ++iter) {
         auto& propertyName = *iter;
-        ASSERT(!propertyName.isPrivateName());
+        // As in PropertyTable::freeze().
+        if (propertyName.isPrivateName() && !PropertyName(propertyName).passesThroughProxies())
+            continue;
 
         PropertyDescriptor desc;
         if (level == IntegrityLevel::Sealed)
