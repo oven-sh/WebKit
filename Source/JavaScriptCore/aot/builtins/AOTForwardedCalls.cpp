@@ -20,6 +20,7 @@ namespace {
 struct ForwardedOperands {
     BuiltinOperand callee;
     std::optional<BuiltinOperand> thisValue;
+    std::optional<BuiltinOperand> newTarget;
     std::optional<BuiltinOperand> list;
     std::optional<unsigned> firstArgument;
 };
@@ -45,7 +46,7 @@ static std::optional<BuiltinOperand> singleOperandOf(const BuiltinPlace& place, 
     return place.operand;
 }
 
-static const BuiltinCallback* findForwardedCallback(const BuiltinOverload& overload)
+static const BuiltinCallback* findForwardedCallback(const BuiltinOverload& overload, bool constructs)
 {
     const BuiltinFlow& flow = overload.flow;
     if (flow.callbacks.size() != 1 || !flow.transfers.empty() || !flow.propertyActions.empty())
@@ -54,7 +55,7 @@ static const BuiltinCallback* findForwardedCallback(const BuiltinOverload& overl
         return nullptr;
 
     const BuiltinCallback& callback = flow.callbacks.front();
-    if (callback.times != BuiltinCallbackTimes::Once || callback.constructs || callback.resultUse != BuiltinCallbackResultUse::Returned)
+    if (callback.times != BuiltinCallbackTimes::Once || callback.constructs != constructs || callback.resultUse != BuiltinCallbackResultUse::Returned)
         return nullptr;
     return &callback;
 }
@@ -63,11 +64,16 @@ static std::optional<ForwardedOperands> forwardedOperandsOf(const BuiltinCallbac
 {
     if (!isSingleOperand(callback.callee))
         return std::nullopt;
-    ForwardedOperands operands { callback.callee, { }, { }, { } };
+    ForwardedOperands operands { callback.callee, { }, { }, { }, { } };
 
     if (callback.thisValue.kind != BuiltinPlaceKind::None) {
         operands.thisValue = singleOperandOf(callback.thisValue, BuiltinPlaceKind::Operand);
         if (!operands.thisValue)
+            return std::nullopt;
+    }
+    if (callback.newTarget.kind != BuiltinPlaceKind::None) {
+        operands.newTarget = singleOperandOf(callback.newTarget, BuiltinPlaceKind::Operand);
+        if (!operands.newTarget)
             return std::nullopt;
     }
 
@@ -95,14 +101,14 @@ static std::optional<ForwardedOperands> forwardedOperandsOf(const BuiltinCallbac
 static bool hasOtherOperandProtocols(const BuiltinOverload& overload, const ForwardedOperands& operands)
 {
     auto runsProtocols = [&](const BuiltinParameter& parameter) {
-        return parameter.operand != operands.list && !parameter.protocols.isEmpty();
+        return parameter.operand != operands.list && parameter.operand != operands.newTarget && !parameter.protocols.isEmpty();
     };
     return (overload.receiver && runsProtocols(*overload.receiver)) || std::ranges::any_of(overload.parameters, runsProtocols);
 }
 
-static std::optional<ForwardedOperands> forwardedOperandsOf(const BuiltinOverload& overload)
+static std::optional<ForwardedOperands> forwardedOperandsOf(const BuiltinOverload& overload, bool constructs = false)
 {
-    const BuiltinCallback* callback = findForwardedCallback(overload);
+    const BuiltinCallback* callback = findForwardedCallback(overload, constructs);
     if (!callback)
         return std::nullopt;
     std::optional<ForwardedOperands> operands = forwardedOperandsOf(*callback);
@@ -127,18 +133,24 @@ std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload& overload)
     return operands ? std::optional(operands->callee) : std::nullopt;
 }
 
-std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const Function& function, const BuiltinCall& call)
+static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const Function& function, const BuiltinCall& call, bool constructs)
 {
-    std::optional<ForwardedOperands> operands = forwardedOperandsOf(program.builtins().at(call.overload));
+    std::optional<ForwardedOperands> operands = forwardedOperandsOf(program.builtins().at(call.overload), constructs);
     if (!operands)
         return std::nullopt;
 
     ForwardedCallPlan plan;
+    plan.constructs = constructs;
     plan.callee = call.operandAt(operands->callee);
     if (!plan.callee)
         return std::nullopt;
     if (operands->thisValue)
         plan.thisValue = call.operandAt(*operands->thisValue);
+    if (operands->newTarget) {
+        plan.newTarget = call.operandAt(*operands->newTarget);
+        if (!plan.newTarget)
+            return std::nullopt;
+    }
 
     ValueID list = operands->list ? call.operandAt(*operands->list) : ValueID();
     if (list && !program.typeOf(function, list).isUndefinedOrNull())
@@ -148,6 +160,16 @@ std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const
     size_t firstForwardedArgument = operands->firstArgument ? std::min<size_t>(*operands->firstArgument, numberOfArguments) : numberOfArguments;
     plan.firstForwardedArgument = static_cast<uint32_t>(firstForwardedArgument);
     return plan;
+}
+
+std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const Function& function, const BuiltinCall& call)
+{
+    return planForwardedCall(program, function, call, false);
+}
+
+std::optional<ForwardedCallPlan> planForwardedConstruct(const Program& program, const Function& function, const BuiltinCall& call)
+{
+    return planForwardedCall(program, function, call, true);
 }
 
 bool isAlwaysArray(const Type& type)
@@ -161,9 +183,14 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     AccessSiteID accessSite = call.accessSite();
     Vector<ValueID, 8> arguments(call.argumentsOperands().subspan(plan.firstForwardedArgument));
 
-    call.become(plan.list ? Opcode::CallList : Opcode::Call);
+    if (plan.constructs) {
+        call.become(plan.list ? Opcode::ConstructList : Opcode::Construct);
+        call.setNewTargetOperand(plan.newTarget);
+    } else {
+        call.become(plan.list ? Opcode::CallList : Opcode::Call);
+        call.setThisValueOperand(plan.thisValue);
+    }
     call.setCalleeOperand(plan.callee);
-    call.setThisValueOperand(plan.thisValue);
     if (plan.list)
         call.setListOperand(plan.list);
     else

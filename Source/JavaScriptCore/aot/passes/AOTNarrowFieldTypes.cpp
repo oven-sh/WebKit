@@ -41,6 +41,8 @@ namespace {
 using StoredKinds = OptionSet<StoredKind>;
 
 constexpr Range inlineInt32s { minInlineInt32, INT32_MAX };
+constexpr Range integersAddedTo { minIntegerAddedTo, maxIntegerAddedTo };
+static_assert(Range { 2 * minIntegerAddedTo, 2 * maxIntegerAddedTo }.isSubsetOf(Range::exact()));
 
 struct FieldEvidence {
     VisibleStores stores;
@@ -314,6 +316,14 @@ static bool isDeclaredInCheckedCode(const Program& program, LayoutID id)
 
 enum class IntegerEvidence : bool { TypesAndStores, Uses };
 
+// Nothing bounds a number that is added to. An index and a position end where the table and the text end.
+static bool mayOutgrowInt32(const Program& program, const FieldEvidence& evidence, FieldReference reference)
+{
+    const Field& field = fieldAt(program, reference);
+    bool isDeclaredInt32 = program.at(slotTypeOf(program, field)).isInt32OrNullish() || field.declared.has(PositionFlags::IsInt32Promise);
+    return !isDeclaredInt32 && evidence.stores.isAddedTo(reference.layout, reference.field) && !evidence.stores.isUsedAsInteger(reference.layout, reference.field);
+}
+
 static std::optional<Type> findIntegersToKeepInSlot(const Program& program, const FieldEvidence& evidence, FieldReference reference, IntegerEvidence admitted)
 {
     const Field& field = fieldAt(program, reference);
@@ -375,6 +385,23 @@ static uint32_t likelyWidthOfSlot(const Program& program, const Field& field)
     if (type.hasCells() && !(type.primitives & ~(markers | cellPrimitives)) && !type.opaque)
         return widthOf(SlotRepresentation::Cell32);
     return widthOf(representation);
+}
+
+// A layout lists the fields of the classes above it only once flow has followed them.
+static void forEachFieldOfObjects(const Program& program, LayoutID id, NOESCAPE const Invocable<void(FieldReference declaration)> auto& functor)
+{
+    const Layout& layout = program.at(id);
+    for (uint32_t fieldIndex = 0; fieldIndex < layout.fields.size(); ++fieldIndex)
+        functor(declarationOf(program, { id, fieldIndex }));
+    LayoutID above = layout.base;
+    for (size_t steps = 0; above && steps < program.layouts.size(); ++steps, above = program.at(above).base) {
+        const Vector<Field>& fields = program.at(above).fields;
+        for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
+            bool isListed = fields[fieldIndex].key && layout.findField(fields[fieldIndex].key);
+            if (!isListed && !fields[fieldIndex].flags.contains(FieldFlags::IsInherited))
+                functor({ above, fieldIndex });
+        }
+    }
 }
 
 static bool originCanBeResolved(const Program& program, const Field& field)
@@ -743,18 +770,23 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
 
     BitVector narrowedKeys;
     uint64_t numberOfNarrowedFields = 0;
-    auto narrow = [&](FieldReference reference, const Type& expected) {
+    auto establish = [&](FieldReference reference, const Type& expected) {
         TypeID type = program.types.intern(expected);
         Field& field = program.at(reference.layout).fields[reference.field];
         if (field.declared.established() == type)
-            return;
+            return false;
         field.declared.establish(Proven::byPosition(type));
         narrowedKeys.set(field.key.index());
-        ++numberOfNarrowedFields;
+        return true;
+    };
+    auto narrow = [&](FieldReference reference, const Type& expected) {
+        numberOfNarrowedFields += establish(reference, expected);
     };
     using FieldToNarrow = std::pair<FieldReference, Type>;
     Vector<BitVector> countedFields(program.layouts.size());
     std::atomic<bool> hasCountedFields { false };
+    Vector<BitVector> fieldsAddedTo(program.layouts.size());
+    std::atomic<bool> hasFieldsAddedTo { false };
     Vector<FieldToNarrow> fields = collectInParallel<FieldToNarrow>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldToNarrow>& found) {
         if (!hasSlots(program, LayoutID(layoutIndex)))
             return;
@@ -762,9 +794,13 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
             FieldReference reference { LayoutID(layoutIndex), fieldIndex };
             if (fieldAt(program, reference).flags.contains(FieldFlags::IsInherited))
                 continue;
-            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::TypesAndStores))
+            if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::TypesAndStores)) {
+                if (mayOutgrowInt32(program, *evidence, reference)) {
+                    fieldsAddedTo[layoutIndex].set(fieldIndex);
+                    hasFieldsAddedTo.store(true, std::memory_order_relaxed);
+                }
                 found.append({ reference, WTF::move(*expected) });
-            else if (findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses)) {
+            } else if (findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses)) {
                 countedFields[layoutIndex].set(fieldIndex);
                 hasCountedFields.store(true, std::memory_order_relaxed);
             }
@@ -772,11 +808,11 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
     });
     for (const auto& [reference, expected] : fields)
         narrow(reference, expected);
+    AOT_THRESHOLD(uint32_t, largestCellWithEveryField, 128);
+    CellSizeClasses sizeClasses(build.options().sizeClassProgression);
     // The uses are a guess, and a guess costs a test at every store and every read.
     if (hasCountedFields.load(std::memory_order_relaxed)) {
         constexpr uint32_t saved = widthOf(SlotRepresentation::OptionalDouble) - widthOf(SlotRepresentation::OptionalInt32);
-        AOT_THRESHOLD(uint32_t, largestCellWithEveryField, 128);
-        CellSizeClasses sizeClasses(build.options().sizeClassProgression);
         Vector<FieldReference> fieldsThatMakeCellsSmaller = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
             const Layout& layout = program.layouts[layoutIndex];
             if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
@@ -797,6 +833,34 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         for (FieldReference reference : fieldsThatMakeCellsSmaller) {
             if (std::optional<Type> expected = findIntegersToKeepInSlot(program, *evidence, reference, IntegerEvidence::Uses))
                 narrow(reference, *expected);
+        }
+    }
+    // A field that is added to takes the bytes that its cells leave unused.
+    if (hasFieldsAddedTo.load(std::memory_order_relaxed)) {
+        constexpr uint32_t added = widthOf(SlotRepresentation::OptionalInt64) - widthOf(SlotRepresentation::OptionalInt32);
+        Vector<FieldReference> fieldsWithoutRoom = collectInParallel<FieldReference>(loops, program.layouts.size(), [&](unsigned layoutIndex, Vector<FieldReference>& found) {
+            const Layout& layout = program.layouts[layoutIndex];
+            if (!hasSlots(program, LayoutID(layoutIndex)) || layout.flow.allocation == AllocationState::NeverAllocated)
+                return;
+            Vector<FieldReference, 8> held;
+            // A store into such a field is tested, and what fails the test goes to the extra properties, which have a word in the cell.
+            uint32_t bytes = offsetOfFirstField + widthOf(SlotRepresentation::Cell32);
+            forEachFieldOfObjects(program, LayoutID(layoutIndex), [&](FieldReference declaration) {
+                // Flow will say of a method that it holds a function.
+                const Field& field = fieldAt(program, declaration);
+                bytes += field.flags.contains(FieldFlags::IsMethod) ? widthOf(SlotRepresentation::Cell32) : likelyWidthOfSlot(program, field);
+                if (fieldsAddedTo[declaration.layout.index()].get(declaration.field))
+                    held.append(declaration);
+            });
+            size_t room = bytes > largestCellWithEveryField ? 0 : sizeClasses.cellSizeFor(bytes) - bytes;
+            if (held.size() > room / added)
+                found.append(held.subspan(room / added));
+        });
+        for (FieldReference reference : fieldsWithoutRoom)
+            fieldsAddedTo[reference.layout.index()].clear(reference.field);
+        for (const auto& [reference, expected] : fields) {
+            if (fieldsAddedTo[reference.layout.index()].get(reference.field))
+                establish(reference, Type::integer(integersAddedTo).withPrimitives(expected.primitives & Primitive::UndefinedOrNull));
         }
     }
     markEnforcedFields(program, build);

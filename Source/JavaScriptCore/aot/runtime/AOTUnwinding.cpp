@@ -104,7 +104,8 @@ static void copyStubSavedRegisters(VMEntryRecord& record, const int8_t* bufferSl
 static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance& instance, const CompiledHandler& handler, unsigned frameSize)
 {
     char* stackPointer = reinterpret_cast<char*>(handler.callFrame) - frameSize;
-    instance.json.didUnwindTo(stackPointer);
+    // A parse is one call of the program, so a handler of the frame that opened a source lies behind that parse.
+    instance.json.didLeaveFramesUpTo(handler.callFrame);
     instance.runtime.exceptions.stackPointerOfHandler = stackPointer;
     result.status = CompiledUnwindStatus::FoundHandler;
     result.handler = handler;
@@ -151,6 +152,8 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
         if (leftFrame)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
+    if (leftFrame)
+        instance->json.didLeaveFramesUpTo(leftFrame);
 
     result.hasLeftRun = true;
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;

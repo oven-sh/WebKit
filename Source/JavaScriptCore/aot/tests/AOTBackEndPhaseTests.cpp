@@ -15,6 +15,7 @@
 #include "AOTPhiNarrowing.h"
 #include "AOTPureOperations.h"
 #include "AOTVector.h"
+#include "AirCode.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
@@ -946,6 +947,8 @@ struct IntegerUpdateShape {
     bool subtracts { false };
     bool returnsOldValue { false };
     bool loadsBeforeStore { false };
+    // Of an integer of eight bytes.
+    std::optional<B3::IntRange> wideOldValueRange { };
 };
 
 } // anonymous namespace
@@ -962,8 +965,10 @@ static IntegerUpdate appendIntegerUpdate(B3::Procedure& proc, const IntegerUpdat
     IntegerUpdate update { proc.addBlock(), proc.addBlock(), proc.addBlock(), nullptr, nullptr, nullptr, nullptr };
     B3::Origin origin = originOf(otherOrigin);
     update.address = update.first->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
-    update.oldValue = update.first->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, update.address, 16);
-    B3::Value* extended = update.first->appendNew<B3::Value>(proc, B3::SExt32, origin, update.oldValue);
+    update.oldValue = update.first->appendNew<B3::MemoryValue>(proc, B3::Load, shape.wideOldValueRange ? B3::Int64 : B3::Int32, origin, update.address, 16);
+    if (shape.wideOldValueRange)
+        proc.setKnownRange(update.oldValue, *shape.wideOldValueRange);
+    B3::Value* extended = shape.wideOldValueRange ? update.oldValue : update.first->appendNew<B3::Value>(proc, B3::SExt32, origin, update.oldValue);
     B3::Value* extendedAddend = nullptr;
     if (shape.addendKind == AddendKind::Constant)
         extendedAddend = update.first->appendNew<B3::Const64Value>(proc, origin, shape.addend);
@@ -986,7 +991,7 @@ static IntegerUpdate appendIntegerUpdate(B3::Procedure& proc, const IntegerUpdat
     B3::Value* result = shape.returnsSum ? update.sum : shape.returnsOldValue ? extended : update.address;
     if (shape.loadsBeforeStore)
         result = update.fastPath->appendNew<B3::Value>(proc, B3::SExt32, origin, update.fastPath->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, update.address, 16));
-    update.fastPath->appendNew<B3::MemoryValue>(proc, B3::Store, origin, update.fastPath->appendNew<B3::Value>(proc, B3::Trunc, origin, update.sum), update.address, shape.storeOffset);
+    update.fastPath->appendNew<B3::MemoryValue>(proc, B3::Store, origin, shape.wideOldValueRange ? update.sum : update.fastPath->appendNew<B3::Value>(proc, B3::Trunc, origin, update.sum), update.address, shape.storeOffset);
     update.fastPath->appendNew<B3::Value>(proc, B3::Return, origin, result);
     update.slowPath->appendNew<B3::Value>(proc, B3::Return, origin, update.sum);
     proc.resetReachability();
@@ -1072,6 +1077,55 @@ static void checkUsesOverflowFlag(const IntegerUpdateShape& shape, std::optional
         AOT_TEST_CHECK(update.fastPath->last()->child(0)->child(0) == update.oldValue);
 }
 
+static void checkUsesCarryFlag(const IntegerUpdateShape& shape, bool adds, std::optional<int32_t> constantAmount)
+{
+    B3::Procedure proc(policyTrustingKnownRanges());
+    IntegerUpdate update = appendIntegerUpdate(proc, shape);
+    AOT_TEST_CHECK(updateIntegersInMemory(proc));
+    B3::validate(proc);
+
+    auto isAmount = [&](B3::Value* value) {
+        return constantAmount ? value->isInt32(*constantAmount) : value == update.addend;
+    };
+    auto storeOfLowWordIn = [&](B3::BasicBlock* block, B3::Opcode opcode) -> B3::Value* {
+        for (B3::Value* value : *block) {
+            auto* store = value->as<B3::MemoryValue>();
+            if (!store || store->opcode() != B3::Store)
+                continue;
+            AOT_TEST_CHECK(store->lastChild() == update.address && store->offset() == 16 && store->child(0)->type() == B3::Int32 && store->child(0)->opcode() == opcode);
+            AOT_TEST_CHECK(isLoadOfUpdatedInteger(update, store->child(0)->child(0)) && store->child(0)->child(0)->owner == block && isAmount(store->child(0)->child(1)));
+            return store->child(0);
+        }
+        return nullptr;
+    };
+
+    B3::Value* changedWord = storeOfLowWordIn(update.first, adds ? B3::Add : B3::Sub);
+    AOT_TEST_CHECK(changedWord);
+    B3::Value* leavesWord = update.first->last()->child(0);
+    AOT_TEST_CHECK(update.first->last()->opcode() == B3::Branch && leavesWord->opcode() == B3::Below && leavesWord->child(0) == (adds ? changedWord : changedWord->child(0)) && isAmount(leavesWord->child(1)));
+    AOT_TEST_CHECK(update.first->successor(0).isRare() && update.first->successorBlock(1) == update.fastPath);
+    for (B3::Value* value : *update.fastPath)
+        AOT_TEST_CHECK(value->opcode() != B3::Store);
+
+    B3::BasicBlock* exact = update.first->successorBlock(0);
+    AOT_TEST_CHECK(storeOfLowWordIn(exact, adds ? B3::Sub : B3::Add));
+    B3::Value* comparison = exact->last()->child(0);
+    AOT_TEST_CHECK(exact->last()->opcode() == B3::Branch && comparison->opcode() == shape.relation && comparison->owner == exact && comparison->child(1)->isInt64(shape.bound));
+    B3::Value* exactSum = shape.bias ? comparison->child(0)->child(0) : comparison->child(0);
+    AOT_TEST_CHECK(exactSum != update.sum && exactSum->owner == exact && exactSum->opcode() == update.sum->opcode() && exactSum->child(1) == update.sum->child(1));
+    auto* exactOldValue = exactSum->child(0)->as<B3::MemoryValue>();
+    AOT_TEST_CHECK(exactOldValue && exactOldValue != update.oldValue && exactOldValue->owner == exact && exactOldValue->opcode() == B3::Load && exactOldValue->type() == B3::Int64 && exactOldValue->lastChild() == update.address && exactOldValue->offset() == 16);
+    AOT_TEST_CHECK(exact->successorBlock(1) == update.slowPath && update.slowPath->numPredecessors() == 1 && update.slowPath->predecessor(0) == exact);
+
+    B3::BasicBlock* exactStore = exact->successorBlock(0);
+    auto* store = exactStore->at(0)->as<B3::MemoryValue>();
+    AOT_TEST_CHECK(exactStore->size() == 2 && store && store->opcode() == B3::Store && store->child(0) == exactSum && store->lastChild() == update.address && store->offset() == 16);
+    AOT_TEST_CHECK(exactStore->numSuccessors() == 1 && exactStore->successorBlock(0) == update.fastPath && update.fastPath->numPredecessors() == 2);
+
+    B3::Value* clonedSum = update.slowPath->last()->child(0);
+    AOT_TEST_CHECK(clonedSum != update.sum && clonedSum->owner == update.slowPath && clonedSum->opcode() == update.sum->opcode() && clonedSum->child(0)->owner == update.slowPath && clonedSum->child(0)->opcode() == B3::Load && clonedSum->child(0)->type() == B3::Int64);
+}
+
 static void checkIntegerUpdateStays(const IntegerUpdateShape& shape)
 {
     B3::Procedure proc(policyTrustingKnownRanges());
@@ -1108,6 +1162,32 @@ static void testUpdateIntegersInMemory()
     checkIntegerUpdateStays({ .storesBetween = true });
     checkIntegerUpdateStays({ .returnsSum = true });
     checkIntegerUpdateStays({ .storeOffset = 20 });
+
+    constexpr int64_t minWide = -(1ll << 52);
+    constexpr int64_t maxWide = (1ll << 52) - 1;
+    const B3::IntRange wide(minWide, maxWide);
+    checkUsesCarryFlag({ .bound = maxWide, .wideOldValueRange = wide }, true, 1);
+    checkUsesCarryFlag({ .addend = std::numeric_limits<int32_t>::max(), .bound = maxWide, .wideOldValueRange = wide }, true, std::numeric_limits<int32_t>::max());
+    checkUsesCarryFlag({ .relation = B3::LessThan, .bound = maxWide + 1, .wideOldValueRange = wide }, true, 1);
+    checkUsesCarryFlag({ .addend = -3, .relation = B3::GreaterEqual, .bound = minWide, .wideOldValueRange = wide }, false, 3);
+    checkUsesCarryFlag({ .addend = 3, .relation = B3::BelowEqual, .bound = maxWide - minWide, .bias = -minWide, .wideOldValueRange = wide }, true, 3);
+    checkUsesCarryFlag({ .bound = maxWide, .addendKind = AddendKind::ZeroExtended, .wideOldValueRange = wide }, true, std::nullopt);
+    checkUsesCarryFlag({ .bound = maxWide, .addendKind = AddendKind::SignExtended, .addendRange = B3::IntRange(0, 7), .wideOldValueRange = wide }, true, std::nullopt);
+    checkUsesCarryFlag({ .relation = B3::GreaterEqual, .bound = minWide, .addendKind = AddendKind::ZeroExtended, .subtracts = true, .wideOldValueRange = wide }, false, std::nullopt);
+    checkUsesCarryFlag({ .bound = maxWide, .returnsOldValue = true, .wideOldValueRange = wide }, true, 1);
+
+    // A sum may pass the bound without a carry.
+    checkIntegerUpdateStays({ .bound = maxWide - 1, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .bound = 0xffffffffll, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .bound = maxWide, .wideOldValueRange = B3::IntRange(minWide, maxWide + 1) });
+    checkIntegerUpdateStays({ .bound = maxWide, .wideOldValueRange = B3::IntRange::top<int64_t>() });
+    checkIntegerUpdateStays({ .addend = -3, .relation = B3::GreaterEqual, .bound = minWide + 1, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .addend = -3, .relation = B3::GreaterEqual, .bound = minWide, .wideOldValueRange = B3::IntRange(minWide - 1, maxWide) });
+    // The amount may be negative.
+    checkIntegerUpdateStays({ .relation = B3::BelowEqual, .bound = maxWide - minWide, .addendKind = AddendKind::SignExtended, .bias = -minWide, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .bound = maxWide, .returnsSum = true, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .bound = maxWide, .storesBetween = true, .wideOldValueRange = wide });
+    checkIntegerUpdateStays({ .bound = maxWide, .storeOffset = 24, .wideOldValueRange = wide });
 }
 
 static void checkPhiNarrowing(bool hasWideUser)
@@ -1174,6 +1254,54 @@ static void testNarrowTruncatedPhis()
     checkPhiNarrowing(true);
 }
 
+static unsigned countLoadsAfterPatch(bool loadsStayInFront)
+{
+    const B3::HeapRange heapOfLoad(1, 2);
+    const B3::HeapRange heapOfPatch(5, 6);
+    B3::Origin origin = originOf(otherOrigin);
+    B3::Policy policy;
+    B3::Procedure proc(policy);
+    if (loadsStayInFront)
+        proc.setHeapThatLoadsStayInFrontOf(heapOfPatch);
+    B3::BasicBlock* root = proc.addBlock();
+    B3::Value* address = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+    B3::Value* addend = root->appendNew<B3::Value>(proc, B3::Trunc, origin, root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1));
+    B3::MemoryValue* load = root->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, address);
+    load->setRange(heapOfLoad);
+    auto* patch = root->appendNew<B3::PatchpointValue>(proc, B3::Void, origin);
+    patch->effects = B3::Effects::none();
+    patch->effects.writes = heapOfPatch;
+    patch->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    root->appendNew<B3::Value>(proc, B3::Return, origin, root->appendNew<B3::Value>(proc, B3::Add, origin, load, addend));
+    B3::prepareForGeneration(proc);
+    AOT_TEST_CHECK(!proc.report().failure);
+
+    unsigned count = 0;
+    bool isAfterPatch = false;
+    for (B3::Air::BasicBlock* block : proc.code()) {
+        for (B3::Air::Inst& inst : *block) {
+            if (inst.kind.opcode == B3::Air::Patch) {
+                isAfterPatch = true;
+                continue;
+            }
+            if (!isAfterPatch)
+                continue;
+            for (B3::Air::Arg& arg : inst.args())
+                count += arg.isMemory() && !arg.isStackMemory();
+        }
+    }
+    AOT_TEST_CHECK(isAfterPatch);
+    return count;
+}
+
+static void testLoadIsNotFoldedAcrossWriteItStaysInFrontOf()
+{
+    AOT_TEST_CHECK(!countLoadsAfterPatch(true));
+#if CPU(X86_64)
+    AOT_TEST_CHECK(countLoadsAfterPatch(false) == 1);
+#endif
+}
+
 std::span<const NativeTest> backEndPhaseTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1207,6 +1335,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merge-test-for-nan-into-length-test"_s, testMergeTestForNaNIntoLengthTest },
         { "update-integers-in-memory"_s, testUpdateIntegersInMemory },
         { "narrow-truncated-phis"_s, testNarrowTruncatedPhis },
+        { "load-is-not-folded-across-write-it-stays-in-front-of"_s, testLoadIsNotFoldedAcrossWriteItStaysInFrontOf },
     };
     return tests;
 }

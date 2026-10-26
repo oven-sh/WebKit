@@ -779,11 +779,13 @@ private:
             read(parameter);
     }
 
-    // A receiver that the overload does not accept makes the call throw. All that the call does with it is to describe it in the error.
+    // A receiver that the overload does not accept makes the call throw. All that the call does with it is to describe it in the error. A data property asks nothing of the receiver that finds it.
     ValueSetID receiversAcceptedBy(const BuiltinOverload& overload) const
     {
         const BuiltinParameter* receiver = overload.receiver;
         if (!receiver || !receiver->accepted || receiver->conversion != BuiltinConversion::None || isConstruction(m_call.kind) || overload.isUndeclared())
+            return ValueSets::anything;
+        if (m_builtins.at(m_builtin).kind == BuiltinKind::DataProperty)
             return ValueSets::anything;
         return m_tables.maskOf(receiver->accepted);
     }

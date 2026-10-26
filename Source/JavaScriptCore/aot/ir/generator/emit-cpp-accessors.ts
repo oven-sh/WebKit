@@ -72,11 +72,15 @@ function collect(schema: Schema): NamedParts {
   };
 }
 
+// A lookup that this many entries declare reads one table that all its callers share. As a switch it is compiled into a jump table at each of them.
+const leastUsersOfSharedTable = 24;
+
 function lookup(name: string, users: readonly User[]): string[] {
   const functions: string[][] = [];
   for (const { isTerminator, enumName, tag } of [opcodes, terminatorKinds]) {
     const own = users.filter(user => user.entry.isTerminator === isTerminator);
-    const signature = `constexpr std::optional<unsigned> ${name}(${enumName} ${tag})`;
+    const isShared = own.length >= leastUsersOfSharedTable;
+    const signature = `constexpr std::optional<unsigned> ${isShared ? `${name}AsDeclared` : name}(${enumName} ${tag})`;
     if (own.length === 0) continue;
     if (own.length === 1) {
       const [{ entry, position }] = own;
@@ -99,6 +103,10 @@ function lookup(name: string, users: readonly User[]): string[] {
     }
     lines.push(`${indentation}default: return std::nullopt;`, `${indentation}}`, "}");
     functions.push(lines);
+    if (isShared) {
+      const table = `PositionTable<${enumName}, ${name}AsDeclared>`;
+      functions.push([`constexpr std::optional<unsigned> ${name}(${enumName} ${tag}) { return ${table}::at(${tag}); }`]);
+    }
   }
   return blocks(...functions);
 }

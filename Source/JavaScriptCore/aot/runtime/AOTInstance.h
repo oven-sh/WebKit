@@ -88,6 +88,10 @@ struct ClosureTableWords {
 
 // On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
+    int64_t minIntegerAddedTo;
+    int64_t maxIntegerAddedTo;
+    int64_t distanceOfIntegersAddedToFromZero;
+    int64_t spanOfIntegersAddedTo;
     int64_t minInt64;
     uint64_t newCopyOnWriteArrayWithContiguousHeader;
     uint64_t stringHeader;

@@ -15,12 +15,14 @@
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <utility>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/MallocSpan.h>
 
@@ -582,6 +584,11 @@ public:
         return !source.isConstant() && source.node() < m_numberOfPlaces ? kinds - StoredKind::NoInt32 : kinds;
     }
 
+    static bool storesWithoutReceiverReach(CodeClass storing, CodeClass declaring)
+    {
+        return storing == CodeClass::Checked || declaring == CodeClass::Library || (storing == CodeClass::Unchecked && declaring == CodeClass::Unchecked);
+    }
+
     void enqueue(Vector<Node>& worklist, Node node)
     {
         if (!m_isEnqueued[node].exchange(1))
@@ -606,8 +613,7 @@ public:
             if (holdsStoresWithoutReceiver(node)) {
                 auto storing = static_cast<CodeClass>((node - m_firstKeyNode) % nodesPerKey);
                 for (const FieldWithKey& field : fieldsWithKey(PropertyKeyID((node - m_firstKeyNode) / nodesPerKey))) {
-                    CodeClass declaring = m_codeClassOfField[field.declaration];
-                    if (storing == CodeClass::Checked || declaring == CodeClass::Library || (storing == CodeClass::Unchecked && declaring == CodeClass::Unchecked))
+                    if (storesWithoutReceiverReach(storing, m_codeClassOfField[field.declaration]))
                         join(worklist, field.declaration, kinds);
                 }
             }
@@ -699,6 +705,73 @@ public:
         });
     }
 
+    // Hands over each place that is stored a sum or a difference which the contents of `from` go into, with no other place in between. False where that is too much to follow.
+    bool forEachPlaceStoredSumOf(Node from, NOESCAPE const Invocable<void(Node)> auto& functor) const
+    {
+        AOT_THRESHOLD(size_t, maxValuesFollowed, 1024);
+        Vector<std::pair<Node, bool>, 16> worklist;
+        UncheckedKeyHashSet<uint64_t> followed;
+        worklist.append({ from, false });
+        while (!worklist.isEmpty() && followed.size() <= maxValuesFollowed) {
+            auto [node, isSum] = worklist.takeLast();
+            for (Node successor : m_successors.subspan(m_firstSuccessor[node], m_firstSuccessor[node + 1] - m_firstSuccessor[node])) {
+                if (successor < m_numberOfPlaces) {
+                    if (isSum)
+                        functor(successor);
+                    continue;
+                }
+                bool successorIsSum = isSum;
+                uint32_t operationIndex = m_operationOfValue[successor - m_numberOfPlaces];
+                if (operationIndex != UINT32_MAX) {
+                    StoredKindRule rule = m_operations[operationIndex].rule;
+                    if (rule == StoredKindRule::BitOperation)
+                        continue;
+                    successorIsSum |= rule == StoredKindRule::IntegerArithmetic;
+                }
+                if (followed.add((static_cast<uint64_t>(successor) << 1 | successorIsSum) + 1).isNewEntry)
+                    worklist.append({ successor, successorIsSum });
+            }
+        }
+        return followed.size() <= maxValuesFollowed;
+    }
+
+    void findFieldsAddedTo()
+    {
+        m_isAddedTo = FilledArray<uint8_t>(m_loops, m_firstVariableNode);
+        forEachInShares(m_firstKeyNode, 1 << 10, [&](Node field) {
+            Kinds kinds = kindsAt(field);
+            if (!kinds.contains(StoredKind::Int32) || kinds.contains(StoredKind::Other))
+                return;
+            bool isStoredBack = false;
+            bool isFollowed = forEachPlaceStoredSumOf(field, [&](Node place) { isStoredBack |= place == field; });
+            m_isAddedTo[field] = isFollowed && isStoredBack;
+        });
+        forEachInShares(m_program.types.numberOfPropertyKeys(), 1 << 8, [&](Node keyIndex) {
+            PropertyKeyID key(keyIndex);
+            if (fieldsWithKey(key).empty())
+                return;
+            Node first = nodeOfStoresWithoutReceiver(CodeClass::Checked, key);
+            std::array<bool, numberOfCodeClasses> isStoredBack { };
+            bool isFollowed = forEachPlaceStoredSumOf(nodeOfAllStores(key), [&](Node place) {
+                if (place >= first && place - first < numberOfCodeClasses)
+                    isStoredBack[place - first] = true;
+            });
+            for (unsigned code = 0; code < numberOfCodeClasses; ++code)
+                m_isAddedTo[first + code] = isFollowed && isStoredBack[code];
+        });
+    }
+
+    bool isAddedTo(Node field, PropertyKeyID key) const
+    {
+        if (m_isAddedTo[field])
+            return true;
+        for (CodeClass storing : { CodeClass::Checked, CodeClass::Unchecked, CodeClass::Library }) {
+            if (m_isAddedTo[nodeOfStoresWithoutReceiver(storing, key)] && storesWithoutReceiverReach(storing, m_codeClassOfField[field]))
+                return true;
+        }
+        return false;
+    }
+
     const Program& m_program;
     const ParallelLoops& m_loops;
     Vector<Node> m_firstFieldOfLayout;
@@ -728,6 +801,7 @@ public:
     FilledArray<std::atomic<uint8_t>> m_isEnqueued;
     Vector<Node> m_usedAsIntegers;
     FilledArray<std::atomic<uint8_t>> m_usesAsIntegers;
+    FilledArray<uint8_t> m_isAddedTo;
     bool m_unseenSourcesAreOther { false };
 };
 
@@ -1234,7 +1308,9 @@ VisibleStores::VisibleStores(const Program& program, const ParallelLoops& loops,
     graph.build(shouldRead);
     graph.solve();
     graph.findUsesAsIntegers();
+    graph.findFieldsAddedTo();
     m_fieldsUsedAsIntegers = Vector<BitVector>(program.layouts.size());
+    m_fieldsAddedTo = Vector<BitVector>(program.layouts.size());
     m_fieldsStartedWithOtherTypes = Vector<BitVector>(program.layouts.size());
     m_kinds = Vector<Vector<Kinds>>(program.layouts.size());
     graph.forEachInShares(program.layouts.size(), 512, [&](Node layout) {
@@ -1242,6 +1318,8 @@ VisibleStores::VisibleStores(const Program& program, const ParallelLoops& loops,
             Node node = graph.nodeOf({ LayoutID(layout), static_cast<uint32_t>(field) });
             if (graph.m_usesAsIntegers[node].load(std::memory_order_relaxed))
                 m_fieldsUsedAsIntegers[layout].set(field);
+            if (PropertyKeyID key = program.layouts[layout].fields[field].key; key && graph.isAddedTo(node, key))
+                m_fieldsAddedTo[layout].set(field);
             if (graph.m_fieldsStartedWithOtherTypes.quickGet(node))
                 m_fieldsStartedWithOtherTypes[layout].set(field);
             return graph.kindsAt(node);

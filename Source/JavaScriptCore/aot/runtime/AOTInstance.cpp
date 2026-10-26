@@ -109,6 +109,12 @@
 #include <sys/mman.h>
 #endif
 
+#if USE(MIMALLOC)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <bmalloc/mimalloc.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
 namespace JSC { namespace AOT {
 
 static std::pair<size_t, size_t> reservationSizes(const Image& image)
@@ -175,6 +181,10 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     prefix.one = 1;
     prefix.pureNaN = PNaN;
     prefix.minInt64 = std::numeric_limits<int64_t>::min();
+    prefix.minIntegerAddedTo = minIntegerAddedTo;
+    prefix.maxIntegerAddedTo = maxIntegerAddedTo;
+    prefix.distanceOfIntegersAddedToFromZero = -minIntegerAddedTo;
+    prefix.spanOfIntegersAddedTo = maxIntegerAddedTo - minIntegerAddedTo;
     prefix.doubleEncodeOffset = JSValue::DoubleEncodeOffset;
     prefix.boxedOne = JSValue::encode(jsNumber(1));
     prefix.undefinedInteger = undefinedInteger;
@@ -979,8 +989,9 @@ AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<co
     result.isRefused = !canMap(result.needed);
     if (result.isRefused)
         return result;
+    // Beside a step of the allocator there is room for as much again: the cells, tables and stacks of threads.
     for (size_t step : stepsOfAllocator) {
-        if (canMap(step + addressSpaceToStartBesideAllocations())) {
+        if (canMap(step + std::max(step, addressSpaceToStartBesideAllocations()))) {
             result.largestStepOfAllocator = step;
             return result;
         }
@@ -1006,19 +1017,93 @@ static size_t sizeOfPagesForNewThread(const Image& image)
     return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart(image) + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
 }
 
+// The allocator keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread. So does a heap.
+// Other threads allocate meanwhile, so it stops where less than this much address space is left.
+static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
+{
+#if USE(MIMALLOC)
+    struct Pages {
+        size_t size;
+        unsigned count;
+    };
+    // What a thread takes until the first statement of a small program runs. The largest come last: by then the small ones have divided what is free.
+    AOT_THRESHOLD(Pages, pagesOfThread[], { { 64 * KB, 40 }, { 512 * KB, 8 }, { 4 * MB, 2 } });
+    AOT_THRESHOLD(unsigned, piecesInPage, 7);
+    AOT_THRESHOLD(size_t, alignmentOfPages, 64 * KB);
+    // It asks the system for an arena whenever its arenas are full, and each time it is refused it goes on at addresses far from the last.
+    AOT_THRESHOLD(size_t, smallestStep, 128 * MB);
+    static const size_t largestStep = mi_option_get_size(mi_option_arena_reserve);
+    size_t step = canMap(largestStep + sizeToLeaveFree) ? largestStep : largestStep > smallestStep && canMap(smallestStep + sizeToLeaveFree) ? smallestStep : 0;
+    mi_option_set(mi_option_arena_reserve, step / KB);
+
+    size_t sizeOfPagesOfThread = 0;
+    for (auto [size, count] : pagesOfThread)
+        sizeOfPagesOfThread += count * (size + alignmentOfPages);
+    if (canMap(numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree))
+        return true;
+
+    mi_heap_t* heap = mi_heap_new();
+    if (!heap)
+        return false;
+    bool hasRoom = true;
+    for (unsigned thread = 0; thread < numberOfThreads; ++thread) {
+        for (auto [size, count] : pagesOfThread) {
+            for (unsigned page = 0; hasRoom && page < count; ++page) {
+                for (unsigned piece = 0; hasRoom && piece < piecesInPage; ++piece)
+                    hasRoom = !!mi_heap_malloc(heap, size / (piecesInPage + 1));
+                hasRoom = hasRoom && canMap(sizeToLeaveFree);
+            }
+        }
+    }
+    mi_heap_destroy(heap);
+    return hasRoom;
+#else
+    UNUSED_PARAM(numberOfThreads);
+    UNUSED_PARAM(sizeToLeaveFree);
+    return true;
+#endif
+}
+
 // Until a thread adopts them the pages begin with their size.
-PagesForNewThread tryReservePagesForNewThread()
+static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads)
+{
+    if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
+        return nullptr;
+    size_t size = sizeOfPagesForNewThread(image);
+    void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
+    if (pages)
+        *static_cast<size_t*>(pages) = size;
+    return pages;
+}
+
+PagesForNewThread tryReservePagesForFirstThread()
 {
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
-    size_t size = sizeOfPagesForNewThread(*image);
-    void* pages = MarkedBlockCage::tryEnsureRoomForNewVMs(++s_numberOfThreadsStarting) ? OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages) : nullptr;
+    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting);
+    if (!pages)
+        --s_numberOfThreadsStarting;
+    return { pages, !pages };
+}
+
+PagesForNewThread tryReservePagesForNewThread()
+{
+    // The stack of the thread, and what the threads that run take meanwhile.
+    AOT_THRESHOLD(size_t, sizeToLeaveFree, 10 * MB);
+    const Image* image = Image::current();
+    if (!hasAddressSpaceLimit() || !image)
+        return { };
+    unsigned numberOfThreads = ++s_numberOfThreadsStarting;
+    void* pages = tryReservePagesForTables(*image, numberOfThreads);
     if (!pages) {
         --s_numberOfThreadsStarting;
         return { nullptr, true };
     }
-    *static_cast<size_t*>(pages) = size;
+    if (!tryEnsureRoomInAllocator(numberOfThreads, sizeToLeaveFree)) {
+        releasePagesForNewThread(pages);
+        return { nullptr, true };
+    }
     return { pages, false };
 }
 
@@ -1057,6 +1142,7 @@ static void* tryTakePagesOfThread(size_t bytes)
     return std::exchange(t_pagesOfThread, t_pagesOfThread + bytes);
 }
 #else
+PagesForNewThread tryReservePagesForFirstThread() { return { }; }
 PagesForNewThread tryReservePagesForNewThread() { return { }; }
 void releasePagesForNewThread(void*) { }
 void adoptPagesForNewThread(void*) { }

@@ -26,13 +26,14 @@ static bool evaluatesTarget(ImportPhase phase)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool completesBeforeRequester(const ModuleRequest& request, const BitVector& modulesInCycles)
+static bool completesBeforeRequester(const Module& requester, const ModuleRequest& request, const BitVector& modulesInCycles)
 {
     if (!request.completes || !evaluatesTarget(request.phase))
         return false;
     switch (request.kind) {
     case ModuleRequestKind::Import:
-        return true;
+        // The loader evaluates a graph when all of it is loaded. A CommonJS file that requires an ES module that imports the file is loaded from then on, while its body runs.
+        return !requester.flags.contains(ModuleFlags::IsLoadedByLoader) || !modulesInCycles.get(request.target.index());
     case ModuleRequestKind::Require:
         return !modulesInCycles.get(request.target.index());
     }
@@ -144,7 +145,7 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         BitVector& completed = order.componentsCompletedBefore[component];
         for (const ModuleRequest& request : program.modules[module].requests) {
             uint32_t target = order.componentOf[request.target.index()];
-            if (!completesBeforeRequester(request, order.modulesInCycles) || target == component || completed.get(target))
+            if (!completesBeforeRequester(program.modules[module], request, order.modulesInCycles) || target == component || completed.get(target))
                 continue;
             completed.set(target);
             completed.merge(order.componentsCompletedBefore[target]);

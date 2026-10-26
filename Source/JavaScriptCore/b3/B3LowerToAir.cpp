@@ -729,6 +729,65 @@ private:
         return false;
     }
 
+    // A word in memory is added to or subtracted from, and the branch asks whether that carried or borrowed.
+    bool tryAppendBranchOnCarryInMemory()
+    {
+        if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection)
+            return false;
+        Value* comparison = m_value->child(0);
+        if (comparison->opcode() != Below || comparison->child(1)->type() != Int32)
+            return false;
+        Value* compared = comparison->child(0);
+        Value* amount = comparison->child(1);
+        bool adds = compared->opcode() == Add;
+        auto* load = (adds ? compared->child(0) : compared)->as<MemoryValue>();
+        if (!load || load->opcode() != Load || load->hasFence() || load->traps() || load->owner != m_block)
+            return false;
+        auto isChangedWord = [&] (Value* value) {
+            if (value->opcode() != (adds ? Add : Sub) || value->child(0) != load || value->owner != m_block || (adds && value != compared))
+                return false;
+            return value->child(1) == amount || (amount->hasInt32() && value->child(1)->isInt32(amount->asInt32()));
+        };
+
+        MemoryValue* store = nullptr;
+        bool canMoveAccesses = false;
+        for (unsigned index = m_index; index--;) {
+            Value* value = m_block->at(index);
+            if (value == load) {
+                canMoveAccesses = true;
+                break;
+            }
+            auto* memory = value->as<MemoryValue>();
+            if (!store && memory && memory->opcode() == Store && isChangedWord(memory->child(0))) {
+                store = memory;
+                continue;
+            }
+            Effects effects = value->effects();
+            if (effects.writes || effects.fence || effects.exitsSideways || effects.reads.overlaps(load->range()))
+                break;
+        }
+        if (!canMoveAccesses || !store || store->hasFence() || store->traps() || store->lastChild() != load->lastChild() || store->offset() != load->offset())
+            return false;
+        Value* changedWord = store->child(0);
+        auto isUsedOnlyHere = [&] (Value* value, unsigned numberOfUses) {
+            return m_useCounts.numUses(value) == numberOfUses && !m_valueToTmp[value] && !m_locked.contains(value);
+        };
+        if (m_locked.contains(store) || !isUsedOnlyHere(changedWord, adds ? 2 : 1) || !isUsedOnlyHere(load, adds ? 1 : 2))
+            return false;
+
+        Air::Opcode opcode = adds ? Air::BranchAdd32 : Air::BranchSub32;
+        Arg address = addr(store);
+        bool amountIsConstant = amount->hasInt32() && isSelectedAsImmediate(comparison, amount);
+        if (!isValidForm(opcode, Arg::ResCond, amountIsConstant ? Arg::Imm : Arg::Tmp, address.kind()))
+            return false;
+        append(opcode, Arg::resCond(MacroAssembler::Carry), amountIsConstant ? Arg::imm(amount->asInt32()) : Arg(tmp(amount)), address);
+        commitInternal(comparison);
+        commitInternal(changedWord);
+        commitInternal(load);
+        commitInternal(store);
+        return true;
+    }
+
     bool crossesInterference(Value* value)
     {
         // If it's in a foreign block, then be conservative. We could handle this if we were
@@ -758,13 +817,16 @@ private:
     bool findsInterferenceBefore(Value* value)
     {
         Effects effects = value->effects();
+        const HeapRange& heapInFrontOfWhichLoadsStay = m_procedure.heapThatLoadsStayInFrontOf();
+        bool staysInFront = heapInFrontOfWhichLoadsStay && effects.reads;
 
         for (unsigned i = m_index; i--;) {
             Value* otherValue = m_block->at(i);
             if (otherValue == value)
                 return false;
             ++m_valuesVisitedByInterferenceSearches;
-            if (effects.interferes(otherValue->effects()))
+            Effects otherEffects = otherValue->effects();
+            if (effects.interferes(otherEffects) || (staysInFront && otherEffects.writes.overlaps(heapInFrontOfWhichLoadsStay)))
                 return true;
         }
 
@@ -881,6 +943,8 @@ private:
         unsigned nextReadsPinned = none;
         unsigned nextFence = none;
         unsigned nextWrites = none;
+        unsigned nextWriteThatLoadsStayInFrontOf = none;
+        const HeapRange& heapInFrontOfWhichLoadsStay = m_procedure.heapThatLoadsStayInFrontOf();
 
         m_nextInterference.resize(m_procedure.values().size());
         for (unsigned index = size; index--;) {
@@ -901,6 +965,7 @@ private:
             considerIf(effects.writesPinned, std::min(nextWritesPinned, nextReadsPinned));
             considerIf(effects.readsPinned, nextWritesPinned);
             considerIf(effects.fence, nextFence);
+            considerIf(!!effects.reads, nextWriteThatLoadsStayInFrontOf);
             next = std::min({ next, findIn(writes, effects.writes), findIn(reads, effects.writes), findIn(writes, effects.reads) });
             m_nextInterference[m_block->at(index)] = next;
 
@@ -917,6 +982,7 @@ private:
             noteIf(effects.readsPinned, nextReadsPinned);
             noteIf(effects.fence, nextFence);
             noteIf(!!effects.writes, nextWrites);
+            noteIf(heapInFrontOfWhichLoadsStay && effects.writes.overlaps(heapInFrontOfWhichLoadsStay), nextWriteThatLoadsStayInFrontOf);
             addTo(reads, effects.reads, index);
             addTo(writes, effects.writes, index);
         }
@@ -7128,6 +7194,8 @@ private:
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
                 if (tryAppendBranchOnInt32OverflowInMemory())
+                    return;
+                if (tryAppendBranchOnCarryInMemory())
                     return;
                 if (tryAppendBranchOnInt32Overflow())
                     return;

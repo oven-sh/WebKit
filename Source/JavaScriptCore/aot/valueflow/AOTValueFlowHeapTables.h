@@ -185,6 +185,8 @@ public:
     std::span<const ValueFlowPropertyKeptForLife> propertiesKeptForLife() const LIFETIME_BOUND { return m_propertiesKeptForLife.span(); }
     std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
     bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
+    // `globalThis.name = value` or `name = value` stands somewhere in the program.
+    bool isStoredUnderOnGlobalObject(PropertyKeyID key) const { return m_keysStoredUnderOnGlobalObject.get(key.index()); }
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
     const ConstantsHoldingModules& constantsHoldingModules() const LIFETIME_BOUND { return m_constantsHoldingModules; }
 
@@ -279,6 +281,7 @@ private:
     Vector<ValueFlowPropertyKeptForLife, 4> m_propertiesKeptForLife;
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     BitVector m_symbolsUsedOnlyAsKeys;
+    BitVector m_keysStoredUnderOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;
     ZeroFilledPages<std::atomic<uint64_t>> m_prototypesAtCreation;

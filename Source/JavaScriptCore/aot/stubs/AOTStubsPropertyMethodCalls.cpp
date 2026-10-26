@@ -18,6 +18,7 @@
 #include "AOTPropertyCachesFront.h"
 #include "AOTStubProgramTables.h"
 #include "AOTStubsCallLists.h"
+#include "AOTStubsField.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsCalls.h"
 #include "JSCell.h"
@@ -276,6 +277,7 @@ void generateTryGetSuperById(StubAssembler& jit)
     JumpList needsGenericRead;
 
     needsGenericRead.append(jit.branchIfNotCell(R0));
+    Label hasHolder = jit.label();
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadFrontCell(jit, SlotAccess::Read, { structureID, name, row, cell, scratch });
     needsGenericRead.append(branchIfCellNameDiffers(jit, name, cell, scratch));
@@ -284,9 +286,63 @@ void generateTryGetSuperById(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotValue.link(&jit);
-    needsGenericRead.append(branchIfSlotKindDiffers(jit, slot, Slot::Kind::Absent, scratch));
+    Jump isNotAbsent = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Absent, scratch);
+    Label returnsUndefined = jit.label();
     jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
     jit.returnToCaller();
+
+    // A data property is the same for every receiver, so whatever is filed for the object that the search starts at answers, but an accessor.
+    const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
+    const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
+    auto fieldReadRegisters = [&](GPRReg object, GPRReg slotData) -> FieldReadRegisters {
+        return {
+            .field = { .object = object, .slotData = slotData, .extensionWordOffset = structureID, .address = structureID, .representation = row },
+            .value = scratch,
+            .result = R0,
+            .number = number,
+            .numberScratch = numberScratch,
+        };
+    };
+    isNotAbsent.link(&jit);
+    Jump isNotField = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Field, scratch);
+    {
+        const CachedSlot field(SlotForm::PackedSlot, Slot::Kind::Field, cell, InvalidGPRReg);
+        const FieldReadRegisters registers = fieldReadRegisters(R0, field.registerOfFirstPayloadWord());
+        FieldReadExits exits;
+        Jump isOutOfLine = field.branchIfFlag(jit, Slot::isOutOfLine);
+        computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+        Label hasAddress = jit.label();
+        readFieldAndReturn(jit, registers, exits);
+
+        isOutOfLine.link(&jit);
+        field.loadHiddenWordOffset(jit, registers.field.extensionWordOffset);
+        computeFieldAddress(jit, registers.field, true, exits.isAbsent);
+        jit.jump().linkTo(hasAddress, &jit);
+
+        exits.isAbsent.link(&jit);
+        field.branchIfFlag(jit, Slot::absentIsUndefined).linkTo(returnsUndefined, &jit);
+        needsGenericRead.append(jit.jump());
+        needsGenericRead.append(exits.cannot);
+    }
+
+    isNotField.link(&jit);
+    Jump isNotVariable = branchIfSlotKindDiffers(jit, slot, Slot::Kind::Variable, scratch);
+    {
+        const CachedSlot variable(SlotForm::PackedSlot, Slot::Kind::Variable, cell, InvalidGPRReg);
+        const FieldReadRegisters registers = fieldReadRegisters(cell, scratch);
+        FieldReadExits exits;
+        variable.loadFirstPayloadWord(jit, registers.field.slotData);
+        loadStaticsBase(jit, cell, structureID);
+        computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+        readFieldAndReturn(jit, registers, exits);
+        needsGenericRead.append(exits.isAbsent);
+        needsGenericRead.append(exits.cannot);
+    }
+
+    isNotVariable.link(&jit);
+    needsGenericRead.append(branchIfSlotKindDiffers(jit, slot, Slot::Kind::InheritedField, scratch));
+    CachedSlot(SlotForm::PackedSlot, Slot::Kind::InheritedField, cell, InvalidGPRReg).loadHolder(jit, R0);
+    jit.jump().linkTo(hasHolder, &jit);
 
     needsGenericRead.link(&jit);
     jit.move(TrustedImm32(0), R0);

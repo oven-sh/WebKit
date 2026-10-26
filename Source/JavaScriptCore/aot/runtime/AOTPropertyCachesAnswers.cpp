@@ -330,6 +330,7 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         return classifyCustomGetter(query);
     ChainWalk walk = walkChain({ query.globalObject, query.structureBefore, query.base.getObject(), query.mode, ChainWalkUse::KeptForReadsThatAskObjects }, query.uid);
     PropertyAnswerKind kind = PropertyAnswerKind::Uncacheable;
+    const FieldData* staticField = nullptr;
     if (walk.result != ChainWalkResult::Unknown && walk.firstObjectWithEmptySlot) {
         walk.holder = walk.firstObjectWithEmptySlot;
         walk.offset = invalidOffset;
@@ -345,10 +346,17 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
             kind = isValidOffset(walk.offset) ? PropertyAnswerKind::Value : PropertyAnswerKind::InheritedField;
         else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor))
             kind = findsLengthGetterOfTypedArrays(query.structureBefore, walk) ? PropertyAnswerKind::TypedArrayLength : PropertyAnswerKind::Accessor;
+        else if (query.mode == ChainWalkMode::MayAllocate && (staticField = StaticFields::findFieldForCache(query.globalObject->vm(), walk.holder, query.uid)))
+            kind = PropertyAnswerKind::Variable;
     }
     if (kind == PropertyAnswerKind::Uncacheable)
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
-    return PropertyAnswer::above(kind, SlotAccess::Read, WTF::move(walk));
+    PropertyAnswer answer = PropertyAnswer::above(kind, SlotAccess::Read, WTF::move(walk));
+    if (staticField) {
+        answer.field = staticField;
+        answer.variable = staticField->slot;
+    }
+    return answer;
 }
 
 PropertyAnswer classifyRead(const ReadQuery& query)
@@ -510,6 +518,26 @@ static OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structur
         return capacityAfter == initialOutOfLineCapacity ? OutOfLineStorageChange::IsFirst : OutOfLineStorageChange::Unsupported;
     bool doublesCapacity = capacityBefore >= initialOutOfLineCapacity && capacityAfter == 2 * capacityBefore && capacityAfter * sizeof(EncodedJSValue) <= MarkedSpace::largeCutoff;
     return doublesCapacity ? OutOfLineStorageChange::Doubled : OutOfLineStorageChange::Unsupported;
+}
+
+std::optional<uint32_t> capacityOfStorageGrownByStub(VM& vm, Structure* before, Structure* after, PropertyOffset offset)
+{
+    if (before->mayBePrototype() || before->mayHaveImmutableProperties() || before->isCompiledStructure() || isFunctionType(before->typeInfo().type()) || !after->propertyAccessesAreCacheable())
+        return std::nullopt;
+    switch (outOfLineStorageChange(before, after, offset)) {
+    case OutOfLineStorageChange::Stays:
+        return 0;
+    case OutOfLineStorageChange::IsFirst:
+        break;
+    case OutOfLineStorageChange::Doubled:
+        if (before->outOfLineCapacity() > runtimeLimitValue(vm, LimitID::MaxCapacityGrownByStub))
+            return std::nullopt;
+        break;
+    case OutOfLineStorageChange::Unsupported:
+    case OutOfLineStorageChange::GrowsBesideIndexingHeader:
+        return std::nullopt;
+    }
+    return after->outOfLineCapacity();
 }
 
 bool isHostObjectOverridingPut(Structure* structure)

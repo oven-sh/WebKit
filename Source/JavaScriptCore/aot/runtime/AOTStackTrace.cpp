@@ -659,7 +659,8 @@ bool tryGetStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<St
     }
     WTF::Vector<StackFrame> compiledFrames;
     StackFrame::appendCompiledFrames(*trace, compiledFrames);
-    results.insertVector(onTop, compiledFrames);
+    if (!compiledFrames.isEmpty())
+        results.insertVector(onTop, compiledFrames);
     return true;
 }
 

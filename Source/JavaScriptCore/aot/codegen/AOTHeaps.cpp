@@ -330,6 +330,11 @@ bool AOTHeaps::mayCollect(const B3::Effects& effects) const
     return effects.writes.overlaps(rangeOf(collectorState)) && effects.writes.overlaps(rangeOf(weakTableStorage));
 }
 
+B3::HeapRange AOTHeaps::rangeWrittenByWhateverMayCollect() const
+{
+    return rangeOf(weakTableStorage);
+}
+
 bool AOTHeaps::isFreedWithOwner(const B3::HeapRange& range) const
 {
     for (const B3::AbstractHeap* heap : { &StringImpl_data, &StringImpl_hashAndFlags, &StringImpl_length, &characters8.atAnyIndex(), &characters16.atAnyIndex(), &ArrayBuffer_shared }) {

@@ -90,7 +90,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
     // Beside a placeholder the receivers that it covers are listed for a while only: each list is looked up as it comes.
     bool areReceiversListedForGood = !m_context.meet(receivers, m_universe.placeholdersAlone());
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
-    if (namesObjectOfAccess() && isNameThatTableDoesNotListOnGlobalObject(key) && m_context.contains(receivers, globalObject)) {
+    if (findsOnGlobalObjectWhatStatementsStore(key) && m_context.contains(receivers, globalObject)) {
         readThroughChain(ClimbingSet(only(globalObject)), key, { &object, { } }, m_statement.result);
         receivers = m_context.restrict(receivers, ValueSets::complement(only(globalObject)));
     }
@@ -233,6 +233,9 @@ void HeapRule::noteTestOfMembers(const ValueFlowOperand& object, const HeapKey& 
 void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOperand& value)
 {
     connect(value, m_context.written(known(objects), name));
+    // The unknown object stands for an object that has escaped, and for no object that lets in unseen code: a read through it finds such a one under the name it is written under.
+    if (value.node && m_context.holdsAnyOf(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), value.node) && hasEscaped(known(objects)))
+        connect(m_context.masked(value.node, m_tables.objectsThatLetInUnseenCode()), m_context.written(unknownObjectAlone(), name));
     bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
     if (namesProperty && m_tables.isSymbolUsedOnlyAsKey(PropertyKeyID(name.payload)))
         add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsHoldingSymbolsUsedOnlyAsKeys), known(objects));
@@ -460,7 +463,7 @@ ClimbingSet HeapRule::accessorsFoundFrom(ClimbingSet start, const HeapKey& key, 
 {
     ValueFlowName name = foundName(key, part);
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
-    if (!namesObjectOfAccess() || !isNameThatTableDoesNotListOnGlobalObject(key) || !m_context.contains(start, globalObject))
+    if (!findsOnGlobalObjectWhatStatementsStore(key) || !m_context.contains(start, globalObject))
         return m_context.valueOf(m_context.lookup(start, name));
 
     ClimbingSet alone(only(globalObject));

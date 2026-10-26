@@ -1828,10 +1828,16 @@ static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlin
 }
 
 // An entrypoint tests what it was given and enters the body.
-static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context, const Value& call, HeatClass heat)
+static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context, BlockID block, ValueID id, HeatClass heat)
 {
     const Function& caller = context.function;
-    if (caller.role != FunctionRole::GenericEntrypoint || isHot(heat))
+    const Value& call = caller.at(id);
+    if (caller.role != FunctionRole::GenericEntrypoint)
+        return false;
+    // In hot code the copy knows what the entrypoint has tested and needs no way back to it. An entrypoint that is nothing but a tail call has tested nothing, and jumps.
+    const Terminator& terminator = caller.at(block).terminator;
+    bool onlyEntersBody = caller.blocks.size() == 1 && caller.at(block).values.size() == 1 && terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
+    if (isHot(heat) && !onlyEntersBody)
         return false;
     // Wrappers lead to the body. What the body calls has the budget that it has there, unless the body is itself a copy.
     bool entersBody = !inlineDepthOf(context.program, caller, call.inlineFrame);
@@ -1905,6 +1911,19 @@ static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const Inli
     return returnsFreshAggregateAskedOnce(summary, AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee });
 }
 
+static FunctionID functionAsWritten(const Program& program, FunctionID id)
+{
+    while (FunctionID source = program.at(id).derivation.source)
+        id = source;
+    return id;
+}
+
+// The call stands behind the test that no function object was renamed, beside the call by value that is made once one was. The forms of the callee itself enter one another as those of any function do.
+static bool standsBesideCallByValue(const FunctionPassContext& context, const Value& call)
+{
+    return context.program.at(call.function()).capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
+}
+
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
 {
     const Program& program = context.program;
@@ -1940,7 +1959,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
+    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {
@@ -1976,6 +1995,12 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         verdict.benefits.add(InlineBenefit::FoldedCode);
     uint64_t callOverheadBytes = InlineModel::callOverheadBytes + uint64_t { InlineModel::argumentOverheadBytes } * value.numberOfOperands();
     addBenefit(InlineBenefit::CallOverhead, callOverheadBytes);
+    // The place holds two ways to the callee already. A third is taken where it is no larger than the call in whose place it stands.
+    if (standsBesideCallByValue(context, value)) {
+        verdict.budgetBytes = 0;
+        verdict.decision = canInlineWholeBody && cost <= callOverheadBytes ? InlineDecision::Inline : InlineDecision::CostExceedsBenefit;
+        return verdict;
+    }
     if (uint64_t bytes = computeKnownCalleeBenefit(context, call, summary, bets))
         addBenefit(InlineBenefit::KnownCalleeArgument, bytes);
     if (uint64_t bytes = computeKnownReceiverBenefit(context, value, summary, bets))

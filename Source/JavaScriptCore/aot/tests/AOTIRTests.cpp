@@ -338,6 +338,18 @@ static void parseEnumRejectsUnknownNames()
     AOT_TEST_CHECK(parseEnum<TerminatorKind>("Jump"_s) == TerminatorKind::Jump && !parseEnum<TerminatorKind>("Call"_s));
 }
 
+static void positionsThatManyOperationsDeclareAreReadFromOneTable()
+{
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        AOT_TEST_CHECK(PayloadWord::key(opcode) == PayloadWord::keyAsDeclared(opcode));
+        AOT_TEST_CHECK(PayloadWord::layout(opcode) == PayloadWord::layoutAsDeclared(opcode));
+        AOT_TEST_CHECK(OperandPosition::value(opcode) == OperandPosition::valueAsDeclared(opcode));
+    }
+    AOT_TEST_CHECK(PayloadWord::key(Opcode::PropGet) == 0u && PayloadWord::key(Opcode::DefineMethod) == 4u && !PayloadWord::key(Opcode::Undefined));
+    for (unsigned noMember : { numberOfEnumerators<Opcode>, unsigned { UINT16_MAX } })
+        AOT_TEST_CHECK(!PayloadWord::key(static_cast<Opcode>(noMember)) && !OperandPosition::value(static_cast<Opcode>(noMember)));
+}
+
 static void valueOperandsOfCall()
 {
     Value call(Opcode::Call);
@@ -1049,7 +1061,7 @@ static void forEachTypeVisitsEveryPosition()
     v(compactListAppendInsertRemove) v(compactListAppendOwnSpan) v(compactListCopyAndMove) v(compactListRemoveAtEnd) v(compactListEmptyOperationsLeaveSharedHeader) \
     v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
     v(effectsDumpUsesSchemaGrammar) v(effectsDumpCountsLocationsOfPartialHeap) v(effectsOnEdgesDumpShowsHandlerThatDiffers) v(abstractHeapSetIterationAscends) \
-    v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) \
+    v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) v(positionsThatManyOperationsDeclareAreReadFromOneTable) \
     v(valueOperandsOfCall) v(valueAbsentOperandKeepsIndex) v(valueFourNamedOperands) v(valueVariadicOperandsFollowFiveNamedOperands) \
     v(valueRemoveVariadicOperandKeepsNamedOperands) v(valueBecomeKeepsTypesOriginAndRepresentation) v(valueWithoutExpectedTypeFallsBackToItsType) \
     v(valueExpectedTypeSurvivesRelayout) v(flagsAndInlineFrameFitBitFields) v(valueSpansSurviveMove) \

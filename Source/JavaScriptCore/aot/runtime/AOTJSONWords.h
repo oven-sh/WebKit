@@ -43,6 +43,9 @@ struct JSONWords {
             dropSourcesBelow(handlerStackPointer);
     }
 
+    // Compiled code opens a source under its frame pointer.
+    ALWAYS_INLINE void didLeaveFramesUpTo(void* framePointer) { didUnwindTo(static_cast<char*>(framePointer) + 1); }
+
 private:
     void dropSourcesBelow(void* stackPointer);
 };

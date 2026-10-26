@@ -61,6 +61,10 @@ static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;
 static constexpr int32_t minInlineInt32 = INT32_MIN + 5;
 
+// What a field holds that is added to. The sum of two of them is exact. A sum that leaves them carries out of its low word or borrows from the high one.
+static constexpr int64_t maxIntegerAddedTo = (1ll << 52) - 1;
+static constexpr int64_t minIntegerAddedTo = -maxIntegerAddedTo - 1;
+
 static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
 static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;
 static constexpr uint32_t absentCell32 = 0;

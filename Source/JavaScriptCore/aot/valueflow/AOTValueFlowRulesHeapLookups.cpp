@@ -546,11 +546,19 @@ bool HeapRule::namesObjectOfAccess() const
     return !mayBeFreeName || !m_program.at(m_statement.function).at(m_statement.site).isFreeName();
 }
 
+// A bare name that the program stores under is a property of the global object like `globalThis.name`. One that it only reads is left to whoever defines it.
+bool HeapRule::findsOnGlobalObjectWhatStatementsStore(const HeapKey& key) const
+{
+    if (!isNameThatTableDoesNotListOnGlobalObject(key))
+        return false;
+    return namesObjectOfAccess() || (m_statement.kind == ValueFlowStatementKind::Operation && m_tables.isStoredUnderOnGlobalObject(key.name));
+}
+
 bool HeapRule::mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey& key)
 {
     ValueSetID holders = holdersOfUndeclaredPropertiesUnder(key);
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
-    if (namesObjectOfAccess() && m_context.contains(objects, globalObject) && isNameThatTableDoesNotListOnGlobalObject(key) && holdsGlobalObjectOnlyWhatStatementsHaveStored())
+    if (m_context.contains(objects, globalObject) && findsOnGlobalObjectWhatStatementsStore(key) && holdsGlobalObjectOnlyWhatStatementsHaveStored())
         holders = m_context.maker().intersect(holders, ValueSets::complement(only(globalObject)));
     return m_context.meet(objects, holders);
 }
@@ -1436,6 +1444,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
 
     if (mayBeUnknownObject(start)) {
         add(result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
+        if (handsOutEvaluators)
+            connect(m_context.masked(m_context.read(unknownObjectAlone(), value), m_tables.objectsThatLetInUnseenCode()), result);
         if (key.keyClass == HeapKeyClass::Name) {
             ClimbingSet holdersOfExports = letMembersOfHeldPrototypeObjectsEscape(key.name, { value, getter });
             if (holdsAnything(holdersOfExports)) {

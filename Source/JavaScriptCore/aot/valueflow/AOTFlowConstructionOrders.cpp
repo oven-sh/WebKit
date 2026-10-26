@@ -32,6 +32,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1456,20 +1457,23 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
         return current;
     };
     // Where the written chain of bases ends at an expression, the class objects that are found above it say who allocates.
-    auto forEachAllocatingClassOf = [&](ValueFlowObjectID closure, NOESCAPE const Invocable<void(LayoutID)> auto& functor) {
-        LayoutID current = program.at(universe.closureFunction(closure)).constructedClass;
-        for (size_t steps = 0; current && predictedHeritageOf(program.at(current)) && steps < program.layouts.size(); ++steps)
-            current = predictedHeritageOf(program.at(current));
-        if (!current)
-            return;
-        if (!program.at(current).has(LayoutFlags::HasHeritage))
-            return functor(current);
-        ValueSetID above = heap.chainOf(heap.prototypesOf(maker.of(universe.closureOf(program.at(current).constructor))));
-        inputs.sets().forEachMember(maker.intersect(above, universe.closures()), [&](ValueFlowObjectID parent) {
-            LayoutID constructed = program.at(universe.closureFunction(parent)).constructedClass;
-            if (constructed && !program.at(constructed).has(LayoutFlags::HasHeritage))
-                functor(constructed);
-        });
+    MapByNumber<uint32_t, ValueSetID> chainsAboveClasses;
+    auto chainAbove = [&](LayoutID classBelowExpression) {
+        return chainsAboveClasses.ensure(classBelowExpression.index(), [&] {
+            return heap.chainOf(heap.prototypesOf(maker.of(universe.closureOf(program.at(classBelowExpression).constructor))));
+        }).iterator->value;
+    };
+    MapByNumber<uint32_t, Vector<LayoutID>> allocatingClassesInChains;
+    auto allocatingClassesIn = [&](ValueSetID chain) -> const Vector<LayoutID>& {
+        return allocatingClassesInChains.ensure(chain.index(), [&] {
+            Vector<LayoutID> found;
+            inputs.sets().forEachMember(maker.intersect(chain, universe.closures()), [&](ValueFlowObjectID parent) {
+                LayoutID constructed = program.at(universe.closureFunction(parent)).constructedClass;
+                if (constructed && !program.at(constructed).has(LayoutFlags::HasHeritage))
+                    found.append(constructed);
+            });
+            return found;
+        }).iterator->value;
     };
     auto withWhatOtherCallablesConstruct = [&](ValueSetID callees) {
         callees = heap.expand(callees);
@@ -1483,25 +1487,55 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
         }
         return callees;
     };
+    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> pairsAdded;
     auto add = [&](ValueSetID callees, ValueSetID newTargets) {
+        if (!pairsAdded.add(static_cast<uint64_t>(callees.index()) << 32 | newTargets.index()).isNewEntry)
+            return;
         constexpr uint32_t severalCallees = UINT32_MAX;
+        constexpr uint32_t noCallee = UINT32_MAX - 1;
         MapByNumber<uint32_t, uint32_t> calleeByAllocatingClass;
+        Vector<std::pair<ValueFlowObjectID, LayoutID>, 8> newTargetsBelowWrittenClasses;
+        inputs.sets().forEachMember(maker.intersect(heap.expand(newTargets), universe.closures()), [&](ValueFlowObjectID newTarget) {
+            LayoutID allocatingClass = allocatingClassOf(newTarget);
+            if (!allocatingClass) {
+                newTargetsFound.append(newTarget);
+                return;
+            }
+            calleeByAllocatingClass.add(allocatingClass.index(), noCallee);
+            newTargetsBelowWrittenClasses.append({ newTarget, allocatingClass });
+        });
+        if (newTargetsBelowWrittenClasses.isEmpty())
+            return;
+        auto allocates = [&](LayoutID allocatingClass, uint32_t callee) {
+            auto entry = calleeByAllocatingClass.find(allocatingClass.index());
+            if (entry != calleeByAllocatingClass.end())
+                entry->value = entry->value == noCallee ? callee : severalCallees;
+        };
         Vector<ValueFlowObjectID, 8> constructed;
         inputs.sets().forEachMember(maker.intersect(withWhatOtherCallablesConstruct(callees), universe.closures()), [&](ValueFlowObjectID callee) {
             constructed.append(callee);
         });
+        MapByNumber<uint32_t, uint32_t> calleeByChainAbove;
         for (ValueFlowObjectID callee : constructed) {
-            forEachAllocatingClassOf(callee, [&](LayoutID allocatingClass) {
-                if (!calleeByAllocatingClass.add(allocatingClass.index(), callee.index()).isNewEntry)
-                    calleeByAllocatingClass.set(allocatingClass.index(), severalCallees);
-            });
+            LayoutID current = program.at(universe.closureFunction(callee)).constructedClass;
+            for (size_t steps = 0; current && predictedHeritageOf(program.at(current)) && steps < program.layouts.size(); ++steps)
+                current = predictedHeritageOf(program.at(current));
+            if (!current)
+                continue;
+            if (!program.at(current).has(LayoutFlags::HasHeritage))
+                allocates(current, callee.index());
+            else if (auto entry = calleeByChainAbove.add(chainAbove(current).index(), callee.index()); !entry.isNewEntry)
+                entry.iterator->value = severalCallees;
         }
-        inputs.sets().forEachMember(maker.intersect(heap.expand(newTargets), universe.closures()), [&](ValueFlowObjectID newTarget) {
-            LayoutID allocatingClass = allocatingClassOf(newTarget);
-            auto callee = allocatingClass ? calleeByAllocatingClass.find(allocatingClass.index()) : calleeByAllocatingClass.end();
-            if (!allocatingClass || (callee != calleeByAllocatingClass.end() && callee->value != newTarget.index()))
+        for (auto [chain, callee] : calleeByChainAbove) {
+            for (LayoutID allocatingClass : allocatingClassesIn(ValueSetID(chain)))
+                allocates(allocatingClass, callee);
+        }
+        for (auto [newTarget, allocatingClass] : newTargetsBelowWrittenClasses) {
+            uint32_t callee = calleeByAllocatingClass.get(allocatingClass.index());
+            if (callee != noCallee && callee != newTarget.index())
                 newTargetsFound.append(newTarget);
-        });
+        }
     };
     if (unseenCodeCanRun(inputs.solution)) {
         ValueSetID reached = maker.unite(universe.unknownObjectAlone(), inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances)));

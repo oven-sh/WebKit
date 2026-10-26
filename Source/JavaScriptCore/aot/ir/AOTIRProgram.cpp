@@ -671,8 +671,9 @@ BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
         return Builtins::PrivateGlobalsRequireCommonJS;
     case ModuleKind::SourceText:
         return Builtins::PrivateGlobalsEsmLoadSync;
-    case ModuleKind::Data:
     case ModuleKind::RuntimeSource:
+        return Builtins::PrivateGlobalsCreateInternalModuleById;
+    case ModuleKind::Data:
     case ModuleKind::Runtime:
     case ModuleKind::External:
         return { };

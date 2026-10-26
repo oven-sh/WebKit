@@ -82,6 +82,7 @@ JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool isESModule(ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
@@ -135,7 +136,10 @@ struct PagesForNewThread {
     void* pages { nullptr };
     bool isRefused { false };
 };
+// Also makes sure that the allocator has room for what the thread takes as it starts, and that there is room for its stack.
 JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForNewThread();
+// The first thread takes its own: askForAddressSpaceToStart() has asked for the rest.
+JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
 JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
 // On the new thread, before it has a VM.
 JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);

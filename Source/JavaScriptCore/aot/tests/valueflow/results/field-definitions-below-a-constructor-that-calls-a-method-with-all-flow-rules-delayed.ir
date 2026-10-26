@@ -1,0 +1,101 @@
+# class Base { constructor() { this.start() }  start() {} }
+# class Quiet extends Base { first; last; constructor() { super(); this.first = 1; this.last = 1 }  start() {} }
+# class Kept .. start() { seen = this }    class Closed .. start() { seen = this; Object.preventExtensions(this) }    class Fixed .. start() { seen = this; Object.defineProperty(this, "last", descriptor) }
+# The constructor above shows the object to a method before the class below defines its fields. A definition that throws leaves the undefined of the fields in front of it to whoever holds the object.
+# No method that is reached closes an object of Quiet or of Kept or redefines a property of it: it takes every definition, and nobody sees the undefined of `first`.
+# An object of Closed or of Fixed may refuse `last`, so `first` holds undefined. The last definition has none behind it.
+# field-definitions-below-a-constructor-that-calls-a-method.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L1 kind=Instance name="Quiet" {{*}}{key="first" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="last" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}
+# CHECK: layout L2 kind=Instance name="Kept" {{*}}{key="first" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="last" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}
+# CHECK: layout L3 kind=Instance name="Closed" {{*}}{key="first" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="last" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+# REPEAT: i = 1..4 ; name = Quiet Kept Closed Fixed
+layout L%(i) kind=Instance name="%(name)" base=L0 constructor=f%(i*2+1) fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="last" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage]
+# END REPEAT
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="start"
+    v4 = FinishClass v1 layout=L0
+# REPEAT: i = 1..4
+    v%(i*7-2) = ResolveHeritage v4
+    v%(i*7-1) = NewClosure function=f%(i*2+1)
+    v%(i*7) = NewClass v%(i*7-1), v4, v%(i*7-2) layout=L%(i)
+    v%(i*7+1) = NewClosure function=f%(i+10)
+    DefineMethod v%(i*7), v%(i*7+1) layout=L%(i) key="start"
+    v%(i*7+3) = FinishClass v%(i*7) layout=L%(i)
+    v%(i*7+4) = Construct v%(i*7+3)
+# END REPEAT
+    Return
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = PropGet v2 key="start"
+    v4 = Call v3, v2 calleeKey="start"
+    Return v2
+}
+function f2 name="start" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: [[filler]]: {{*}} = Integer
+# CHECK: PropDefine {{*}}, [[filler]] key="first"
+# CHECK-LABEL: function f6
+# CHECK: [[filler]]: {{*}} = Integer
+# CHECK: PropDefine {{*}}, [[filler]] key="first"
+# CHECK-LABEL: function f8
+# CHECK: PropDefine {{*}}, v1 key="first"
+# CHECK-LABEL: function f10
+# CHECK: PropDefine {{*}}, v1 key="first"
+# REPEAT: i = 1..4 ; name = Quiet Kept Closed Fixed
+function f%(i*2+1) name="%(name)" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L%(i) {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L%(i)
+    v4 = Convert v3 declared={type=L%(i) flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f%(i*2+2)
+    v6 = Integer integer=1
+    PropSet v4, v6 key="first" mode=Strict
+    PropSet v4, v6 key="last" mode=Strict
+    Return v4
+}
+function f%(i*2+2) module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L%(i) flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="first"
+    PropDefine v0, v1 key="last"
+    Return v1
+}
+# END REPEAT
+function f11 name="start" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f12 name="start" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f13 name="start" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Object
+    v3 = PropGet v2 key="preventExtensions"
+    v4 = Call v3, v2, v0 calleeKey="preventExtensions"
+    Return
+}
+function f14 name="start" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Object
+    v3 = PropGet v2 key="defineProperty"
+    v4 = String string="last"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="descriptor" [isFreeName]
+    v7 = Call v3, v2, v0, v4, v6 calleeKey="defineProperty"
+    Return
+}

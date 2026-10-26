@@ -170,7 +170,13 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
 
 bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
 {
-    constexpr size_t roomForNewVM = 4 * MB;
+    struct Pieces {
+        size_t size;
+        unsigned count;
+    };
+    // The range keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread.
+    // These fill the pages that a VM takes until the first statement of a small program runs: 2 of 512 KB for blocks, 12 of 64 KB for cells outside blocks.
+    static constexpr Pieces piecesOfVM[] = { { std::max<size_t>(MarkedBlock::blockSize, 64 * KB), 14 }, { 8 * KB, 84 } };
     ReservedRangeHeap* range;
     {
         Locker locker { s_poolLock };
@@ -178,16 +184,25 @@ bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
             return true;
         range = s_firstRange;
     }
-    Vector<void*, 16> pieces;
-    while (pieces.size() < count) {
-        void* piece = range->tryAllocateAligned(MarkedBlock::blockSize, roomForNewVM);
-        if (!piece)
-            break;
-        pieces.append(piece);
+    struct Piece {
+        Piece* next;
+    };
+    Piece* taken = nullptr;
+    bool hasRoom = true;
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto [size, countOfSize] : piecesOfVM) {
+            for (unsigned j = 0; hasRoom && j < countOfSize; ++j) {
+                void* piece = range->tryAllocate(size);
+                hasRoom = !!piece;
+                if (hasRoom)
+                    taken = new (NotNull, piece) Piece { taken };
+            }
+        }
     }
-    for (void* piece : pieces)
-        range->free(piece);
-    return pieces.size() == count;
+    while (taken)
+        range->free(std::exchange(taken, taken->next));
+    range->releaseFreeMemory();
+    return hasRoom;
 }
 
 MarkedBlockCage::MarkedBlockCage()

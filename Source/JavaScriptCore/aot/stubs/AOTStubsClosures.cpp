@@ -162,9 +162,12 @@ void generateNewSlimClosure(StubAssembler& jit)
     createClosureInOperation(jit, function, restOfRequest, allocator);
 }
 
+// The caller loses the registers that a call of the operation which keeps registers would cost it.
 StubSignature signatureOfClosureOfTable(StubKey)
 {
-    return closureRequestSignature(0);
+    StubSignature signature = StubSignature::withGPRResult({ });
+    signature.immediate = operationArgumentGPR(1);
+    return signature;
 }
 
 // The number of the cell that the closure table has for the function. The two registers may hold anything.
@@ -187,10 +190,10 @@ static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg 
 }
 
 // ClosureTable::closure(), for a slim closure: two words, the cell of the table, and the card that has the collector visit that region of the table.
-static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegisters& registers, GPRReg number, JumpList& slow)
+static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegisters& registers, GPRReg number, JumpList& slow, JumpList& isCreated)
 {
     const auto [cell, function, first, second] = registers;
-    ASSERT(number == first || number == second);
+    ASSERT(noOverlap(cell, function, first, second, number));
     static_assert(offsetOfSlimClosureWord == sizeof(uint64_t) && numberOfSlimClosureKinds == 2);
     static_assert(sizeof(RememberedSlot<uint32_t>) == 1u << CCallHelpers::TimesFour);
     constexpr unsigned cellsOfRegionShift = ClosureTable::regionShift - CCallHelpers::TimesFour;
@@ -199,7 +202,7 @@ static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegist
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureTable.cards)), cards);
     slow.append(jit.branchTestPtr(CCallHelpers::Zero, cards));
     slow.append(jit.branchTest32(CCallHelpers::Zero, number));
-    const GPRReg kind = number == first ? second : first;
+    const GPRReg kind = first;
     loadKindOfClosureFunction(jit, function, kind);
     slow.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(slimFunctionKindBit())));
     jit.urshift32(TrustedImm32(cellsOfRegionShift), number);
@@ -230,15 +233,21 @@ static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegist
     encodeCell32(jit, cell, second);
     jit.sub32(TrustedImm32(1), second);
     jit.store32(second, Address(slot));
-    jit.returnToCaller();
+    isCreated.append(jit.jump());
 
     emitLateRefill(jit, refill, slow);
 }
 
 void generateClosureOfTable(StubAssembler& jit)
 {
-    const ClosureRegisters registers = allocateClosureRegisters(jit);
-    const auto [cell, function, cells, number] = registers;
+    const GPRReg cell = jit.result();
+    const GPRReg function = jit.immediate();
+    const GPRReg cells = cell;
+#if CPU(X86_64)
+    constexpr GPRReg number = CCallHelpers::s_scratchRegister;
+#else
+    const GPRReg number = jit.allocateScratch(StubRegister::T9);
+#endif
 
     loadNumberOfClosureCell(jit, function, number, cells);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), cells);
@@ -255,7 +264,16 @@ void generateClosureOfTable(StubAssembler& jit)
         jit.returnToCaller();
 
         isNotCreated.link(&jit);
-        emitCreateSlimClosureOfTable(jit, registers, number, slow);
+        jit.preserving({ gprOf(StubRegister::T12), gprOf(StubRegister::T13) }, [&] {
+            JumpList cannot;
+            JumpList isCreated;
+            emitCreateSlimClosureOfTable(jit, { cell, function, jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) }, number, cannot, isCreated);
+            cannot.link(&jit);
+            jit.move(TrustedImm32(0), cell);
+            isCreated.link(&jit);
+        });
+        slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
+        jit.returnToCaller();
     }
 
     slow.link(&jit);

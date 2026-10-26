@@ -37,7 +37,7 @@ operation ReadScope (values...: Convertible/inspects) -> none ; none ; AsRead..A
 
 family Module AsRead..Placed
 operation ModuleNamespace (module: Module(Target), phase: ImportPhase) -> declared(module) ; unknownCode ; runtime = GetModuleNamespace ; flow = Copies ; flowRule = Module
-operation ImportModule (module: Module(Target), referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; runtime = ImportModule ; flow = Allocates ; flowRule = Module
+operation ImportModule (module: Module(Target), options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; runtime = ImportModule ; flow = Allocates ; flowRule = Module
 operation RequireModule (module: Module(Target), referrer: Module(Referrer), specifier: String) -> unknown ; unknownCode ; runtime = RequireModule ; flow = Copies ; flowRule = Module
 operation EvaluateModule (module: Module(Target), referrer: Module(Referrer)) [isBare isCallOfRequire] -> none ; unknownCode ; AsRead..Prepared ; removedBy = CallModules ; flow = Copies ; flowRule = Module
 operation RecordRequire (module: Module(Target), referrer: Module(Referrer)) -> none ; unknownCode ; runtime = RecordRequire ; flow = Copies ; flowsWithoutRule = true

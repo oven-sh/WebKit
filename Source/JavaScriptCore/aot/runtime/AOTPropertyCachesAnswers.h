@@ -143,6 +143,8 @@ bool isHostObjectOverridingPut(Structure*);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
+// For an addition that leads from one Structure to the next. Zero: the storage out of line stays. Nothing: no stub makes the addition.
+std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset);
 bool slotAgreesWithStructures(VM&, const Slot&, SlotAccess, UniquedStringImpl*);
 
 } } // namespace JSC::AOT

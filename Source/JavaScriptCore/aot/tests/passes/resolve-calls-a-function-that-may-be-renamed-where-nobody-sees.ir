@@ -1,5 +1,5 @@
 # A function whose function objects may get another name where nobody sees is called directly while no function object has got one: one test stands in front, and the call of the value behind its failure.
-# Its body is copied only into code that is hot. A function that records its callee from the start is called by value.
+# Whether its body is copied is the inliner's to say. A function that records its callee from the start is called by value.
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # RUN(TWICE): pass ResolveCalls ResolveCalls
@@ -22,7 +22,8 @@ function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results
 # CHECK-NEXT: Branch [[areUnchanged]] -> taken [[direct]](), notTaken [[byValue]]()
 # CHECK: [[direct]]():
 # CHECK-NEXT: [[capture]]: number = GetCapture v0 function=f0
-# CHECK-NEXT: = CallDirect [[capture]], v1 function=f0 [isNeverInlined]
+# CHECK-NEXT: = CallDirect [[capture]], v1 function=f0
+# CHECK-NOT: isNeverInlined
 # CHECK: [[byValue]]() frequency=Unlikely:
 # CHECK-NEXT: = Call v0, -, v1
 }

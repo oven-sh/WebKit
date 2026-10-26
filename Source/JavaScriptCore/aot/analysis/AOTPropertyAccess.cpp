@@ -12,6 +12,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <utility>
@@ -419,6 +420,18 @@ static UnprovenCause causeOfRest(const PropertyAccessContext& context, const Pro
     return findMember(context, memberQueryFor(query, partition.rest[0])).cause;
 }
 
+AOT_THRESHOLD(size_t, maxOtherReceiversForEachTestedOneInLibrary, 3);
+
+// A function of the library is handed the objects of all its callers, and which of them come often is not known. Where few of them find the name in one place, a test for those few fails for the others, which go by name behind it.
+static bool isTestedForFewOfManyReceiversOfLibrary(const Program& program, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
+{
+    if (query.module && program.at(query.module).kind != ModuleKind::RuntimeSource && !program.at(query.module).flags.contains(ModuleFlags::IsLibrary))
+        return false;
+    size_t tested = plan.receivers.size();
+    size_t expected = query.receivers.predicted.size();
+    return expected > tested && tested * maxOtherReceiversForEachTestedOneInLibrary < expected - tested;
+}
+
 static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberPartition& partition)
 {
     PropertyAccessPlan heaviest;
@@ -439,6 +452,8 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
         heaviest = WTF::move(plan);
         weightOfHeaviest = weight;
     }
+    if (heaviest.isResolved() && isTestedForFewOfManyReceiversOfLibrary(context.program, query, heaviest))
+        heaviest = PropertyAccessPlan();
     if (!heaviest.isResolved()) {
         heaviest.cause = partition.arms.isEmpty() ? causeOfRest(context, query, partition) : partition.arms[0].answer.cause;
         return heaviest;

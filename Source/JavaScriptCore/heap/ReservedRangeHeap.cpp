@@ -29,6 +29,7 @@
 
 #if CPU(ADDRESS64)
 
+#include "AddressSpaceBudget.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 #include <bmalloc/bmalloc.h>
@@ -78,6 +79,8 @@ static_assert(!(sizeStep % granuleSize));
 static constexpr size_t mallocChunkSize = 32 * MB;
 #if OS(LINUX) && USE(MIMALLOC)
 static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
+// malloc and the stacks of threads go on taking address space.
+static constexpr size_t addressSpaceToLeaveBesideSegment = 32 * MB;
 static constexpr unsigned maxSegmentPlacements = 8;
 #endif
 static constexpr unsigned maxRandomPlacements = 16;
@@ -463,6 +466,10 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 #if OS(LINUX) && USE(MIMALLOC)
     size_t minSize = std::max(minSegmentSize, roundUpToMultipleOf<mallocChunkSize>(allocationSize) + mallocChunkSize);
     size_t size = std::max(minSize, roundUpToMultipleOf<mallocChunkSize>(reservedSize() / 2));
+    size_t left = addressSpaceLeft();
+    if (left < minSize + addressSpaceToLeaveBesideSegment)
+        return false;
+    size = std::min(size, (left - addressSpaceToLeaveBesideSegment) / mallocChunkSize * mallocChunkSize);
     Request request { .name = m_name, .usage = m_usage, .initialAccess = InitialAccess::None };
     unsigned placements = 0;
     while (true) {

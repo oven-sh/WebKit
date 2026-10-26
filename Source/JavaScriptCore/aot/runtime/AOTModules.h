@@ -212,7 +212,7 @@ public:
     JSValue requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild);
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
-    JSPromise* import(ModuleID, ModuleID referrer);
+    JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);

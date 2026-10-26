@@ -48,6 +48,8 @@ struct CallOptions {
     bool followsThrow { false };
     // The callee promises the type of its result, and the caller relies on it.
     bool hasLandingOfMisfit { false };
+    // Whatever the callee writes, no cell that exists has another header, butterfly or closure word behind it.
+    bool convertsNoCells { false };
 };
 
 struct StubCallResult {

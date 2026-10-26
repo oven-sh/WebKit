@@ -61,8 +61,11 @@ static void createClassObjectsOnChain(VM& vm, JSCell* receiver, UniquedStringImp
     const FieldData* field = closure.classData() ? StaticFields::findOwnField(closure, nameAskedFor) : nullptr;
     if (field && StaticFields::isInVariable(closure, *field))
         return;
-    for (JSValue next = receiver; next.isCell() && isCompiledClosure(next.asCell()); next = asObject(next)->getPrototypeDirect())
+    for (JSValue next = receiver; next.isCell() && isCompiledClosure(next.asCell()); next = asObject(next)->getPrototypeDirect()) {
         uncheckedDowncast<Closure>(next.asCell())->ensureClassObject(vm);
+        if (StaticFields::findFieldForCache(vm, next.asCell(), nameAskedFor))
+            return;
+    }
 }
 
 static bool hasSlotForEveryClosure(const NamedAccess& access, JSCell* base)
@@ -73,7 +76,7 @@ static bool hasSlotForEveryClosure(const NamedAccess& access, JSCell* base)
     return slot && (slot->kind == Slot::Kind::ClosureName || slot->kind == Slot::Kind::ClosureLength);
 }
 
-JSValue getAndCache(const NamedAccess& access, JSValue base)
+JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
 {
     VM& vm = *access.instance->vm;
     JSGlobalObject* globalObject = access.instance->globalObject;
@@ -85,7 +88,7 @@ JSValue getAndCache(const NamedAccess& access, JSValue base)
         access.caches().countMiss("read"_s, shouldFile, base, uid);
     Object* compiledBase = compiledObjectOrNull(base);
     if (!shouldFile || (base.isCell() && hasSlotForEveryClosure(access, base.asCell())) || (compiledBase && hasPendingStars(*compiledBase))) {
-        JSValue result = getWithoutCaches(access.instance, base, ident);
+        JSValue result = getWithoutCaches(access.instance, base, ident, receiver);
         RETURN_IF_EXCEPTION(scope, { });
         return result;
     }
@@ -104,9 +107,9 @@ JSValue getAndCache(const NamedAccess& access, JSValue base)
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read, access.site }, lazy.answer);
-        RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, base, lazy.answer));
+        RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
-    PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
+    PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     JSValue result = (lazy.firstObjectAbove ? JSValue(lazy.firstObjectAbove) : base).get(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(scope, { });
     fileRead(access.instance, base, structureBefore, access.name(), slot, access.site);

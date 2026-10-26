@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeGenerator.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "B3BasicBlockInlines.h"
@@ -19,6 +20,7 @@
 #include "B3MemoryValue.h"
 #include "B3Procedure.h"
 #include "B3ValueInlines.h"
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <wtf/BitVector.h>
@@ -29,7 +31,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-enum class UpdateKind : uint8_t { CompareThenAdd, AddThenBranchOnOverflow };
+enum class UpdateKind : uint8_t { CompareThenAdd, AddThenBranchOnOverflow, AddToLowWordThenBranchOnCarry };
 
 struct Update {
     UpdateKind kind;
@@ -44,6 +46,7 @@ struct Update {
     int32_t constantAddend;
     int32_t oldValueBound;
     std::optional<int32_t> minStoredValue;
+    bool addsToLowWord;
     Vector<B3::BasicBlock*, 4> path;
     Vector<B3::Value*, 2> sumUsersOnExits;
 };
@@ -51,6 +54,12 @@ struct Update {
 struct StoredRange {
     std::optional<int64_t> min;
     std::optional<int64_t> max;
+};
+
+// The function that the procedure was made from, where there is one.
+struct Source {
+    const Typed::Program* program { nullptr };
+    const Typed::Function* function { nullptr };
 };
 
 } // anonymous namespace
@@ -100,6 +109,18 @@ static bool isLocationReadBeforeStore(B3::MemoryValue* store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isWide(const Update& update)
+{
+    return update.load->type() == B3::Int64;
+}
+
+// Sums of a few of them do not overflow.
+static bool isUsableBound(const Update& update, int64_t bound)
+{
+    constexpr int64_t limit = std::numeric_limits<int64_t>::max() / 4;
+    return isWide(update) ? bound > -limit && bound < limit : fitsInt32(bound >> 2);
+}
+
 static std::optional<StoredRange> computeStoredRange(const Update& update, B3::BasicBlock* test, B3::DominatingCondition condition)
 {
     B3::Value* comparison = condition.value;
@@ -109,7 +130,7 @@ static std::optional<StoredRange> computeStoredRange(const Update& update, B3::B
     if (test->successorBlock(0) == test->successorBlock(1) || !comparison->child(1)->hasInt64())
         return std::nullopt;
     int64_t bound = comparison->child(1)->asInt64();
-    if (!fitsInt32(bound >> 2))
+    if (!isUsableBound(update, bound))
         return std::nullopt;
 
     bool storesOnTrue = (test->successorBlock(0) == update.path[0]) == condition.isNonZero;
@@ -127,7 +148,7 @@ static std::optional<StoredRange> computeStoredRange(const Update& update, B3::B
     if (!boundsFromAbove || limit < 0)
         return std::nullopt;
     B3::Value* biased = comparison->child(0);
-    if (biased->opcode() != B3::Add || biased->child(0) != update.sum || !biased->child(1)->hasInt64() || !fitsInt32(biased->child(1)->asInt64() >> 2))
+    if (biased->opcode() != B3::Add || biased->child(0) != update.sum || !biased->child(1)->hasInt64() || !isUsableBound(update, biased->child(1)->asInt64()))
         return std::nullopt;
     int64_t bias = biased->child(1)->asInt64();
     return StoredRange { -bias, limit - bias };
@@ -163,21 +184,63 @@ static bool tryUseOverflowFlag(B3::Procedure& proc, Update& update, const Stored
     return true;
 }
 
-static std::optional<Update> matchUpdate(B3::Procedure& proc, B3::Value* value)
+// A load may run ahead of the guard of the read that it was made for. Where the sum is stored the read has run, and nothing was stored between the two.
+static B3::IntRange rangeOfIntegerRead(B3::Procedure& proc, const Source& source, B3::Value* load)
+{
+    Typed::ValueID id = Typed::valueOfOrigin(load->origin());
+    if (!source.function || !id || id.index() >= source.function->values.size())
+        return B3::rangeFor(proc, load);
+    const Typed::Value& read = source.function->at(id);
+    const Typed::Type& type = source.program->at(read.type);
+    if (read.opcode != Typed::Opcode::GetSlot || read.representation != Typed::Representation::Int64 || !type.isInteger())
+        return B3::rangeFor(proc, load);
+    return B3::IntRange(type.integers.minimum, type.integers.maximum);
+}
+
+// Where the low word neither carries nor borrows, the sum has the high word of the old value.
+static bool tryUseCarryFlag(B3::Procedure& proc, const Source& source, Update& update, const StoredRange& storedRange)
+{
+    constexpr int64_t lowWord = std::numeric_limits<uint32_t>::max();
+    B3::IntRange oldValueRange = rangeOfIntegerRead(proc, source, update.load);
+    if (!isUsableBound(update, oldValueRange.min()) || !isUsableBound(update, oldValueRange.max()))
+        return false;
+    bool adds = update.sum->opcode() == B3::Add;
+    B3::IntRange amountRange = B3::rangeFor(proc, update.addend);
+    if (update.constantAddend < 0) {
+        adds = false;
+        amountRange = B3::IntRange(-static_cast<int64_t>(update.constantAddend), -static_cast<int64_t>(update.constantAddend));
+    }
+    if (amountRange.min() < 0 || amountRange.max() > lowWord)
+        return false;
+    int64_t minSum = adds ? oldValueRange.min() + amountRange.min() : oldValueRange.min() & ~lowWord;
+    int64_t maxSum = adds ? oldValueRange.max() | lowWord : oldValueRange.max() - amountRange.min();
+    if ((storedRange.min && minSum < *storedRange.min) || (storedRange.max && maxSum > *storedRange.max))
+        return false;
+    if (isLocationReadBeforeStore(update.store))
+        return false;
+    update.kind = UpdateKind::AddToLowWordThenBranchOnCarry;
+    update.addsToLowWord = adds;
+    return true;
+}
+
+static std::optional<Update> matchUpdate(B3::Procedure& proc, const Source& source, B3::Value* value)
 {
     AOT_THRESHOLD(unsigned, maxPathLength, 4);
     auto* store = value->as<B3::MemoryValue>();
-    if (!store || store->opcode() != B3::Store || store->child(0)->opcode() != B3::Trunc)
+    if (!store || store->opcode() != B3::Store)
+        return std::nullopt;
+    bool isWide = store->child(0)->type() == B3::Int64;
+    if (!isWide && store->child(0)->opcode() != B3::Trunc)
         return std::nullopt;
     B3::Value* truncated = store->child(0);
-    B3::Value* sum = truncated->child(0);
+    B3::Value* sum = isWide ? truncated : truncated->child(0);
     if (sum->opcode() != B3::Add && sum->opcode() != B3::Sub)
         return std::nullopt;
 
     auto matchExtendedLoad = [&](B3::Value* extended) -> B3::MemoryValue* {
-        if (extended->opcode() != B3::SExt32)
+        if (!isWide && extended->opcode() != B3::SExt32)
             return nullptr;
-        auto* load = extended->child(0)->as<B3::MemoryValue>();
+        auto* load = (isWide ? extended : extended->child(0))->as<B3::MemoryValue>();
         if (!load || load->opcode() != B3::Load || load->lastChild() != store->lastChild() || load->offset() != store->offset() || load->traps() || store->traps())
             return nullptr;
         return load;
@@ -194,8 +257,10 @@ static std::optional<Update> matchUpdate(B3::Procedure& proc, B3::Value* value)
     B3::Value* addend = sum->child(1 - oldValueIndex);
     if (addend->hasInt64() && (sum->opcode() == B3::Sub || !addend->asInt64() || !fitsInt32(addend->asInt64())))
         return std::nullopt;
+    if (isWide && addend->isInt64(minInt32))
+        return std::nullopt;
 
-    Update update { UpdateKind::CompareThenAdd, store, truncated, sum, extended, load, nullptr, nullptr, addend, addend->hasInt64() ? static_cast<int32_t>(addend->asInt64()) : 0, 0, std::nullopt, { }, { } };
+    Update update { UpdateKind::CompareThenAdd, store, truncated, sum, extended, load, nullptr, nullptr, addend, addend->hasInt64() ? static_cast<int32_t>(addend->asInt64()) : 0, 0, std::nullopt, false, { }, { } };
     for (B3::BasicBlock* block = store->owner; ; block = block->predecessor(0)) {
         update.path.append(block);
         if (block == load->owner)
@@ -221,10 +286,12 @@ static std::optional<Update> matchUpdate(B3::Procedure& proc, B3::Value* value)
 
     if (std::optional<StoredRange> storedRange = computeStoredRange(update, test, condition)) {
         update.biasedSum = comparison->child(0) == sum ? nullptr : comparison->child(0);
-        if (tryUseOverflowFlag(proc, update, *storedRange))
+        if (isWide ? tryUseCarryFlag(proc, source, update, *storedRange) : tryUseOverflowFlag(proc, update, *storedRange))
             return update;
         update.biasedSum = nullptr;
     }
+    if (isWide)
+        return std::nullopt;
 
     if (!addend->hasInt64() || !isSignedOrder(comparison->opcode()) || comparison->child(0) != sum || !comparison->child(1)->hasInt64())
         return std::nullopt;
@@ -265,9 +332,12 @@ static void rematerializeSumOnExits(B3::Procedure& proc, const Update& update)
                 ++index;
             B3::Value* oldValue = proc.clone(update.load);
             insertionSet.insertValue(index, oldValue);
-            B3::Value* extended = proc.clone(update.extended);
-            extended->child(0) = oldValue;
-            insertionSet.insertValue(index, extended);
+            B3::Value* extended = oldValue;
+            if (update.extended != update.load) {
+                extended = proc.clone(update.extended);
+                extended->child(0) = oldValue;
+                insertionSet.insertValue(index, extended);
+            }
             B3::Value* addend = update.addend;
             if (addend->opcode() == B3::SExt32 || addend->opcode() == B3::ZExt32) {
                 addend = proc.clone(addend);
@@ -370,6 +440,80 @@ static void emitAddThenBranchOnOverflow(B3::Procedure& proc, const Update& updat
     proc.invalidateCFG();
 }
 
+static void emitAddToLowWordThenBranchOnCarry(B3::Procedure& proc, const Update& update)
+{
+    B3::BasicBlock* test = update.path[1];
+    unsigned fastPathIndex = test->successorBlock(0) == update.path[0] ? 0 : 1;
+    B3::FrequentedBlock fastPath = test->successor(fastPathIndex);
+    B3::FrequentedBlock slowPath = test->successor(1 - fastPathIndex);
+    B3::Origin origin = update.store->origin();
+
+    auto appendLoadOfLowWord = [&](B3::BasicBlock* block) {
+        return block->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, update.load->lastChild(), update.load->offset(), update.load->range(), update.load->fenceRange());
+    };
+    auto appendStoreOfLowWord = [&](B3::BasicBlock* block, B3::Value* value) {
+        block->appendNew<B3::MemoryValue>(proc, B3::Store, origin, value, update.store->lastChild(), update.store->offset(), update.store->range(), update.store->fenceRange());
+    };
+    auto appendClone = [&](B3::BasicBlock* block, B3::Value* value) {
+        B3::Value* clone = proc.clone(value);
+        block->append(clone);
+        return clone;
+    };
+
+    B3::BasicBlock* exact = proc.addBlock(slowPath.block()->frequency());
+    B3::BasicBlock* exactStore = proc.addBlock(slowPath.block()->frequency());
+
+    bool isTakenWhereComparisonHolds = B3::stripNegations(test->last()->child(0)).isNonZero;
+    test->removeLast(proc);
+    B3::Value* amount = nullptr;
+    if (!update.addend->hasInt64()) {
+        bool isExtended = update.addend->opcode() == B3::SExt32 || update.addend->opcode() == B3::ZExt32;
+        amount = isExtended ? update.addend->child(0) : test->appendNew<B3::Value>(proc, B3::Trunc, origin, update.addend);
+    }
+    auto amountIn = [&](B3::BasicBlock* block) {
+        return amount ? amount : block->appendNew<B3::Const32Value>(proc, origin, std::abs(update.constantAddend));
+    };
+    B3::Value* lowWord = appendLoadOfLowWord(test);
+    B3::Value* wrappedSum = test->appendNew<B3::Value>(proc, update.addsToLowWord ? B3::Add : B3::Sub, origin, lowWord, amountIn(test));
+    appendStoreOfLowWord(test, wrappedSum);
+    B3::Value* leavesWord = test->appendNew<B3::Value>(proc, B3::Below, origin, update.addsToLowWord ? wrappedSum : lowWord, amountIn(test));
+    test->appendNew<B3::Value>(proc, B3::Branch, origin, leavesWord);
+    test->setSuccessors(B3::FrequentedBlock(exact, B3::FrequencyClass::Rare), fastPath);
+    exact->addPredecessor(test);
+
+    B3::Value* changedWord = appendLoadOfLowWord(exact);
+    appendStoreOfLowWord(exact, exact->appendNew<B3::Value>(proc, update.addsToLowWord ? B3::Sub : B3::Add, origin, changedWord, amountIn(exact)));
+    B3::Value* oldValue = appendClone(exact, update.load);
+    B3::Value* sum = appendClone(exact, update.sum);
+    for (B3::Value*& child : sum->children()) {
+        if (child == update.load)
+            child = oldValue;
+    }
+    B3::Value* compared = sum;
+    if (update.biasedSum) {
+        compared = appendClone(exact, update.biasedSum);
+        compared->child(0) = sum;
+    }
+    B3::Value* comparison = appendClone(exact, update.comparison);
+    comparison->child(0) = compared;
+    exact->appendNew<B3::Value>(proc, B3::Branch, origin, comparison);
+    B3::FrequentedBlock storing(exactStore, fastPath.frequency());
+    if (isTakenWhereComparisonHolds == !fastPathIndex)
+        exact->setSuccessors(storing, slowPath);
+    else
+        exact->setSuccessors(slowPath, storing);
+    exactStore->addPredecessor(exact);
+    slowPath.block()->replacePredecessor(test, exact);
+
+    appendClone(exactStore, update.store)->child(0) = sum;
+    exactStore->appendNew<B3::Value>(proc, B3::Jump, origin);
+    exactStore->setSuccessors(B3::FrequentedBlock(fastPath.block()));
+    fastPath.block()->addPredecessor(exactStore);
+
+    update.store->replaceWithNopIgnoringType();
+    proc.invalidateCFG();
+}
+
 static void apply(B3::Procedure& proc, const Update& update)
 {
     proc.movedLoadLog().willMove(update.store);
@@ -381,11 +525,14 @@ static void apply(B3::Procedure& proc, const Update& update)
     case UpdateKind::AddThenBranchOnOverflow:
         emitAddThenBranchOnOverflow(proc, update);
         return;
+    case UpdateKind::AddToLowWordThenBranchOnCarry:
+        emitAddToLowWordThenBranchOnCarry(proc, update);
+        return;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool updateIntegersInMemory(B3::Procedure& proc)
+static bool updateIntegersInMemory(B3::Procedure& proc, const Source& source)
 {
     if (!isX86_64())
         return false;
@@ -394,7 +541,7 @@ bool updateIntegersInMemory(B3::Procedure& proc)
     Vector<Update, 4> updates;
     for (B3::BasicBlock* block : proc) {
         for (B3::Value* value : *block) {
-            if (std::optional<Update> update = matchUpdate(proc, value))
+            if (std::optional<Update> update = matchUpdate(proc, source, value))
                 updates.append(WTF::move(*update));
         }
     }
@@ -409,7 +556,7 @@ bool updateIntegersInMemory(B3::Procedure& proc)
             if (!part)
                 continue;
             auto added = updateForValue.add(part, index);
-            if (!added.isNewEntry) {
+            if (!added.isNewEntry && added.iterator->value != index) {
                 isRejected.quickSet(added.iterator->value);
                 isRejected.quickSet(index);
             }
@@ -427,7 +574,7 @@ bool updateIntegersInMemory(B3::Procedure& proc)
                     || (child == update.biasedSum && user == update.comparison);
                 if (isInternalUse)
                     continue;
-                if (update.kind == UpdateKind::AddThenBranchOnOverflow && (child == update.load || child == update.extended))
+                if (update.kind != UpdateKind::CompareThenAdd && (child == update.load || child == update.extended))
                     continue;
                 if (child == update.sum && findExitDominating(proc, update, user))
                     update.sumUsersOnExits.appendIfNotContains(user);
@@ -447,13 +594,18 @@ bool updateIntegersInMemory(B3::Procedure& proc)
     return changed;
 }
 
-B3::ClientPhase updateIntegersInMemoryAfterOptimization()
+bool updateIntegersInMemory(B3::Procedure& proc)
+{
+    return updateIntegersInMemory(proc, { });
+}
+
+B3::ClientPhase updateIntegersInMemoryAfterOptimization(const Typed::Program& program, const Typed::Function& function)
 {
     return {
         B3::ClientPhase::Point::AfterOptimization,
         "updateIntegersInMemory"_s,
-        createSharedTask<bool(B3::Procedure&)>([](B3::Procedure& proc) {
-            return updateIntegersInMemory(proc);
+        createSharedTask<bool(B3::Procedure&)>([&program, &function](B3::Procedure& proc) {
+            return updateIntegersInMemory(proc, { &program, &function });
         })
     };
 }

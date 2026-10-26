@@ -54,8 +54,9 @@ struct NamedAccess {
     SiteCache site;
 };
 
-// The base is neither undefined nor null.
-JSValue getAndCache(const NamedAccess&, JSValue base);
+// The base is neither undefined nor null. An accessor that is found gets the receiver for `this`.
+JSValue getAndCache(const NamedAccess&, JSValue base, JSValue receiver);
+inline JSValue getAndCache(const NamedAccess& access, JSValue base) { return getAndCache(access, base, base); }
 void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
 bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
 bool instanceOfAndCache(Instance*, JSValue, JSValue constructor);

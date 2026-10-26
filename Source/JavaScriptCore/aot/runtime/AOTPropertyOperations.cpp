@@ -36,23 +36,23 @@
 
 namespace JSC { namespace AOT {
 
-JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier)
+JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier, JSValue receiver)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto found = base.isObject() ? instance->state->objects->classes.findThroughLazyPrototypes(vm, asObject(base), identifier.impl(), false) : std::nullopt;
+    PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     if (!found)
-        RELEASE_AND_RETURN(scope, base.get(globalObject, identifier));
+        RELEASE_AND_RETURN(scope, base.get(globalObject, identifier, slot));
     if (found->member) {
         JSValue member = found->member->holder->getDirect(found->member->offset);
         if (!found->member->isAccessor)
             return member;
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(member.asCell())->callGetter(globalObject, base));
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(member.asCell())->callGetter(globalObject, receiver));
     }
     if (!found->firstObjectAbove)
         return jsUndefined();
-    PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
     RELEASE_AND_RETURN(scope, JSValue(found->firstObjectAbove).get(globalObject, identifier, slot));
 }
 
@@ -304,24 +304,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetSuperPropertyById, EncodedJSValue, (Inst
     const Identifier& identifier = identifierAt(instance, name);
     JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    PropertyCaches& caches = *instance->state->propertyCaches;
-    if (caches.findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
+    // The stub answers for what is filed unless that is an accessor or lies in no cell of the front table.
+    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
         if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
             OPERATION_RETURN(scope, JSValue::encode(found));
+        OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
     }
-    ClassPrototype::ensureMembers(parent);
-    Object::ensureStructureForExtraPropertiesIfNeeded(vm, parent);
-    Structure* structureBefore = WTF::opaque(parent->structure());
-    PropertySlot slot(JSValue::decode(receiver), PropertySlot::InternalMethodType::Get);
-    JSValue result = JSValue(parent).get(globalObject, identifier, slot);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (parent->structure() == structureBefore) {
-        PropertyAnswer answer = classifyRead({ globalObject, parent, structureBefore, identifier.impl(), slot });
-        if (answer.isCacheable())
-            caches.cache({ structureBefore, caches.nameOf(name), SlotAccess::Read }, answer);
-    }
-    ensureStillAliveHere(structureBefore);
-    OPERATION_RETURN(scope, JSValue::encode(result));
+    OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name, nullptr }, parent, JSValue::decode(receiver))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperGet, EncodedJSValue, (Instance* instance, EncodedJSValue base, EncodedJSValue key, EncodedJSValue receiver))

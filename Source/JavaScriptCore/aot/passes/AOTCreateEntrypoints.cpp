@@ -160,7 +160,8 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         uint32_t written = writtenFunctionOf(FunctionID(index)).index();
         hasBody.quickSet(written);
-        if (hasClosures(program.functions[index]) && !standsBehindEntryChecks.quickGet(index) && hasForm.set(written))
+        // No function object is made of a form that is only called directly.
+        if (hasClosures(program.functions[index]) && !program.functions[index].hasOnlyDirectCallers() && !standsBehindEntryChecks.quickGet(index) && hasForm.set(written))
             hasSeveralForms.quickSet(written);
     }
     for (unsigned index = 0; index < program.functions.size(); ++index) {
@@ -179,9 +180,9 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         FunctionID written = writtenFunctionOf(id);
         if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index()))
             continue;
-        // The tables leave async functions out. A static field is stored without a word to the run time.
+        // A static field is stored without a word to the run time.
         bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
-        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !function.has(FunctionFlags::IsAsync) && !isNamedByStaticField)
+        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !isNamedByStaticField)
             continue;
         editor.at(id).capabilities.add(FunctionCapabilities::RecordsCallee);
         editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
@@ -791,14 +792,12 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
 
         IRBuilder builder(context, entrypoint, arenas.types);
         builder.setOrigin({ entrypoint.position, 0 });
-        BlockID block = builder.addBlock();
+        BlockID block = builder.addBlock(BlockFrequency::Rare);
         builder.moveToEndOf(block);
         for (TypeID type : parameterTypes)
             builder.addParameter(block, type);
         Value error = IRBuilder::make(Opcode::NewRuntimeError);
         error.setRuntimeError(RuntimeErrorKind::LeftOutOfExecutable);
-        if (!build.options().obfuscates())
-            error.setName(entrypoint.name);
         builder.emitThrow(builder.append(WTF::move(error)));
     });
     build.statistics().count(StatisticID::UnreachableFunctionsRemoved, entrypoints.size());

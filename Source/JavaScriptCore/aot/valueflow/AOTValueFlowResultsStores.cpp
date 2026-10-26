@@ -79,6 +79,7 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
             if (sets.contains(writtenThrough, ValueFlowUniverse::untrackedObject()))
                 throughUntrackedObject = maker.unite(throughUntrackedObject, value);
         });
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> listOfPrototypes;
         for (ValueFlowObjectID object : objectsThatSelectLayout) {
             ValueSetID prototypes = setAt(links, object.index());
             if (sets.contains(heap.escaped(), object))
@@ -86,20 +87,27 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
             if (sets.contains(heap.lost(), object))
                 prototypes = maker.unite(prototypes, throughUntrackedObject);
             SelectedLayouts selected;
-            sets.forEachMember(maker.intersect(prototypes, prototypeObjectsOfClasses), [&](ValueFlowObjectID prototype) {
-                selected.listed.append(universe.classLayoutOf(prototype));
-            });
-            AOT::sort(selected.listed);
-            removeRepeatedElements(selected.listed);
-            selected.listed.removeFirst(namedLayoutOf(object));
+            ValueSetID prototypesOfClasses = maker.intersect(prototypes, prototypeObjectsOfClasses);
+            selected.list = listOfPrototypes.ensure(prototypesOfClasses.index(), [&] {
+                Vector<LayoutID> listed;
+                sets.forEachMember(prototypesOfClasses, [&](ValueFlowObjectID prototype) {
+                    listed.append(universe.classLayoutOf(prototype));
+                });
+                AOT::sort(listed);
+                removeRepeatedElements(listed);
+                m_listsOfSelectedLayouts.append(WTF::move(listed));
+                return m_listsOfSelectedLayouts.size() - 1;
+            }).iterator->value;
+            const Vector<LayoutID>& listed = m_listsOfSelectedLayouts[selected.list];
+            bool listsOtherLayout = listed.size() > 1 || (listed.size() == 1 && listed[0] != namedLayoutOf(object));
             selected.everyEscapedClass = !m_escapedClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::unknownObject());
             selected.everyLostClass = !m_lostClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::untrackedObject());
             if (selected.everyEscapedClass)
                 objectsOfEveryEscapedClass.append(object);
             if (selected.everyLostClass)
                 objectsOfEveryLostClass.append(object);
-            if (!selected.listed.isEmpty() || selected.everyEscapedClass || selected.everyLostClass)
-                m_selectedLayouts.add(object.index(), WTF::move(selected));
+            if (listsOtherLayout || selected.everyEscapedClass || selected.everyLostClass)
+                m_selectedLayouts.add(object.index(), selected);
         }
     }
 
@@ -112,8 +120,10 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
         auto selected = m_selectedLayouts.find(index);
         if (selected == m_selectedLayouts.end())
             return;
-        for (LayoutID layout : selected->value.listed)
-            found.append({ layout, object });
+        for (LayoutID layout : m_listsOfSelectedLayouts[selected->value.list]) {
+            if (layout != named)
+                found.append({ layout, object });
+        }
     });
     Vector<uint32_t> firstObjectOfLayout;
     firstObjectOfLayout.fill(0u, numberOfLayouts + 1);

@@ -407,7 +407,10 @@ bool mayBeCalledDirectly(const Program& program, FunctionID id)
 bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
-    return (!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+    if (!callee.capabilities.contains(FunctionCapabilities::RecordsCallee))
+        return mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+    // The tests at the head of a function stay where the entrypoint alone enters them.
+    return callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && callee.role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
@@ -1212,7 +1215,6 @@ struct CallArm {
     FunctionID callee;
     ValueID closureCreation;
     bool capturesReceiver { false };
-    bool isNeverInlined { false };
     LayoutSetID receivers;
     MemberConditions conditions;
 };
@@ -1635,7 +1637,7 @@ struct CallResolver {
             .accessSite = original.accessSite(),
             .calledBuiltin = original.opcode == Opcode::Call ? original.calledBuiltin() : BuiltinID(),
             .isConstruction = !!newTarget,
-            .isNeverInlined = arm.isNeverInlined || (original.opcode == Opcode::Call && original.isNeverInlined()),
+            .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
         });
@@ -2051,10 +2053,7 @@ struct CallResolver {
 
         bool testsNames = mayTestNames && std::ranges::any_of(*members, isEnteredByValueOnceRenamed);
         auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) {
-            CallArm arm = directCallArm(member, { }, candidates.value);
-            // A copy of the body at every place costs more bytes than the few calls of a place win back.
-            arm.isNeverInlined = isEnteredByValueOnceRenamed(member) && !isHot(heatClassOf(context, site.position.block));
-            return arm;
+            return directCallArm(member, { }, candidates.value);
         });
         return [this, &site, testsNames, proof = candidates.proof, arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
             expansion.begin(site.position);
@@ -2361,6 +2360,14 @@ struct CallResolver {
         };
     }
 
+    bool isAlwaysConstructor(ValueID value)
+    {
+        CalleeCandidates candidates = calleeCandidates(program, function, value);
+        return candidates.isProven() && !candidates.hasOtherCallees && !candidates.mayBeNullish && std::ranges::all_of(candidates.proven, [&](FunctionID id) {
+            return program.at(id).constructorForm() != ConstructorForm::NotConstructor;
+        });
+    }
+
     Plan planFunctionMethod(const CallSite& site)
     {
         const Value& value = function.at(site.position.value);
@@ -2374,6 +2381,12 @@ struct CallResolver {
         if (!typeOf(site.position.value).isAnything())
             return declined;
         std::optional<ForwardedCallPlan> forwarded = planForwardedCall(program, function, builtinCallOf(program, value));
+        if (!forwarded) {
+            forwarded = planForwardedConstruct(program, function, builtinCallOf(program, value));
+            // Written any other way, the built-in has a frame of its own between the caller and the constructor.
+            if (forwarded && !(value.isReflectConstructSyntax() && isAlwaysConstructor(forwarded->callee) && (!forwarded->newTarget || isAlwaysConstructor(forwarded->newTarget))))
+                return declined;
+        }
         if (!forwarded || (forwarded->list && !isAlwaysArray(typeOf(forwarded->list))))
             return declined;
         return [this, &site, forwarded = *forwarded] {

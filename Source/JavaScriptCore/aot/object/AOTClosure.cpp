@@ -185,7 +185,13 @@ bool mayHaveLazyProperty(VM& vm, JSCell* cell, UniquedStringImpl* uid, LookupPos
     if (!closure->kind().isConstructor)
         return false;
     const LayoutData* classLayout = closure->classData();
-    return !classLayout || !closure->getDirect(vm, vm.propertyNames->prototype) || closure->state().objects->classes.staticField(*classLayout, uid);
+    if (!classLayout || !closure->getDirect(vm, vm.propertyNames->prototype))
+        return true;
+    // A static field that a class above declares is a property of that class object alone.
+    const FieldData* field = closure->state().objects->classes.staticField(*classLayout, uid);
+    std::span<const FieldData> declaredHere = classLayout->staticFields();
+    bool isDeclaredHere = field && std::bit_cast<uintptr_t>(field) - std::bit_cast<uintptr_t>(declaredHere.data()) < declaredHere.size_bytes();
+    return isDeclaredHere && !isValidOffset(closure->structure()->get(vm, uid));
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(closurePrototypeProperty);

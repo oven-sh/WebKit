@@ -193,12 +193,11 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
     return state.strings->writtenNameOfFunction(vm, function);
 }
 
-// The frames of a generator, and of an async function that may wait, run under a function object of their own.
+// The frames of a generator run under a function object of their own.
 // So is a frame without a record of a function that records its callees only once one of them was renamed.
 static bool isNamedInFramesByFunction(FunctionID closureFunction)
 {
-    FunctionDescription description(closureFunction);
-    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !description.isAsync() && !description.recordsCallee();
+    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !FunctionDescription(closureFunction).recordsCallee();
 }
 
 static String nameSetAtRunTime(VM& vm, FunctionID function)
@@ -568,6 +567,12 @@ static bool runsInBodyWithoutName(const FunctionDescription& description)
     return kind.hasInferredName && (kind.isGenerator || (kind.isAsync && description.isNamedByOwner()));
 }
 
+// So does the body of an async function that may wait: what the function object is called says nothing about it.
+static bool runsInBodyThatMayWait(const FunctionDescription& description)
+{
+    return description.isAsync() && description.rejectsOnThrow() && description.visibility() == TraceVisibility::Visible;
+}
+
 String functionName(VM& vm, const FunctionDescription& description, NameForm form, JSObject* callee, bool calleeLiesInFrame)
 {
     FunctionID function = description.function();
@@ -580,19 +585,23 @@ String functionName(VM& vm, const FunctionDescription& description, NameForm for
         if (callee) [[unlikely]] {
             if (String name = nameGivenTo(vm, callee); !name.isNull())
                 return name;
-        } else if (String name = calleeLiesInFrame ? String() : nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
-            return name;
-        else if (String name = nameLookedFor(vm, function); !name.isNull()) [[unlikely]]
-            return name;
-        else if (String displayName = calleeLiesInFrame ? String() : displayNameInFrames(vm, function); !displayName.isEmpty()) [[unlikely]]
-            return displayName;
+        } else if (!runsInBodyThatMayWait(description)) {
+            String nameSet = calleeLiesInFrame ? String() : nameSetAtRunTime(vm, function);
+            if (!nameSet.isEmpty()) [[unlikely]]
+                return nameSet;
+            // A text without characters: the function object has no such property any more, or one that names nothing.
+            if (String name = nameSet.isNull() ? nameLookedFor(vm, function) : String(); !name.isNull()) [[unlikely]]
+                return name;
+            if (String displayName = calleeLiesInFrame ? String() : displayNameInFrames(vm, function); !displayName.isEmpty()) [[unlikely]]
+                return displayName;
+        }
         if (description.isNamedByComputedKey()) [[unlikely]]
             return nameInFramesOfFunctionNamedByComputedKey(function);
         return functionNameAsWritten(description);
     case NameForm::CalculatedDisplayName: {
         if (runsInBodyWithoutName(description))
             return emptyString();
-        String displayName = callee ? ownStringProperty(callee, vm.propertyNames->displayName) : calleeLiesInFrame ? String() : displayNameInFrames(vm, function);
+        String displayName = callee ? ownStringProperty(callee, vm.propertyNames->displayName) : calleeLiesInFrame || runsInBodyThatMayWait(description) ? String() : displayNameInFrames(vm, function);
         if (!displayName.isNull()) [[unlikely]]
             return displayName;
         return description.isNamedByComputedKey() ? emptyString() : functionNameAsWritten(description);
@@ -639,18 +648,14 @@ void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
 
 void didDeleteNameProperty(VM& vm, JSObject* closure)
 {
-    FunctionTables& tables = FunctionTables::of(vm);
-    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire))
-        return;
-    Locker locker { tables.namesLock };
-    tables.namesSetAtRunTime.remove(sourceFunctionOf(*functionOf(closure)));
+    didDefineNameProperty(vm, closure, emptyString());
 }
 
 void didLookForNameProperty(VM& vm, JSObject* closure)
 {
     FunctionID function = *functionOf(closure);
     FunctionID sourceFunction = sourceFunctionOf(function);
-    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator || FunctionDescription(function).isAsync())
+    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator)
         return;
     FunctionTables& tables = FunctionTables::of(vm);
     Locker locker { tables.namesLock };
@@ -664,7 +669,7 @@ void showNameUntilLookedFor(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
     FunctionID sourceFunction = sourceFunctionOf(function);
-    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator || FunctionDescription(function).isAsync())
+    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator)
         return;
     FunctionTables& tables = FunctionTables::of(vm);
     Locker locker { tables.namesLock };

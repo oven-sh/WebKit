@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTFlowBuiltinLocations.h"
@@ -22,6 +23,7 @@
 #include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSets.h"
 #include <array>
 #include <wtf/HashMap.h>
@@ -398,6 +400,40 @@ bool ConstantsHoldingModules::isReadBy(const Value& read) const
     if (read.opcode == Opcode::GetModuleVariable)
         return m_variables.get(read.variable().index());
     return read.opcode == Opcode::GetEnvironmentField && std::ranges::binary_search(m_fields, keyOf(read.layout(), read.field()));
+}
+
+static bool spellsGlobalObject(const Program& program, const Function& function, ValueID id)
+{
+    const BuiltinTable& builtins = program.builtins();
+    const Value& object = function.at(sameObjectThroughCasts(function, id));
+    if (object.opcode == Opcode::Builtin)
+        return builtins.canonicalID(object.builtin()) == Builtins::GlobalThis;
+    if (object.opcode != Opcode::PropGet || !object.isFreeName())
+        return false;
+    if (object.key() == program.keyOf(builtins.at(Builtins::GlobalThis).name))
+        return true;
+    BuiltinID member = findOwnMember(program, Builtins::GlobalThis, object.key());
+    return member && builtins.canonicalID(member) == Builtins::GlobalThis;
+}
+
+static BitVector findKeysStoredUnderOnGlobalObject(const Program& program, const ParallelLoops& loops)
+{
+    Vector<PropertyKeyID> stored = collectInParallel<PropertyKeyID>(loops, program.functions.size(), [&](unsigned index, Vector<PropertyKeyID>& found) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || !mayHoldValueWith(program, FunctionID(index), { Opcode::PropSet }))
+            return;
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& operation = function.at(id);
+                if (operation.opcode == Opcode::PropSet && spellsGlobalObject(program, function, operation.operand(OperandIndex::PropSet::object)))
+                    found.append(operation.key());
+            }
+        }
+    });
+    BitVector keys(program.types.numberOfPropertyKeys());
+    for (PropertyKeyID key : stored)
+        keys.set(key.index());
+    return keys;
 }
 
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
@@ -931,6 +967,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         },
         [&] {
             m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program, loops);
+        },
+        [&] {
+            m_keysStoredUnderOnGlobalObject = findKeysStoredUnderOnGlobalObject(program, loops);
         },
         [&] {
             m_constantsHoldingModules = ConstantsHoldingModules(program);

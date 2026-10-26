@@ -772,6 +772,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
     case Opcode::ImportModule:
+        escapeOperands(statement, context);
         noteRequest(context, statement.function, operation.module());
         evaluateModule(context, operation.module());
         context.connect(context.lookup(valueOf(context, namespaceOf(context, operation.module())), awaitedValueName), settledValueOfPromiseAt(statement, context));

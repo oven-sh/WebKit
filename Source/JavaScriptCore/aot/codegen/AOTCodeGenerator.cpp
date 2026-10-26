@@ -153,7 +153,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction } }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 
@@ -402,6 +402,7 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 void CodeGenerator::finishProcedure()
 {
     m_heaps.computeRangesAndDecorateInstructions();
+    m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
     if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
         B3::HeapRange fields = m_heaps.rangeOf(m_heaps.entire(AbstractHeap::ObjectFields));
         for (B3::Value* value : m_proc.values()) {

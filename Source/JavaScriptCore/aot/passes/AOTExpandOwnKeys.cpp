@@ -37,6 +37,7 @@
 #include <limits>
 #include <memory>
 #include <ranges>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -68,6 +69,15 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
         return std::ranges::any_of(order, [&](uint32_t field) {
             return layout.fields[field].form.contains(FieldForm::IsAccessor);
         });
+    };
+    // No object is seen without a field that is always filled, so an order that leaves one out is the order of none.
+    BitVector isInEveryOrder(layout.fields.size());
+    for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        if (isEnumerableStringField(program, layout.fields[field]) && flowOf(program, { id, field }).occupancy == Occupancy::AlwaysFilled)
+            isInEveryOrder.quickSet(field);
+    }
+    auto isOrderOfNoObject = [&, numberOfFieldsInEveryOrder = isInEveryOrder.bitCount()](const KeyOrderFields& order) {
+        return static_cast<size_t>(std::ranges::count_if(order, [&](uint32_t field) { return isInEveryOrder.quickGet(field); })) < numberOfFieldsInEveryOrder;
     };
     uint64_t numberOfOrdersLeftOut = 0;
     bool isComplete = true;
@@ -104,7 +114,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
                     if (!order.contains(field))
                         extended.append(field);
                 }
-                if (extendedOrders.contains(extended))
+                if (extendedOrders.contains(extended) || (declaringLayout == id && isOrderOfNoObject(extended)))
                     continue;
                 if (extended.size() > limits.maxFields || extendedOrders.size() == limits.maxOrders || listsAccessor(extended))
                     ++numberOfOrdersLeftOut;
@@ -454,7 +464,15 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
     return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
 }
 
-// The layout of a literal that has no property yet when a spread without excluded keys fills it.
+// Once its fields are stored one by one, such an object need not be made.
+static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
+{
+    const EscapeAnalysis& escape = context.analyses.escape();
+    std::optional<ObjectID> tracked = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(object);
+    return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
+}
+
+// The layout of a literal that somebody keeps, and that has no property yet when a spread without excluded keys fills it.
 static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Spread || !context.function.at(site.value).excludedKeys().empty())
@@ -471,7 +489,7 @@ static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const Unchange
         if (!hasPlainSlot)
             return { };
     }
-    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
+    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }) || isKeptByNobody(context, site.target))
         return { };
     return layout;
 }
@@ -690,14 +708,6 @@ static bool fillsEmptyLiteral(const Function& function, const OwnKeyWalkSite& si
             return false;
     }
     return false;
-}
-
-// Once its fields are stored one by one, such an object need not be made.
-static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
-{
-    const EscapeAnalysis& escape = context.analyses.escape();
-    std::optional<ObjectID> tracked = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(object);
-    return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
 }
 
 static bool walksWithoutTests(const OwnKeyWalkPlan& plan)

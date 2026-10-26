@@ -45,12 +45,12 @@ function f3 name="published" parameters=[{type=anything}] results=[{type=anythin
     Return v2
 }
 # CHECK-LABEL: name="first" module=m0 role=GenericEntrypoint
-# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
-# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable name="first"
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable
 # CHECK-NEXT: Throw
 # CHECK-LABEL: name="second" module=m0 role=GenericEntrypoint
-# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
-# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable name="second"
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable
 # CHECK-NEXT: Throw
 # CHECK-LABEL: name="published" module=m0 role=GenericEntrypoint
 # CHECK: = CallDirect {{*}} function=f1

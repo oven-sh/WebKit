@@ -632,7 +632,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : CellConversions::AsEffectsSay);
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;

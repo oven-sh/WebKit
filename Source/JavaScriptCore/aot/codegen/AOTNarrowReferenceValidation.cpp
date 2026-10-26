@@ -11,6 +11,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
 #include "B3ArgumentRegValue.h"
@@ -24,6 +25,9 @@
 #include "B3Procedure.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
+#include <algorithm>
+#include <span>
+#include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexMap.h>
@@ -101,11 +105,21 @@ private:
     struct BlockState {
         unsigned eventsBegin { 0 };
         unsigned eventsEnd { 0 };
-        bool hasSafepoint { false };
-        unsigned walkedAt { 0 };
-        unsigned changedAt { 0 };
+        unsigned positionInPostOrder { 0 };
+        unsigned cycle { 0 };
+        // A round over a cycle reads the head of a block in front as the same round left it, and any other as the round before did.
+        bool isReadInNextRound { false };
+        B3::BasicBlock* lastReaderInRound { nullptr };
         unsigned numberOfPredecessorsReported { 0 };
         B3::BasicBlock* lastPredecessorReported { nullptr };
+    };
+
+    struct SuccessorPositions {
+        unsigned size() const { return block->numSuccessors(); }
+        unsigned operator[](unsigned index) const { return states[block->successorBlock(index)].positionInPostOrder; }
+
+        B3::BasicBlock* block;
+        const IndexMap<B3::BasicBlock*, BlockState>& states;
     };
 
     void analyze()
@@ -127,47 +141,75 @@ private:
         m_wordsAtHead.resize(m_proc.size());
         m_pointersAtHead.resize(m_proc.size());
         m_blockStates.resize(m_proc.size());
-        for (B3::BasicBlock* block : postOrder)
-            collectEvents(block);
+        for (unsigned position = 0; position < postOrder.size(); ++position) {
+            m_blockStates[postOrder[position]].positionInPostOrder = position;
+            collectEvents(postOrder[position]);
+        }
 
-        bool needsFixedPoint = hasBackEdge(postOrder);
-        for (bool changed = needsFixedPoint; changed;) {
-            changed = false;
-            for (B3::BasicBlock* block : postOrder) {
-                if (needsWalk(block))
-                    changed |= walk(block, Reports::No);
-            }
-        }
-        for (B3::BasicBlock* block : postOrder) {
-            if (!needsFixedPoint || !m_insertsGuards || m_blockStates[block].hasSafepoint)
+        forEachComponent(postOrder, [&](std::span<B3::BasicBlock* const> blocks, bool isCycle) {
+            if (isCycle)
+                solveCycle(blocks);
+            for (B3::BasicBlock* block : blocks)
                 walk(block, Reports::Yes);
-            // What is live at the head of a block is read by its predecessors alone.
-            for (B3::BasicBlock* successor : block->successorBlocks()) {
-                BlockState& state = m_blockStates[successor];
-                if (std::exchange(state.lastPredecessorReported, block) != block && ++state.numberOfPredecessorsReported == successor->numPredecessors())
-                    forgetHead(successor);
-            }
-        }
+        });
         m_findings.numberOfReferencesAcrossSafepoints += m_wordsAcrossSafepoints.bitCount();
     }
 
-    void forgetHead(B3::BasicBlock* block)
+    // Each strongly connected component comes behind those that it leads to, with its blocks in post order.
+    template<typename Functor>
+    void forEachComponent(const Vector<B3::BasicBlock*>& postOrder, const Functor& functor)
     {
-        m_wordsAtHead[block] = { };
-        m_pointersAtHead[block] = { };
+        if (!hasBackEdge(postOrder)) {
+            for (B3::BasicBlock* const& block : postOrder)
+                functor(std::span<B3::BasicBlock* const> { &block, 1 }, false);
+            return;
+        }
+        Typed::StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(postOrder.size(), [&](unsigned position) {
+            return SuccessorPositions { postOrder[position], m_blockStates };
+        });
+        Vector<B3::BasicBlock*> blocks;
+        for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
+            uint32_t begin = components.firstMemberOf[component];
+            std::span<uint32_t> positions = components.members.mutableSpan().subspan(begin, components.firstMemberOf[component + 1] - begin);
+            std::ranges::sort(positions);
+            blocks.shrink(0);
+            for (uint32_t position : positions)
+                blocks.append(postOrder[position]);
+            functor(blocks.span(), components.isInCycle.get(positions[0]));
+        }
     }
 
-    bool needsWalk(B3::BasicBlock* block) const
+    // Leaves what is live at the heads that a round reads from the round before. Once those stay, one more round finds every other head.
+    void solveCycle(std::span<B3::BasicBlock* const> blocks)
     {
-        const BlockState& state = m_blockStates[block];
-        if (!m_insertsGuards || !state.walkedAt)
-            return true;
-        for (B3::BasicBlock* successor : block->successorBlocks()) {
-            // A block can be its own successor.
-            if (m_blockStates[successor].changedAt >= state.walkedAt)
-                return true;
+        unsigned cycle = ++m_numberOfCycles;
+        for (B3::BasicBlock* block : blocks)
+            m_blockStates[block].cycle = cycle;
+        for (B3::BasicBlock* block : blocks) {
+            for (B3::BasicBlock* successor : block->successorBlocks()) {
+                BlockState& state = m_blockStates[successor];
+                if (state.cycle != cycle)
+                    continue;
+                if (state.positionInPostOrder < m_blockStates[block].positionInPostOrder)
+                    state.lastReaderInRound = block;
+                else
+                    state.isReadInNextRound = true;
+            }
         }
-        return false;
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (B3::BasicBlock* block : blocks)
+                changed |= walk(block, Reports::No);
+        }
+    }
+
+    // What is live at the head of a block is read by its predecessors alone.
+    bool isLastReader(B3::BasicBlock* block, B3::BasicBlock* successor, Reports reports)
+    {
+        BlockState& state = m_blockStates[successor];
+        if (reports == Reports::No)
+            return state.lastReaderInRound == block && !state.isReadInNextRound;
+        return std::exchange(state.lastPredecessorReported, block) != block && ++state.numberOfPredecessorsReported == successor->numPredecessors();
     }
 
     const Facts& factsOf(B3::Value* value) const
@@ -179,17 +221,20 @@ private:
     bool isWord(B3::Value* value) const { return factsOf(value).wordNumber != Facts::none; }
     bool isPointer(B3::Value* value) const { return factsOf(value).pointerNumber != Facts::none; }
 
-    static bool hasBackEdge(const Vector<B3::BasicBlock*>& postOrder)
+    bool hasBackEdge(const Vector<B3::BasicBlock*>& postOrder) const
     {
-        BitVector seen;
-        for (B3::BasicBlock* block : postOrder) {
-            for (B3::BasicBlock* successor : block->successorBlocks()) {
-                if (!seen.get(successor->index()))
+        for (unsigned position = 0; position < postOrder.size(); ++position) {
+            for (B3::BasicBlock* successor : postOrder[position]->successorBlocks()) {
+                if (m_blockStates[successor].positionInPostOrder >= position)
                     return true;
             }
-            seen.set(block->index());
         }
         return false;
+    }
+
+    static bool differs(const BitVector& now, const BitVector& before)
+    {
+        return before.isEmpty() ? !now.isEmpty() : now != before;
     }
 
     static bool isCellCageBase(B3::Value* value)
@@ -785,10 +830,8 @@ private:
                 m_events.append(Event { EventKind::WordDef, facts.wordNumber });
             if (facts.pointerNumber != Facts::none)
                 m_events.append(Event { EventKind::PointerDef, facts.pointerNumber });
-            if (isSafepoint(value)) {
+            if (isSafepoint(value))
                 m_events.append(Event { EventKind::Safepoint, Facts::none, Facts::none, value });
-                state.hasSafepoint = true;
-            }
             if (facts.wordOfSum) {
                 if (facts.pointerNumber != Facts::none)
                     useWord(facts.wordOfSum, value);
@@ -815,9 +858,21 @@ private:
     {
         BitVector words;
         BitVector pointers;
+        bool isFirst = true;
         for (B3::BasicBlock* successor : block->successorBlocks()) {
-            words.merge(m_wordsAtHead[successor]);
-            pointers.merge(m_pointersAtHead[successor]);
+            bool isLastRead = isLastReader(block, successor, reports);
+            if (isLastRead && isFirst) {
+                words = std::exchange(m_wordsAtHead[successor], { });
+                pointers = std::exchange(m_pointersAtHead[successor], { });
+            } else {
+                words.merge(m_wordsAtHead[successor]);
+                pointers.merge(m_pointersAtHead[successor]);
+                if (isLastRead) {
+                    m_wordsAtHead[successor] = { };
+                    m_pointersAtHead[successor] = { };
+                }
+            }
+            isFirst = false;
         }
         auto useWord = [&](unsigned number, B3::Value* user) {
             words.set(number);
@@ -857,16 +912,7 @@ private:
             }
         }
 
-        bool changed = false;
-        if (reports == Reports::No) {
-            if (!state.walkedAt)
-                changed = !words.isEmpty() || !pointers.isEmpty();
-            else
-                changed = words != m_wordsAtHead[block] || pointers != m_pointersAtHead[block];
-        }
-        state.walkedAt = ++m_walkCount;
-        if (changed)
-            state.changedAt = state.walkedAt;
+        bool changed = reports == Reports::No && state.isReadInNextRound && (differs(words, m_wordsAtHead[block]) || differs(pointers, m_pointersAtHead[block]));
         m_wordsAtHead[block] = WTF::move(words);
         m_pointersAtHead[block] = WTF::move(pointers);
         return changed;
@@ -889,7 +935,7 @@ private:
     IndexMap<B3::BasicBlock*, BitVector> m_pointersAtHead;
     IndexMap<B3::BasicBlock*, BlockState> m_blockStates;
     Vector<Event> m_events;
-    unsigned m_walkCount { 0 };
+    unsigned m_numberOfCycles { 0 };
     bool m_hasSafepoint { false };
     BitVector m_wordsAcrossSafepoints;
     Vector<Vector<unsigned, 2>> m_pointersOfWord;

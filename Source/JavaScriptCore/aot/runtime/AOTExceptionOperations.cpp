@@ -9,7 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
+#include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
+#include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
@@ -206,6 +209,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, 
     OPERATION_RETURN(scope);
 }
 
+static String nameOfFunctionOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames)
+        return { };
+    while (!frames->isAtEnd() && frames->frame().visibility == TraceVisibility::Hidden)
+        frames->advance();
+    if (frames->isAtEnd())
+        return { };
+    return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
+}
+
 JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKind kind, const Identifier* name)
 {
     switch (kind) {
@@ -257,8 +272,8 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
         if (validatesRuntime(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
-        if (name && !name->isEmpty())
-            return createTypeError(globalObject, makeString('\'', name->string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
+        if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
+            return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
         return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
         return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());

@@ -50,10 +50,12 @@ struct TypePropagationOutcome {
     bool waitsToCutCode { false };
     bool didLookForCodeToCut { false };
     bool gaveUpOnRounds { false };
+    bool keptRangesOfNarrowedParameters { false };
     bool leftTypesAboveTheirRules { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
+    bool dependsOnTypesBefore() const { return gaveUpOnRounds || keptRangesOfNarrowedParameters; }
 
     TypePropagationOutcome& operator+=(const TypePropagationOutcome& other)
     {
@@ -62,6 +64,7 @@ struct TypePropagationOutcome {
         cutBlocks += other.cutBlocks;
         replacedUpcasts += other.replacedUpcasts;
         gaveUpOnRounds |= other.gaveUpOnRounds;
+        keptRangesOfNarrowedParameters |= other.keptRangesOfNarrowedParameters;
         leftTypesAboveTheirRules |= other.leftTypesAboveTheirRules;
         if (other.didLookForCodeToCut) {
             didLookForCodeToCut = true;
@@ -179,6 +182,7 @@ private:
     TypeID meetWithPreviousExpectation(ValueID, TypeID computed);
     TypeID joinIntoParameter(const TypingContext&, ValueID parameter, TypeID current, TypeID incoming);
     TypeID widenGrownParameter(ValueID parameter, TypeID old, TypeID grown);
+    TypeID keepRangeOfNarrowedParameter(ValueID parameter, TypeID old, TypeID narrowed);
     bool update(TypeLevel, Direction, ValueID, TypeID computed);
     void giveUpOnRounds(TypeLevel, Direction);
 

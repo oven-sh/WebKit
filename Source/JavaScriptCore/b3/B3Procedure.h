@@ -325,6 +325,9 @@ public:
     unsigned optLevel() const { return m_optLevel; }
 
     const Policy& policy() const { return m_policy; }
+    // A load is not folded into an instruction that comes after a write to this range.
+    const HeapRange& heapThatLoadsStayInFrontOf() const { return m_heapThatLoadsStayInFrontOf; }
+    void setHeapThatLoadsStayInFrontOf(const HeapRange& range) { m_heapThatLoadsStayInFrontOf = range; }
     uint64_t limit(Limit limit) const { return m_policy.limits.get(limit); }
     HeapSetTable& heapSets() LIFETIME_BOUND { return m_heapSets; }
     Arena* arenaOrNull() LIFETIME_BOUND { return m_policy.allocation.usesArena ? &m_arena : nullptr; }
@@ -470,6 +473,7 @@ private:
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { 2 };
     Policy m_policy;
+    HeapRange m_heapThatLoadsStayInFrontOf;
     CompilationScratch* m_scratch { nullptr };
     mutable CompilationReport m_report;
     HeapSetTable m_heapSets;

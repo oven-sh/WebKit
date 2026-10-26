@@ -21,6 +21,7 @@ export default b.declarations(
     "%JSONText%",
     "%NativeFunctions%",
     "%PrivateGlobals%",
+    "%PrivateGlobals%.createInternalModuleById",
     "%PrivateGlobals%.esmLoadSync",
     "%PrivateGlobals%.inherits",
     "%PrivateGlobals%.makeErrorWithCode",

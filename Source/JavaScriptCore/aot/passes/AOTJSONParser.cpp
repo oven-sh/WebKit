@@ -519,10 +519,8 @@ struct JSONParserBuilder final : Emission {
         emitJumpIf(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor() }), exits.unknown);
 
         auto emitMatchedMember = [&](size_t index, ValueID valueStart) {
-            if (!inputs().build.isSabotaged(Sabotage::ParsedMembersComeOnce))
-                emitJumpIf(state.seen(index), exits.unknown);
             ObjectState stateOfMember = state;
-            emitMember(parse, index, valueStart, stateOfMember, parse.anyOrder);
+            emitMember(parse, index, valueStart, stateOfMember, parse.anyOrder, inputs().build.isSabotaged(Sabotage::ParsedMembersComeOnce) ? ValueID() : state.seen(index));
         };
 
         for (size_t index = 0; index < parse.members.size(); ++index) {
@@ -636,7 +634,24 @@ struct JSONParserBuilder final : Emission {
 
     static Value makeMemberRepeats(StringID name, ValueID valueStart) { return make<&Value::setString>(Opcode::JSONMemberRepeats, { valueStart }, name); }
 
-    void emitMember(const ObjectParse& parse, size_t index, ValueID valueStart, ObjectState& state, BlockID whenMoreMembers)
+    // A member that comes again keeps the place of the first among the keys.
+    ValueID emitOrderWithKey(const ObjectParse& parse, const MemberParse& member, ValueID order, ValueID cameBefore)
+    {
+        if (!cameBefore)
+            return appendObjectKey(order, parse.node.layout, member);
+        BlockID next = builder().addBlock();
+        ValueID orderWithKey = builder().addParameter(next, keyOrderType());
+        IRBuilder::BranchBlocks branch = builder().emitBranch(cameBefore, BlockFrequency::Rare);
+        builder().emitJump(next, { order });
+
+        builder().moveToEndOf(branch.notTaken);
+        builder().emitJump(next, { appendObjectKey(order, parse.node.layout, member) });
+
+        builder().moveToEndOf(next);
+        return orderWithKey;
+    }
+
+    void emitMember(const ObjectParse& parse, size_t index, ValueID valueStart, ObjectState& state, BlockID whenMoreMembers, ValueID cameBefore = { })
     {
         const MemberParse& member = parse.members[index];
         if (!canFillField(member)) {
@@ -648,7 +663,7 @@ struct JSONParserBuilder final : Emission {
         ParsedValue parsed = emitValueOfMember(member.member->node, valueStart, parse.exits, makeMemberRepeats(member.name, valueStart));
         state.value(index) = emitRequireStoredType(parsed.value, testedFieldTypeOf(member), parse.exits.unknown);
         state.seen(index) = builder().appendBoolean(true);
-        state.order() = appendObjectKey(state.order(), parse.node.layout, member);
+        state.order() = emitOrderWithKey(parse, member, state.order(), cameBefore);
         emitMemberSeparator(parse, parsed.next, state, whenMoreMembers);
     }
 

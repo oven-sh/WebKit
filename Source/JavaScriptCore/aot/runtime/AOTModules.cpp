@@ -740,17 +740,21 @@ std::optional<int64_t> Modules::asyncEvaluationOrder(ModuleID module) const
     return record->asyncEvaluationOrder().order();
 }
 
-JSPromise* Modules::import(ModuleID module, ModuleID referrer)
+JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    if (!fetchParameters)
+        return fetchParameters.error();
     if (!data(module).isUncompiledCode())
         RELEASE_AND_RETURN(scope, startImport(module, asyncEvaluationOrder(referrer)));
 
     const Identifier& key = resolvedKey(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), nullptr));
+    RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
 }
 
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
@@ -1274,10 +1278,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsNamespaceOfModule, size_t, (JSCe
     return moduleNamespace && moduleNamespace->hasNamespaceLayoutOf(ModuleID(module));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
+JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* instance, uint32_t module, EncodedJSValue options, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTImportModule);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer))));
+    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer), JSValue::decode(options))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t))
@@ -1444,6 +1448,12 @@ bool entryPointIsCommonJS(JSGlobalObject* realm)
     Modules* modules = modulesOf(realm);
     std::optional<ModuleID> entryPoint = modules ? modules->firstModuleRequestedByHost() : std::nullopt;
     return entryPoint && modules->data(*entryPoint).kind == ModuleKind::CommonJs;
+}
+
+bool isESModule(ModuleID module)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && table->data(module).kind == ModuleKind::SourceText;
 }
 
 void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)

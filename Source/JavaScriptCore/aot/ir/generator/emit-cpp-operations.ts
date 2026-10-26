@@ -105,7 +105,33 @@ const declaredPosition = `constexpr unsigned declaredPosition(std::optional<unsi
 {
     RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(position);
     return *position;
-}`.split("\n");
+}
+
+// What find() answers for each member, in one table that every caller reads.
+template<typename E, std::optional<unsigned> (*find)(E)>
+struct PositionTable {
+    static constexpr uint8_t absent = UINT8_MAX;
+
+    static constexpr std::array<uint8_t, numberOfEnumerators<E>> tabulate()
+    {
+        std::array<uint8_t, numberOfEnumerators<E>> positions { };
+        for (E member : allMembersOf<E>) {
+            std::optional<unsigned> position = find(member);
+            RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!position || *position < absent);
+            positions[static_cast<size_t>(member)] = position ? static_cast<uint8_t>(*position) : absent;
+        }
+        return positions;
+    }
+
+    static constexpr std::array<uint8_t, numberOfEnumerators<E>> positions = tabulate();
+
+    static constexpr std::optional<unsigned> at(E member)
+    {
+        size_t index = static_cast<size_t>(member);
+        uint8_t position = index < positions.size() ? positions[index] : absent;
+        return position == absent ? std::nullopt : std::optional<unsigned>(position);
+    }
+};`.split("\n");
 
 const positionIncludes = `#include "AOTSchemaFlagMasks.h"
 #include "AOTSchemaOperandPositions.h"
@@ -232,6 +258,7 @@ function operationsHeader(schema: Schema): string[] {
     '"AOTSchemaEntryMacros.h"',
     '"AOTSchemaEnums.h"',
     '"AOTSchemaOperandIndexes.h"',
+    "<array>",
     "<optional>",
     "<span>",
   ];

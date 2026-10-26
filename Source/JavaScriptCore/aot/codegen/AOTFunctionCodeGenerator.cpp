@@ -193,7 +193,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
 {
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
-    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization());
+    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
         policy.clientPhases.append(materializeSlotBasesLate());
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

@@ -518,9 +518,23 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
     return { ValueSets::nothing, receivers.rest };
 }
 
-static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID keyReadFromReceiver = { })
 {
-    for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(1))
+    // A member that nobody knows is called on the receivers that find it, or find a function that it stands for. Any other object of the program stays with the callees that it finds.
+    if (keyReadFromReceiver) {
+        const ValueFlowUniverse& universe = context.universe();
+        const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
+        ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), context.restrict(context.valueOf(receiver), objectsOfProgram)));
+        for (ValueSetID group : receivers.groups) {
+            ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(keyReadFromReceiver)));
+            if (context.meet(answered, universe.placeholdersAlone()) || context.holdsAnyOf(context.restrict(answered, universe.callables()), ValueFlowProgramNodes::escaped()))
+                context.add(ValueFlowProgramNodes::escaped(), group);
+        }
+        context.add(ValueFlowProgramNodes::escaped(), receivers.rest);
+        passThis(context, statement, receiver, { ValueSets::complement(objectsOfProgram), ValueSets::nothing }, ValueFlowProgramNodes::escaped());
+    }
+    for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(keyReadFromReceiver ? 2 : 1))
         context.connect(operand, ValueFlowProgramNodes::escaped());
     ValueSetID anything = unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee);
     if (statement.result)
@@ -546,14 +560,14 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
     return context.contains(context.valueOf(context.read(inHandsOfProgram, ValueFlowName::property(key))), ValueFlowUniverse::unknownObject());
 }
 
-static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key)
+static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
 {
     context.forEachMember(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
     });
 
     letUnknownCodeWrite(context);
-    callOperandOfDescribedCall(statement, context);
+    callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID());
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)
@@ -745,7 +759,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (placeholder == ValueFlowUniverse::unknownObject() && isCodeThatRecordsDescribe(context.universe(), statement.function))
             callOperandOfDescribedCall(statement, context);
         else if (keyOfMember)
-            callMemberNobodyKnows(statement, context, keyOfMember);
+            callMemberNobodyKnows(statement, context, keyOfMember, context.meet(callees, enteredClosures));
         else
             passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
     }

@@ -204,7 +204,7 @@ runtime SetMappedArgument : void (JSCell* arguments, uint32_t index, EncodedJSVa
 
 runtime GetModuleNamespace : JSCell* (uint32_t module, uint32_t phase) ; unknownCode
 runtime IsNamespaceOfModule : size_t (JSCell* cell, uint32_t module) ; none ; leaf
-runtime ImportModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
+runtime ImportModule : EncodedJSValue (uint32_t module, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireModule : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime RecordRequire : void (uint32_t module, uint32_t referrer) ; unknownCode
 runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t specifier, uint32_t isURL) ; unknownCode

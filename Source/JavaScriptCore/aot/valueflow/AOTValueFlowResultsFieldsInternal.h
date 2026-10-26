@@ -208,18 +208,27 @@ class LayoutsOfObjects {
 public:
     LayoutsOfObjects(const ValueFlowResultInputs&, ValueFlowHeapView&);
 
+    // Each layout once.
     void forEachLayoutOf(ValueFlowObjectID object, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        forEachLayoutOfEach([&](const auto& visit) {
-            visit(object);
-        }, functor);
+        LayoutID named = namedLayoutOf(object);
+        if (!named)
+            return;
+        functor(named);
+        auto selected = m_selectedLayouts.find(object.index());
+        if (selected == m_selectedLayouts.end())
+            return;
+        for (LayoutID other : m_listsOfSelectedLayouts[selected->value.list]) {
+            if (other != named)
+                functor(other);
+        }
+        forEachLayoutIn(SharedLists { selected->value.everyEscapedClass, selected->value.everyLostClass }, functor);
     }
 
+    // A layout may come more than once.
     void forEachLayoutOfMembers(ValueSetID objects, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        forEachLayoutOfEach([&](const auto& visit) {
-            m_inputs.sets().forEachMember(objects, visit);
-        }, functor);
+        forEachLayoutIn(forEachLayoutListedForMembers(objects, functor), functor);
     }
 
     struct SharedLists {
@@ -227,11 +236,31 @@ public:
         bool everyLostClass { false };
     };
 
+    // A layout may come more than once. A list that many members share is walked once.
     SharedLists forEachLayoutListedForMembers(ValueSetID objects, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        return forEachListedLayoutOfEach([&](const auto& visit) {
-            m_inputs.sets().forEachMember(objects, visit);
-        }, functor);
+        SharedLists shared;
+        Vector<uint32_t, 4> lists;
+        m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+            LayoutID named = namedLayoutOf(object);
+            if (!named)
+                return;
+            functor(named);
+            auto selected = m_selectedLayouts.find(object.index());
+            if (selected == m_selectedLayouts.end())
+                return;
+            if (lists.isEmpty() || lists.last() != selected->value.list)
+                lists.append(selected->value.list);
+            shared.everyEscapedClass |= selected->value.everyEscapedClass;
+            shared.everyLostClass |= selected->value.everyLostClass;
+        });
+        AOT::sort(lists);
+        removeRepeatedElements(lists);
+        for (uint32_t list : lists) {
+            for (LayoutID layout : m_listsOfSelectedLayouts[list])
+                functor(layout);
+        }
+        return shared;
     }
 
     std::span<const LayoutID> escapedClasses() const LIFETIME_BOUND { return m_escapedClasses.span(); }
@@ -241,33 +270,13 @@ public:
 
 private:
     struct SelectedLayouts {
-        Vector<LayoutID, 2> listed;
+        uint32_t list { 0 };
         bool everyEscapedClass { false };
         bool everyLostClass { false };
     };
 
-    SharedLists forEachListedLayoutOfEach(NOESCAPE const auto& forEachObject, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
+    void forEachLayoutIn(SharedLists lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        SharedLists lists;
-        forEachObject([&](ValueFlowObjectID object) {
-            LayoutID layout = namedLayoutOf(object);
-            if (!layout)
-                return;
-            functor(layout);
-            auto selected = m_selectedLayouts.find(object.index());
-            if (selected == m_selectedLayouts.end())
-                return;
-            for (LayoutID other : selected->value.listed)
-                functor(other);
-            lists.everyEscapedClass |= selected->value.everyEscapedClass;
-            lists.everyLostClass |= selected->value.everyLostClass;
-        });
-        return lists;
-    }
-
-    void forEachLayoutOfEach(NOESCAPE const auto& forEachObject, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
-    {
-        SharedLists lists = forEachListedLayoutOfEach(forEachObject, functor);
         if (lists.everyEscapedClass) {
             for (LayoutID layout : m_escapedClasses)
                 functor(layout);
@@ -283,6 +292,8 @@ private:
 
     const ValueFlowResultInputs& m_inputs;
     HashMap<uint32_t, SelectedLayouts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_selectedLayouts;
+    // The classes whose prototype objects an allocation may be given, in order: one list for all the allocations that may be given the same ones.
+    Vector<Vector<LayoutID>> m_listsOfSelectedLayouts;
     Vector<LayoutID> m_escapedClasses;
     Vector<LayoutID> m_lostClasses;
     Vector<ValueSetID> m_objectsOfLayout;

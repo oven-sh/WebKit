@@ -25,6 +25,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint32_t updatesBeforeJoiningBound = 8;
+static constexpr uint32_t updatesBeforeRangeStays = 16;
 static constexpr uint32_t notVisited = UINT32_MAX;
 static constexpr uint32_t noComponent = UINT32_MAX - 1;
 
@@ -686,24 +687,39 @@ TypeID TypePropagation::widenGrownParameter(ValueID parameter, TypeID old, TypeI
     return joinsBound ? types.unionOf(grown, bound) : grown;
 }
 
+// Round a cycle, a bound that was widened far out comes back by a step a round.
+TypeID TypePropagation::keepRangeOfNarrowedParameter(ValueID parameter, TypeID old, TypeID narrowed)
+{
+    TypeArena& types = m_inputs.types;
+    const Type& type = types.at(narrowed);
+    Range before = types.at(old).integers;
+    if (m_statesBeforeRestart[parameter.index()].numberOfUpdates < updatesBeforeRangeStays || type.integers.isEmpty() || type.integers == before)
+        return narrowed;
+    m_outcome.keptRangesOfNarrowedParameters = true;
+    Type withRangeBefore = type;
+    withRangeBefore.integers = before;
+    return types.intern(WTF::move(withRangeBefore));
+}
+
 bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, TypeID computed)
 {
     TypeArena& types = m_inputs.types;
     const Value& value = m_inputs.function.at(id);
     TypeID old = level == TypeLevel::Proven ? value.type : value.expectedOrTypeForTyping().predicted();
 
+    auto isJoin = [&] {
+        ValueLocation location = locationForRule(id);
+        return location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() > 1;
+    };
     TypeID next = computed;
     if (direction == Direction::Ascending) {
         next = types.unionOf(old, computed);
-        auto isJoin = [&] {
-            ValueLocation location = locationForRule(id);
-            return location.placement == ValuePlacement::Parameter && m_cfg.incomingEdges(location.block).size() > 1;
-        };
         if (next != old && isJoin())
             next = widenGrownParameter(id, old, next);
         if (next != computed)
             m_valuesAboveTheirRules.append(id);
-    }
+    } else if (next != old && isJoin())
+        next = keepRangeOfNarrowedParameter(id, old, next);
     if (level == TypeLevel::Expected && next != old) {
         next = types.intersectionOf(value.type, next);
         if (next == TypeTable::never && (direction == Direction::Descending || computed != TypeTable::never))
@@ -1560,13 +1576,13 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         if (inputs.build.options().verifiesAfterEveryPass && !pending->holdsTypesLeftWhenRoundsRanOut()) {
             typedFromNever = inputs.function;
             FunctionAnalyses analyses(inputs.analyses.context(), *typedFromNever);
-            // Where the rounds run out, the types depend on the types that typing began with.
-            if (typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build }).gaveUpOnRounds)
+            // Where the rounds run out or a range stays, the types depend on the types that typing began with.
+            if (typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build }).dependsOnTypesBefore())
                 typedFromNever = std::nullopt;
         }
         outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues);
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
-        if (ValueID value = typedFromNever && !outcome.gaveUpOnRounds ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
+        if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
             inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {
