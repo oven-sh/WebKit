@@ -488,13 +488,13 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
             return { };
         if (hasInt32Magnitude(left) && hasInt32Magnitude(right))
             return KnownValue::integer(left.asInteger() - right.asInteger());
-        return KnownValue::number(left.asNumber() - right.asNumber());
+        return KnownValue::computedNumber(left.asNumber() - right.asNumber());
     case Opcode::Add:
         if (!areNumbers)
             return { };
         if (hasInt32Magnitude(left) && hasInt32Magnitude(right))
             return KnownValue::integer(left.asInteger() + right.asInteger());
-        return KnownValue::number(left.asNumber() + right.asNumber());
+        return KnownValue::computedNumber(left.asNumber() + right.asNumber());
     case Opcode::BitAnd:
         if (areNumbers)
             return KnownValue::integer(toInt32(left.asNumber()) & toInt32(right.asNumber()));

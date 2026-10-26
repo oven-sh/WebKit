@@ -42,7 +42,10 @@ public:
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
         FunctionID innermostFunction;
         uint16_t shownFrameCount { 0 };
-        uint16_t shownFrameCountOnTop { 0 };
+        static constexpr uint8_t tooManyFramesToCount = UINT8_MAX;
+        uint8_t shownFrameCountOnTop { 0 };
+        // No frame above is shown, and the tail call of the site has taken its frame from the stack.
+        uint8_t shownFrameCountOnTopBehindTailCall { 0 };
         std::optional<HandlerRecord> handler;
         ImageFrame frame { };
     };
@@ -87,9 +90,16 @@ static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberO
 ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
 {
     ASSERT(!isStubReturnSite());
-    if (site.isTailCall && hasShownFrame != site.isTailDeleted(calleeWasEntered)) [[unlikely]]
+    bool isTailDeleted = site.isTailDeleted(calleeWasEntered);
+    if (hasShownFrame) {
+        if (site.isTailCall && !isTailDeleted) [[unlikely]]
+            return std::nullopt;
+        return static_cast<unsigned>(shownFrameCount);
+    }
+    uint8_t count = isTailDeleted ? shownFrameCountOnTopBehindTailCall : shownFrameCountOnTop;
+    if (count == tooManyFramesToCount) [[unlikely]]
         return std::nullopt;
-    return static_cast<unsigned>(hasShownFrame ? shownFrameCount : shownFrameCountOnTop);
+    return static_cast<unsigned>(count);
 }
 
 ALWAYS_INLINE const CallSiteCache::Entry* CallSiteCache::find(const void* returnAddress) const

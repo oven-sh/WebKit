@@ -214,7 +214,6 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
     words.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(image.programTables().closureFunctionKinds().data()) - image.programTables().closureFunctions.first * sizeof(FunctionKindData);
-    words.siteNames = image.programTables().siteNames().data();
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();
@@ -939,6 +938,39 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
     }
     return nullptr;
 }
+#endif
+
+#if OS(LINUX)
+static bool canMap(size_t bytes)
+{
+    void* pages = mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (pages == MAP_FAILED)
+        return false;
+    munmap(pages, bytes);
+    return true;
+}
+
+AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<const size_t> stepsOfAllocator)
+{
+    AddressSpaceToStart result;
+    result.left = addressSpaceLeft();
+    if (result.left == std::numeric_limits<size_t>::max())
+        return result;
+    result.needed = addressSpaceToStart(sizeOfProgram);
+    result.isRefused = !canMap(result.needed);
+    if (result.isRefused)
+        return result;
+    for (size_t step : stepsOfAllocator) {
+        if (canMap(step + addressSpaceToStartBesideAllocations())) {
+            result.largestStepOfAllocator = step;
+            return result;
+        }
+    }
+    result.largestStepOfAllocator = 0;
+    return result;
+}
+#else
+AddressSpaceToStart askForAddressSpaceToStart(size_t, std::span<const size_t>) { return { }; }
 #endif
 
 #if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)

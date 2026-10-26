@@ -1,20 +1,22 @@
-# A suspension lists what the suspended function holds: each parameter that may be an object, and each such value that is read behind the suspension.
-# A number is not listed, and neither is a value that is read only in front of the suspension.
+# A suspension lists what the suspended function holds: what it listed when it was read, which is what the names of the parameters hold there, the receiver,
+# and each value that is read behind the suspension. A number is not listed, and neither is a value that is read only in front of the suspension,
+# nor a parameter that the suspension did not list.
 # FORM: Prepared
 # RUN: pass SplitCoroutines
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="awaitsTwice" flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] {
-    v3 = NewArray v1 contents=number
-    v4 = NewArray v1 contents=number
-    v5 = Add v1, v1
-    v6 = ElemGet v3, v1
-    v7 = Await v2 @10
-    v8 = ElemGet v4, v5
-    v9 = Await v8 @20
-    Return v5
+function f0 name="awaitsTwice" flags=[IsAsync, HasThis] thisType={type=object} parameters=[{type=object}, {type=number}, {type=anything}, {type=object}] results=[{type=Promise}] {
+    v5 = NewArray v2 contents=number
+    v6 = NewArray v2 contents=number
+    v7 = NewArray v2 contents=number
+    v8 = Add v2, v2
+    v9 = ElemGet v5, v2
+    v10 = Await v3, v1, v2, v3 @10
+    v11 = ElemGet v6, v8
+    v12 = Await v11, v7, v2, v3 @20
+    Return v8
 }
 # CHECK-LABEL: function f1 name="awaitsTwice"
-# CHECK: b0(v0: object, v1: number, v2: anything, [[driver]]: undefined|Promise):
-# CHECK: AwaitBySavingFrame v2, [[driver]], v0, v2, v4 @10
-# CHECK: AwaitBySavingFrame v8, [[driver]], v0, v2 @20
+# CHECK: b0(v0: object, v1: object, v2: number, v3: anything, v4: object, [[driver]]: undefined|Promise):
+# CHECK: AwaitBySavingFrame v3, [[driver]], v1, v0, v3, v6, v7 @10
+# CHECK: AwaitBySavingFrame v11, [[driver]], v0, v7, v3 @20

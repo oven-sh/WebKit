@@ -25,7 +25,7 @@ runtime DefineMethod : void (JSCell* classObject, EncodedJSValue property, JSCel
 runtime TryDefineLiveBinding : size_t (EncodedJSValue target, EncodedJSValue source, EncodedJSValue sourceKey, EncodedJSValue targetKey, JSCell* getter) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
 runtime TryReExportFields : size_t (EncodedJSValue target, EncodedJSValue source, uint32_t getter, uint32_t rule) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
 runtime SetFunctionName : void (JSCell* function, EncodedJSValue name, uint32_t methodKind) ; reads(all) writes(NamedProperties, StringStorage, AllocatorState, RuntimeState) throws collects
-runtime SetLiteralPrototype : void (JSCell* object, EncodedJSValue prototype, uint32_t refusesOtherValues) ; reads(all) writes(PrototypeLinks, ShapeWords, MemberGuards, AllocatorState, RuntimeState) throws collects
+runtime SetLiteralPrototype : void (JSCell* object, EncodedJSValue prototype, uint32_t refusesOtherValues) ; reads(all) writes(PrototypeLinks, ShapeWords, MemberGuards, Elements[Object], AllocatorState, RuntimeState) throws collects
 
 runtime Construct : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
 runtime Apply : EncodedJSValue (EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list) ; unknownCode

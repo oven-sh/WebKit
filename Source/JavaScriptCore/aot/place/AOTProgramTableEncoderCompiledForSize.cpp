@@ -310,13 +310,6 @@ void encodePropertyRunTable(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::propertyRuns, words);
 }
 
-void encodeSiteNames(TableEncoder& encoder)
-{
-    encoder.setTableFrom<uint32_t>(ProgramTableIndex::siteNames, encoder.inputs.pipeline.siteCaches->keys(), [&](PropertyKeyID key) {
-        return key ? encoder.identifierNumber(key, "what a site with a cache reads or writes"_s) : 0;
-    });
-}
-
 void encodeMethodTable(TableEncoder& encoder)
 {
     const MethodTable& table = encoder.placement.methodTable();

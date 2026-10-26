@@ -440,7 +440,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -468,6 +468,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
+        .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },

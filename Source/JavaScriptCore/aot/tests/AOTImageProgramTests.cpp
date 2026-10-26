@@ -449,8 +449,7 @@ static void appendFunctionWithAccesses(StringBuilder& text, unsigned function)
 {
     text.append("function f"_s, function, " name=\"f"_s, function, "\" parameters=[{type=anything}] results=[{type=anything}] {\n  b0(v0: anything):\n"_s);
     text.append("    v1 = PropGet v0 key=\"a\"\n    v2 = PropGet v1 key=\"b\"\n    v3 = PropGet v2 key=\"c\"\n"_s);
-    text.append("    v4 = Integer integer="_s, function, "\n    v5 = Builtin builtin=GlobalThis\n    v6 = PropGet v5 key=\"sink\" [isFreeName]\n"_s);
-    text.append("    v7 = Call v3, v2, v4, v6, v1, v1, v1, v1, v1, v1, v1\n    Return v7\n}\n"_s);
+    text.append("    v4 = Integer integer="_s, function, "\n    v5 = Call v3, v2, v4, v1, v1, v1, v1, v1, v1, v1, v1\n    Return v5\n}\n"_s);
 }
 
 // A function that calls itself is never wholly in line, so a call that names a function stays.
@@ -523,7 +522,7 @@ static void testSymbolSpacesOfProgram()
         for (const Relocation& relocation : relocations)
             usedSpaces.set(static_cast<size_t>(relocation.space));
     };
-    // Cold code is outlined and asks a shared stub. Hot code looks into the cache of a free name's site by itself.
+    // Cold code is outlined and asks a shared stub, which needs no cache of the site. Hot code names the cache of its site.
     for (Wire::HeatOverride heat : { Wire::HeatOverride::EverythingIsCold, Wire::HeatOverride::EverythingIsHot }) {
         ParsedProgram parsed(programUsingSymbolSpaces(), { .heat = heat });
         BuiltImage built = buildWholeProgram(parsed);

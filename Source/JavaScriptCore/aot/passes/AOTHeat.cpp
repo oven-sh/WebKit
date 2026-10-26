@@ -807,6 +807,8 @@ struct OutliningSite {
     ValueID root { };
     // Whether the operations that a stack trace can show stand for a call in tail position: all of them do or none does.
     std::optional<bool> isTailCall { };
+    // The built-in function that those operations run steps of, if all of them run steps of the same one or of none. The call of the body names it.
+    std::optional<BuiltinID> calledBuiltin { };
     bool rootIsUsed { false };
     bool canPayOff { false };
     uint32_t orderOfEntryBlock { 0 };
@@ -834,20 +836,22 @@ static void forEachValueListAndTerminator(const Function& function, const Outlin
     }
 }
 
-static void forEachPayloadWordWithoutAccessSite(const Value& value, const Invocable<void(uint32_t)> auto& functor)
+static void forEachPayloadWordThatBodiesShare(const Value& value, const OutliningSite& site, const Invocable<void(uint32_t)> auto& functor)
 {
-    uint64_t wordsOfAccessSites = 0;
+    uint64_t omittedWords = 0;
     for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
         if (field.kind != PayloadKind::AccessSite)
             continue;
         RELEASE_ASSERT(field.firstWord < 64);
-        wordsOfAccessSites |= uint64_t { 1 } << field.firstWord;
+        omittedWords |= uint64_t { 1 } << field.firstWord;
     }
+    if (std::optional<unsigned> word = PayloadWord::calledBuiltin(value.opcode); word && site.calledBuiltin)
+        omittedWords |= uint64_t { 1 } << *word;
     unsigned position = 0;
     auto visit = [&](uint32_t word) {
-        bool isAccessSite = position < 64 && (wordsOfAccessSites >> position & 1);
+        bool isOmitted = position < 64 && (omittedWords >> position & 1);
         ++position;
-        functor(isAccessSite ? absentPayloadWord : word);
+        functor(isOmitted ? absentPayloadWord : word);
     };
     functor(static_cast<uint16_t>(value.flags));
     for (uint32_t word : value.inlinePayload())
@@ -990,7 +994,7 @@ struct OutliningNormalForm {
         for (uint32_t word : words)
             add(hasher, word);
         for (const Value* payload : payloads) {
-            forEachPayloadWordWithoutAccessSite(*payload, [&](uint32_t word) {
+            forEachPayloadWordThatBodiesShare(*payload, site, [&](uint32_t word) {
                 add(hasher, word);
             });
         }
@@ -1001,7 +1005,7 @@ struct OutliningNormalForm {
     {
         Vector<uint32_t, 128> result;
         for (const Value* payload : payloads) {
-            forEachPayloadWordWithoutAccessSite(*payload, [&](uint32_t word) {
+            forEachPayloadWordThatBodiesShare(*payload, site, [&](uint32_t word) {
                 result.append(word);
             });
         }
@@ -1591,6 +1595,25 @@ struct OutliningScan {
         return value.position == origin.position && value.isTailCall == *site.isTailCall;
     }
 
+    std::optional<BuiltinID> findCalledBuiltin(const OutliningSite& site)
+    {
+        std::optional<BuiltinID> found;
+        bool allAgree = true;
+        forEachValueListAndTerminator(function, site, [&](std::span<const ValueID> values) {
+            for (ValueID id : values) {
+                if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
+                    continue;
+                const Value& value = function.at(id);
+                BuiltinID builtin = Value::opcodesWithCalledBuiltin.contains(value.opcode) ? value.calledBuiltin() : BuiltinID();
+                allAgree &= !found || *found == builtin;
+                found = builtin;
+            }
+        }, [](const Terminator&) { });
+        if (!allAgree)
+            return std::nullopt;
+        return found.value_or(BuiltinID());
+    }
+
     bool findRegionBlocks(OutliningSite& region, uint32_t& numberOfValues)
     {
         Origin origin = originOfBodyCall(region);
@@ -1799,6 +1822,7 @@ struct OutliningScan {
                 return false;
         }
 
+        site.calledBuiltin = findCalledBuiltin(site);
         OutliningNormalForm form(function, site, build.limit(LimitID::MaxOutlinedOperands));
         if (form.hasRequiredDefinitionOutside)
             return false;
@@ -2268,6 +2292,8 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
         copy.forEachOperand([&](ValueID& operand, uint32_t) {
             operand = copyOf(valueCopies, operand);
         });
+        if (site.calledBuiltin && Value::opcodesWithCalledBuiltin.contains(copy.opcode))
+            copy.setCalledBuiltin({ });
         ValueID copyID = builder.append(WTF::move(copy));
         ASSERT(body.at(copyID).type == source.at(id).type);
         valueCopies.append({ id, copyID });
@@ -2353,6 +2379,7 @@ static void convertToCall(Value& value, const OutliningSite& site, FunctionID ca
     value.type = site.resultType;
     value.setExpected({ });
     value.setFunction(callee);
+    value.setCalledBuiltin(site.calledBuiltin.value_or(BuiltinID()));
     value.setArgumentsOperands(site.liveIns.span());
 }
 

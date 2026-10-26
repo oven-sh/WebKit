@@ -19,7 +19,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: constructedAllocations 0 0
 # CHECK-NEXT: shapeSetBits
 # CHECK-NEXT: propertyRuns 1 4
-# CHECK-NEXT: siteNames 0 0
 # CHECK-NEXT: fieldTable 
 # CHECK-NEXT: fieldRecordIndices 
 # CHECK-NEXT: classMemberRows 0 0

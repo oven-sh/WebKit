@@ -51,13 +51,13 @@ function f3 name="hasNoRest" flags=[IsAsync, HasThis, HasArgumentCount] thisType
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=5}
 # CHECK-NEXT: b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array, [[driver0]]: undefined|Promise):
 # CHECK-NEXT: v5{{*}}= CreateUnmappedArguments v2, v4, v3
-# CHECK-NEXT: v6{{*}}= AwaitBySavingFrame v5, [[driver0]], v1, v4 @10
+# CHECK-NEXT: v6{{*}}= AwaitBySavingFrame v5, [[driver0]], v1 @10
 
 # CHECK-LABEL: function f5 name="hasRestParameter"
 # CHECK: role=CoroutineBody flags=[IsAsync, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}, {type=Array<number>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]}
 # CHECK: promiseParameter=4}
 # CHECK-NEXT: b0(v0: object, v1: int[0, 4294967295], v2: string, v3: Array<number>, [[driver1]]: undefined|Promise):
-# CHECK-NEXT: = AwaitBySavingFrame v3, [[driver1]], v0, v3 @20
+# CHECK-NEXT: = AwaitBySavingFrame v3, [[driver1]], v0 @20
 
 # CHECK-LABEL: function f6 name="generatorHasHiddenRest"
 # CHECK: role=CoroutineBody flags=[IsGenerator, TakesCallee, HasArgumentCount] {{*}} parameters=[{type=string}, {type=Array}, {type=Generator}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]}

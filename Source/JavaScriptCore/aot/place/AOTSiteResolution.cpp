@@ -543,15 +543,10 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     // The position of a request begins with what its function has alone, so the requests of a function stand together.
     std::span<const SiteCacheRequest> servedRequests = requests.span().first(count);
     auto groups = groupSitesByFunction(servedRequests);
-    Vector<PropertyKeyID> keys(count);
     forEachIndexInParallel(loops, groups.size(), [&](unsigned group) {
         Function& function = editor.atForPlacedWords(groups[group].front().function);
-        for (const SiteCacheRequest& request : groups[group]) {
-            auto index = static_cast<uint32_t>(&request - servedRequests.data());
-            if (function.at(request.value).opcode != Opcode::TryPutByIds)
-                keys[index] = function.at(request.value).key();
-            function.edit(request.value, ValueEdit::Definition).setSiteCache(SiteCacheID(index));
-        }
+        for (const SiteCacheRequest& request : groups[group])
+            function.edit(request.value, ValueEdit::Definition).setSiteCache(SiteCacheID(static_cast<uint32_t>(&request - servedRequests.data())));
     });
     times.didFinish("writeSiteCaches"_s);
 
@@ -563,7 +558,7 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     numberOfSitesWithoutCache += static_cast<uint32_t>(unservedRequests.size());
     build.statistics().count(StatisticID::SiteCachesPlaced, count);
     build.statistics().count(StatisticID::SitesWithoutSiteCache, numberOfSitesWithoutCache);
-    return SiteCaches(WTF::move(keys), numberOfSitesWithoutCache);
+    return SiteCaches(count, numberOfSitesWithoutCache);
 }
 
 } } } // namespace JSC::AOT::Typed

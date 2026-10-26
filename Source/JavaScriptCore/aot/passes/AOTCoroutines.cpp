@@ -82,8 +82,11 @@ static ValueID driverOfAsyncBody(const Function& body)
 ValueID appendAwait(IRBuilder& builder, ValueID awaited, std::span<const ValueID> held)
 {
     Function& function = builder.function();
-    if (function.isUnsplitCoroutine())
-        return builder.append(Opcode::Await, { awaited });
+    if (function.isUnsplitCoroutine()) {
+        Value await = IRBuilder::make(Opcode::Await, { awaited });
+        await.setHeldOperands(held);
+        return builder.append(WTF::move(await));
+    }
     Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
     await.setHeldOperands(held);
     return builder.append(WTF::move(await));
@@ -287,10 +290,12 @@ static void rewriteInPlace(BodyRewrite& body, BlockID block, ValueID id, Opcode 
 {
     ReplacedEffects replaced = replacedEffectsOf(body, replacedValues);
     Value& value = body.function.edit(id);
+    Vector<ValueID, 8> held(heldOperandsOf(value));
     value.become(opcode);
     uint32_t operandIndex = 0;
     for (ValueID operand : operands)
         value.setOperand(operandIndex++, operand);
+    setHeldOperands(value, held.span());
     body.analyses.didChangeValues();
     checkSuccessor(body, block, id, replaced);
 }
@@ -541,6 +546,7 @@ static void replaceStepsAndAwaits(BodyRewrite& body)
         IRBuilder::Expansion expansion = builder.beginExpansion(point);
         Value successor = IRBuilder::make(Opcode::AwaitBySavingFrame, { await.valueOperand(), body.driver });
         successor.setTakesExtraTurn(await.takesExtraTurn());
+        successor.setHeldOperands(heldOperandsOf(await));
         // An expected type is set only where it says more than the type.
         TypeID type = resultTypeOf(program, function, successor, types);
         if (await.expected() && await.expected() != type && types.at(await.expected()).isSubsetOf(types.at(type), program))
@@ -569,6 +575,7 @@ static void expandInitialYield(BodyRewrite& body)
     auto head = [&] { return function.at(entryBlock).values.span().first(point->index); };
 
     ReplacedEffects replaced = replacedEffectsOf(body, { function.at(point->block).values[point->index] });
+    Vector<ValueID, 8> held(heldOperandsOf(function.at(function.at(point->block).values[point->index])));
     // The ramp allocates the generator, which reads the property `prototype` of the function, and only then does the head of the body evaluate the parameters.
     bool takesPrototypeAgain = point->block != entryBlock || std::ranges::any_of(head(), [&](ValueID id) {
         Effects effects = analyses.effectsOf(id).onAnyEdge();
@@ -592,7 +599,9 @@ static void expandInitialYield(BodyRewrite& body)
         RELEASE_ASSERT(calleeParameter);
         builder.append(Opcode::TakeGeneratorPrototype, { body.driver, function.at(entryBlock).parameters[*calleeParameter] });
     }
-    ValueID yield = builder.append(Opcode::YieldBySavingFrame, { body.driver, builder.appendUndefined() });
+    Value firstYield = IRBuilder::make(Opcode::YieldBySavingFrame, { body.driver, builder.appendUndefined() });
+    firstYield.setHeldOperands(held.span());
+    ValueID yield = builder.append(WTF::move(firstYield));
     checkSuccessor(body, point->block, yield, replaced);
     ValueID sent = builder.append(makeResultAt(yield, static_cast<uint32_t>(YieldResult::Sent)));
     ValueID mode = builder.append(makeResultAt(yield, static_cast<uint32_t>(YieldResult::Mode)));
@@ -632,7 +641,20 @@ static void replaceReturns(BodyRewrite& body)
     body.analyses.didChangeValues();
 }
 
-// A suspended function holds what it reads behind the suspension, and its parameters until it ends. A later pass may answer such a read without the object: what the object holds lives on as long as the function would have held the object.
+// A constant of a module holds its value as long as the program runs.
+static bool isHeldByConstantOfModule(const Program& program, const Function& function, ValueID id)
+{
+    const Value* definition = &function.at(sameObjectThroughCasts(function, id));
+    if (definition->opcode == Opcode::FinishClass)
+        definition = &function.at(sameObjectThroughCasts(function, definition->classObjectOperand()));
+    if (definition->opcode != Opcode::GetModuleVariable)
+        return false;
+    const Variable& variable = program.at(definition->variable());
+    return variable.flags.contains(VariableFlags::IsImmutable) && variable.module;
+}
+
+// A suspended function holds what it reads behind the suspension and, until it ends, its receiver, what it captures, and what the names of its parameters hold, which the suspension lists as it is read.
+// A later pass may answer such a read without the object: what the object holds lives on as long as the function would have held the object.
 static void holdLiveValuesAtSuspensions(BodyRewrite& body)
 {
     Function& function = body.function;
@@ -640,12 +662,13 @@ static void holdLiveValuesAtSuspensions(BodyRewrite& body)
     body.analyses.didChangeControlFlow();
 
     auto isHeld = [&](ValueID id) {
-        return id != body.driver && mayHoldObject(program.typeOf(function, id));
+        return id != body.driver && mayHoldObject(program.typeOf(function, id)) && !isHeldByConstantOfModule(program, function, id);
     };
     Vector<ValueID, 8> parameters;
-    for (ValueID parameter : function.at(entryBlock).parameters) {
-        if (isHeld(parameter))
-            parameters.append(parameter);
+    const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+    for (uint32_t index = 0; index < entryParameters.size(); ++index) {
+        if (entryParameters[index] != body.driver && function.entryParameterKind(index) != EntryParameter::Parameter && isHeld(entryParameters[index]))
+            parameters.append(entryParameters[index]);
     }
 
     Vector<uint32_t, 4> suspensionIndexes;
@@ -666,9 +689,15 @@ static void holdLiveValuesAtSuspensions(BodyRewrite& body)
             while (pointIndex > suspensionIndex + 1)
                 localCalc.execute(--pointIndex);
             held.shrink(0);
-            for (ValueID parameter : parameters) {
-                if (!localCalc.isLive(parameter))
-                    held.append(parameter);
+            auto holdUnlessLive = [&](ValueID id) {
+                if (!localCalc.isLive(id) && !held.contains(id))
+                    held.append(id);
+            };
+            for (ValueID parameter : parameters)
+                holdUnlessLive(parameter);
+            for (ValueID listed : heldOperandsOf(function.at(values[suspensionIndex]))) {
+                if (isHeld(listed))
+                    holdUnlessLive(listed);
             }
             localCalc.forEachLive([&](ValueID live) {
                 if (live != values[suspensionIndex] && isHeld(live))
@@ -1407,6 +1436,8 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     ValueID generator = function.at(site.call).receiverOperand();
     ValueID sent = function.at(site.call).argumentsOperands()[0];
     Origin callOrigin = function.at(site.call).origin();
+    const BuiltinTable& builtins = context.program.builtins();
+    BuiltinID calledBuiltin = builtins.canonicalID(builtins.at(function.at(site.call).overload()).builtin);
     BlockFrequency frequency = function.at(site.point.block).frequency;
     TypeID type = function.at(site.await).type;
     Vector<ValueID, 8> held(heldOperandsOf(function.at(site.await)));
@@ -1424,6 +1455,7 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     ValueID done = site.resultReads ? builder.addParameter(expansion.continuation, TypeTable::anything) : ValueID();
 
     Value stepOfGenerator = IRBuilder::make(Opcode::StepAsyncGenerator, { generator, sent, driver });
+    stepOfGenerator.setCalledBuiltin(calledBuiltin);
     stepOfGenerator.setHeldOperands(held.span());
     ValueID step = builder.append(WTF::move(stepOfGenerator));
     ValueID stepped = builder.append(makeResultAt(step, static_cast<uint32_t>(StepGeneratorResult::Value)));

@@ -68,6 +68,20 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Layout& 
     return isFoundAtAnyTime ? constructor : BuiltinID();
 }
 
+bool hasOnlyClassesAndBuiltins(const Program& program, const Type& type)
+{
+    if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || (type.primitives & ~Primitive::Null) || !type.isJavaScriptValue())
+        return false;
+    bool hasOnlyConstructors = std::ranges::all_of(type.builtins, [&](BuiltinID id) {
+        const Builtin& builtin = program.builtins().at(id);
+        return builtin.kind == BuiltinKind::Constructor && builtin.instanceClass && program.builtins().at(builtin.instanceClass).prototype;
+    });
+    return hasOnlyConstructors && std::ranges::all_of(type.functions, [&](FunctionID id) {
+        FunctionKind kind = program.at(id).kind;
+        return kind == FunctionKind::BaseConstructor || kind == FunctionKind::DerivedConstructor;
+    });
+}
+
 static bool hasOnlyClassesAbove(const Program& program, LayoutID id)
 {
     LayoutID current = id;
@@ -142,7 +156,10 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
         }
         if (otherUses != 1)
             return std::nullopt;
-        site.describedByRecord.append(current);
+        if (value.opcode == Opcode::ResolveHeritage)
+            site.heritageLook = current;
+        else
+            site.describedByRecord.append(current);
         current = isCastThatDoesNothing ? value.valueOperand() : ValueID();
     }
 

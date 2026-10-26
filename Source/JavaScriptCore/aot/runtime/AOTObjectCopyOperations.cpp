@@ -143,10 +143,13 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         });
         return walkResult == PropertyWalk::Result::Completed;
     }
-    // As in the engine's own copy, which takes the keys of any other source names first.
     Structure* structure = source->structure();
-    if (source->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(structure->indexingType()))
+    TypeInfo info = structure->typeInfo();
+    if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
         return false;
+    // As in the engine's own copy, which takes the keys of such a source names first.
+    bool symbolsComeLast = !structure->canPerformFastPropertyEnumerationCommon();
+    Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 4> symbols;
     bool everyPropertyIsPlain = true;
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
         if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName() || excluded.contains(entry.key()))
@@ -154,6 +157,10 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         everyPropertyIsPlain = !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue);
         if (!everyPropertyIsPlain)
             return false;
+        if (symbolsComeLast && entry.key()->isSymbol()) {
+            symbols.append({ entry.key(), entry.offset() });
+            return true;
+        }
         names.append(entry.key());
         values.appendWithCrashOnOverflow(source->getDirect(entry.offset()));
         return true;
@@ -161,8 +168,13 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
     if (!everyPropertyIsPlain) {
         names.clear();
         values.clear();
+        return false;
     }
-    return everyPropertyIsPlain;
+    for (auto [symbol, offset] : symbols) {
+        names.append(symbol);
+        values.appendWithCrashOnOverflow(source->getDirect(offset));
+    }
+    return true;
 }
 
 // What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.

@@ -282,7 +282,7 @@ private:
                 isZero.link(&jit);
                 if (mayBeNaN) {
                     CCallHelpers::Jump isNumber = branchOnTest(jit, CCallHelpers::NonZero, divisor);
-                    produce(PNaN);
+                    produce(std::bit_cast<double>(bitsOfNaNFromArithmetic));
                     isNumber.link(&jit);
                 }
                 branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend).linkTo(done, &jit);

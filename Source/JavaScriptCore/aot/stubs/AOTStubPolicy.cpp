@@ -24,7 +24,7 @@
 
 namespace JSC { namespace AOT {
 
-StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program, const Typed::FlowResults& flow, InstanceSizes sizes)
+StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Program& program, const Typed::FlowResults& flow)
 {
     return {
         .useWideReferences = recorded.useWideReferences(),
@@ -35,7 +35,6 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .countsAllocations = recorded.countsBranches,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
         .layoutSeed = recorded.layoutSeed,
-        .offsetOfSiteCaches = safeCast<uint32_t>(InstanceLayout::offsetOfSiteCaches(sizes)),
         .targetFeatures = CPUFeatureSet::fromBits(static_cast<uint32_t>(recorded.targetFeatures)),
     };
 }

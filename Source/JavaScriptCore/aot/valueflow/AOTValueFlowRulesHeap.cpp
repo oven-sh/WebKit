@@ -128,6 +128,11 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             connect(m_context.lookup(bun, name), ValueFlowProgramNodes::escaped());
         }
     }
+    if (key.keyClass == HeapKeyClass::Name && !mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))
+        && hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun()))) && m_context.holdsAnyOf(known(receivers), m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows))) {
+        // What was copied stands for whatever has escaped, and the read already answers a value nobody knows.
+        connect(m_context.lookup(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), name), ValueFlowProgramNodes::escaped());
+    }
     if (key.keyClass == HeapKeyClass::Name && object.node && mayBeUnknownObject(receivers)) {
         // Bun read off a value that may be the global object goes on being listed, so that a name read on it is found.
         BuiltinID member = memberUnder(Builtins::GlobalThis, key.name);

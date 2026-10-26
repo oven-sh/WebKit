@@ -13,6 +13,7 @@
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTFunctionNames.h"
+#include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -652,6 +653,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* ins
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordCallee);
     recordCallee(vm, asObject(closure));
+    instance->heap.recordedCallees = &FunctionTables::of(vm).recordedCalleeList;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t methodKind))

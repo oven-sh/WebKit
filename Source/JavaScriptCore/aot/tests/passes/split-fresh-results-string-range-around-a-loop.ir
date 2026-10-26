@@ -1,0 +1,44 @@
+# The bounds of a string range that is carried around a loop and returned keep the type of a string length
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="rangeAroundLoop" parameters=[{type=string}, {type=int}, {type=i32}] results=[{type=string}] {
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    Jump -> next b1(v2)
+  b1(v8: i32):
+    LoopHint
+    v10 = Integer
+    v11 = Greater v8, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    v12 = Integer integer=1
+    v13 = Sub v8, v12
+    v14 = ToInt32 v13
+    Jump -> next b1(v14)
+  b3():
+    Return v7
+}
+# CHECK-LABEL: function f0 name="rangeAroundLoop" module=m0 role=ResultWrapper
+# CHECK: [[call]]:{{*}}= CallDirect v0, v1, v2 function=[[worker]]
+# CHECK-NEXT: [[base]]: string = ResultAt [[call]]
+# CHECK-NEXT: [[start]]: int[0, 2147483647] = ResultAt [[call]] index=1
+# CHECK-NEXT: [[end]]: int[0, 2147483647] = ResultAt [[call]] index=2
+# CHECK-NEXT: [[string]]: string = Substring [[base]], [[start]], [[end]]
+# CHECK-NEXT: Return [[string]]
+
+function f1 name="readsTheRange" parameters=[{type=string}, {type=int}, {type=i32}] results=[{type=number}] {
+    v3 = CallDirect v0, v1, v2 function=f0
+    v4 = GetStringLength v3
+    Return v4
+}
+# CHECK: role=ResultWorker
+# CHECK: results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}]

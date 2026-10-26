@@ -1854,11 +1854,16 @@ std::optional<StringRangeSource> stringRangeSourceOf(const Program& program, con
 StringRangeBounds insertStringRange(IRBuilder& builder, ProgramPoint point, const StringRangeSource& source, std::optional<StringRangeBounds> enclosing)
 {
     auto insert = [&](Value&& value) { return builder.insertBefore(point, WTF::move(value)); };
+    // A range lies within its string, so the sums and differences of bounds are positions in the string, also where the types of the bounds are too wide to say so.
+    auto insertPosition = [&](Opcode opcode, ValueID left, ValueID right) {
+        ValueID position = insert(IRBuilder::make(opcode, { left, right }));
+        return builder.context().program.typeOf(builder.function(), position).isInteger() ? position : insert(IRBuilder::make(Opcode::ToInt32, { position }));
+    };
     StringRangeBounds bounds;
     if (source.bounds)
         bounds = *source.bounds;
     else {
-        ValueID length = insert(enclosing ? IRBuilder::make(Opcode::Sub, { enclosing->end, enclosing->start }) : IRBuilder::make(Opcode::GetStringLength, { source.string }));
+        ValueID length = enclosing ? insertPosition(Opcode::Sub, enclosing->end, enclosing->start) : insert(IRBuilder::make(Opcode::GetStringLength, { source.string }));
         ValueID first = source.first ? source.first : insert(makeInteger(0));
         Value range = IRBuilder::make(Opcode::StringRange, { length, first, source.second });
         range.setMethod(source.method);
@@ -1868,8 +1873,8 @@ StringRangeBounds insertStringRange(IRBuilder& builder, ProgramPoint point, cons
     }
     if (!enclosing)
         return bounds;
-    ValueID start = insert(IRBuilder::make(Opcode::Add, { enclosing->start, bounds.start }));
-    return { start, insert(IRBuilder::make(Opcode::Add, { enclosing->start, bounds.end })) };
+    ValueID start = insertPosition(Opcode::Add, enclosing->start, bounds.start);
+    return { start, insertPosition(Opcode::Add, enclosing->start, bounds.end) };
 }
 
 Value makeStringRangeRead(Opcode read, ValueID string, std::optional<StringRangeBounds> bounds, ValueID position)

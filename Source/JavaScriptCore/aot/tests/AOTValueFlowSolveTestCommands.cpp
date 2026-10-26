@@ -101,6 +101,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsUnseenCode = false;
     bool printsUsedBuiltins = false;
     bool printsProtocols = false;
+    ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
             printsCalls = true;
@@ -114,11 +115,13 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsUsedBuiltins = true;
         else if (word == "protocols"_s)
             printsProtocols = true;
+        else if (word == "proofs"_s)
+            coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
         else
             return printBadArgument(context.out, word);
     }
 
-    ValueFlowSolution solution(*context.program, context.build);
+    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::None, UINT32_MAX, { }, ValueFlowSolution::WaysOfValues::AreAskedFor, coveredMembers);
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowSolver::Counters& counters = solver.counters();

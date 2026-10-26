@@ -9,6 +9,7 @@
 
 #include "AOTClosureWord.h"
 #include "AOTImage.h"
+#include "AOTInstance.h"
 #include "AOTProgramTables.h"
 #include "AOTVector.h"
 #include "Strong.h"
@@ -120,20 +121,22 @@ struct FunctionTables {
     std::atomic<bool> hasNamesSetAtRunTime { false };
     std::atomic<bool> hasDisplayNames { false };
 
-    struct RecordedCallee {
-        const void* stackPointerOfCaller;
-        JSObject* closure;
-    };
+    // For an instance that has recorded nothing yet. It has no room.
+    static RecordedCalleeList* emptyRecordedCalleeList();
     void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
     // False once every function that recorded its callee has returned.
     bool hasRecordedCalleesAbove(const void* stackPointer);
     // Those of functions that have not returned yet.
     template<typename Visitor> void visitRecordedCallees(Visitor&, const void* stackPointer);
     void finalizeRecordedCallees(VM&, const void* stackPointer);
+    std::span<const RecordedCallee> recordedCallees() const { return recordedCalleeStorage.span().subspan(recordedCalleeStorage.isEmpty() ? 0 : 1, numberOfRecordedCallees()); }
+    size_t numberOfRecordedCallees() const { return recordedCalleeStorage.isEmpty() ? 0 : recordedCalleeList.top - recordedCalleeStorage.span().data() - 1; }
+    void setNumberOfRecordedCallees(size_t number) { recordedCalleeList.top = recordedCalleeStorage.mutableSpan().subspan(number + 1).data(); }
 
-    // Outermost first. Only the thread of the VM changes it.
+    // Only the thread of the VM changes them: compiled code adds an entry where there is room and nothing to drop.
     Lock recordedCalleesLock;
-    Vector<RecordedCallee> recordedCallees;
+    RecordedCalleeList recordedCalleeList { };
+    Vector<RecordedCallee> recordedCalleeStorage;
     bool dropsRecordedCalleesWhenIdle { false };
     TextsByFunction sourceTexts;
 };

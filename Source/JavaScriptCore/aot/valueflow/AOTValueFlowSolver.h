@@ -58,6 +58,7 @@ struct ValueFlowSolverInput {
     uint64_t mostEdgesLogged { UINT64_MAX };
     bool remembersWhoLoggedEachEdge { false };
     bool isAskedHowValuesCame { true };
+    bool leavesOutWhatIsCovered { false };
     uint32_t mostRounds { UINT32_MAX };
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     RefusedCode refusedCode;
@@ -263,10 +264,19 @@ public:
     const ValueSets& sets() const { return m_sets; }
     const ValueFlowGraph& graph() const { return m_graph; }
     std::span<const std::unique_ptr<ValueSetMaker>> makersIdleAfterSolve() const LIFETIME_BOUND { return m_makers.span(); }
-    // Everything that may reach the node. A proof reads this.
+    // Everything that may reach the node. A proof reads this. A member that another member covers is left out.
     ValueSetID possibleValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     // What the program itself brings to the node. A prediction reads this: it may name too few, so nothing is proven from it.
-    ValueSetID seenValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
+    ValueSetID seenValuesOf(ValueFlowNodeID node) const
+    {
+        if (size_t share = node.index() / nodesPerShareOfListed; share < m_listedWithCoveredMembers.size()) {
+            const Vector<ValueFlowNodeSet>& listed = m_listedWithCoveredMembers[share];
+            const ValueFlowNodeSet* found = std::ranges::lower_bound(listed, node, { }, &ValueFlowNodeSet::node);
+            if (found != listed.end() && found->node == node)
+                return found->set;
+        }
+        return m_graph.valueOf(node);
+    }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
@@ -601,6 +611,7 @@ private:
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
     void saturate(std::span<const ValueFlowNodeID> moved);
+    void leaveOutWhatIsCoveredInTheEnd();
     void spreadMarks();
     void findObjectsOutsideFamilies();
     ValueSetID findClosuresFollowedTo(ValueFlowNodeID, ValueSetMaker&) const;
@@ -855,6 +866,9 @@ private:
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
 
     Vector<Covering, 2> m_coverings;
+    ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
+    static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
+    Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };

@@ -587,10 +587,14 @@ public:
 
     Outcome run(const Vector<StackSlot*>& assignedEscapedStackSlots, StackColoring& coloring)
     {
-        bool coalesceSpillSlots = m_code.policy().frame.coalescesSpillSlots;
-
-        StackSlotActions actions(m_code, coalesceSpillSlots);
+        StackSlotActions actions(m_code, m_code.policy().frame.coalescesSpillSlots);
         SlotLiveness liveness(m_code, actions);
+        return run(assignedEscapedStackSlots, coloring, actions, liveness);
+    }
+
+    Outcome run(const Vector<StackSlot*>& assignedEscapedStackSlots, StackColoring& coloring, const StackSlotActions& actions, SlotLiveness& liveness)
+    {
+        bool coalesceSpillSlots = m_code.policy().frame.coalescesSpillSlots;
         if (liveness.didGiveUp())
             return Outcome::GaveUp;
         if (shouldValidateIRAtEachPhase(m_code.proc()))
@@ -1565,10 +1569,8 @@ bool doTrivialStackAllocation(Code& code, SlotPlacement placement, StackColoring
 
 // An upper bound on the number of interference edges: for each spill slot, the number of slots that are live at
 // its definitions, capped at the number of other slots.
-std::optional<size_t> computeInterferenceEdgeBound(Code& code)
+std::optional<size_t> computeInterferenceEdgeBound(Code& code, const StackSlotActions& actions, const StackSlotLivenessInWords& liveness)
 {
-    StackSlotActions actions(code, code.policy().frame.coalescesSpillSlots);
-    StackSlotLivenessInWords liveness(code, actions);
     if (liveness.didGiveUp())
         return std::nullopt;
 
@@ -1613,7 +1615,18 @@ std::optional<size_t> computeInterferenceEdgeBound(Code& code)
     return numberOfEdges;
 }
 
-bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots)
+struct StackSlotActionsAndLiveness {
+    explicit StackSlotActionsAndLiveness(Code& code)
+        : actions(code, code.policy().frame.coalescesSpillSlots)
+        , liveness(code, actions)
+    {
+    }
+
+    StackSlotActions actions;
+    StackSlotLivenessInWords liveness;
+};
+
+bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots, std::optional<StackSlotActionsAndLiveness>& computed)
 {
     const size_t numberOfSlots = code.stackSlots().size();
     if (numberOfSlots >= std::numeric_limits<DenseIterableInterferenceGraph::IndexType>::max())
@@ -1622,7 +1635,8 @@ bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots)
         return true;
 
     // Above the limit, use the rows only if the hash sets of the sparse graph would take at least as much memory.
-    std::optional<size_t> numberOfEdges = computeInterferenceEdgeBound(code);
+    computed.emplace(code);
+    std::optional<size_t> numberOfEdges = computeInterferenceEdgeBound(code, computed->actions, computed->liveness);
     hasTooManyLiveSlots = !numberOfEdges;
     return numberOfEdges && 2 * *numberOfEdges * AirLimits::bytesPerNeighborInSparseInterference >= numberOfSlots * numberOfSlots / 8;
 }
@@ -1652,12 +1666,15 @@ StackColoring allocateStackByGraphColoring(Code& code)
         bool isAllocated = false;
         // The sets of live slots that were too large as rows of bits are larger still as the lists of the sparse graph's liveness.
         bool hasTooManyLiveSlots = false;
-        if (shouldUseDenseInterferenceGraph(code, hasTooManyLiveSlots)) {
+        std::optional<StackSlotActionsAndLiveness> computed;
+        if (shouldUseDenseInterferenceGraph(code, hasTooManyLiveSlots, computed)) {
             using DenseAllocator = GraphColoringStackAllocator<DenseIterableInterferenceGraph, StackSlotLivenessInWords>;
             DenseAllocator allocator(code, placement);
-            isAllocated = allocator.run(assignedEscapedStackSlots, coloring) == DenseAllocator::Outcome::Allocated;
+            auto outcome = computed ? allocator.run(assignedEscapedStackSlots, coloring, computed->actions, computed->liveness) : allocator.run(assignedEscapedStackSlots, coloring);
+            isAllocated = outcome == DenseAllocator::Outcome::Allocated;
             hasTooManyLiveSlots = !isAllocated;
         }
+        computed.reset();
         if (!isAllocated) {
             code.proc().didReachLimit(Limit::MaxSlotsForDenseInterference);
             if (!hasTooManyLiveSlots && code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {

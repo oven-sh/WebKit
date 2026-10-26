@@ -598,7 +598,7 @@ static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callabl
 
 static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueFlowObjectID object)
 {
-    return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().possibleValuesOf(operand.node), object));
+    return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().seenValuesOf(operand.node), object));
 }
 
 static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
@@ -635,7 +635,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
             if (!mayHold(inputs, operands[0], bind))
                 continue;
             ValueSetMaker& maker = makers.of(worker);
-            ValueSetID targets = inputs.possibleValuesOf(maker, operands[1]);
+            ValueSetID targets = inputs.seenValuesOf(maker, operands[1]);
             if (ValueSets::isComplement(targets))
                 continue;
             ValueFlowObjectID result = universe.siteObject(statement);
@@ -714,7 +714,7 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
                 return;
             BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
             ValueSetMaker& maker = borrowedMaker.get();
-            ValueSetID targets = inputs.possibleValuesOf(maker, operands[1]);
+            ValueSetID targets = inputs.seenValuesOf(maker, operands[1]);
             ValueFlowObjectID result = universe.siteObject(statement);
             if (!result || ValueSets::isComplement(targets))
                 return;

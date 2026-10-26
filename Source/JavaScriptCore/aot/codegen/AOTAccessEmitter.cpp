@@ -103,12 +103,12 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     if (!comesAgain(context))
         return readThroughTables();
     if (cache && m_program.nameClassOf(key) == NameClass::Length)
-        return Boxed(callStub(context, getLengthAtSite(), { receiver.value() }, { .immediate = siteCacheOperand(cache), .origin = origin }).first);
+        return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     // A site cache pays where one kind of receiver comes again and again.
     // The tables answer for every Structure alike, in about what a hit at a site and the site's operand cost together.
     bool tablesAnswer = context.shape() != CodeShape::Fast || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);
     if (cache && (!tablesAnswer || !RowDisplacementTable::hasColumn(*identifier)))
-        return Boxed(callStub(context, getByIdAtSite(), { receiver.value() }, { .immediate = siteCacheOperand(cache), .origin = origin }).first);
+        return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     return readThroughTables();
 }
 
@@ -128,7 +128,7 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         return;
     }
     if (cache) {
-        callStub(context, putByIdAtSite(mode), { receiver.value(), value.value() }, { .immediate = siteCacheOperand(cache) });
+        callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier });
         return;
     }
     StubKey stub = RowDisplacementTable::hasColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
@@ -148,19 +148,22 @@ Boxed AccessEmitter::getFreeName(const ValueContext& value)
 {
     bool isForTypeOf = value->isForTypeOf();
     SiteCacheID cache = value->siteCache();
+    Pointer site = siteCacheAddress(cache);
     if (!cache) {
         RuntimeOperation operation = isForTypeOf ? RuntimeOperation::GetFreeNameForTypeOf : RuntimeOperation::GetFreeName;
-        return callOperation<Boxed>(value, operation, { identifierNumber(value->key()), siteCacheAddress(cache) });
+        return callOperation<Boxed>(value, operation, { identifierNumber(value->key()), site });
     }
 
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    if (!identifier)
+        return undefined();
     auto readByStub = [&](bool isOnRarePath) {
         StubKey stub = AOT::getFreeName(isForTypeOf ? FreeNameRead::TypeOf : FreeNameRead::Read);
-        return Boxed(callStub(value, stub, { }, { .immediate = siteCacheOperand(cache), .isOnRarePath = isOnRarePath }).first);
+        return Boxed(callStub(value, stub, { site.value() }, { .immediate = *identifier, .isOnRarePath = isOnRarePath }).first);
     };
     if (!probesFreeNameInline(value.shape()))
         return readByStub(false);
 
-    Pointer site = siteCacheAddress(cache);
     B3::PatchpointValue* probe = m_out.patchpoint(B3::Int64);
     probe->appendSomeRegister(site.value());
     probe->numGPScratchRegisters = 1;
@@ -201,12 +204,16 @@ void AccessEmitter::putFreeName(const ValueContext& value)
 {
     Boxed stored = in<Boxed>(value->valueOperand());
     SiteCacheID cache = value->siteCache();
+    Pointer site = siteCacheAddress(cache);
     if (!cache) {
-        callVoidOperation(value, forMode(value->mode(), RuntimeOperation::SetFreeName, RuntimeOperation::SetFreeNameSloppy), { identifierNumber(value->key()), siteCacheAddress(cache), stored });
+        callVoidOperation(value, forMode(value->mode(), RuntimeOperation::SetFreeName, RuntimeOperation::SetFreeNameSloppy), { identifierNumber(value->key()), site, stored });
         return;
     }
 
-    callStub(value, setFreeName(putModeOf(value->mode())), { stored.value() }, { .immediate = siteCacheOperand(cache) });
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    if (!identifier)
+        return;
+    callStub(value, setFreeName(putModeOf(value->mode())), { stored.value(), site.value() }, { .immediate = *identifier });
 }
 
 CellPointer AccessEmitter::globalObject()

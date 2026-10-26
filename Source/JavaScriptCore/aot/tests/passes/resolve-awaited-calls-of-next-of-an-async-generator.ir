@@ -38,7 +38,7 @@ function f10 name="readsBoth" role=CoroutineBody flags=[IsAsync] parameters=[{ty
 # CHECK-NOT: castType=object
 # The step names no driver: by that it is told from a step of a loop, which goes on under the async context that is active where the step is finished. An await goes on under its own.
 # CHECK: [[noDriver10]]: absent = Absent @10
-# CHECK-NEXT: [[step10]]: undefined = StepAsyncGenerator v0, v2, [[noDriver10]] @10
+# CHECK-NEXT: [[step10]]: undefined = StepAsyncGenerator v0, v2, [[noDriver10]] calledBuiltin=AsyncGeneratorPrototypeNext @10
 # CHECK-NEXT: [[stepped10]]: anything = ResultAt [[step10]]
 # CHECK-NEXT: [[status10]]: int[0, 2] = ResultAt [[step10]] index=1
 # CHECK: Branch [[isResult10]] -> taken [[made10]](), notTaken [[answered10]]()

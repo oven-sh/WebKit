@@ -55,6 +55,7 @@ static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
 // Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
 static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
+static_assert(smallestUsableSize == smallestCellRangeSize);
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
 static_assert(unusedPrefixSize + (MarkedBlockCage::maxSize >> maxHalvingsOfFirstRange) / randomPrefixDivisor < smallestUsableSize);

@@ -287,6 +287,9 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
         // `{ 0: x }` defines a property under the name "0". Whoever reads an element of an object that is no array reads its named properties too.
         if (!isArray && (difference.change == OperandChange::ElementsChanged || difference.change == OperandChange::ArrayStorageChanged))
             heaps.add(AbstractHeap::NamedProperties);
+        // Only an array has a storage that is read apart from its elements.
+        if (!isArray && difference.change == OperandChange::ArrayStorageChanged)
+            heaps.add(AbstractHeap::Elements);
         if (heaps.isEmpty() || written.containsAny(heaps))
             continue;
         String message = makeString("operand "_s, position, ": "_s, describe(difference), ", the call writes "_s, describeMembers(written), " through it, not "_s, describeMembers(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');

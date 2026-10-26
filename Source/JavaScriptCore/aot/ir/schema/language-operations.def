@@ -22,17 +22,17 @@ operation PrivateHas (object: Any/inspects, token: ClassToken/inspects, layout: 
 
 family Iteration AsRead..AsRead
 operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest isDelegating] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies
-operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32, engine held...: Convertible/retains) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
-operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion, engine held...: Convertible/retains) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
+operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32, held...: Convertible/retains) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
+operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion, held...: Convertible/retains) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
 
 family ForIn AsRead..Placed
 operation ForInOpen (object: Any/retains(result)+runs(OwnKeys+PrototypeChain)) -> natural(Enumerator) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = GetPropertyEnumerator ; flow = TableProves
 operation ForInStep (enumerator: Enumerator/inspects, object: Any/inspects+runs(OwnKeys+PrototypeChain), engine position?: Integer/inspects) -> results(ForInStepResult: natural(boolean), natural(string), natural(int[0, 8589934590])) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = EnumeratorNext ; flow = TableProves
 
 family Coroutine AsRead..Prepared
-operation Await (value: Any/retains+runs(Thenable)) [takesExtraTurn] -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame ; flow = Copies
-operation Yield (value: Any/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies
-operation InitialYield () -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies
+operation Await (value: Any/retains+runs(Thenable), held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame ; flow = Copies
+operation Yield (value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies
+operation InitialYield (held...: Convertible/retains) -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies
 
 family Module AsRead..Placed
 operation ModuleNamespace (module: Module(Target), phase: ImportPhase) -> declared(module) ; unknownCode ; runtime = GetModuleNamespace ; flow = Copies

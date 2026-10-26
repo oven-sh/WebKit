@@ -13,7 +13,9 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSExportMacros.h>
+#include <limits>
 #include <optional>
+#include <span>
 #include <wtf/IterationStatus.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
@@ -112,6 +114,16 @@ JS_EXPORT_PRIVATE bool hasESModuleMarker(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE void setESModuleMarker(JSCell* moduleNamespace, bool);
 
 JS_EXPORT_PRIVATE void setVerbose(bool);
+
+// Whether the limit on the address space of the process leaves what a program of this size maps until its first statement runs. It allocates nothing: the host asks before its allocator starts.
+struct AddressSpaceToStart {
+    size_t needed { 0 };
+    size_t left { 0 };
+    // The allocator reserves address space in steps: the largest of them that leaves enough for the rest, or 0.
+    size_t largestStepOfAllocator { std::numeric_limits<size_t>::max() };
+    bool isRefused { false };
+};
+JS_EXPORT_PRIVATE AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<const size_t> stepsOfAllocatorFromLargest);
 
 // The address space for the tables that a thread reserves when it creates its VM and its instance. The thread that starts it takes the pages, so it is there that a refusal is heard.
 // Only where the address space of the process is limited: elsewhere there is nothing to take, and the pages are null.

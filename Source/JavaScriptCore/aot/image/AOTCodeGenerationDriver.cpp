@@ -66,13 +66,13 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
             addRegExpLiterals(policy, *pipeline.regExpRequests, pipeline.flow->mayReadLegacyRegExpStatics(), context);
+            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(context.recordedOptions(), program, *pipeline.flow), WTF::move(policy));
             context.setIdentifierNumbering(WTF::move(numbering));
 
             plan.stringConstants = numberStringConstants(program, plan.uses.strings, context);
             plan.instanceSizes = { pipeline.placement->sizeOfStatics(), plan.stringConstants.count(), pipeline.siteCaches->count(), static_cast<uint32_t>(pipeline.placement->methodTable().sizeInBytes()) };
             if (!InstanceLayout::isAddressable(plan.instanceSizes))
                 context.reportLimitExceeded(LimitID::MaxStaticsSize, std::max(InstanceLayout::bytesReservedBelowInstance(plan.instanceSizes), InstanceLayout::bytesReservedFromInstance(plan.instanceSizes)));
-            plan.stubCatalog = makeUniqueWithoutFastMallocCheck<const StubCatalog>(StubOptions::from(context.recordedOptions(), program, *pipeline.flow, plan.instanceSizes), WTF::move(policy));
         },
         [&] { plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context); },
         [&] {

@@ -147,7 +147,6 @@ struct ImageWords {
     const uint64_t* data;
     // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
     uintptr_t closureFunctionKindsOrigin;
-    const uint32_t* siteNames;
 };
 
 struct LazyStringWords {
@@ -228,10 +227,23 @@ struct RealmWords {
     uint32_t builtinLayoutOfStructure;
 };
 
+// A function object, and what the stack pointer is once its call has returned.
+struct RecordedCallee {
+    const void* stackPointerOfCaller;
+    JSObject* closure;
+};
+
+// Outermost first. In front of the first lies an entry that every call lies above.
+struct RecordedCalleeList {
+    RecordedCallee* top;
+    RecordedCallee* end;
+};
+
 struct HeapWords {
     StoredCellLog* storedCellLog;
     MarkStackArray* mutatorMarkStack;
     uintptr_t* barriersExecuted;
+    RecordedCalleeList* recordedCallees;
 };
 
 struct IterationWords {

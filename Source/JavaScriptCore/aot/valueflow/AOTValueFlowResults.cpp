@@ -340,7 +340,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
     auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
-        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor);
+        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
     times.didFinish("solve"_s);
     RELEASE_ASSERT(solution->hasResult());
     if (build.options().checksFlowFixpoint)

@@ -87,7 +87,7 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Return [[sent0]]
-# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0 @12
 # CHECK-NEXT: v5: anything = ResultAt v4
 # CHECK-NEXT: v8{{*}}= ResultAt v4 index=1
 # CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -95,13 +95,13 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
 # CHECK-LABEL: function f5 name="readWhereArmsMeet"
 # CHECK: Throw v6
 # CHECK: Return v6
-# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0 @12
 # CHECK-NEXT: v5: anything = ResultAt v4
 # CHECK-NEXT: v6: undefined|int = AssumeType v5 castType=undefined|int
 
 # CHECK-LABEL: function f6 name="noAwaitInFront"
 # CHECK: Throw v5
-# CHECK: v3{{*}}= YieldBySavingFrame {{*}}, v1 @12
+# CHECK: v3{{*}}= YieldBySavingFrame {{*}}, v1, v0 @12
 # CHECK-NEXT: v4: anything = ResultAt v3
 # CHECK-NEXT: v5: undefined|int = AssumeType v4 castType=undefined|int
 
@@ -116,6 +116,6 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: [[other3]]: undefined|int = AssumeType v5 castType=undefined|int
 # CHECK-NEXT: [[cast3]]{{*}}= Upcast [[other3]] castType=undefined|number
 # CHECK-NEXT: Return [[cast3]]
-# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0 @12
 # CHECK-NEXT: v5: anything = ResultAt v4
 # CHECK-NEXT: v8{{*}}= ResultAt v4 index=1

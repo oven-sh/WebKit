@@ -261,6 +261,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             takenByRetiredNodes = maker.unite(takenByRetiredNodes, maker.unite(mark, maker.of(m_input.universe->objectOf(Builtins::Bun))));
             keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, mark);
         }
+        m_takenByRetiredNodes = takenByRetiredNodes;
         ValueSetID wholeUnknownValue = m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone;
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
         if (m_input.nodes && m_input.universe) {
@@ -3090,6 +3091,57 @@ ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueFlowNodeID node, V
     return node == m_input.escaped || node == m_input.lost ? withoutMarkOfNamedBun(m_graph.valueOf(node), maker) : withoutWhatOtherMembersCover(m_graph.valueOf(node), maker);
 }
 
+void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
+{
+    if (!m_input.nodes || !m_input.universe)
+        return;
+    uint32_t firstNodeOfHost = m_input.nodes->ofHost(static_cast<ValueFlowHostNode>(0)).index();
+    auto isReadByResults = [&](ValueFlowNodeID node) {
+        if (node == m_input.escaped || node == m_input.lost)
+            return false;
+        if (node.index() < firstNodeOfHost)
+            return true;
+        const ValueFlowNodeKey* key = keyOfMadeNode(node);
+        if (!key)
+            return false;
+        switch (key->kind) {
+        case ValueFlowMadeNodeKind::Read:
+        case ValueFlowMadeNodeKind::Written:
+        case ValueFlowMadeNodeKind::Lookup:
+        case ValueFlowMadeNodeKind::ReadUnderKind:
+        case ValueFlowMadeNodeKind::WrittenUnderKind:
+            return true;
+        case ValueFlowMadeNodeKind::Constant:
+        case ValueFlowMadeNodeKind::CallGroup:
+        case ValueFlowMadeNodeKind::Hub:
+        case ValueFlowMadeNodeKind::Masked:
+        case ValueFlowMadeNodeKind::Marked:
+        case ValueFlowMadeNodeKind::Instance:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    constexpr uint32_t nodesPerShare = nodesPerShareOfListed;
+    uint32_t numberOfNodes = m_graph.numberOfNodes();
+    m_listedWithCoveredMembers.grow((numberOfNodes + nodesPerShare - 1) / nodesPerShare);
+    forEachIndexInParallel(m_loops, m_listedWithCoveredMembers.size(), [&](unsigned share, unsigned worker) {
+        ValueSetMaker& maker = *m_makers[worker];
+        for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
+            ValueFlowNodeID node(index);
+            ValueSetID value = m_graph.valueOf(node);
+            if (value == ValueSets::nothing || !isReadByResults(node))
+                continue;
+            ValueSetID left = maker.unite(withoutWhatOtherMembersCover(value, maker), maker.intersect(value, m_takenByRetiredNodes));
+            if (left == value)
+                continue;
+            m_graph.replaceValueAfterSolving(node, left);
+            if ((index < firstNodeOfHost || keyOfMadeNode(node)->kind == ValueFlowMadeNodeKind::Written))
+                m_listedWithCoveredMembers[share].append(ValueFlowNodeSet { node, value });
+        }
+        m_listedWithCoveredMembers[share].shrinkToFit();
+    });
+}
+
 ValueSetID ValueFlowSolver::withoutMarkOfNamedBun(ValueSetID value, ValueSetMaker& maker) const
 {
     return m_allButMarkOfNamedBun != ValueSets::anything && m_sets.contains(value, ValueFlowUniverse::markOfNamedBun()) ? maker.intersect(value, m_allButMarkOfNamedBun) : value;
@@ -3426,6 +3478,10 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
             ValueFlowObjectID object = firstMemberOutside(value, maker.unite(mask.set, whatIsNotFollowed));
             if (!object && looksAtArrivals && !m_graph.isAtRest(mask.node)) {
                 ValueSetID accountedFor = maker.unite(value, whatMaskMayTakeAway);
+                for (const Covering& covering : m_coverings) {
+                    if (m_sets.contains(value, covering.placeholder))
+                        accountedFor = maker.unite(accountedFor, ValueSets::complement(covering.allButCovered));
+                }
                 m_graph.forEachPredecessor(mask.node, [&](ValueFlowNodeID predecessor) {
                     ValueFlowObjectID takenAway = firstMemberOutside(m_graph.valueOf(predecessor), accountedFor);
                     if (takenAway && (!object || takenAway < object))
@@ -3849,6 +3905,8 @@ bool ValueFlowSolver::solve()
     if (m_allButMarkOfNamedBun != ValueSets::anything)
         m_graph.removeFromEveryNode(ValueFlowUniverse::markOfNamedBun());
     m_graph.releaseRows();
+    if (m_input.leavesOutWhatIsCovered)
+        leaveOutWhatIsCoveredInTheEnd();
     spreadMarks();
     findObjectsOutsideFamilies();
     findClosuresFollowedToConstructions();

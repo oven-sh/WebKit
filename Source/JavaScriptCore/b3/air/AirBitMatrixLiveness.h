@@ -347,7 +347,8 @@ private:
     class SliceRows {
     public:
         explicit SliceRows(unsigned numberOfPositions)
-            : gen(FillWith { }, numberOfPositions, 0u)
+            : m_firstTransferWord(FillWith { }, numberOfPositions, 0u)
+            , m_numberOfTransferWords(FillWith { }, numberOfPositions, 0u)
             , m_head(FillWith { }, numberOfPositions, 0u)
             , m_tail(FillWith { }, numberOfPositions, 0u)
         {
@@ -366,8 +367,41 @@ private:
             m_numberOfRows = 0;
             m_freeRows.shrink(0);
             m_lastUnion = { };
+            m_transferWords.shrink(0);
             addRows(1);
+            m_scratchRows = addRows(3);
         }
+
+        uint64_t* scratchGen() LIFETIME_BOUND { return at(m_scratchRows); }
+        uint64_t* scratchKill() LIFETIME_BOUND { return at(m_scratchRows + 1); }
+        uint64_t* scratchTail() LIFETIME_BOUND { return at(m_scratchRows + 2); }
+
+        // Takes what the scratch rows say about the block and leaves them empty.
+        void takeScratchRows(unsigned position)
+        {
+            uint64_t* gen = scratchGen();
+            uint64_t* kill = scratchKill();
+            uint64_t* tail = scratchTail();
+            m_firstTransferWord[position] = m_transferWords.size();
+            uint64_t anyInTail = 0;
+            for (size_t i = 0; i < m_wordsPerRow; ++i) {
+                anyInTail |= tail[i];
+                if (!(gen[i] | kill[i]))
+                    continue;
+                m_transferWords.append(TransferWord { gen[i], kill[i], static_cast<unsigned>(i) });
+                gen[i] = 0;
+                kill[i] = 0;
+            }
+            m_numberOfTransferWords[position] = m_transferWords.size() - m_firstTransferWord[position];
+            if (!anyInTail)
+                return;
+            unsigned row = takeRow();
+            memcpySpan(std::span { at(row), m_wordsPerRow }, std::span<const uint64_t> { tail, m_wordsPerRow });
+            zeroSpan(std::span { tail, m_wordsPerRow });
+            setTail(position, row);
+        }
+
+        bool changesSet(unsigned position) const { return m_numberOfTransferWords[position]; }
 
         unsigned headOf(unsigned position) const { return m_head[position]; }
         unsigned tailOf(unsigned position) const { return m_tail[position]; }
@@ -378,7 +412,7 @@ private:
         {
             m_head[position] = 0;
             m_tail[position] = 0;
-            gen[position] = 0;
+            m_numberOfTransferWords[position] = 0;
         }
 
         size_t wordsPerRow() const { return m_wordsPerRow; }
@@ -391,16 +425,6 @@ private:
             for (unsigned row = first; row < first + count; ++row)
                 zeroSpan(std::span { at(row), m_wordsPerRow });
             return first;
-        }
-
-        void removeRowsFrom(unsigned row) { m_numberOfRows = row; }
-
-        bool isEmpty(unsigned row) const
-        {
-            uint64_t any = 0;
-            for (size_t i = 0; i < m_wordsPerRow; ++i)
-                any |= at(row)[i];
-            return !any;
         }
 
         unsigned unite(unsigned a, unsigned b)
@@ -436,20 +460,21 @@ private:
         {
             const unsigned tailRow = m_tail[position];
             unsigned result = takeRow();
-            const uint64_t* wordsOfGen = at(gen[position]);
-            const uint64_t* wordsOfKill = at(gen[position] + 1);
             const uint64_t* wordsOfTail = at(tailRow);
             const uint64_t* wordsOfCurrent = at(current);
             uint64_t* wordsOfResult = at(result);
-            uint64_t differsFromCurrent = 0;
+            memcpySpan(std::span { wordsOfResult, m_wordsPerRow }, std::span { wordsOfTail, m_wordsPerRow });
             uint64_t differsFromTail = 0;
+            for (const TransferWord& transfer : m_transferWords.subspan(m_firstTransferWord[position], m_numberOfTransferWords[position])) {
+                uint64_t word = transfer.gen | (wordsOfTail[transfer.index] & ~transfer.kill);
+                wordsOfResult[transfer.index] = word;
+                differsFromTail |= word ^ wordsOfTail[transfer.index];
+            }
+            uint64_t differsFromCurrent = 0;
             uint64_t any = 0;
             for (size_t i = 0; i < m_wordsPerRow; ++i) {
-                uint64_t word = wordsOfGen[i] | (wordsOfTail[i] & ~wordsOfKill[i]);
-                wordsOfResult[i] = word;
-                differsFromCurrent |= word ^ wordsOfCurrent[i];
-                differsFromTail |= word ^ wordsOfTail[i];
-                any |= word;
+                differsFromCurrent |= wordsOfResult[i] ^ wordsOfCurrent[i];
+                any |= wordsOfResult[i];
             }
             if (differsFromCurrent && differsFromTail && any)
                 return result;
@@ -459,10 +484,14 @@ private:
             return any ? tailRow : 0;
         }
 
-        // By position in post order. The kill row of a block follows its gen row, and a block whose gen is 0 names no index of the slice.
-        Vector<unsigned> gen;
-
     private:
+        // The words of the slice in which a block generates or kills an index.
+        struct TransferWord {
+            uint64_t gen;
+            uint64_t kill;
+            unsigned index;
+        };
+
         size_t offsetInChunk(unsigned row) const { return (row & ((1u << m_rowsPerChunkShift) - 1)) * m_wordsPerRow; }
 
         // Rows stay where they are, and the chunks serve every slice.
@@ -507,6 +536,10 @@ private:
         Vector<Vector<uint64_t>> m_chunks;
         Vector<unsigned> m_numberOfSlotsPointingTo;
         Vector<unsigned> m_freeRows;
+        unsigned m_scratchRows { 0 };
+        Vector<TransferWord> m_transferWords;
+        Vector<unsigned> m_firstTransferWord;
+        Vector<unsigned> m_numberOfTransferWords;
         Vector<unsigned> m_head;
         Vector<unsigned> m_tail;
         Union m_lastUnion;
@@ -641,17 +674,10 @@ private:
             };
 
             auto fillRowsOf = [&](BasicBlock* block) {
-                unsigned gen = rows.addRows(3);
-                if (!this->fillRows(block, firstWord, words, rows.at(gen), rows.at(gen + 1), rows.at(gen + 2))) {
-                    rows.removeRowsFrom(gen);
+                if (!this->fillRows(block, firstWord, words, rows.scratchGen(), rows.scratchKill(), rows.scratchTail()))
                     return;
-                }
                 unsigned position = order.positionOfBlock[block->index()];
-                rows.gen[position] = gen;
-                if (rows.isEmpty(gen + 2))
-                    rows.removeRowsFrom(gen + 2);
-                else
-                    rows.setTail(position, gen + 2);
+                rows.takeScratchRows(position);
                 markVisited(position);
                 worklist.add(position);
             };
@@ -665,7 +691,7 @@ private:
             }
 
             while (auto position = worklist.takeLowest()) {
-                unsigned head = rows.gen[*position] ? rows.applyTransfer(*position, rows.headOf(*position)) : rows.tailOf(*position);
+                unsigned head = rows.changesSet(*position) ? rows.applyTransfer(*position, rows.headOf(*position)) : rows.tailOf(*position);
                 if (head == rows.headOf(*position))
                     continue;
                 rows.setHead(*position, head);

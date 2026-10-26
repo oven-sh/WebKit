@@ -370,6 +370,18 @@ static JSObject* driverOf(const Instance& instance, SavedFrame* coroutine, const
 // With the status Result, the value is what the consumer has to await: the sentinel if the producer resumes it, else the promise of an iterator result.
 enum class StepAnswer : uint8_t { ResumesDriver, IsPromise };
 
+// The consumer is the only one that sees the promise, and it awaits the promise next. The job that a step of "for await" ends with stands where the job of that await would stand, and hands over the value and the status in the place of the iterator result.
+static AsyncGeneratorStep awaitPromiseOfStep(Instance& instance, JSValue promise, JSObject* driver)
+{
+    VM& vm = *instance.vm;
+    JSGlobalObject* globalObject = instance.globalObject;
+    // An await reads "constructor" of the promise where a program could tell.
+    if (!driver || promise.asCell()->structureID() != globalObject->promiseStructure()->id() || globalObject->promiseSpeciesWatchpointSet().state() != IsWatched)
+        return { promise, AsyncGeneratorStepStatus::Result };
+    uncheckedDowncast<JSPromise>(promise)->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, nullptr, driver, AsyncContextSwapScope::current(vm, globalObject));
+    return { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
+}
+
 static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* frame, SavedFrame* newSavedFrame, StepAnswer answer, JSObject* iterator, JSValue sent)
 {
     JSGlobalObject* globalObject = instance.globalObject;
@@ -377,9 +389,11 @@ static AsyncGeneratorStep stepAsyncIterator(Instance& instance, const uint64_t* 
     // A coroutine that has not been suspended yet and got no SavedFrame for this step has nothing that the iterator could resume.
     SavedFrame* coroutine = newSavedFrame ? newSavedFrame : coroutineOfFrame(instance, frame);
     if (!coroutine || answer == StepAnswer::IsPromise) {
-        if (auto* generator = dynamicDowncast<JSAsyncGenerator>(iterator))
-            return { asyncGeneratorNext(globalObject, generator, sent ? sent : jsUndefined(), callCache), AsyncGeneratorStepStatus::Result };
-        return { asyncFromSyncIteratorNext(globalObject, uncheckedDowncast<JSAsyncFromSyncIterator>(iterator), sent), AsyncGeneratorStepStatus::Result };
+        auto scope = DECLARE_THROW_SCOPE(*instance.vm);
+        auto* generator = dynamicDowncast<JSAsyncGenerator>(iterator);
+        JSValue promise = generator ? asyncGeneratorNext(globalObject, generator, sent ? sent : jsUndefined(), callCache) : asyncFromSyncIteratorNext(globalObject, uncheckedDowncast<JSAsyncFromSyncIterator>(iterator), sent);
+        RETURN_IF_EXCEPTION(scope, (AsyncGeneratorStep { JSValue(), AsyncGeneratorStepStatus::Result }));
+        return awaitPromiseOfStep(instance, promise, coroutine ? driverOf(instance, coroutine, frame) : nullptr);
     }
 
     JSObject* driver = driverOf(instance, coroutine, frame);
@@ -424,10 +438,13 @@ static AsyncGeneratorStep finishAsyncGeneratorStep(Instance& instance, const uin
     VM& vm = *instance.vm;
     bool isSeenTo = returned == JSValue(vm.fastAsyncGeneratorSentinel());
     if (slotsOfStub[consumerSlotInStubFrame] & consumerOfStepAwaitsPromise || (!isSeenTo && endOfBodyAnswersOtherRequestsFirst(slotsOfStub, generator))) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSPromise* promise = tryPutPromiseInPlaceOfDriver(instance, slotsOfStub, generator);
         if (!isSeenTo)
             finishAsyncGeneratorBodyCall(instance.globalObject, generator, returned, JSValue(), &vm.syncResumeCallCache());
-        return { promise ? JSValue(promise) : JSValue(vm.fastAsyncGeneratorSentinel()), AsyncGeneratorStepStatus::Result };
+        if (!promise || scope.exception())
+            return { vm.fastAsyncGeneratorSentinel(), AsyncGeneratorStepStatus::Result };
+        return awaitPromiseOfStep(instance, promise, asObject(std::bit_cast<JSCell*>(slotsOfStub[driverSlotInStubFrame])));
     }
     ASSERT(!isSeenTo);
     // The request at the head of the queue is the one that the stub wrote, so it names the consumer.

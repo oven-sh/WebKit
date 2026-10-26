@@ -522,8 +522,8 @@ bool CompiledFrameIterator::isConstructCall()
 
 JSObject* CompiledFrameIterator::recordedCallee()
 {
-    const auto& recordedCallees = FunctionTables::of(*m_vm).recordedCallees;
-    if (recordedCallees.isEmpty()) [[likely]]
+    std::span recordedCallees = FunctionTables::of(*m_vm).recordedCallees();
+    if (recordedCallees.empty()) [[likely]]
         return nullptr;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
@@ -703,7 +703,9 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.innermostIsInlinedConstructCall = innermost.isInlinedConstructCall;
     entry.innermostVisibility = FunctionDescription(innermost.function).visibility();
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall);
-    entry.shownFrameCountOnTop = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false);
+    entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
+    if (entry.site.isTailCall)
+        entry.shownFrameCountOnTopBehindTailCall = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), true), CallSiteCache::Entry::tooManyFramesToCount);
     return entry;
 }
 

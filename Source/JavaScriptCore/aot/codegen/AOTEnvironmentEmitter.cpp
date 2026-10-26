@@ -90,7 +90,61 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
 
 void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
 {
-    callVoidOperation(value, RuntimeOperation::RecordCallee, { in<CellPointer>(value->closureOperand()) });
+    CellPointer closure = in<CellPointer>(value->closureOperand());
+    ptrdiff_t bytesAboveFrameRecord = sizeof(CallerFrameAndPC) + (inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0);
+    LValue stackPointerOfCaller = m_out.add(m_out.framePointer(), m_out.constIntPtr(bytesAboveFrameRecord));
+    const B3::AbstractHeap& heap = m_heaps.collectorState;
+    LValue list = m_out.loadPtr(instanceField(heap, AOT_INSTANCE_OFFSET(heap.recordedCallees)));
+    constexpr ptrdiff_t offsetOfLast = -static_cast<ptrdiff_t>(sizeof(RecordedCallee));
+
+    LBasicBlock loop = newBlock();
+    LBasicBlock replaceLast = newBlock();
+    LBasicBlock isNotLast = newBlock();
+    LBasicBlock liesBelowLast = newBlock();
+    LBasicBlock liesAboveLast = newBlock();
+    LBasicBlock dropLast = newBlock();
+    LBasicBlock add = newBlock();
+    LBasicBlock callRuntime = newBlock();
+    LBasicBlock continuation = newBlock();
+    ValueFromBlock topAtEntry = m_out.anchor(m_out.loadPtr(m_out.address(heap, list, OBJECT_OFFSETOF(RecordedCalleeList, top))));
+    m_out.jump(loop);
+
+    m_out.appendTo(loop);
+    LValue top = m_out.phi(B3::pointerType(), topAtEntry);
+    LValue stackPointerOfLast = m_out.loadPtr(m_out.address(heap, top, offsetOfLast + OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    m_out.branch(m_out.equal(stackPointerOfLast, stackPointerOfCaller), normalEdge(replaceLast), normalEdge(isNotLast));
+
+    // The call that the last entry stands for has returned to where this one comes from.
+    m_out.appendTo(replaceLast);
+    m_out.storePtr(closure.value(), m_out.address(heap, top, offsetOfLast + OBJECT_OFFSETOF(RecordedCallee, closure)));
+    m_out.storePtr(top, m_out.address(heap, list, OBJECT_OFFSETOF(RecordedCalleeList, top)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(isNotLast);
+    m_out.branch(m_out.above(stackPointerOfLast, stackPointerOfCaller), normalEdge(liesBelowLast), normalEdge(liesAboveLast));
+
+    // So has one that was made from further down. The entry in front of the first has no stack pointer.
+    m_out.appendTo(liesAboveLast);
+    m_out.branch(m_out.isNull(stackPointerOfLast), rareEdge(callRuntime), normalEdge(dropLast));
+
+    m_out.appendTo(dropLast);
+    m_out.addIncomingToPhi(top, m_out.anchor(m_out.add(top, m_out.constIntPtr(offsetOfLast))));
+    m_out.jump(loop);
+
+    m_out.appendTo(liesBelowLast);
+    m_out.branch(m_out.notEqual(top, m_out.loadPtr(m_out.address(heap, list, OBJECT_OFFSETOF(RecordedCalleeList, end)))), normalEdge(add), rareEdge(callRuntime));
+
+    m_out.appendTo(add);
+    m_out.storePtr(stackPointerOfCaller, m_out.address(heap, top, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    m_out.storePtr(closure.value(), m_out.address(heap, top, OBJECT_OFFSETOF(RecordedCallee, closure)));
+    m_out.storePtr(m_out.add(top, m_out.constIntPtr(sizeof(RecordedCallee))), m_out.address(heap, list, OBJECT_OFFSETOF(RecordedCalleeList, top)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(callRuntime);
+    callVoidOperation(value, RuntimeOperation::RecordCallee, { closure });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
 }
 
 } } } // namespace JSC::AOT::Typed

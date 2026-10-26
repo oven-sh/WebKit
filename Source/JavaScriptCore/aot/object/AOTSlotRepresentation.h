@@ -61,6 +61,13 @@ static constexpr uint64_t nullDouble = 0x7ffbull << 48;
 static constexpr uint64_t absentDouble = 0x7ffcull << 48;
 static_assert(maxSlotInteger < undefinedInteger);
 
+// What the processor answers where arithmetic on numbers has no number to give.
+#if CPU(X86_64)
+static constexpr uint64_t bitsOfNaNFromArithmetic = PNaNAsBits | 1ull << 63;
+#else
+static constexpr uint64_t bitsOfNaNFromArithmetic = PNaNAsBits;
+#endif
+
 static constexpr int32_t absentInt32 = INT32_MIN + 1;
 static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;

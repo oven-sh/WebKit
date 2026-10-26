@@ -761,21 +761,17 @@ B3::Air::StackSlot* RuntimeCallEmitter::ensureRegisterStorage(B3::Air::StackSlot
     return storage;
 }
 
-// A call, and the read of the method that it calls, can throw before the callee begins.
-static constexpr OpcodeSet opcodesInFrontOfCallee {
-    Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs, Opcode::CallMethod, Opcode::CallResolved, Opcode::AwaitCallBySavingFrame,
-    Opcode::RequireObjectCoercible, Opcode::PropGet, Opcode::ElemGet
-};
-
 RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context, const CallOptions& options)
 {
     // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
     Origin origin = options.origin.value_or(context.origin());
-    bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
-    bool isInsideCallee = standsForCallee && !(context.valueID() && opcodesInFrontOfCallee.contains(m_function.at(context.valueID()).opcode));
+    const Value* value = context.valueID() ? &m_function.at(context.valueID()) : nullptr;
     BuiltinID calledBuiltin = options.calledBuiltin;
-    if (const Value* value = context.valueID() ? &m_function.at(context.valueID()) : nullptr; !calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
+    if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
         calledBuiltin = value->calledBuiltin();
+    bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
+    // A call, and the read of the method that it calls, can throw before the callee begins.
+    bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
     RELEASE_ASSERT(!calledBuiltin || (!options.constructs && !options.isTailCall && isInsideCallee == origin.isTailCall));
     return { .origin = origin, .constructs = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .calledBuiltin = calledBuiltin };
 }

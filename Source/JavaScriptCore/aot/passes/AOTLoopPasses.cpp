@@ -634,10 +634,41 @@ static bool removeOutermostDeadLoops(FunctionPassContext& context)
     return true;
 }
 
+static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID block)
+{
+    BitVector hints;
+    std::span<const ValueID> values = function.at(block).values.span();
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (function.at(values[index]).opcode == Opcode::LoopHint)
+            hints.set(index);
+    }
+    if (hints.isEmpty())
+        return false;
+    builder.eraseValues(block, hints);
+    return true;
+}
+
+// What is left of a loop whose way back has been folded away turns no more.
+static bool removeHintsOutsideCycles(FunctionPassContext& context)
+{
+    Vector<BlockID, 8> outsideCycles;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        if (!context.analyses.isInCycle(block))
+            outsideCycles.append(block);
+    }
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    bool changed = false;
+    for (BlockID block : outsideCycles)
+        changed |= eraseLoopHints(builder, context.function, block);
+    return changed;
+}
+
 PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     while (removeOutermostDeadLoops(context))
+        outcome = PassOutcome::Changed;
+    if (removeHintsOutsideCycles(context))
         outcome = PassOutcome::Changed;
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)
@@ -729,14 +760,7 @@ static void unroll(FunctionPassContext& context, const ShortLoop& loop)
             Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
             builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
         }
-        BlockID header = turns[turn]->cloneOf(loop.header);
-        BitVector hints;
-        std::span<const ValueID> values = function.at(header).values.span();
-        for (size_t index = 0; index < values.size(); ++index) {
-            if (function.at(values[index]).opcode == Opcode::LoopHint)
-                hints.set(index);
-        }
-        builder.eraseValues(header, hints);
+        eraseLoopHints(builder, function, turns[turn]->cloneOf(loop.header));
     }
     context.analyses.didChangeControlFlow();
     RegionCloner::repairSSA(context.analyses, turns.span());

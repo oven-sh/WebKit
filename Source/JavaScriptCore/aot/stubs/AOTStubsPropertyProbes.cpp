@@ -1341,36 +1341,6 @@ void markStaticsCard(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeO
     jit.store8(TrustedImm32(ProgramStatics::cardIsDirty), BaseIndex(staticsBase, offsetInStatics, CCallHelpers::TimesOne));
 }
 
-static_assert(sizeof(Slot) == 4 * sizeof(uint32_t));
-
-BaseIndex wordOfSite(StubAssembler& jit, GPRReg offsetOfName, ptrdiff_t offsetInSlot)
-{
-    return BaseIndex(instanceGPR, offsetOfName, CCallHelpers::TimesFour, static_cast<int32_t>(jit.options().offsetOfSiteCaches + offsetInSlot));
-}
-
-void loadAddressOfSite(StubAssembler& jit, GPRReg offsetOfName, GPRReg site)
-{
-#if CPU(ARM64)
-    // The site caches begin at a multiple of 4 KB, which one instruction adds.
-    static_assert(!(InstanceLayout::granuleAboveInstance % (4 * KB)) && !(InstanceLayout::offsetOfStringCells % (4 * KB)));
-    const uint32_t pages = jit.options().offsetOfSiteCaches / (4 * KB);
-    if (isUInt12(pages)) {
-        jit.m_assembler.add<64>(site, instanceGPR, offsetOfName, ARM64Assembler::LSL, 2);
-        jit.m_assembler.add<64>(site, site, UInt12(pages), 12);
-        return;
-    }
-#endif
-    jit.getEffectiveAddress(wordOfSite(jit, offsetOfName, 0), site);
-}
-
-void loadNameAndAddressOfSite(StubAssembler& jit, GPRReg offsetOfName, GPRReg name, GPRReg site)
-{
-    RELEASE_ASSERT(noOverlap(offsetOfName, name, instanceGPR) && noOverlap(site, name, instanceGPR));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.siteNames)), name);
-    jit.load32(BaseIndex(name, offsetOfName, CCallHelpers::TimesOne), name);
-    loadAddressOfSite(jit, offsetOfName, site);
-}
-
 Jump branchIfSiteIsFilled(StubAssembler& jit, GPRReg site)
 {
     return jit.branchTest64(CCallHelpers::NonZero, Address(site));

@@ -903,6 +903,9 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     if (key.keyClass != HeapKeyClass::Unknown) {
         forEachMemberUnder(objects, key, [&](BuiltinID member, ModuleID module) {
             readMember(member, module, result, getters);
+            ValueFlowObjectID function = objectOfMember(member, module);
+            if (m_builtins.at(member).origin == BuiltinOrigin::Host && m_context.sets().contains(m_universe.builtinFunctions(), function))
+                add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), only(function));
         });
         return;
     }

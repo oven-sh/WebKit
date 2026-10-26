@@ -150,9 +150,10 @@ private:
                 continue;
             }
             BasicBlock* successor = block->successorBlock(successorIndex++);
-            if (state[successor] == WalkState::OnStack)
+            if (state[successor] == WalkState::OnStack) {
                 m_isLoopHeader[successor] = true;
-            else if (state[successor] == WalkState::NotReached)
+                m_hasLoop = true;
+            } else if (state[successor] == WalkState::NotReached)
                 reach(successor);
         }
     }
@@ -254,7 +255,16 @@ private:
     // where the value is still live.
     void withdrawTailsWhoseValuesCrossManyTails()
     {
-        if (m_cloner.isEmpty())
+        uint64_t limit = m_proc.limit(Limit::MaxTailsCrossedByCopiedValues);
+        uint64_t numberOfTails = 0;
+        uint64_t mostValuesInTail = 0;
+        for (BasicBlock* block : m_proc) {
+            if (!m_cloner.contains(block))
+                continue;
+            ++numberOfTails;
+            mostValuesInTail = std::max<uint64_t>(mostValuesInTail, block->size());
+        }
+        if (numberOfTails * mostValuesInTail <= limit)
             return;
 
         Vector<BasicBlock*> postOrder = m_proc.blocksInPostOrder();
@@ -263,11 +273,14 @@ private:
         for (unsigned index = 0; index < numberOfBlocks; ++index)
             position[postOrder[index]] = numberOfBlocks - 1 - index;
 
-        NaturalLoops& loops = m_proc.naturalLoops();
-        Vector<unsigned> lastPositionInLoop(FillWith { }, loops.numLoops(), 0u);
-        for (BasicBlock* block : postOrder) {
-            for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
-                lastPositionInLoop[loop->index()] = std::max(lastPositionInLoop[loop->index()], position[block]);
+        NaturalLoops* loops = m_hasLoop ? &m_proc.naturalLoops() : nullptr;
+        Vector<unsigned> lastPositionInLoop;
+        if (loops) {
+            lastPositionInLoop.fill(0, loops->numLoops());
+            for (BasicBlock* block : postOrder) {
+                for (const NaturalLoop* loop = loops->innerMostLoopOf(block); loop; loop = loops->innerMostOuterLoop(*loop))
+                    lastPositionInLoop[loop->index()] = std::max(lastPositionInLoop[loop->index()], position[block]);
+            }
         }
 
         IndexMap<Value*, unsigned> lastLivePosition(m_proc.values().size(), 0);
@@ -278,14 +291,13 @@ private:
                     if (tail == block || !m_cloner.contains(tail))
                         continue;
                     unsigned last = position[block];
-                    for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop && !loops.belongsTo(tail, *loop); loop = loops.innerMostOuterLoop(*loop))
+                    for (const NaturalLoop* loop = loops ? loops->innerMostLoopOf(block) : nullptr; loop && !loops->belongsTo(tail, *loop); loop = loops->innerMostOuterLoop(*loop))
                         last = lastPositionInLoop[loop->index()];
                     lastLivePosition[child] = std::max(lastLivePosition[child], last);
                 }
             }
         }
 
-        uint64_t limit = m_proc.limit(Limit::MaxTailsCrossedByCopiedValues);
         Vector<unsigned> numberOfTailsFrom(FillWith { }, numberOfBlocks + 1, 0u);
         for (unsigned index = 0; index < numberOfBlocks; ++index) {
             BasicBlock* tail = postOrder[index];
@@ -884,6 +896,7 @@ private:
     std::optional<DominatingConditions> m_conditions;
     Vector<FrequencyClass> m_blockClasses;
     IndexMap<BasicBlock*, bool> m_isLoopHeader;
+    bool m_hasLoop { false };
     IndexMap<Value*, uint8_t> m_branchCountOn;
     IndexSet<BasicBlock*> m_tailsOnlyForDecidedTests;
     IndexMap<BasicBlock*, CopyCost> m_pathCopyCost;

@@ -202,23 +202,46 @@ static String nameSetAtRunTime(VM& vm, FunctionID function)
     return tables.namesSetAtRunTime.get(sourceFunction);
 }
 
+static constinit RecordedCallee entryOfEmptyList[1] { { nullptr, nullptr } };
+static constinit RecordedCalleeList emptyList { entryOfEmptyList + 1, entryOfEmptyList + 1 };
+
+RecordedCalleeList* FunctionTables::emptyRecordedCalleeList()
+{
+    return &emptyList;
+}
+
+static size_t numberOfCalleesAbove(std::span<const RecordedCallee> storage, size_t number, const void* stackPointer)
+{
+    while (number && storage[number].stackPointerOfCaller <= stackPointer)
+        --number;
+    return number;
+}
+
 bool FunctionTables::hasRecordedCalleesAbove(const void* stackPointer)
 {
-    if (recordedCallees.isEmpty()) [[likely]]
+    size_t number = numberOfRecordedCallees();
+    if (!number) [[likely]]
         return false;
     Locker locker { recordedCalleesLock };
-    while (!recordedCallees.isEmpty() && recordedCallees.last().stackPointerOfCaller <= stackPointer)
-        recordedCallees.removeLast();
-    return !recordedCallees.isEmpty();
+    number = numberOfCalleesAbove(recordedCalleeStorage.span(), number, stackPointer);
+    setNumberOfRecordedCallees(number);
+    return number;
 }
 
 void FunctionTables::recordCallee(VM& vm, const void* stackPointerOfCaller, JSObject* closure)
 {
     {
         Locker locker { recordedCalleesLock };
-        while (!recordedCallees.isEmpty() && recordedCallees.last().stackPointerOfCaller <= stackPointerOfCaller)
-            recordedCallees.removeLast();
-        recordedCallees.append({ stackPointerOfCaller, closure });
+        size_t number = numberOfCalleesAbove(recordedCalleeStorage.span(), numberOfRecordedCallees(), stackPointerOfCaller);
+        if (number + 1 >= recordedCalleeStorage.size()) {
+            recordedCalleeStorage.grow(std::max<size_t>(64, recordedCalleeStorage.size() * 2));
+            recordedCalleeStorage[0] = { nullptr, nullptr };
+            for (size_t index = number + 1; index < recordedCalleeStorage.size(); ++index)
+                recordedCalleeStorage[index] = { nullptr, nullptr };
+            recordedCalleeList.end = recordedCalleeStorage.mutableSpan().subspan(recordedCalleeStorage.size()).data();
+        }
+        recordedCalleeStorage[number + 1] = { stackPointerOfCaller, closure };
+        setNumberOfRecordedCallees(number + 1);
     }
     if (dropsRecordedCalleesWhenIdle || !vm.entryScope)
         return;
@@ -226,7 +249,7 @@ void FunctionTables::recordCallee(VM& vm, const void* stackPointerOfCaller, JSOb
     vm.whenIdle([this] {
         dropsRecordedCalleesWhenIdle = false;
         Locker locker { recordedCalleesLock };
-        recordedCallees.shrink(0);
+        setNumberOfRecordedCallees(0);
     });
 }
 
@@ -234,7 +257,7 @@ template<typename Visitor>
 void FunctionTables::visitRecordedCallees(Visitor& visitor, const void* stackPointer)
 {
     Locker locker { recordedCalleesLock };
-    for (const RecordedCallee& recorded : recordedCallees) {
+    for (const RecordedCallee& recorded : recordedCallees()) {
         if (recorded.stackPointerOfCaller <= stackPointer)
             break;
         visitor.appendUnbarriered(recorded.closure);
@@ -245,12 +268,19 @@ template void FunctionTables::visitRecordedCallees(SlotVisitor&, const void*);
 
 void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
 {
-    if (!hasRecordedCalleesAbove(stackPointer))
+    if (recordedCalleeStorage.isEmpty())
         return;
     Locker locker { recordedCalleesLock };
-    recordedCallees.removeAllMatching([&](const RecordedCallee& recorded) {
-        return !vm.heap.isMarked(recorded.closure);
-    });
+    size_t number = numberOfCalleesAbove(recordedCalleeStorage.span(), numberOfRecordedCallees(), stackPointer);
+    size_t numberKept = 0;
+    for (size_t index = 1; index <= number; ++index) {
+        if (vm.heap.isMarked(recordedCalleeStorage[index].closure))
+            recordedCalleeStorage[++numberKept] = recordedCalleeStorage[index];
+    }
+    setNumberOfRecordedCallees(numberKept);
+    // What lies behind the last entry is never older than one collection.
+    for (size_t index = numberKept + 1; index < recordedCalleeStorage.size(); ++index)
+        recordedCalleeStorage[index] = { nullptr, nullptr };
 }
 
 static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)

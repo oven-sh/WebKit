@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
@@ -325,6 +326,26 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
     };
     auto hasOnlyClosure = [&](FunctionID closed) { return counts.closuresOfFunction[closed.index()] == 1; };
 
+    // In the generic version of the function the type of a value that rests on a check says nothing.
+    std::optional<BitVector> valuesThatRestOnChecks;
+    auto restsOnCheck = [&](ValueID id) {
+        if (!valuesThatRestOnChecks) {
+            Vector<ValueID, 16> checks;
+            for (const Block& block : function.blocks) {
+                for (ValueID value : block.values) {
+                    if (function.at(value).opcode == Opcode::Check)
+                        checks.append(value);
+                }
+            }
+            valuesThatRestOnChecks = computeTaintedValues(function, useLists(), checks.span());
+        }
+        return valuesThatRestOnChecks->get(id.index());
+    };
+    auto neverThrows = [&](ValueID heritageLook) {
+        ValueID heritage = function.at(heritageLook).heritageOperand();
+        return hasOnlyClassesAndBuiltins(program, program.typeOf(function, heritage)) && !restsOnCheck(heritage);
+    };
+
     // SomethingElse where the variable needs the object itself.
     auto whatIsReadBefore = [&](const Value& store, Deferral::Kind kind) {
         const Variable& variable = program.at(store.variable());
@@ -424,6 +445,8 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
 
         Deferral deferral { .kind = Deferral::Kind::Class, .body = id, .function = layout.constructor, .layout = layoutID };
         deferral.removed.appendVector(site->describedByRecord);
+        if (site->heritageLook && neverThrows(site->heritageLook))
+            deferral.removed.append(site->heritageLook);
         bool holdsClassObjectSomewhere = false;
         for (ValueID store : site->stores)
             holdsClassObjectSomewhere |= tryTakeStore(deferral, store);
@@ -964,18 +987,6 @@ struct MovableCode {
         if (!type.isObject() || type.anyObject || type.anyFunction || type.layouts || !type.functions.isEmpty() || !type.builtins.isEmpty() || type.classes.isEmpty())
             return false;
         return std::ranges::all_of(type.classes, [&](const ClassPart& part) { return part.builtinClass == BuiltinClasses::Array && part.provenPristine.containsAll(proven); });
-    }
-
-    // The prototype property of a class and of a built-in constructor can neither be stored to nor redefined.
-    bool hasOnlyClassesAndBuiltins(const Type& type) const
-    {
-        if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || (type.primitives & ~Primitive::Null) || !type.isJavaScriptValue())
-            return false;
-        bool hasOnlyConstructors = std::ranges::all_of(type.builtins, [&](BuiltinID id) {
-            const Builtin& builtin = program.builtins().at(id);
-            return builtin.kind == BuiltinKind::Constructor && builtin.instanceClass && program.builtins().at(builtin.instanceClass).prototype;
-        });
-        return hasOnlyConstructors && std::ranges::all_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); });
     }
 
     static ValueID allocationOf(const Function& function, ValueID id)
@@ -1539,7 +1550,7 @@ struct MovableCode {
                 return true;
             break;
         case Opcode::ResolveHeritage:
-            if (hasOnlyClassesAndBuiltins(typeOf(function, value.heritageOperand())))
+            if (hasOnlyClassesAndBuiltins(program, typeOf(function, value.heritageOperand())))
                 return true;
             break;
         case Opcode::NewClass:

@@ -103,8 +103,8 @@ public:
             return Answer { KnownValue::null(), { } };
         if (result.isBoolean())
             return Answer { KnownValue::boolean(result.asBoolean()), { } };
-        if (result.isNumber())
-            return Answer { KnownValue::number(result.asNumber()), { } };
+        if (KnownValue number = result.isNumber() ? KnownValue::computedNumber(result.asNumber()) : KnownValue(); number.kind() != KnownValue::Kind::Unknown)
+            return Answer { number, { } };
         return std::nullopt;
     }
 
