@@ -153,6 +153,7 @@ Upstream's too, and run by the `test` job.
 | `Threading.cpp` | `WTF_Thread.SchedulingAttributesFollowQOS` and `.HighPriorityThreadsRestoresClampWhenReenabled` are compiled only without `USE(BUN_JSC_ADDITIONS)` | on purpose, as in A: `Thread::updateSchedulingAttributes()` (`wtf/posix/ThreadingPOSIX.cpp`) does nothing on Linux, so a thread keeps the scheduling policy, nice level and utilization clamp of the process that embeds it. The tests expect upstream's mapping from QOS |
 | `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
 | `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
+| `URLParser.cpp` | `WTF_URLParser.Basic` expects `a://[::2:]` to fail. The three rows at the end of `ParserFailures` and the four `5efe` rows of `ParserDifferences` are the fork's own | on purpose, as in A: `URLParser::parseIPv6Host()` (`wtf/URLParser.cpp`) follows the IPv6 parser of the URL Standard. An address that ends with a single `:` fails, where upstream drops the `:` and parses the rest (bug 199627). A compressed address takes an IPv4 tail at piece 5, where upstream rejects it |
 
 ---
 
