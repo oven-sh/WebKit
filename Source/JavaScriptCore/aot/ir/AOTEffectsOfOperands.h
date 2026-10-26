@@ -37,6 +37,8 @@ struct OperandBehavior {
     bool membersAreOfObjectsOnly { false };
     bool functionsAreConvertedUnderNamesOnly { false };
     std::span<const BuiltinName> convertedMembers { };
+    bool isDescribedWhenRefused { false };
+    BuiltinTypeID accepted { };
 };
 
 struct OperandSummary {
@@ -93,6 +95,8 @@ inline constexpr Effects listReadEffects = [] {
 OperandBehavior declaredBehaviorOf(Opcode, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(TerminatorKind, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(const BuiltinOverload&, BuiltinOperand);
+// How the host describes a value in the message of an error. Null where the table has no host.
+const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable&);
 bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& operand);
 bool isDescribedByModel(const BuiltinOverload&);
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);

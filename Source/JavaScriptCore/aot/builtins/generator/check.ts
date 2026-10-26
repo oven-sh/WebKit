@@ -674,6 +674,7 @@ function needsText(role: OperandRole): boolean {
     case "BecomesLengthOfReceiver":
     case "CopiesHolesToResult":
     case "WorkerEntryPath":
+    case "DescribedWhenRefused":
       return false;
   }
 }

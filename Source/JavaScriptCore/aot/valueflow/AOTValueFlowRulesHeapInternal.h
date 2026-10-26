@@ -272,7 +272,7 @@ private:
     enum class PropertySearch : uint8_t { OwnProperty, WholeChain };
     bool holdsOnlyWhatWasWritten(ClimbingSet receivers) { return !m_context.meet(receivers, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode()))); }
     void readAccessorFunctions(const ValueFlowOperand& object, const HeapKey&, HeapPropertyPart, PropertySearch);
-    bool replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey&, PropertySearch, const ValueFlowOperand* value);
+    bool replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey&, PropertySearch, const ValueFlowOperand* value, bool isGivenAnyValue = false);
 
     ClimbingSet allocateUnder(const ValueFlowOperand& prototype);
     void runCreateArguments(const ValueFlowOperand& count, const ValueFlowOperand& rest, std::span<const ValueFlowOperand> parameters, const ValueFlowOperand* callee);

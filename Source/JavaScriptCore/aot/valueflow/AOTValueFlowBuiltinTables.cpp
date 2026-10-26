@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinPristine.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
@@ -150,7 +151,7 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
 
     auto intern = [&](const ValueFlowBehavior& behavior) {
         auto found = std::ranges::find_if(m_behaviors, [&](const ValueFlowBehavior& other) {
-            return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive
+            return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive && other.describesRefusedOperands == behavior.describesRefusedOperands
                 && std::ranges::equal(other.namedMembers, behavior.namedMembers) && std::ranges::equal(other.calledMembers, behavior.calledMembers);
         });
         if (found == m_behaviors.end()) {
@@ -160,6 +161,7 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
         return ValueFlowBehaviorID(static_cast<uint32_t>(found - m_behaviors.begin()));
     };
     m_conversionToPrimitive = intern({ Protocol::ToPrimitive, false, { }, { } });
+    m_descriptionOfRefusedOperands = intern({ Protocol::Named, false, m_namesReadFromRefusedOperands, { }, true });
     auto behaviorFor = [&](OperandUses uses, Protocols declaredProtocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers) -> ValueFlowBehaviorID {
         Protocols protocols = declaredProtocols - protocolsWithoutHub;
         if (uses == OperandUses::all() || protocols.isEmpty())
@@ -182,6 +184,8 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
         if (overload.hasTypedResult())
             m_functionsWithTypedResults.set(builtins.canonicalID(overload.builtin).index());
     }
+    if (const BuiltinParameter* formatted = findParameterDescribedInMessages(builtins))
+        m_formatterOfMessages = m_behaviorOfParameter.get(formatted);
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (!m_functionsWithTypedResults.get(builtins.canonicalID(BuiltinID(index)).index()))
             continue;

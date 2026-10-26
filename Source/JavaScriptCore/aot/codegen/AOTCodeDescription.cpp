@@ -190,7 +190,7 @@ static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall;
+        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall && !record.calledBuiltin;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;

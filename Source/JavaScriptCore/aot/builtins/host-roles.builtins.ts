@@ -23,6 +23,7 @@ export default b.declarations(
     "%NativeFunctions%",
     "%PrivateGlobals%",
     "%PrivateGlobals%.inherits",
+    "%PrivateGlobals%.makeErrorWithCode",
     "%PrivateGlobals%.toClass",
     "%UndeclaredNativeCode%",
     "native:Bindgen:ffi.bind.ts:cc",

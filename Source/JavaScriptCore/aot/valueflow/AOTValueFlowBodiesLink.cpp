@@ -1094,6 +1094,11 @@ private:
         universe.m_objectsWithLockedPrototypeLink = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
             return builtins.hasLockedPrototypeLink(builtin);
         });
+        for (uint32_t index = 0; index < m_program.modules.size(); ++index)
+            list.append(universe.namespaceOf(ModuleID(index)));
+        universe.m_objectsBornWithoutPrototype = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return builtins.at(builtin).prototypeLink != BuiltinPrototypeLink::Builtin && builtins.canonicalID(builtin) != Builtins::ObjectPrototype;
+        });
 
         appendHoldersOfLibraryExports(list);
         universe.m_holdersOfLibraryExports = take();

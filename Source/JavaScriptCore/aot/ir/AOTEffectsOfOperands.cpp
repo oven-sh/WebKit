@@ -161,7 +161,14 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload& overload, BuiltinOpera
     });
     bool membersAreOfObjectsOnly = parameter->roles.contains(BuiltinOperandRole::MembersAreOfObjectsOnly);
     bool functionsAreConvertedUnderNamesOnly = parameter->roles.contains(BuiltinOperandRole::FunctionsAreConvertedUnderNamesOnly);
-    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers };
+    bool isDescribedWhenRefused = parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused);
+    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted };
+}
+
+const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable& table)
+{
+    auto overloads = table.overloadsOf(Builtins::PrivateGlobalsMakeErrorWithCode);
+    return overloads.empty() ? nullptr : table.parameterFor(overloads.front(), BuiltinOperand::argument(1));
 }
 
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
@@ -453,6 +460,17 @@ static bool admitsEveryObject(const BuiltinTable& table, BuiltinTypeID testedID,
     });
 }
 
+// A function is described by its name, and an object of a class that the parameter takes is not refused. Of any other object that it takes, native code may refuse a member.
+static bool mayBeDescribedInMessage(const BuiltinTable& table, const OperandBehavior& behavior, const Type& operand)
+{
+    if (!behavior.isDescribedWhenRefused)
+        return false;
+    if (!operand.anyObject && !operand.layouts && operand.classes.isEmpty() && operand.builtins.isEmpty())
+        return false;
+    bool takesAnyObject = !behavior.accepted || table.at(behavior.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+    return takesAnyObject || !admitsEveryObject(table, behavior.accepted, operand);
+}
+
 static void forEachOverloadCalledOn(const BuiltinTable& table, const Type& receivers, BuiltinDispatchTarget target, NOESCAPE const Invocable<void(BuiltinOverloadID)> auto& functor)
 {
     if (target.isOverload()) {
@@ -723,6 +741,12 @@ static void describeOperandCode(const Program& program, const Type& operand, con
     constexpr OperandUses usesStoringValues { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
 
     bool hasObjects = operand.hasObjects();
+    if (mayBeDescribedInMessage(program.builtins(), behavior, operand)) {
+        if (const BuiltinParameter* described = findParameterDescribedInMessages(program.builtins()))
+            describeOperandCode(program, operand, { described->uses, described->protocols, described->namedMembers, described->calledMembers }, membersBeingDescribed, description);
+        else
+            description.addUnknownCode();
+    }
     if (!behavior.protocols.isEmpty()) {
         if (hasObjects && behavior.uses.contains(OperandUse::AppliesTransitively))
             describeCodeOfReachableValues(program, operand, behavior, membersBeingDescribed, description);

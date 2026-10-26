@@ -135,6 +135,18 @@ BitVector computeTaintedValues(const Function& function, const CFG& cfg, std::sp
     return isTainted;
 }
 
+BitVector computeValuesThatRestOnChecks(const Function& function)
+{
+    Vector<ValueID, 16> checks;
+    for (const Block& block : function.blocks) {
+        for (ValueID value : block.values) {
+            if (function.at(value).opcode == Opcode::Check)
+                checks.append(value);
+        }
+    }
+    return checks.isEmpty() ? BitVector() : computeTaintedValues(function, CFG(function), checks.span());
+}
+
 // The values that may be the very value that a check has turned away: the check, the casts of it, and the parameters that take it.
 static BitVector computeValuesTurnedAway(const Function& function, const CFG& cfg, std::span<const ValueID> checks)
 {

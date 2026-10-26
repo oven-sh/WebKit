@@ -295,23 +295,36 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     });
 }
 
-// `node.self = node`: a use may name one value twice, and a branch may have narrowed only one of the names. What passes a test takes the place of both, so it has the types of both.
-static bool canPass(const TestSiteReporter& reporter, const Value& test)
+// `node.self = node`: a use may name one value twice, a branch may have narrowed only one of the names, and each name may get a test of its own. What passes the tests takes the place of every name, so it has the types of all names and passes all tests of the value.
+static bool canPassWithOtherTests(const TestSiteReporter& reporter, std::span<const Value> tests, const Value& test)
 {
     if (!provesForever(provesOf(test.opcode)))
         return true;
     const Value& use = reporter.useValue();
+    ValueID subject = reporter.analyses().identityOf(test.operand(testedOperandIndex));
+    auto isAboutSubject = [&](const Value& other) {
+        return provesForever(provesOf(other.opcode)) && reporter.analyses().identityOf(other.operand(testedOperandIndex)) == subject;
+    };
+    // The first test of a value answers for all of them.
+    if (&*std::ranges::find_if(tests, isAboutSubject) != &test)
+        return true;
+
     ValueID tested = test.operand(testedOperandIndex);
-    ValueID subject = reporter.analyses().identityOf(tested);
-    std::optional<Type> typeOfAllNames;
+    Type type = reporter.typeOf(tested);
+    bool hasOtherName = false;
     use.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (!operand || operand == tested || use.operandKind(operandIndex) == OperandKind::Guard || reporter.analyses().identityOf(operand) != subject)
             return;
-        typeOfAllNames = typeOfAllNames.value_or(reporter.typeOf(tested)).intersectWith(reporter.typeOf(operand), reporter.types());
+        hasOtherName = true;
+        type = type.intersectWith(reporter.typeOf(operand), reporter.types());
     });
-    if (!typeOfAllNames)
+    if (!hasOtherName && std::ranges::count_if(tests, isAboutSubject) == 1)
         return true;
-    return !narrowTypeByTest({ reporter.program(), reporter.function(), reporter.types() }, *typeOfAllNames, test, testedOperandIndex, EdgeSide::Taken).isNever();
+    for (const Value& other : tests) {
+        if (isAboutSubject(other))
+            type = narrowTypeByTest({ reporter.program(), reporter.function(), reporter.types() }, type, other, testedOperandIndex, EdgeSide::Taken);
+    }
+    return !type.isNever();
 }
 
 void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome)
@@ -319,7 +332,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
         RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
-    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test) || !canPass(*this, test); }))
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test) || !canPassWithOtherTests(*this, tests, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.

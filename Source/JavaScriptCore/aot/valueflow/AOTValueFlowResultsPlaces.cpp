@@ -124,7 +124,7 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
             const Value& operation = function.at(statement.site);
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
             if (statement.result)
-                noteBuiltinsIn(solver.possibleValuesOf(statement.result), statement.site);
+                noteBuiltinsIn(solver.seenValuesOf(statement.result), statement.site);
             for (uint32_t position = 0; position < operands.size(); ++position) {
                 if (!operands[position].constant)
                     continue;

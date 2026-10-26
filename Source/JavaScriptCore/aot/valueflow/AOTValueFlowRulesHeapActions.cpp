@@ -23,10 +23,8 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     ValueFlowName everySetter = foundName(unknownHeapKey, HeapPropertyPart::Setter);
     ValueFlowName valueUnderUnknownKey = writtenName(unknownHeapKey, HeapPropertyPart::Value);
 
-    if (storesThroughSetters) {
-        ValueFlowOperand anyValue { { }, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult) };
-        replaceMembersThroughSettersFoundFrom(targets, unknownHeapKey, PropertySearch::WholeChain, &anyValue);
-    }
+    if (storesThroughSetters)
+        replaceMembersThroughSettersFoundFrom(targets, unknownHeapKey, PropertySearch::WholeChain, nullptr, true);
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
     if (holdsNamedBun(source))
         add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
@@ -166,8 +164,7 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
         add(m_statement.result, m_context.restrict(ClimbingSet(Typed::unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult)), m_universe.objects()));
     };
     // Whoever has the setter in hand calls it with any value.
-    ValueFlowOperand anyValue { { }, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult) };
-    if (replaceMembersThroughSettersFoundFrom(receivers, key, search, part == HeapPropertyPart::Setter ? &anyValue : nullptr))
+    if (replaceMembersThroughSettersFoundFrom(receivers, key, search, nullptr, part == HeapPropertyPart::Setter))
         addFunctionNobodyFollows();
     if (search == PropertySearch::OwnProperty && holdsOnlyWhatWasWritten(receivers) && holdsOnlyWhatWasWritten(withSourcesOfCopies(m_context, known(receivers)))) {
         readOwn(withSourcesOfCopies(m_context, known(receivers)), foundName(key, part), m_statement.result);

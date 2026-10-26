@@ -1011,8 +1011,11 @@ export function applyUses(context: OverloadContext, operand: ModelOperand, uses:
 export function applyWrittenUses(context: OverloadContext): void {
   const { uses = {}, isUndeclared } = context.signature;
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);
-  for (const { parameter } of context.states) {
-    const { name, operand, accepted, converted } = parameter;
+  for (const state of context.states) {
+    const { name, operand, accepted, converted } = state.parameter;
+    // The host describes an argument that it refuses in the message of the error.
+    if (context.source.origin === "Host" && !isUndeclared && !accepted.isAnything && operand.operand !== "Receiver")
+      state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {
       applyUses(context, operand, uses[name]!);

@@ -25,6 +25,8 @@ class UseLists;
 BitVector computeTaintedValues(const Function&, const UseLists&, std::span<const ValueID> checks);
 // The same values, for whoever has no use lists: to make them costs ten times what it costs to walk the body in the order in which the marks are handed on.
 BitVector computeTaintedValues(const Function&, const CFG&, std::span<const ValueID> checks);
+// The same values for all the checks of the function. Empty where it has none.
+BitVector computeValuesThatRestOnChecks(const Function&);
 
 // Flow gives a position back where it sees no value outside the type arrive.
 enum class TaintedPositionsRun : uint8_t { BeforeFlow, AfterFlow };

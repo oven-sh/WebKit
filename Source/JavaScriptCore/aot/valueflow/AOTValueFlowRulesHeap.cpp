@@ -422,7 +422,7 @@ ClimbingSet HeapRule::settersFoundFrom(ClimbingSet start, const HeapKey& key)
     return holdsAnything(others) ? m_context.unite(setters, m_context.valueOf(m_context.lookup(others, name))) : setters;
 }
 
-bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey& key, PropertySearch search, const ValueFlowOperand* value)
+bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey& key, PropertySearch search, const ValueFlowOperand* value, bool isGivenAnyValue)
 {
     bool isFound = false;
     for (const ValueFlowMemberReplacedBySetter& member : m_tables.membersReplacedBySetters()) {
@@ -436,9 +436,9 @@ bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, cons
         isFound = true;
         HeapKey named { HeapKeyClass::Name, member.key };
         add(m_context.written(holder, writtenName(named, HeapPropertyPart::Setter)), only(m_tables.undescribedNativeCode()));
-        if (!value)
+        if (!value && !isGivenAnyValue)
             continue;
-        write(holder, writtenName(named, HeapPropertyPart::Value), *value);
+        write(holder, writtenName(named, HeapPropertyPart::Value), value ? *value : ValueFlowOperand { { }, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult) });
         noteWrittenMembers(holder, named);
     }
     return isFound;

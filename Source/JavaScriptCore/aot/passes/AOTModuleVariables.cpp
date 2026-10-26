@@ -329,16 +329,8 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
     // In the generic version of the function the type of a value that rests on a check says nothing.
     std::optional<BitVector> valuesThatRestOnChecks;
     auto restsOnCheck = [&](ValueID id) {
-        if (!valuesThatRestOnChecks) {
-            Vector<ValueID, 16> checks;
-            for (const Block& block : function.blocks) {
-                for (ValueID value : block.values) {
-                    if (function.at(value).opcode == Opcode::Check)
-                        checks.append(value);
-                }
-            }
-            valuesThatRestOnChecks = computeTaintedValues(function, useLists(), checks.span());
-        }
+        if (!valuesThatRestOnChecks)
+            valuesThatRestOnChecks = computeValuesThatRestOnChecks(function);
         return valuesThatRestOnChecks->get(id.index());
     };
     auto neverThrows = [&](ValueID heritageLook) {

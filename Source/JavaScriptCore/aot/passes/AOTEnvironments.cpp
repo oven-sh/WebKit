@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTBodyIndex.h"
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
@@ -324,57 +325,8 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
     return variable;
 }
 
-static void appendSourcesOfParameter(const Function& function, ValueID parameter, Vector<ValueID, 8>& sources)
-{
-    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        size_t index = function.blocks[blockIndex].parameters.find(parameter);
-        if (index == notFound)
-            continue;
-        for (const Block& from : function.blocks) {
-            if (from.handler && from.handler->block == BlockID(blockIndex) && index < from.handler->arguments.size())
-                sources.append(from.handler->arguments[index]);
-            for (const Target& target : from.terminator.targets) {
-                if (target.block != BlockID(blockIndex))
-                    continue;
-                if (index < target.arguments.size()) {
-                    sources.append(target.arguments[index]);
-                    continue;
-                }
-                from.terminator.forEachOperand([&](ValueID operand, uint32_t) {
-                    if (!operand)
-                        return;
-                    sources.append(operand);
-                    function.at(operand).forEachOperand([&](ValueID tested, uint32_t) {
-                        if (tested)
-                            sources.append(tested);
-                    });
-                });
-            }
-        }
-        return;
-    }
-}
-
-static bool restsOnCheck(const Function& function, ValueID value)
-{
-    BitVector visited;
-    Vector<ValueID, 8> pending { value };
-    while (!pending.isEmpty()) {
-        CastChain chain(function, pending.takeLast());
-        for (ValueID cast : chain) {
-            if (visited.set(cast.index()))
-                break;
-            if (function.at(cast).opcode == Opcode::Check)
-                return true;
-            if (cast == chain.last() && function.at(cast).opcode == Opcode::Parameter)
-                appendSourcesOfParameter(function, cast, pending);
-        }
-    }
-    return false;
-}
-
-// Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
-static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture)
+// Where the type of the value rests on a check, the generic version of the function stores what it makes of the value that the check has turned away.
+static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture, bool restsOnCheck)
 {
     const Value& value = function.at(id);
     Variable variable;
@@ -382,7 +334,7 @@ static Variable createValueVariable(const Function& function, ValueID id, const 
     // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
     bool isOnlyExpected = value.type == TypeTable::anything && value.expected();
     variable.declared.type = isOnlyExpected ? value.expected() : value.type;
-    if (isOnlyExpected || restsOnCheck(function, id) || capture.flags.contains(PositionFlags::IsExpected))
+    if (isOnlyExpected || restsOnCheck || capture.flags.contains(PositionFlags::IsExpected))
         variable.declared.flags.add(PositionFlags::IsExpected);
     variable.flags.add(VariableFlags::IsImmutable);
     variable.flow.writers = WriterState::AllKnown;
@@ -606,11 +558,17 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         return isSameInVersions && !constant.isObject() ? constant : KnownValue();
     };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
+    UncheckedKeyHashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> valuesThatRestOnChecks;
+    auto restsOnCheck = [&](const PromotedCaptureSource& source) {
+        return valuesThatRestOnChecks.ensure(source.function.index(), [&] {
+            return computeValuesThatRestOnChecks(program.at(source.function));
+        }).iterator->value.get(source.value.index());
+    };
     auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
         if (source.variable)
             return source.variable;
         return variablesByValue.ensure(static_cast<uint64_t>(source.function.index()) << 32 | source.value.index(), [&] {
-            VariableID variable = addVariable(createValueVariable(program.at(source.function), source.value, capture));
+            VariableID variable = addVariable(createValueVariable(program.at(source.function), source.value, capture, restsOnCheck(source)));
             plan.storedValues.append({ variable, source.function, source.value });
             return variable;
         }).iterator->value;

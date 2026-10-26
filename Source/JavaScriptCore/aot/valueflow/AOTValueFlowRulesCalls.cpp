@@ -153,8 +153,10 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
             member.group = layout.index();
         else if (BuiltinClassID builtinClass = universe.classOf(member.object))
             member.group = 1ull << 32 | builtinClass.index();
+        else if (universe.builtinOf(member.object))
+            member.group = 2ull << 32;
         else
-            member.group = 2ull << 32 | member.object.index();
+            member.group = 3ull << 32 | member.object.index();
     }
     AOT::stableSort(members, { }, &Member::group);
     Vector<ValueFlowObjectID, 64> objects;

@@ -1071,6 +1071,36 @@ private:
         throwValue(undescribedValue());
     }
 
+    // A function is described by its name, and an object of a class that the parameter takes is not refused. Of any other object that it takes, native code may refuse what it reads out of it.
+    void describeRefusedOperands(const BuiltinParameter& parameter)
+    {
+        ValueFlowNodeID description = m_context.hub(m_tables.descriptionOfRefusedOperands());
+        bool takesAnyObject = !parameter.accepted || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+        if (!takesAnyObject) {
+            ValueSetID refused = ValueSets::complement(m_context.maker().unite(m_universe.callables(), m_tables.membersSurelyOf(parameter.accepted)));
+            forEachOperandAt(parameter.operand, [&](ValueFlowOperand operand) {
+                operand.mask = m_context.maker().intersect(operand.mask, refused);
+                m_context.connect(operand, description);
+            });
+            return;
+        }
+
+        ValueSetID allButFunctions = ValueSets::complement(m_universe.callables());
+        ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter);
+        if (behavior && m_tables.at(behavior).isTransitive)
+            m_context.connect(m_context.masked(m_context.hub(behavior), allButFunctions), description);
+        else {
+            for (BuiltinName name : parameter.namedMembers)
+                m_context.connect(m_context.masked(m_context.lookup(valueAt(parameter.operand), property(m_context, name)), allButFunctions), description);
+        }
+        if (parameter.uses.contains(OperandUse::ReadsContents)) {
+            forEachNodeReadThrough(objectsAt(parameter.operand), everyPropertyName, [&](ValueFlowNodeID contents) {
+                m_context.connect(m_context.masked(contents, allButFunctions), description);
+            });
+            m_context.connect(m_context.masked(m_context.lookup(m_context.restrict(known(objectsAt(parameter.operand)), ValueSets::complement(m_universe.builtinObjects())), elementsName), allButFunctions), description);
+        }
+    }
+
     void applyParameter(const BuiltinParameter& parameter)
     {
         if (parameter.uses == OperandUses::all()) {
@@ -1102,6 +1132,8 @@ private:
                 });
             }
         }
+        if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
+            describeRefusedOperands(parameter);
         if (parameter.protocols.contains(Protocol::Species))
             constructSpecies(parameter.operand);
 
@@ -3121,10 +3153,41 @@ static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, V
     callFromNativeCode(context, ClimbingSet(context.maker().of(methods.span())), operandHolding(universe.unknownObjectAlone()), universe.anyPrimitive(), behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped());
 }
 
+// Every chain that ends at Object.prototype finds a constructor there at the latest.
+static bool mayLackConstructor(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (context.meet(context.valueOf(context.lookup(objects, property(context, BuiltinNames::constructor))), universe.primitives()))
+        return true;
+    ClimbingSet chain = context.valueOf(context.lookup(objects, prototypeLinkName));
+    if (context.meet(chain, context.maker().unite(ValueSets::complement(universe.knownObjects()), universe.objectsBornWithoutPrototype())))
+        return true;
+    ClimbingSet below = context.restrict(chain, ValueSets::complement(context.maker().of(universe.objectOf(Builtins::ObjectPrototype))));
+    return context.meet(context.valueOf(context.read(below, prototypeLinkName)), universe.primitives());
+}
+
+// The message names the constructor of the value. A value without one is printed by the formatter.
+static void describeRefusedOperands(ValueFlowRuleContext& context, ValueFlowNodeID hub)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    const ValueFlowBuiltinTables& tables = universe.builtinTables();
+    ClimbingSet described = context.restrict(context.valueOf(hub), universe.objects());
+    ValueFlowNodeID constructors = context.lookup(described, property(context, BuiltinNames::constructor));
+    context.connect(context.lookup(context.valueOf(constructors), property(context, BuiltinNames::name)), context.hub(tables.conversionToPrimitive()));
+
+    ValueFlowNodeID formatter = context.hub(tables.formatterOfMessages());
+    forEachReceiverToldApart(context, described, operandOfBuiltinAt(hub, universe.objects()), [&](ClimbingSet toldApart, const ValueFlowOperand& holding) {
+        if (mayLackConstructor(context, toldApart))
+            context.connect(holding, formatter);
+    });
+}
+
 void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     ValueFlowNodeID hub = statement.result;
     const ValueFlowBehavior& behavior = context.universe().builtinTables().at(context.nodes().behaviorOf(hub));
+    if (behavior.describesRefusedOperands)
+        return describeRefusedOperands(context, hub);
 
     ValueSetID mask = everythingButUnknownObject(context);
     ClimbingSet receivers = context.restrict(context.valueOf(hub), mask);

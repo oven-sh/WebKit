@@ -136,6 +136,7 @@ public:
     ValueSetID objectsOfRealm() const { return m_objectsOfRealm; }
     ValueSetID lockedObjects() const { return m_lockedObjects; }
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
+    ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
@@ -251,6 +252,7 @@ private:
     ValueSetID m_objectsOfRealm;
     ValueSetID m_lockedObjects;
     ValueSetID m_objectsWithLockedPrototypeLink;
+    ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
