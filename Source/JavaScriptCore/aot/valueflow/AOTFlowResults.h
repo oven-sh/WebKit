@@ -159,6 +159,8 @@ struct FlowFunctionTables {
     BitVector functionsSeeingOnlyFinishedObjects;
     BitVector functionsWhoseClosuresAreNeverCompared;
     BitVector functionsWithOneClosure;
+    BitVector functionsWhoseClosuresMayBeRenamed;
+    BitVector functionsWhoseClosuresAreMadeOnce;
 };
 
 struct WrittenPositionOfSite {
@@ -177,6 +179,7 @@ struct FlowSiteTables {
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
     BitVector sitesOfObjectsThatNeverChange;
+    BitVector layoutsNeverHeldWeakly;
     Vector<FlowSinkOperand> sinkOperands;
     Vector<FlowTypedResultCall> typedResultCalls;
     Vector<AllocationSiteID> typedResultSites;
@@ -265,6 +268,8 @@ public:
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
     bool closuresAreNeverCompared(FunctionID) const;
     bool closuresGoUnnoticed(FunctionID) const;
+    // No WeakRef, FinalizationRegistry, WeakMap or WeakSet takes an object of the layout.
+    bool objectsAreNeverHeldWeakly(LayoutID layout) const { return m_tables.sites.layoutsNeverHeldWeakly.get(layout.index()); }
     bool hasOneClosure(FunctionID id) const { return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index()); }
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
@@ -308,6 +313,10 @@ public:
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }
     bool objectsNeverChange(AllocationSiteID site) const { return m_tables.sites.sitesOfObjectsThatNeverChange.get(site.index()); }
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
+    // By code that flow has seen.
+    bool closuresMayBeRenamed(FunctionID closureFunction) const;
+    // By one operation that runs once, or by the first read of the variable that starts with the function.
+    bool closureIsMadeOnce(FunctionID closureFunction) const;
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
     bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
     bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }

@@ -72,6 +72,8 @@ constexpr StubKey rememberKeyOrderStep() { return StubKey(StubFamily::RememberKe
 constexpr StubKey getByValCached() { return StubKey(StubFamily::GetByValCached); }
 constexpr StubKey getByValCachedCells() { return StubKey(StubFamily::GetByValCachedCells); }
 constexpr StubKey inByValCached(PresenceQuestion question) { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(question)); }
+constexpr StubKey deleteByIdCached(PutMode mode) { return StubKey(StubFamily::DeleteByIdCached).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey deleteByValCached(PutMode mode) { return StubKey(StubFamily::DeleteByValCached).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByValCached(PutMode mode)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(mode != PutMode::Define);
@@ -136,10 +138,10 @@ constexpr SlotHandlerTable handlerTableOf(StubKey handler)
 
 constexpr Slot::Kind slotKindOf(StubKey handler) { return static_cast<Slot::Kind>(handler.count()); }
 
-constexpr std::array<StubKey, numberOfSlotKinds> slotHandlerKeys(SlotHandlerTable table)
+constexpr std::array<StubKey, numberOfSlotKindsWithHandlers> slotHandlerKeys(SlotHandlerTable table)
 {
-    std::array<StubKey, numberOfSlotKinds> keys { };
-    for (Slot::Kind kind : allSlotKinds)
+    std::array<StubKey, numberOfSlotKindsWithHandlers> keys { };
+    for (Slot::Kind kind : slotKindsWithHandlers)
         keys[static_cast<unsigned>(kind)] = slotHandlerFor(table, kind);
     return keys;
 }
@@ -187,7 +189,7 @@ static_assert([] {
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
         didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
-        getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
+        getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
         if (!exists(lastFormKey) || lastFormKey.form() + 1u != descriptorOf(lastFormKey.family()).numberOfForms)
             return false;
@@ -195,7 +197,7 @@ static_assert([] {
     return true;
 }());
 static_assert(exists(getByIdEqualsLiteral(sizeof(uint64_t))) && !exists(getByIdEqualsLiteral(0)) && exists(callMethodById(numberOfArgumentGPRs)));
-static_assert(descriptorOf(StubFamily::ReadSlot).maxCount + 1 == numberOfSlotKinds && descriptorOf(StubFamily::StoreSlot).maxCount + 1 == numberOfSlotKinds);
+static_assert(descriptorOf(StubFamily::ReadSlot).maxCount + 1 == numberOfSlotKindsWithHandlers && descriptorOf(StubFamily::StoreSlot).maxCount + 1 == numberOfSlotKindsWithHandlers);
 static_assert([] {
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (StubKey handler : slotHandlerKeys(table)) {

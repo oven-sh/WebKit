@@ -149,6 +149,11 @@ static std::optional<uint32_t> findOrdinalByWalk(State& state, const Object& obj
     return ordinal;
 }
 
+bool Object::keyOrderCountsExtraKeys() const
+{
+    return !countPositionedExtraKeys(state(), *this).isEmpty();
+}
+
 std::optional<uint32_t> Object::extraKeyOrdinal(PropertyName name) const
 {
     JSObject* extra = extraProperties();

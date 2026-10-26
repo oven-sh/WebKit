@@ -370,7 +370,7 @@ static void testHandlerTables()
     Vector<StubKey> allHandlers;
     for (SlotHandlerTable table : allSlotHandlerTables) {
         auto handlers = slotHandlerKeys(table);
-        for (Slot::Kind kind : allSlotKinds) {
+        for (Slot::Kind kind : slotKindsWithHandlers) {
             StubKey handler = handlers[static_cast<unsigned>(kind)];
             const StubDescriptor& descriptor = checkedHandlerDescriptor(handler);
             AOT_TEST_CHECK(descriptor.family == (isReadTable(table) ? StubFamily::ReadSlot : StubFamily::StoreSlot));

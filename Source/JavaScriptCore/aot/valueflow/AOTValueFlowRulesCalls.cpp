@@ -673,11 +673,6 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         // Behind a built-in of the engine only a Bun that the program named is looked for.
         auto mayHandOnNamedBun = [&] {
             ClimbingSet mark = only(context, ValueFlowUniverse::markOfNamedBun());
-            if (!context.holdsAnyOf(mark, ValueFlowProgramNodes::escaped()))
-                return false;
-            BuiltinID holder = builtins.at(named).holder;
-            if (builtins.canonicalID(named) == Builtins::Promise || (holder && builtins.canonicalID(holder) == Builtins::Promise))
-                return true;
             return std::ranges::any_of(context.operandsOf(statement).subspan(1), [&](const ValueFlowOperand& operand) {
                 return operand.node && context.holdsAnyOf(mark, operand.node);
             });

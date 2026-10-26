@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTNaturalLoops.h"
 #include "AOTPerFunction.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -156,6 +157,7 @@ HeatClass heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
 // By how often the code of the function is taken to run for its size.
 bool isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 HeatClass heatClassOf(FunctionPassContext&, BlockID);
+bool isHotLoop(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed
 

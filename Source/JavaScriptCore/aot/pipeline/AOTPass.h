@@ -185,6 +185,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
     v(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths) \
     v(ConvertCountersToIntegers, convertCountersToIntegers) \
     v(RemoveDeadCountedLoops, removeDeadCountedLoops) \
+    v(UnrollShortLoops, unrollShortLoops) \
     v(FuseArrayChains, fuseArrayChains) \
     v(FuseGeneratorLoops, fuseGeneratorLoops) \
     v(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep) \

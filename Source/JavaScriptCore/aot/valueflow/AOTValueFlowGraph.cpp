@@ -912,14 +912,16 @@ void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
 {
     if (!m_counters.nodesRetired)
         return;
-    size_t numberOfEdges = m_edgesNotInLists.size();
+    findIndices(&team, m_edgesNotInLists.size(), m_found, [&](size_t index) {
+        auto flags = m_gates[m_edgesNotInLists[index].to.index()].flags;
+        return (flags & IsRetired) && !(flags & IsAtRest);
+    });
     for (Covering& covering : m_coverings) {
-        findIndices(&team, numberOfEdges, m_found, [&](size_t index) {
+        for (uint32_t index : m_found) {
             uint32_t to = m_edgesNotInLists[index].to.index();
-            return covering.isRetired.quickGet(to) && !(m_gates[to].flags & IsAtRest) && !isRetiredUnderNearerCovering(covering, to);
-        });
-        for (uint32_t index : m_found)
-            connectStraightToCoveredNode(covering, m_edgesNotInLists[index].from.index());
+            if (covering.isRetired.quickGet(to) && !isRetiredUnderNearerCovering(covering, to))
+                connectStraightToCoveredNode(covering, m_edgesNotInLists[index].from.index());
+        }
         for (uint32_t node : m_nodesWoken) {
             if (!covering.isRetired.quickGet(node) || isRetiredUnderNearerCovering(covering, node))
                 continue;
@@ -933,6 +935,18 @@ void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
 void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<const ValueFlowEdge> added)
 {
     Vector<uint32_t, 16> toVisit;
+    auto lengthensFlowInto = [&](const Covering& covering, ValueFlowEdge edge) {
+        uint32_t to = edge.to.index();
+        return covering.flowsIntoCovered.quickGet(to) && !covering.flowsIntoCovered.quickGet(edge.from.index()) && (to == covering.covered || passesEverythingOn(to));
+    };
+    for (Covering& covering : m_coverings)
+        covering.flowsIntoCovered.quickSet(covering.covered);
+    Vector<uint32_t> lengthening;
+    findIndices(team, added.size(), lengthening, [&](size_t index) {
+        return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
+            return lengthensFlowInto(covering, added[index]);
+        });
+    });
     for (Covering& covering : m_coverings) {
         auto markPredecessorsOf = [&](uint32_t node) {
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
@@ -945,11 +959,11 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
             return node == covering.covered || passesEverythingOn(node);
         };
 
-        covering.flowsIntoCovered.quickSet(covering.covered);
-        findIndices(team, added.size(), m_found, [&](size_t index) {
-            ValueFlowEdge edge = added[index];
-            return covering.flowsIntoCovered.quickGet(edge.to.index()) && !covering.flowsIntoCovered.quickGet(edge.from.index()) && passesOnWhatIsCovered(edge.to.index());
-        });
+        m_found.shrink(0);
+        for (uint32_t index : lengthening) {
+            if (lengthensFlowInto(covering, added[index]))
+                m_found.append(index);
+        }
         for (uint32_t index : m_found) {
             if (!covering.flowsIntoCovered.quickSet(added[index].from.index()))
                 toVisit.append(added[index].from.index());
@@ -974,10 +988,19 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
 {
     Team& team = *m_team;
     Vector<uint32_t> retired;
+    auto isToBeRetiredUnder = [&](const Covering& covering, uint32_t node) {
+        return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
+            && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].set));
+    };
+    Vector<uint32_t> movedToBeRetired;
+    findIndices(&team, moved.size(), movedToBeRetired, [&](size_t index) {
+        return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
+            return isToBeRetiredUnder(covering, moved[index].index());
+        });
+    });
     for (Covering& covering : m_coverings) {
         auto isToBeRetired = [&](uint32_t node) {
-            return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
-                && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].set));
+            return isToBeRetiredUnder(covering, node);
         };
         auto retire = [&](uint32_t node) {
             if (covering.isRetired.quickSet(node))
@@ -987,11 +1010,10 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
                 m_gates[node].flags |= IgnoresArrivals;
             retired.append(node);
         };
-        findIndices(&team, moved.size(), m_found, [&](size_t index) {
-            return isToBeRetired(moved[index].index());
-        });
-        for (uint32_t index : m_found)
-            retire(moved[index].index());
+        for (uint32_t index : movedToBeRetired) {
+            if (isToBeRetired(moved[index].index()))
+                retire(moved[index].index());
+        }
         findIndices(&team, covering.nodesToLookAt.size(), m_found, [&](size_t index) {
             return isToBeRetired(covering.nodesToLookAt[index]);
         });

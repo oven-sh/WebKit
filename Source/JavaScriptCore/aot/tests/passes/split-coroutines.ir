@@ -58,7 +58,7 @@ function f2 name="awaitsInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCall
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=2}
 # CHECK-NOT: capabilities=
 # CHECK: b0(v0: number, v1: anything, [[driver]]: undefined|Promise):
-# CHECK-NEXT: v2: anything = AwaitBySavingFrame v1, [[driver]] @11
+# CHECK-NEXT: v2: anything = AwaitBySavingFrame v1, [[driver]], v1 @11
 # CHECK-NEXT: [[result]]: anything = ReturnAsyncResult [[driver]], v2
 # CHECK-NEXT: Return [[result]]
 # CHECK-NOT: [[result]]
@@ -71,9 +71,9 @@ function f2 name="awaitsInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCall
 # CHECK-NEXT: Branch [[isRunning]] -> taken
 # CHECK: Return v5
 # CHECK: Return v0
-# CHECK: v4{{*}}= YieldBySavingFrame [[generatorDriver]], v2 @21
+# CHECK: v4{{*}}= YieldBySavingFrame [[generatorDriver]], v2, v1, v2 @21
 # CHECK: [[nothing]]: undefined = Undefined
-# CHECK-NEXT: = YieldBySavingFrame [[generatorDriver]], [[nothing]] @20
+# CHECK-NEXT: = YieldBySavingFrame [[generatorDriver]], [[nothing]], v1, v2 @20
 # CHECK-NOT: ReturnAsyncResult
 
 # CHECK-LABEL: function f5 name="awaitsInAsyncGenerator"
@@ -82,6 +82,6 @@ function f2 name="awaitsInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCall
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f2 body=f5 promiseType=Promise promiseParameter=3}
 # CHECK: b0(v0: number, v1: function, v2: anything, [[asyncGeneratorDriver]]: AsyncGenerator):
 # CHECK: = YieldBySavingFrame [[asyncGeneratorDriver]], {{*}} @30
-# CHECK: v4: anything = AwaitBySavingFrame v2, [[asyncGeneratorDriver]] @31
+# CHECK: v4: anything = AwaitBySavingFrame v2, [[asyncGeneratorDriver]], v1, v2 @31
 # CHECK-NEXT: Return v4
 # CHECK-NOT: ReturnAsyncResult

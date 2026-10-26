@@ -22,8 +22,8 @@ operation PrivateHas (object: Any/inspects, token: ClassToken/inspects, layout: 
 
 family Iteration AsRead..AsRead
 operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest isDelegating] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies
-operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
-operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
+operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32, engine held...: Convertible/retains) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
+operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion, engine held...: Convertible/retains) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies
 
 family ForIn AsRead..Placed
 operation ForInOpen (object: Any/retains(result)+runs(OwnKeys+PrototypeChain)) -> natural(Enumerator) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = GetPropertyEnumerator ; flow = TableProves

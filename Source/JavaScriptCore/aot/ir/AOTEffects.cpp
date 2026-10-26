@@ -12,6 +12,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include <array>
 #include <wtf/BitVector.h>
@@ -132,7 +133,7 @@ static BitVector mappedEntryParameters(const Function& callee, const Value& call
     bool isCalledByValue = Value::opcodesWithCallees.contains(call.opcode);
     BitVector mapped(numberOfParameters);
     call.forEachOperand([&](ValueID, uint32_t index) {
-        if (call.operandUses(index).containsAny(callingUses))
+        if (call.operandUses(index).containsAny(callingUses) || isHeldOperand(call, index))
             return;
         std::optional<uint32_t> parameter = isCalledByValue ? entryParameterOf(callee, call, index) : call.variadicOperandIndex(index);
         if (parameter && *parameter < numberOfParameters)

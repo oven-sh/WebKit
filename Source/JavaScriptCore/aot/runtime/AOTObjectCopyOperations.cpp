@@ -143,9 +143,9 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         });
         return walkResult == PropertyWalk::Result::Completed;
     }
+    // As in the engine's own copy, which takes the keys of any other source names first.
     Structure* structure = source->structure();
-    TypeInfo info = structure->typeInfo();
-    if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
+    if (source->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(structure->indexingType()))
         return false;
     bool everyPropertyIsPlain = true;
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

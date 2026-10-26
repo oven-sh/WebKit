@@ -230,35 +230,6 @@ void ObjectInterpreter::execute(ValueID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool mayHoldObject(const Type& type)
-{
-    return type.isJavaScriptValue() && (type.hasObjects() || type.primitives & Primitive::Symbol);
-}
-
-void ObjectInterpreter::keepMembersAlive(ValueID usedObject)
-{
-    VirtualObjectID used = objectOf(usedObject);
-    if (!used)
-        return;
-    Vector<ValueID, 4> members;
-    for (const ObjectEntry& entry : m_state.objects) {
-        if (entry.state.isCell() || (entry.object != used && !m_state.canReach(used, entry.object)))
-            continue;
-        const ObjectValues* held = values().find(entry.object);
-        if (!held)
-            continue;
-        for (ValueID member : held->fields) {
-            if (member && mayHoldObject(program().typeOf(cursor().builder().function(), member)) && !members.contains(member))
-                members.append(member);
-        }
-    }
-    if (members.isEmpty())
-        return;
-    Value keepAlive = IRBuilder::make(Opcode::KeepAlive);
-    keepAlive.setValuesOperands(members.span());
-    cursor().emit(WTF::move(keepAlive));
-}
-
 void ObjectInterpreter::executeAllocation(ValueID id)
 {
     VirtualObjectID object = m_sinking.candidateDefinedBy(id);
@@ -401,7 +372,50 @@ void ObjectInterpreter::executeOther(ValueID id)
 {
     requireCellsOfOperands(id);
     forgetFieldsWrittenBy(id);
+    if (isRewriting() && numberOfHeldOperandsOf(function().at(id)))
+        holdMembersOfUnbuiltObjects(id);
     keep(id);
+}
+
+// A suspended function holds an object as an object holds a field. Of an object that is not built here it holds what the object would hold.
+void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
+{
+    auto isUnbuilt = [&](VirtualObjectID object) {
+        return object && !stateOf(object)->isCell();
+    };
+    Vector<ValueID, 8> held;
+    Vector<VirtualObjectID, 4> unbuilt;
+    for (ValueID operand : heldOperandsOf(function().at(suspension))) {
+        if (VirtualObjectID object = objectOf(operand); isUnbuilt(object))
+            unbuilt.append(object);
+        else
+            held.append(operand);
+    }
+    if (unbuilt.isEmpty())
+        return;
+
+    Function& rewritten = cursor().builder().function();
+    BitVector isListed;
+    for (ValueID operand : held)
+        isListed.set(operand.index());
+    auto hold = [&](ValueID member) {
+        if (member && !isUnbuilt(objectOf(member)) && mayHoldObject(program().typeOf(rewritten, member)) && !isListed.set(member.index()))
+            held.append(member);
+    };
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (entry.state.isCell())
+            continue;
+        bool isReached = std::ranges::any_of(unbuilt, [&](VirtualObjectID object) {
+            return object == entry.object || m_state.canReach(object, entry.object);
+        });
+        const ObjectValues* members = isReached ? values().find(entry.object) : nullptr;
+        if (!members)
+            continue;
+        if (entry.state.hasCell())
+            hold(members->cell);
+        std::ranges::for_each(members->fields, hold);
+    }
+    setHeldOperands(rewritten.edit(suspension), held.span());
 }
 
 void ObjectInterpreter::executeOnCell(ValueID id, uint32_t operandIndex)
@@ -546,6 +560,8 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id, BuiltinCallForm formO
     bool passesRange = false;
     Opcode opcode = function().at(id).opcode;
     for (auto [operand, index] : indexedOperandsOf(function().at(id))) {
+        if (isHeldOperand(function().at(id), index))
+            continue;
         bool isGuard = operandKindOf(opcode, index) == OperandKind::Guard;
         if (VirtualObjectID range = bytes && bytes->operandIndexes.contains(index) ? objectOf(operand) : VirtualObjectID(); range && isRangeOfView(range)) {
             requireCellOfHeldObject(range, *m_sinking.familyOf(range).findField(VirtualField::operand(OperandIndex::TypedArrayRange::view)), causeOf(id, index));

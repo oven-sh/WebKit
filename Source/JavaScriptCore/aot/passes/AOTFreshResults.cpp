@@ -646,7 +646,7 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
 
 static Function createResultWrapper(const AnalysisContext& context, FunctionID worker, const Function& original, const FreshResultShape& shape, TypeArena& types)
 {
-    constexpr OptionSet<FunctionCapabilities> capabilitiesWorkersInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
+    constexpr OptionSet<FunctionCapabilities> capabilitiesWorkersInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::RecordsCallee };
     RELEASE_ASSERT(canReturnParts(original));
 
     bool mayBeUndefined = false;

@@ -243,6 +243,7 @@ private:
     bool m_associatedContextIsFullyActive { true };
     bool m_canFastQueueMicrotask { true };
     bool m_typedArraysInterceptIndexedStores { false };
+    bool m_prototypesThatCanChangeInterceptIndexedAccesses { false };
     Ref<MicrotaskQueue> m_microtaskQueue;
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
@@ -1282,6 +1283,8 @@ public:
         return m_havingABadTimeWatchpointSet->hasBeenInvalidated();
     }
     bool typedArraysInterceptIndexedStores() const { return m_typedArraysInterceptIndexedStores; }
+    // True of a prototype object that could begin to intercept indexed accesses, once its realm has given slow-put storage to everything with elements below such objects.
+    static bool isTakenToInterceptIndexedAccesses(const JSObject*);
         
     void haveABadTime(VM&);
     void haveABadTime(VM&, JSObject* interceptor);

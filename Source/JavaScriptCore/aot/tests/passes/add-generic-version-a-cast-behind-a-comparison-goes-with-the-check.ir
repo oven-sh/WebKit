@@ -1,0 +1,32 @@
+# A list is checked to be a bigint, compared with an object, and what the comparison has left of it is read under a key. Where the check stands the value is only compared, so the check goes.
+# The cast behind the comparison has its type from the check: it lets everything through, and the read takes the list
+# FORM: Prepared
+# RUN: pass AddGenericVersion
+# STATISTIC: ChecksReplacedByGuards = 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Marker" fields=[]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=i32
+    v2 = NewObject layout=L0
+    v3 = String string="length"
+    v4 = Check v1 castType=undefined|null|bigint
+    v5 = StrictEq v4, v2
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: never):
+    Jump -> next b3(v6)
+  b2(v7: undefined|null|bigint):
+    Jump -> next b3(v7)
+  b3(v8: undefined|null|bigint):
+    v9 = Upcast v8 castType=undefined|null|bigint
+    v10 = ElemGet v9, v3
+    Return v10
+# CHECK-NOT: TypeTest
+# CHECK-NOT: castType=undefined|null|bigint
+# CHECK: [[list]]: Array<i32> = Upcast v8 castType=anything|absent
+# CHECK: = ElemGet [[list]], v3
+# CHECK: Return
+}

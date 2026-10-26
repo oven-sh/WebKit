@@ -13,6 +13,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
@@ -294,12 +295,31 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     });
 }
 
+// `node.self = node`: a use may name one value twice, and a branch may have narrowed only one of the names. What passes a test takes the place of both, so it has the types of both.
+static bool canPass(const TestSiteReporter& reporter, const Value& test)
+{
+    if (!provesForever(provesOf(test.opcode)))
+        return true;
+    const Value& use = reporter.useValue();
+    ValueID tested = test.operand(testedOperandIndex);
+    ValueID subject = reporter.analyses().identityOf(tested);
+    std::optional<Type> typeOfAllNames;
+    use.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (!operand || operand == tested || use.operandKind(operandIndex) == OperandKind::Guard || reporter.analyses().identityOf(operand) != subject)
+            return;
+        typeOfAllNames = typeOfAllNames.value_or(reporter.typeOf(tested)).intersectWith(reporter.typeOf(operand), reporter.types());
+    });
+    if (!typeOfAllNames)
+        return true;
+    return !narrowTypeByTest({ reporter.program(), reporter.function(), reporter.types() }, *typeOfAllNames, test, testedOperandIndex, EdgeSide::Taken).isNever();
+}
+
 void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome)
 {
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
         RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
-    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test); }))
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test) || !canPass(*this, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.

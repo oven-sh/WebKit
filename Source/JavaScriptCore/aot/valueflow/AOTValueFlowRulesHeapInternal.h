@@ -52,6 +52,7 @@ struct HeapKeyUse {
     const ValueFlowOperand* object { nullptr };
     const ValueFlowOperand* stored { nullptr };
     bool tellsReceiversApart { false };
+    bool isRead { false };
 };
 
 struct HeapReceiver {
@@ -271,6 +272,7 @@ private:
     enum class PropertySearch : uint8_t { OwnProperty, WholeChain };
     bool holdsOnlyWhatWasWritten(ClimbingSet receivers) { return !m_context.meet(receivers, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode()))); }
     void readAccessorFunctions(const ValueFlowOperand& object, const HeapKey&, HeapPropertyPart, PropertySearch);
+    bool replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey&, PropertySearch, const ValueFlowOperand* value);
 
     ClimbingSet allocateUnder(const ValueFlowOperand& prototype);
     void runCreateArguments(const ValueFlowOperand& count, const ValueFlowOperand& rest, std::span<const ValueFlowOperand> parameters, const ValueFlowOperand* callee);
@@ -310,6 +312,15 @@ void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invoc
         HeapKeyReceivers receiversOfSymbols = receiversOfSymbolNobodyKnows(otherKeys, use);
         if (receiversOfSymbols == HeapKeyReceivers::AllButBuiltinObjects) {
             functor(unknownHeapKey);
+            if (!use.isRead)
+                return;
+            // A key nobody knows names no member of Bun. A name that comes beside it does. Any string holds every name, and names none.
+            ClimbingSet names(m_tables.keysOfMembersOfBun());
+            if (!property.node || !holdsAnything(m_context.membersMissingFrom(property.node, names)))
+                return;
+            m_context.forEachMember(m_context.valueWithin(names, property.node), [&](ValueFlowObjectID constant) {
+                functor(keyNamed(m_universe.keyOf(constant)));
+            });
             return;
         }
         if (receiversOfSymbols == HeapKeyReceivers::BuiltinObjects)

@@ -17,6 +17,7 @@
 #include "AOTCoroutines.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTGenerator.h"
+#include "AOTHeldOperands.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTTypeTestEmitter.h"
@@ -190,7 +191,7 @@ void SavedFrameEmitter::generateAwaitCallBySavingFrame(const ValueContext& value
         return;
     }
     Vector<Operand, 8> arguments;
-    for (ValueID argument : value->argumentsOperands())
+    for (ValueID argument : value->argumentsOperands().first(value->numberOfVariadicOperands() - numberOfHeldOperandsOf(value.value())))
         arguments.append(get(argument));
     arguments.append(undefined());
     Boxed returned = emitter<CallEmitter>().callDirect(value, value->function(), arguments.span()).as<Boxed>();
@@ -318,18 +319,6 @@ void SavedFrameEmitter::generateIsGeneratorRunning(const ValueContext& value)
 {
     Word32 state(m_out.load32(stateOf(in<CellPointer>(value->generatorOperand()))));
     defineTest(value, equal(state, word32(static_cast<int32_t>(Generator::State::Running))));
-}
-
-void SavedFrameEmitter::generateKeepAlive(const ValueContext& value)
-{
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->effects.writesLocalState = true;
-    patchpoint->effects.reads = B3::HeapRange::top();
-    for (ValueID kept : value->valuesOperands())
-        patchpoint->append(get(kept).value, B3::ValueRep::ColdAny);
-    patchpoint->setRunsWithoutFrame(true);
-    patchpoint->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 }
 
 void SavedFrameEmitter::generateMarkGeneratorRunning(const ValueContext& value)

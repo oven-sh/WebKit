@@ -42,12 +42,12 @@ struct TableStubs {
     StubKey hashed;
 };
 
-static SiteRegisters allocateSiteRegisters(StubAssembler& jit, unsigned siteOperandIndex)
+static SiteRegisters allocateSiteRegisters(StubAssembler& jit)
 {
     SiteRegisters registers;
     registers.receiver = jit.operand(0);
-    registers.site = jit.operand(siteOperandIndex);
-    registers.identifierNumber = jit.immediate();
+    registers.site = jit.immediate();
+    registers.identifierNumber = jit.allocateScratch(slotNameRegister);
     registers.structureID = jit.allocateScratch(StubRegister::T11);
     registers.header = jit.allocateScratch(slotHeaderRegister);
     registers.payload = jit.allocateScratch(slotPayloadRegister);
@@ -130,10 +130,9 @@ StubSignature signatureOfGetByIdAtSite(StubKey)
 {
     StubSignature signature;
     signature.addOperand(gprOf(firstStubOperandRegister));
-    signature.addOperand(gprOf(readSiteCacheRegister));
     signature.result = StubResult::GPR;
     signature.firstResult = gprOf(firstStubOperandRegister);
-    signature.immediate = gprOf(slotNameRegister);
+    signature.immediate = gprOf(readSiteCacheRegister);
     return signature;
 }
 
@@ -142,25 +141,27 @@ void generateGetByIdAtSite(StubAssembler& jit)
 {
     static constexpr SlotHandlerTable table = SlotHandlerTable::ReadById;
     static constexpr TableStubs tableStubs { getById(), getByIdHashed() };
-    const SiteRegisters registers = allocateSiteRegisters(jit, 1);
+    const SiteRegisters registers = allocateSiteRegisters(jit);
 
     Jump isNotCell = jit.branchIfNotCell(registers.receiver);
 #if CPU(X86_64)
     // Each word is compared where it lies.
-    jit.load64(Address(registers.site, Slot::offsetOfStructureID()), registers.header);
+    auto atSite = [&](ptrdiff_t offset) { return wordOfSite(jit, registers.site, offset); };
+    jit.load64(atSite(Slot::offsetOfStructureID()), registers.header);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, Address(registers.receiver, JSCell::structureIDOffset()));
     // The address of an own inline value needs the receiver and the site alone.
-    Jump isNotOwnInlineValue = jit.branch16(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(kindAndFlagsOfOwnInlineValue));
+    Jump isNotOwnInlineValue = jit.branch16(CCallHelpers::NotEqual, atSite(Slot::offsetOfKind()), TrustedImm32(kindAndFlagsOfOwnInlineValue));
     jit.urshift64(TrustedImm32(Slot::locationShiftInHeader), registers.header);
     jit.load64(BaseIndex(registers.receiver, registers.header, CCallHelpers::TimesEight), jit.result());
     jit.returnToCaller();
 
     isNotOwnInlineValue.link(&jit);
-    jit.load64(Address(registers.site, Slot::offsetOfPayload()), registers.payload);
-    Jump isNotValue = jit.branch8(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
+    jit.load64(atSite(Slot::offsetOfPayload()), registers.payload);
+    Jump isNotValue = jit.branch8(CCallHelpers::NotEqual, atSite(Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
 #else
     static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
-    jit.loadPair64(registers.site, registers.header, registers.payload);
+    loadAddressOfSite(jit, registers.site, registers.scratch);
+    jit.loadPair64(registers.scratch, registers.header, registers.payload);
     jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, registers.structureID);
     jit.extractUnsignedBitfield64(registers.header, TrustedImm32(Slot::kindShiftInHeader), TrustedImm32(16), registers.scratch);
@@ -179,7 +180,7 @@ void generateGetByIdAtSite(StubAssembler& jit)
     // A name that is asked for and is not there comes next in number: `if (options.signal)`, `payload.aborted`. It needs no handler.
     isNotValue.link(&jit);
 #if CPU(X86_64)
-    Jump isNotAbsent = jit.branch8(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
+    Jump isNotAbsent = jit.branch8(CCallHelpers::NotEqual, atSite(Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
 #else
     Jump isNotAbsent = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
 #endif
@@ -187,12 +188,14 @@ void generateGetByIdAtSite(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotAbsent.link(&jit);
+    loadNameAndAddressOfSite(jit, registers.site, registers.identifierNumber, registers.site);
 #if CPU(X86_64)
     loadKindOfSlotAtSite(jit, registers, registers.scratch);
 #endif
     jumpToSlotHandlerOfKind(jit, table, registers.header, registers.scratch);
 
     hasOtherStructure.link(&jit);
+    loadNameAndAddressOfSite(jit, registers.site, registers.identifierNumber, registers.site);
     JumpList isDue;
     Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, registers.header);
     // Objects of several Structures come to this place. What the front table holds for this one is answered from here: the table of fields, which answers at an empty site, has its turn behind it.
@@ -256,6 +259,7 @@ void generateGetByIdAtSite(StubAssembler& jit)
     jit.addOutOfLinePart([isNotCell, registers](StubAssembler& jit) {
         JumpList hasNoStructure;
         isNotCell.link(&jit);
+        loadNameAndAddressOfSite(jit, registers.site, registers.identifierNumber, registers.site);
         Jump isNumber = jit.branchIfNumber(registers.receiver);
         hasNoStructure.append(jit.branchIfNotBoolean(registers.receiver, registers.structureID));
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.booleanStructureID)), registers.structureID);
@@ -312,8 +316,7 @@ StubSignature signatureOfPutByIdAtSite(StubKey)
     StubSignature signature;
     signature.addOperand(gprOf(firstStubOperandRegister));
     signature.addOperand(gprOf(storedValueByIdRegister));
-    signature.addOperand(gprOf(storeSiteCacheRegister));
-    signature.immediate = gprOf(slotNameRegister);
+    signature.immediate = gprOf(storeSiteCacheRegister);
     return signature;
 }
 
@@ -321,9 +324,10 @@ void generatePutByIdAtSite(StubAssembler& jit)
 {
     const PutMode mode = static_cast<PutMode>(jit.key().form());
     const SlotHandlerTable table = slotHandlerTable(operationFor(mode), SlotOrigin::ById, SlotForm::Slot);
-    const SiteRegisters registers = allocateSiteRegisters(jit, 2);
+    const SiteRegisters registers = allocateSiteRegisters(jit);
     JumpList isNotInFieldTable;
 
+    loadNameAndAddressOfSite(jit, registers.site, registers.identifierNumber, registers.site);
     jit.linkToStub(jit.branchIfNotCell(registers.receiver), slotExit(table, SlotExit::Miss));
     isNotInFieldTable.append(branchIfSiteIsFilled(jit, registers.site));
     // What the table of fields answers is never filed.

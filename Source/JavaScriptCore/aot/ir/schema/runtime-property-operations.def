@@ -1,6 +1,7 @@
 runtime GetById : EncodedJSValue (EncodedJSValue base, uint32_t key) ; unknownCode
 runtime PutById, PutByIdSloppy : void (EncodedJSValue base, uint32_t key, EncodedJSValue value) ; unknownCode
 runtime DeleteById, DeleteByIdSloppy : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
+runtime DeleteByName, DeleteByNameSloppy : size_t (JSCell* base, UniquedStringImpl* uid) ; unknownCode
 runtime InByIdAndCache, HasOwnByIdAndCache : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
 runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, SiteCache cache) ; unknownCode
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode

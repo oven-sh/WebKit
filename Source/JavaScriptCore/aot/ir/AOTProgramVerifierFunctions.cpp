@@ -26,6 +26,8 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::HasOnlyDirectCallers,
     FunctionCapabilities::IsNeverCalledByHost,
     FunctionCapabilities::IsHiddenInStackTraces,
+    FunctionCapabilities::ClosuresAreReadWithoutCode,
+    FunctionCapabilities::RecordsCallee,
 };
 
 bool isSentByFrontEnd(FunctionRole role)

@@ -153,6 +153,24 @@ static bool definesPropertyOfOrdinaryObject(const Program& program, const Functi
     });
 }
 
+static bool readsNameOfClosuresWithoutCode(const Program& program, const Type& receiver, PropertyKeyID key)
+{
+    NameClass nameClass = program.nameClassOf(key);
+    if (program.at(key).kind != PropertyKeyKind::Text || (nameClass != NameClass::Ordinary && nameClass != NameClass::ObjectPrototypeMember && nameClass != NameClass::CallOrApply && nameClass != NameClass::Bind))
+        return false;
+    for (BuiltinID above : { Builtins::FunctionPrototype, Builtins::ObjectPrototype }) {
+        BuiltinID member = findOwnMember(program, above, key);
+        if (!listsEveryMemberUnder(program, above, key) || (member && program.builtins().at(member).kind != BuiltinKind::Method))
+            return false;
+    }
+    Type closures = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
+    if (closures.functions.isEmpty() || closures != closures.withOnlyObjects() || closures.anyObject || closures.anyFunction || closures.layouts || !closures.classes.isEmpty() || !closures.builtins.isEmpty())
+        return false;
+    return std::ranges::all_of(closures.functions, [&](FunctionID closureFunction) {
+        return program.at(closureFunction).has(FunctionCapabilities::ClosuresAreReadWithoutCode);
+    });
+}
+
 static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Function& function, const Value& access, PredictedReceivers predictedReceivers = PredictedReceivers::LeftOut)
 {
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, function, access, ExpectedClassObjects::Ignored, predictedReceivers);
@@ -167,6 +185,8 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     if (!addProvenArms({ program, nullptr }, *query, result)) {
         if (definesPropertyOfOrdinaryObject(program, function, access))
             return { .isComplete = true, .definesOwnProperty = true, .key = query->key };
+        if (query->access == Access::Read && !query->isPrivate && readsNameOfClosuresWithoutCode(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
+            return { .isComplete = true, .mayFindStoredValue = true, .key = query->key };
         if (query->start != MemberStart::Instance || query->isPrivate || !isLookup(query->access))
             return ProvenAccess::unknown();
         return provenLookupUnderAnyKey(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))));

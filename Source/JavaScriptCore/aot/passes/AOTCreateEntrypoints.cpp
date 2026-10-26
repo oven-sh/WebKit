@@ -85,10 +85,54 @@ static bool mayBeReadWithItsFunction(const Variable& variable)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A stack frame shows the name that the function object has when the stack is read. One function object stands for every frame of the function as it is written.
+static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow)
+{
+    const Program& program = editor.program();
+    auto writtenFunctionOf = [&](FunctionID id) {
+        while (FunctionID source = program.at(id).derivation.source)
+            id = source;
+        return id;
+    };
+    auto hasClosures = [&](const Function& function) {
+        return function.hasBody() && canBeCalledByValueOf(function.role);
+    };
+    Vector<PropertyKeyID, 2> keysOfNames { program.keyOf(BuiltinNames::name) };
+    if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
+        if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
+            keysOfNames.append(*key);
+    }
+    BitVector hasForm(program.functions.size());
+    BitVector hasSeveralForms(program.functions.size());
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (hasClosures(program.functions[index]) && hasForm.set(writtenFunctionOf(FunctionID(index)).index()))
+            hasSeveralForms.quickSet(writtenFunctionOf(FunctionID(index)).index());
+    }
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        FunctionID id(index);
+        // The body of a generator, and of an async function that may wait, runs under a function object of its own.
+        bool mayWait = function.role == FunctionRole::CoroutineRamp && function.creator.as<CreatorRecord::Coroutine>().worker != function.creator.as<CreatorRecord::Coroutine>().body;
+        if (!hasClosures(function) || mayWait || function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::IsHiddenInStackTraces }) || !flow.closuresMayBeRenamed(id))
+            continue;
+        FunctionID written = writtenFunctionOf(id);
+        // The modules of the run time name their functions once, when they start.
+        if (program.at(written).role == FunctionRole::Library)
+            continue;
+        // The tables leave async functions out. A static field is stored without a word to the run time.
+        bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
+        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !function.has(FunctionFlags::IsAsync) && !isNamedByStaticField)
+            continue;
+        editor.at(id).capabilities.add(FunctionCapabilities::RecordsCallee);
+        editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
+    }
+}
+
 void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build)
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
+    markFunctionsThatRecordTheirCallee(editor, inputs.flow);
     AnalysisContext context { build, program, &inputs.flow, nullptr };
     size_t numberOfFunctionsBefore = program.functions.size();
 

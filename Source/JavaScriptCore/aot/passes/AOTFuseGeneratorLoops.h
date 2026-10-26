@@ -15,7 +15,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ValueID appendAwait(IRBuilder&, ValueID awaited);
+ValueID appendAwait(IRBuilder&, ValueID awaited, std::span<const ValueID> held);
 
 } } } // namespace JSC::AOT::Typed
 

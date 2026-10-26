@@ -23,9 +23,11 @@
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "AbstractSlotVisitorInlines.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
+#include "SlotVisitorInlines.h"
 #include <algorithm>
 #include <optional>
 #include <wtf/text/ASCIIFastPath.h>
@@ -183,20 +185,11 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
     return state.strings->writtenNameOfFunction(vm, function);
 }
 
-static void recordNameSetAtRunTime(VM& vm, FunctionID closureFunction, const String& name, bool isOnlyClosure)
+// The frames of a generator, and of an async function that may wait, run under a function object of their own.
+static bool isNamedInFramesByFunction(FunctionID closureFunction)
 {
-    if (functionKindData(closureFunction).isBound())
-        return;
-    FunctionTables& tables = FunctionTables::of(vm);
-    FunctionID sourceFunction = sourceFunctionOf(closureFunction);
-    Locker locker { tables.namesLock };
-    if (isOnlyClosure)
-        tables.namesSetAtRunTime.set(sourceFunction, name);
-    else if (auto result = tables.namesSetAtRunTime.add(sourceFunction, String()); result.isNewEntry)
-        result.iterator->value = name;
-    else if (result.iterator->value != name)
-        result.iterator->value = String();
-    tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
+    FunctionDescription description(closureFunction);
+    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !description.isAsync() && !description.recordsCallee();
 }
 
 static String nameSetAtRunTime(VM& vm, FunctionID function)
@@ -209,21 +202,59 @@ static String nameSetAtRunTime(VM& vm, FunctionID function)
     return tables.namesSetAtRunTime.get(sourceFunction);
 }
 
-static bool usesOwnPropertiesForStackTraceName(JSCell* closure)
+bool FunctionTables::hasRecordedCalleesAbove(const void* stackPointer)
 {
-    DeclaredAs declared = declaredAs(closure);
-    return declared == DeclaredAs::Function || declared == DeclaredAs::Class;
+    if (recordedCallees.isEmpty()) [[likely]]
+        return false;
+    Locker locker { recordedCalleesLock };
+    while (!recordedCallees.isEmpty() && recordedCallees.last().stackPointerOfCaller <= stackPointer)
+        recordedCallees.removeLast();
+    return !recordedCallees.isEmpty();
 }
 
-// A frame does not say which closure runs in it, and a function that captures something is created more than once as a rule.
-static bool standsForEveryFrameOfItsFunction(JSObject* closure)
+void FunctionTables::recordCallee(VM& vm, const void* stackPointerOfCaller, JSObject* closure)
 {
-    return usesOwnPropertiesForStackTraceName(closure) && !captureCountsOf(*functionOf(closure)).captures;
+    {
+        Locker locker { recordedCalleesLock };
+        while (!recordedCallees.isEmpty() && recordedCallees.last().stackPointerOfCaller <= stackPointerOfCaller)
+            recordedCallees.removeLast();
+        recordedCallees.append({ stackPointerOfCaller, closure });
+    }
+    if (dropsRecordedCalleesWhenIdle || !vm.entryScope)
+        return;
+    dropsRecordedCalleesWhenIdle = true;
+    vm.whenIdle([this] {
+        dropsRecordedCalleesWhenIdle = false;
+        Locker locker { recordedCalleesLock };
+        recordedCallees.shrink(0);
+    });
 }
 
-static JSValue ownDisplayNameValue(VM& vm, JSObject* closure)
+template<typename Visitor>
+void FunctionTables::visitRecordedCallees(Visitor& visitor, const void* stackPointer)
 {
-    UniquedStringImpl* uid = vm.propertyNames->displayName.impl();
+    Locker locker { recordedCalleesLock };
+    for (const RecordedCallee& recorded : recordedCallees) {
+        if (recorded.stackPointerOfCaller <= stackPointer)
+            break;
+        visitor.appendUnbarriered(recorded.closure);
+    }
+}
+template void FunctionTables::visitRecordedCallees(AbstractSlotVisitor&, const void*);
+template void FunctionTables::visitRecordedCallees(SlotVisitor&, const void*);
+
+void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
+{
+    if (!hasRecordedCalleesAbove(stackPointer))
+        return;
+    Locker locker { recordedCalleesLock };
+    recordedCallees.removeAllMatching([&](const RecordedCallee& recorded) {
+        return !vm.heap.isMarked(recorded.closure);
+    });
+}
+
+static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)
+{
     if (auto* classObject = dynamicDowncast<Closure>(closure)) {
         const FieldData* field = StaticFields::findOwnField(*classObject, uid);
         if (field && StaticFields::isInVariable(*classObject, *field))
@@ -236,9 +267,9 @@ static JSValue ownDisplayNameValue(VM& vm, JSObject* closure)
     return closure->getDirect(offset);
 }
 
-static String ownDisplayNameText(VM& vm, JSObject* closure)
+static String ownTextProperty(JSObject* closure, const Identifier& name)
 {
-    JSValue value = ownDisplayNameValue(vm, closure);
+    JSValue value = ownDataProperty(closure, name.impl());
     if (!value || !value.isString())
         return String();
     String text = asString(value)->tryGetValueWithoutGC();
@@ -248,13 +279,13 @@ static String ownDisplayNameText(VM& vm, JSObject* closure)
 void didChangeDisplayName(VM& vm, JSObject* closure)
 {
     FunctionID closureFunction = *functionOf(closure);
-    if (functionKindData(closureFunction).isBound() || !standsForEveryFrameOfItsFunction(closure))
+    if (!isNamedInFramesByFunction(closureFunction))
         return;
     FunctionTables& tables = FunctionTables::of(vm);
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
     auto* classObject = dynamicDowncast<Closure>(closure);
     bool isClassObject = classObject && classObject->classData();
-    String text = isClassObject ? String() : ownDisplayNameText(vm, closure);
+    String text = isClassObject ? String() : ownTextProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
@@ -291,7 +322,7 @@ static String displayNameInFrames(VM& vm, FunctionID function)
     if (!entry->value.stateOfClassObject)
         return entry->value.text;
     JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
-    return classObject == entry->value.functionObject ? ownDisplayNameText(vm, asObject(classObject)) : String();
+    return classObject == entry->value.functionObject ? ownTextProperty(asObject(classObject), vm.propertyNames->displayName) : String();
 }
 
 static String functionNameAsWritten(FunctionID function)
@@ -310,15 +341,36 @@ static String nameInFramesOfFunctionNamedBySymbol(FunctionID function)
     return functionKindData(source).isGenerator ? emptyString() : initialNameProperty(source);
 }
 
-String functionName(VM& vm, FunctionID function, NameForm form)
+// The engine shows the property `name` once the function object has it as a property, which is when it is defined.
+static String nameGivenTo(VM& vm, JSObject* callee)
+{
+    String name = ownTextProperty(callee, vm.propertyNames->name);
+    if (!name.isNull() && name != initialNameProperty(*functionOf(callee)))
+        return name;
+    return ownTextProperty(callee, vm.propertyNames->displayName);
+}
+
+// The engine runs the body of a generator, and of an async function that awaits, as a function of its own. It has the name that is written in the function and none that the function takes from a variable or a property.
+static bool runsInBodyWithoutName(FunctionID function)
+{
+    FunctionKindData kind = functionKindData(sourceFunctionOf(function));
+    return kind.hasInferredName && (kind.isGenerator || (kind.isAsync && FunctionDescription(function).isNamedByOwner()));
+}
+
+String functionName(VM& vm, FunctionID function, NameForm form, JSObject* callee)
 {
     switch (form) {
     case NameForm::AsWritten:
         return functionNameAsWritten(function);
     case NameForm::InFrames:
-        if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
+        if (runsInBodyWithoutName(function))
+            return emptyString();
+        if (callee) [[unlikely]] {
+            if (String name = nameGivenTo(vm, callee); !name.isNull())
+                return name;
+        } else if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
             return name;
-        if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
+        else if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
             return displayName;
         if (FunctionDescription(function).isNamedBySymbol()) [[unlikely]]
             return nameInFramesOfFunctionNamedBySymbol(function);
@@ -355,10 +407,12 @@ static String computedFunctionName(JSGlobalObject* globalObject, const Identifie
 void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
-    bool isInRuntimeModule = functionKindData(function).isInRuntimeModule;
-    if (!isInRuntimeModule && !usesOwnPropertiesForStackTraceName(closure))
+    if (!isNamedInFramesByFunction(function))
         return;
-    recordNameSetAtRunTime(vm, function, name, isInRuntimeModule || closureTableOf(closure).closureIfCreated(function) == closure);
+    FunctionTables& tables = FunctionTables::of(vm);
+    Locker locker { tables.namesLock };
+    tables.namesSetAtRunTime.set(sourceFunctionOf(function), name);
+    tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
 }
 
 void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)

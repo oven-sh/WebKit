@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTDecidedBranches.h"
-#include "AOTFrameAllocationPointers.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
@@ -229,7 +228,6 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
             return identities.identityOf(ValueID(index));
         });
     }
-    findBlocksBehindSuspensions();
     m_cursor.emplace(*this, builder);
 
     addHeadParameters(builder);
@@ -243,81 +241,6 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     for (auto [read, replacement] : tables.replacedReads)
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
     substitution.apply(builder.function(), &m_analyses);
-    keepOnlySpecifiedValuesAlive(builder);
-}
-
-// A frame lists what a KeepAlive names as references. What a path leaves unspecified is none on that path.
-void AllocationSinking::keepOnlySpecifiedValuesAlive(IRBuilder& builder)
-{
-    if (!m_tables->maySuspend)
-        return;
-    Function& function = builder.function();
-    struct Edit {
-        BlockID block;
-        uint32_t index;
-        Vector<ValueID, 4> specified;
-    };
-    Vector<Edit, 4> edits;
-    {
-        FunctionAnalyses analyses(m_analyses.context(), std::as_const(function));
-        if (!analyses.opcodesOfValues().contains(Opcode::KeepAlive))
-            return;
-        UnspecifiedValues unspecifiedValues(analyses);
-        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-            const BlockValues& values = function.at(BlockID(blockIndex)).values;
-            for (uint32_t index = 0; index < values.size(); ++index) {
-                const Value& keepAlive = function.at(values[index]);
-                if (keepAlive.opcode != Opcode::KeepAlive)
-                    continue;
-                Edit edit { BlockID(blockIndex), index, { } };
-                for (ValueID kept : keepAlive.valuesOperands()) {
-                    if (!unspecifiedValues.mayContain(kept))
-                        edit.specified.append(kept);
-                }
-                if (edit.specified.size() != keepAlive.valuesOperands().size())
-                    edits.append(WTF::move(edit));
-            }
-        }
-    }
-    for (size_t first = 0; first < edits.size();) {
-        BlockID block = edits[first].block;
-        BitVector erasedIndexes;
-        for (; first < edits.size() && edits[first].block == block; ++first) {
-            const Edit& edit = edits[first];
-            if (edit.specified.isEmpty())
-                erasedIndexes.set(edit.index);
-            else
-                function.edit(function.at(block).values[edit.index]).setValuesOperands(edit.specified.span());
-        }
-        if (!erasedIndexes.isEmpty())
-            builder.eraseValues(block, erasedIndexes);
-    }
-    if (!edits.isEmpty())
-        m_analyses.didChangeValues();
-}
-
-void AllocationSinking::findBlocksBehindSuspensions()
-{
-    BitVector& reached = m_tables->blocksBehindSuspensions;
-    reached.ensureSize(m_function.blocks.size());
-    Vector<BlockID, 8> worklist;
-    auto addSuccessorsOf = [&](BlockID block) {
-        forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
-            if (!reached.quickSet(target.block.index()))
-                worklist.append(target.block);
-        });
-    };
-    for (BlockID block : m_tables->order) {
-        bool suspends = m_function.at(block).values.containsIf([&](ValueID value) {
-            return maySuspend(m_function.at(value).opcode);
-        });
-        if (suspends) {
-            m_tables->maySuspend = true;
-            addSuccessorsOf(block);
-        }
-    }
-    while (!worklist.isEmpty())
-        addSuccessorsOf(worklist.takeLast());
 }
 
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)
@@ -478,24 +401,8 @@ void AllocationSinking::rewriteBlock(BlockID block)
     if (state.objects.isEmpty() && !m_inputs.blocksWithCandidates.get(block.index()))
         function.edit(m_cursor->block(), BlockEdit::Values).values = WTF::move(oldValues);
     else {
-        bool isBehindSuspension = m_tables->blocksBehindSuspensions.quickGet(block.index());
-        auto keepMembersAlive = [&](const auto& user) {
-            if (!isBehindSuspension || state.objects.isEmpty())
-                return;
-            Vector<ValueID, 4> operands;
-            user.forEachOperand([&](ValueID operand, uint32_t) {
-                operands.append(operand);
-            });
-            m_cursor->setOrigin(user.origin());
-            for (ValueID operand : operands)
-                interpreter.keepMembersAlive(operand);
-        };
-        for (ValueID id : oldValues) {
-            keepMembersAlive(function.at(id));
-            isBehindSuspension |= maySuspend(function.at(id).opcode);
+        for (ValueID id : oldValues)
             interpreter.execute(id);
-        }
-        keepMembersAlive(terminator);
     }
 
     m_cursor->setOrigin(terminator.origin());

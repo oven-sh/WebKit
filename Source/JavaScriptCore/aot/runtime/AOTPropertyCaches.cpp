@@ -1090,7 +1090,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
 {
     StructureID id = structure->id();
     ASSERT(slot.structureID == id);
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber)) {
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
         bool isSet = m_front.trySet(structure, *column, access, slot);
         if (m_front.takeDidMovePlanes()) {
             for (Instance* instance : m_vm.aotState().instances)
@@ -1116,7 +1116,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
 
 std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& name, SlotAccess access) const
 {
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber)) {
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
         if (std::optional<Slot> slot = m_front.find(id, *column, access))
             return slot;
     }
@@ -1128,7 +1128,7 @@ std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& nam
 void VMPropertyCaches::remove(StructureID id, const CachedName& name, SlotAccess access)
 {
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber || !identifiers ? name.identifierNumber : identifiers->numberOf(name.uid)))
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber || !identifiers ? name.identifierNumber : identifiers->numberOf(name.uid)) : std::nullopt)
         m_front.remove(id, *column, access);
     m_hashedTable.remove(id, name.uid, access);
 }
@@ -1168,7 +1168,7 @@ void initializePropertyCacheWords(Instance& instance)
         return;
     uint8_t* sharedCode = const_cast<uint8_t*>(image.sharedCodeCopy(0));
     std::span offsets = image.slotHandlerOffsets();
-    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKinds);
+    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     RELEASE_ASSERT(offsets.size() == handlers.size());
     for (size_t index = 0; index < handlers.size(); ++index)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
@@ -1615,6 +1615,10 @@ bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedS
         return found.outcome == StructureLookup::Absent;
     case Slot::Kind::Transition:
         return transitionSlotAgrees(slot, access, found, uid);
+    case Slot::Kind::Removal:
+        return found.outcome == StructureLookup::Own && found.offset == slot.offsetInStorage() && !(found.attributes & PropertyAttribute::DontDelete) && !isValidOffset(slot.removal.newStructureID.decode()->getConcurrently(uid));
+    case Slot::Kind::NothingToRemove:
+        return found.outcome != StructureLookup::Own;
     case Slot::Kind::Empty:
     case Slot::Kind::CustomGetter:
     case Slot::Kind::CustomSetter:
@@ -1630,6 +1634,8 @@ bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedS
     case Slot::Kind::ExtraGetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
     case Slot::Kind::ArrayLength:
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
@@ -1970,9 +1976,12 @@ static void forEachStructureNamedBy(const Slot& slot, const Invocable<void(Struc
         return functor(slot.extraPropertyAddition.newStructureID);
     case SlotPayload::Transition:
         return functor(slot.transition.newStructureID);
+    case SlotPayload::Removal:
+        return functor(slot.removal.newStructureID);
     case SlotPayload::None:
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
+    case SlotPayload::OrderWords:
     case SlotPayload::CustomAccessor:
     case SlotPayload::Holder:
     case SlotPayload::FieldAndHolder:

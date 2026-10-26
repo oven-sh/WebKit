@@ -19,6 +19,7 @@ public:
     void generateMaterializeEnvironment(const ValueContext&);
     void generateMarkEnvironmentEscaped(const ValueContext&);
     void generateReleaseEnvironment(const ValueContext&);
+    void generateRecordCallee(const ValueContext&);
 
     Operand closureCapture(CellPointer closure, FunctionID, unsigned index);
 

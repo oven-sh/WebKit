@@ -213,6 +213,7 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image)
     words.classAccessors = image.programTables().classAccessors().data();
     words.data = image.programTables().data().data();
     words.closureFunctionKindsOrigin = std::bit_cast<uintptr_t>(image.programTables().closureFunctionKinds().data()) - image.programTables().closureFunctions.first * sizeof(FunctionKindData);
+    words.siteNames = image.programTables().siteNames().data();
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
     words.stringRecords = image.text().stringRecords().data();
     words.lazyStringHeaderOffsets = image.text().lazyHeaderOffsets();

@@ -39,13 +39,16 @@ static_assert(traitsOf(handlerTableFor(FreeNameRead::Read)) == SlotHandlerTableT
 static_assert(traitsOf(handlerTableFor(FreeNameRead::TypeOf)) == SlotHandlerTableTraits { SlotOperation::Read, SlotOrigin::FreeNameForTypeOf, SlotForm::Slot });
 
 // The site is the key, so no StructureID is compared.
-static void jumpToSlotHandlerAtSite(StubAssembler& jit, SlotHandlerTable table, GPRReg site, GPRReg receiver)
+static void jumpToSlotHandlerAtSite(StubAssembler& jit, SlotHandlerTable table, GPRReg receiver)
 {
+    const GPRReg site = jit.immediate();
+    const GPRReg name = jit.allocateScratch(slotNameRegister);
     const GPRReg header = jit.allocateScratch(slotHeaderRegister);
     const GPRReg payload = jit.allocateScratch(slotPayloadRegister);
     const GPRReg kind = jit.allocateScratch(StubRegister::T10);
     RELEASE_ASSERT(receiver == gprOf(firstStubOperandRegister));
-    RELEASE_ASSERT(noOverlap(site, receiver, header, payload, kind, jit.immediate()));
+    RELEASE_ASSERT(noOverlap(site, receiver, header, payload, kind, name));
+    loadNameAndAddressOfSite(jit, site, name, site);
     jit.loadPair64(site, header, payload);
     // Every slot of a free name has a holder, so the receiver is only what an accessor is entered with.
     jit.move(TrustedImm64(JSValue::ValueUndefined), receiver);
@@ -54,26 +57,26 @@ static void jumpToSlotHandlerAtSite(StubAssembler& jit, SlotHandlerTable table, 
 
 StubSignature signatureOfGetFreeName(StubKey)
 {
-    StubSignature signature = StubSignature::withGPRResult({ gprOf(readSiteCacheRegister) });
-    signature.immediate = gprOf(slotNameRegister);
+    StubSignature signature = StubSignature::withGPRResult({ });
+    signature.immediate = gprOf(readSiteCacheRegister);
     return signature;
 }
 
 void generateGetFreeName(StubAssembler& jit)
 {
-    jumpToSlotHandlerAtSite(jit, handlerTableFor(static_cast<FreeNameRead>(jit.key().form())), jit.operand(0), jit.result());
+    jumpToSlotHandlerAtSite(jit, handlerTableFor(static_cast<FreeNameRead>(jit.key().form())), jit.result());
 }
 
 StubSignature signatureOfSetFreeName(StubKey)
 {
-    StubSignature signature = StubSignature::withoutResult({ gprOf(storedValueByIdRegister), gprOf(storeSiteCacheRegister) });
-    signature.immediate = gprOf(slotNameRegister);
+    StubSignature signature = StubSignature::withoutResult({ gprOf(storedValueByIdRegister) });
+    signature.immediate = gprOf(storeSiteCacheRegister);
     return signature;
 }
 
 void generateSetFreeName(StubAssembler& jit)
 {
-    jumpToSlotHandlerAtSite(jit, handlerTableFor(static_cast<PutMode>(jit.key().form())), jit.operand(1), jit.allocateScratch(firstStubOperandRegister));
+    jumpToSlotHandlerAtSite(jit, handlerTableFor(static_cast<PutMode>(jit.key().form())), jit.allocateScratch(firstStubOperandRegister));
 }
 
 } } // namespace JSC::AOT

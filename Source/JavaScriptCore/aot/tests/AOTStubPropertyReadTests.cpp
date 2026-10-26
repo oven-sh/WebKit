@@ -1423,8 +1423,10 @@ static void testReadsAtSites()
     FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
     receiver.setHeader(PropertyReads::structureID, FinalObjectType);
     receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(42));
-    Slot site = Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset);
-    auto readAtSite = [&] { return reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name); };
+    Slot& site = reads.runner.siteCache();
+    site = Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset);
+    reads.runner.setNameOfSiteCache(PropertyReads::name);
+    auto readAtSite = [&] { return reads.runner.run(getByIdAtSite(), { receiver.address() }, 0); };
     auto isAnswered = [](const StubRun& run, JSValue expected) { return !run.calledOperation && run.result == bitsOf(expected); };
 
     AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));

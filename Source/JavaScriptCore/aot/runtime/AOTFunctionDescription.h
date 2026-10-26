@@ -15,6 +15,7 @@
 
 namespace JSC {
 
+class JSCell;
 class VM;
 
 namespace AOT {
@@ -33,12 +34,13 @@ public:
     JS_EXPORT_PRIVATE explicit FunctionDescription(FunctionID);
 
     JS_EXPORT_PRIVATE String name(VM&) const;
-    JS_EXPORT_PRIVATE String nameInFrames(VM&) const;
+    JS_EXPORT_PRIVATE String nameInFrames(VM&, JSCell* callee = nullptr) const;
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isStrict() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
     bool isNakedConstructor() const;
     bool isNamedBySymbol() const;
+    bool recordsCallee() const;
     JS_EXPORT_PRIVATE bool isAsync() const;
     JS_EXPORT_PRIVATE bool isNamedByOwner() const;
     JS_EXPORT_PRIVATE bool isInRuntimeModule() const;

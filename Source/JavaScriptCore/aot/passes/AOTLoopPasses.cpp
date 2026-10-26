@@ -9,14 +9,18 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCodeSizeEstimate.h"
+#include "AOTDecidedBranches.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
 #include "AOTProgramPasses.h"
+#include "AOTRegionCloner.h"
 #include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -638,6 +642,120 @@ PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;
+    return outcome;
+}
+
+// UnrollShortLoops.
+
+// How often the body runs, where the counter starts at a constant, steps by a constant and is tested against a constant.
+static std::optional<uint64_t> findNumberOfTurns(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const InductionVariable* counter = context.analyses.inductionVariables().of(loop).counter();
+    if (!counter || counter->step.kind != InductionStepKind::Constant || !counter->step.constant)
+        return std::nullopt;
+    const InductionTest* test = counter->controllingTest();
+    if (!test || test->tested != TestedValue::BeforeStep || test->block != loop.header() || !isBoundingRelation(test->relation, counter->direction) || !counter->start || !test->bound)
+        return std::nullopt;
+    std::optional<int64_t> start = integerConstantThroughCasts(context.program, context.function, counter->start);
+    std::optional<int64_t> bound = integerConstantThroughCasts(context.program, context.function, test->bound);
+    constexpr int64_t farthest = 1 << 30;
+    if (!start || !bound || std::abs(*start) > farthest || std::abs(*bound) > farthest)
+        return std::nullopt;
+
+    int64_t distance = counter->direction == InductionDirection::Increasing ? *bound - *start : *start - *bound;
+    if (test->relation == Opcode::LessEq || test->relation == Opcode::GreaterEq)
+        ++distance;
+    uint64_t step = static_cast<uint64_t>(std::abs(counter->step.constant));
+    return distance <= 0 ? 0 : (static_cast<uint64_t>(distance) + step - 1) / step;
+}
+
+namespace {
+
+struct ShortLoop {
+    BlockID header;
+    uint64_t numberOfTurns { 0 };
+    Vector<BlockID, 8> region;
+    Vector<Edge, 2> entries;
+    Vector<Edge, 2> backEdges;
+};
+
+} // anonymous namespace
+
+static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Function& function = context.function;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
+    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop) || !isHotLoop(context, loop))
+        return std::nullopt;
+
+    ShortLoop found { loop.header(), *numberOfTurns, { }, { }, { } };
+    uint64_t bytes = 0;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        if (loops.innerMostLoopOf(loop.at(index)) != &loop)
+            return std::nullopt;
+        found.region.append(loop.at(index));
+        bytes += estimatedCodeBytes(context.program, function, function.at(loop.at(index)));
+    }
+    if (bytes * *numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+        return std::nullopt;
+
+    for (Edge edge : context.analyses.cfg().incomingEdges(loop.header())) {
+        if (edge.isHandlerEdge() || hasEdgeResults(function, edge))
+            return std::nullopt;
+        (loops.belongsTo(edge.from, loop) ? found.backEdges : found.entries).append(edge);
+    }
+    if (RegionCloner::checkCanDuplicate(context.analyses, found.region.span()) != CloneCheck::CanClone)
+        return std::nullopt;
+    return found;
+}
+
+// The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.
+static void unroll(FunctionPassContext& context, const ShortLoop& loop)
+{
+    Function& function = context.function;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<std::unique_ptr<RegionCloner>> turns;
+    for (uint64_t turn = 0; turn < loop.numberOfTurns; ++turn) {
+        turns.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+        turns.last()->cloneBlocks(loop.region.span(), [](ValueID, Value&) { });
+    }
+
+    for (Edge entry : loop.entries)
+        builder.redirectEdge(entry, turns.first()->cloneOf(loop.header), Arguments(targetOf(function, entry).arguments));
+    for (size_t turn = 0; turn < turns.size(); ++turn) {
+        BlockID next = turn + 1 < turns.size() ? turns[turn + 1]->cloneOf(loop.header) : loop.header;
+        for (Edge backEdge : loop.backEdges) {
+            Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
+            builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
+        }
+        BlockID header = turns[turn]->cloneOf(loop.header);
+        BitVector hints;
+        std::span<const ValueID> values = function.at(header).values.span();
+        for (size_t index = 0; index < values.size(); ++index) {
+            if (function.at(values[index]).opcode == Opcode::LoopHint)
+                hints.set(index);
+        }
+        builder.eraseValues(header, hints);
+    }
+    context.analyses.didChangeControlFlow();
+    RegionCloner::repairSSA(context.analyses, turns.span());
+    context.analyses.didChangeControlFlow();
+}
+
+PassOutcome unrollShortLoops(FunctionPassContext& context)
+{
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (uint64_t unrolled = 0; unrolled < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++unrolled) {
+        std::optional<ShortLoop> found;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
+            found = findShortLoop(context, loops.loop(index));
+        if (!found)
+            break;
+        unroll(context, *found);
+        outcome = PassOutcome::Changed;
+    }
     return outcome;
 }
 

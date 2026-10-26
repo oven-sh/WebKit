@@ -282,6 +282,10 @@ void StoresByLayout::followCopiedProperties()
                 for (PropertyKeyID key : keysStoredInto(source)) {
                     ValueSetID value = storedUnder(source, key);
                     ValueFlowNumbers numbers = numbersStoredUnder(source, key);
+                    // A copy reads the field, and a read of an int32 slot says no more than that: what it delivers goes into the target without a test.
+                    constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
+                    if (!numbers.integers.isEmpty() && numbers.integers.isSubsetOf(integersOfSlots))
+                        numbers.integers = integersOfSlots;
                     StoredUnderKey& stored = stores.underKey.add(key.index(), StoredUnderKey { }).iterator->value;
                     unite(stored.value, value);
                     stored.uniteNumbers(numbers);

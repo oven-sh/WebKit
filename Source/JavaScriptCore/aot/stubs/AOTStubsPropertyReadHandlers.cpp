@@ -55,6 +55,10 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
     case Slot::Kind::Transition:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         return false;
     case Slot::Kind::Value:
     case Slot::Kind::Getter:
@@ -369,6 +373,10 @@ void generateReadSlot(StubAssembler& jit)
         case Slot::Kind::ExtraSetter:
         case Slot::Kind::ExtraPropertyAddition:
         case Slot::Kind::Transition:
+        case Slot::Kind::Removal:
+        case Slot::Kind::ExtraPropertyRemoval:
+        case Slot::Kind::FieldRemoval:
+        case Slot::Kind::NothingToRemove:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();

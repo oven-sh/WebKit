@@ -376,7 +376,7 @@ function optionalByName(schema: Schema): Set<string> {
 function printEntry(schema: Schema, entry: Entry, subject: string, optionalNames: ReadonlySet<string>): string[] {
   const statements = entry.parameters.flatMap(parameter => {
     if (parameter.tag === "Operand") {
-      if (!parameter.isEngine) return [];
+      if (!parameter.isEngine || parameter.isVariadic) return [];
       const operand = `${subject}.operand(${parameter.index})`;
       return [
         `if (printsEngineFields && ${operand})`,

@@ -62,8 +62,6 @@ public:
     ObjectValueMap& values() { return *m_values; }
 
     void execute(ValueID);
-    // What an object holds lives as long as the object. An object that is never built holds nothing, so a user of it behind a suspension stands in as a user of its members.
-    void keepMembersAlive(ValueID usedObject);
     void executeTerminator(const Terminator&);
     void executeRelevantValue(const BlockValues&, uint32_t entry);
     void executeTerminatorOf(BlockID);
@@ -111,6 +109,7 @@ private:
     void executeGuards(ValueID);
     void executeRuntimeValidation(ValueID);
     void executeOther(ValueID);
+    void holdMembersOfUnbuiltObjects(ValueID suspension);
     void executeOnCell(ValueID, uint32_t operandIndex);
     void executeAccessOnCell(ValueID access, VirtualObjectID);
     void didFoldStores(VirtualObjectID, unsigned numberOfStores);

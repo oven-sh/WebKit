@@ -45,6 +45,11 @@ struct ValueFlowPropertyKeptForLife {
     BuiltinClassID instanceClass;
 };
 
+struct ValueFlowMemberReplacedBySetter {
+    PropertyKeyID key;
+    ValueFlowObjectID holder;
+};
+
 struct ValueFlowClassOfEntries {
     ValueFlowObjectID prototype;
     ValueSetID entries;
@@ -102,6 +107,7 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
     macro(ValueSetID, numberKinds) \
     macro(ValueSetID, booleanKinds) \
     macro(ValueSetID, keysNobodyKnows) \
+    macro(ValueSetID, keysOfMembersOfBun) \
     macro(ValueSetID, builtinObjectsAndPlaceholders) \
     macro(ValueSetID, accessors) \
     macro(ValueSetID, knownAccessors) \
@@ -152,6 +158,7 @@ public:
     std::span<const ValueFlowClassOfEntries> classesOfHostWithEntries() const LIFETIME_BOUND { return m_classesOfHostWithEntries.span(); }
     const ValueFlowNamesReadByNativeCode* namesReadByNativeCodeOn(ValueFlowObjectID) const LIFETIME_BOUND;
     std::span<const ValueFlowPropertyKeptForLife> propertiesKeptForLife() const LIFETIME_BOUND { return m_propertiesKeptForLife.span(); }
+    std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
 
     static constexpr uint64_t noBlockKept = UINT64_MAX;
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
@@ -243,6 +250,7 @@ private:
     Vector<ValueFlowClassOfEntries> m_classesOfHostWithEntries;
     Vector<ValueFlowNamesReadByNativeCode> m_namesReadByNativeCode;
     Vector<ValueFlowPropertyKeptForLife, 4> m_propertiesKeptForLife;
+    Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesAtCreation;
     std::unique_ptr<std::atomic<uint64_t>[]> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };

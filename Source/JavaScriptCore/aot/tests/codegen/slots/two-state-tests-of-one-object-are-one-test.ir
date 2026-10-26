@@ -43,5 +43,5 @@ function f2 name="twoFailingSides" parameters=[{type=L0}] results=[{type=anythin
 }
 # CHECK: f1: size={{*}}
 # CHECK: f2: size={{*}}
-# X64: f1: size=36 frame=0@12-33
-# X64: f2: size=62 frame=0@12-39,41-59
+# X64: f1: size=25 frame=0@12-22
+# X64: f2: size=46 frame=0@12-31,33-43

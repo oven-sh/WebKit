@@ -9,6 +9,7 @@
 
 #include "AOTCompileOptions.h"
 #include "AOTEffects.h"
+#include "AOTInstanceLayout.h"
 #include "AOTStubDescriptor.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -36,7 +37,7 @@ class Program;
 
 // Everything that may change the code of a stub. The image records every member.
 struct StubOptions {
-    static StubOptions from(const RecordedOptions&, const Typed::Program&, const Typed::FlowResults&);
+    static StubOptions from(const RecordedOptions&, const Typed::Program&, const Typed::FlowResults&, InstanceSizes);
 
     bool useWideReferences { false };
     bool forceGCSlowPaths { false };
@@ -46,6 +47,7 @@ struct StubOptions {
     bool countsAllocations { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t layoutSeed { 0 };
+    uint32_t offsetOfSiteCaches { static_cast<uint32_t>(InstanceLayout::offsetOfSiteCaches({ 0, 1, 0, 0 })) };
     CPUFeatureSet targetFeatures;
 };
 

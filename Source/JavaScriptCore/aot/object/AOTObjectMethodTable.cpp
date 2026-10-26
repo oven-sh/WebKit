@@ -817,8 +817,12 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         if (current.attributes & PropertyAttribute::DontDelete)
             return false;
         if (current.isInSlot) {
-            object->deleteField(vm, *field);
-            return true;
+            if (!field->isAccessor()) {
+                object->deleteField(vm, *field);
+                return true;
+            }
+            // The Structure of the extra properties goes on saying that there has been an accessor, as that of an ordinary object does.
+            object->moveFieldToExtraProperties(vm, *field, { current.valueOrAccessor, current.attributes }, SlotExitReason::Delete);
         }
     }
     JSObject* extra = object->extraProperties();

@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
+#include "AOTHeldOperands.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
@@ -94,7 +95,7 @@ static std::optional<uint32_t> expectedNumberOfVariadicOperands(const Program& p
         return program.at(user.function()).numberOfEntryParameters();
     case Opcode::AwaitCallBySavingFrame: {
         unsigned numberOfEntryParameters = program.at(user.function()).numberOfEntryParameters();
-        return numberOfEntryParameters ? numberOfEntryParameters - 1 : 0;
+        return (numberOfEntryParameters ? numberOfEntryParameters - 1 : 0) + numberOfHeldOperandsOf(user);
     }
     case Opcode::PutSlots:
         return static_cast<uint32_t>(user.placedKeys().size());

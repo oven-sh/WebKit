@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTFlowParts.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTSlotRepresentation.h"
@@ -494,7 +495,7 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, ui
     TypingContext positions = context.atLevel(TypeLevel::Proven);
     if (user.opcode == Opcode::CreateIteratorResult)
         return requiredTypeOfIteratorResultField(positions, operandIndex);
-    if (user.operandKind(operandIndex) != OperandKind::Declared)
+    if (user.operandKind(operandIndex) != OperandKind::Declared || isHeldOperand(user, operandIndex))
         return { };
 
     auto variadicIndex = [&] {

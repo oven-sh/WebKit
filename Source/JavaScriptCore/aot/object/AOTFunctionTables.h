@@ -119,6 +119,22 @@ struct FunctionTables {
     DisplayNamesByFunction displayNames WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<bool> hasNamesSetAtRunTime { false };
     std::atomic<bool> hasDisplayNames { false };
+
+    struct RecordedCallee {
+        const void* stackPointerOfCaller;
+        JSObject* closure;
+    };
+    void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
+    // False once every function that recorded its callee has returned.
+    bool hasRecordedCalleesAbove(const void* stackPointer);
+    // Those of functions that have not returned yet.
+    template<typename Visitor> void visitRecordedCallees(Visitor&, const void* stackPointer);
+    void finalizeRecordedCallees(VM&, const void* stackPointer);
+
+    // Outermost first. Only the thread of the VM changes it.
+    Lock recordedCalleesLock;
+    Vector<RecordedCallee> recordedCallees;
+    bool dropsRecordedCalleesWhenIdle { false };
     TextsByFunction sourceTexts;
 };
 

@@ -34,6 +34,7 @@ namespace {
 
 constexpr ValueFlowName everySetter = ValueFlowName::of(ValueFlowNameKind::EverySetter);
 constexpr ValueFlowName iteratedValues = ValueFlowName::of(ValueFlowNameKind::IteratedValues);
+constexpr ValueFlowName describedObjectName = ValueFlowName::of(ValueFlowNameKind::InternalFields);
 
 constexpr ValueFlowOperand operandHolding(ValueSetID constant)
 {
@@ -2182,6 +2183,11 @@ private:
             });
             if (!isTaken)
                 applyWith({ }, { });
+            if (action.value.kind == BuiltinPlaceKind::ResultField && m_resultObject) {
+                forEachOperandAt(action.object, [&](const ValueFlowOperand& described) {
+                    m_context.connect(described, m_context.written(ClimbingSet(m_context.maker().of(m_resultObject)), describedObjectName));
+                });
+            }
             return;
         }
         case BuiltinPropertyActionKind::DescribesOwnProperties:
@@ -2210,11 +2216,19 @@ private:
         case BuiltinPropertyActionKind::DefinesFrom:
             forEachOperandAt(*action.value.operand, applyWithValue);
             return;
+        case BuiltinPropertyActionKind::TakesDescriptor:
+            if (std::optional<DescriptorReadUnderSameKey> read = findDescriptorReadUnderSameKey(action)) {
+                if (read->descriptor)
+                    copyDescribedProperties(action, read->descriptor);
+                if (!read->isTouched)
+                    return;
+            }
+            forEachOperandAt(action.value, applyWithValue);
+            return;
         case BuiltinPropertyActionKind::StoresByKey:
         case BuiltinPropertyActionKind::DefinesName:
         case BuiltinPropertyActionKind::DefinesGetter:
         case BuiltinPropertyActionKind::DefinesSetter:
-        case BuiltinPropertyActionKind::TakesDescriptor:
         case BuiltinPropertyActionKind::ChangesPrototype:
             forEachOperandAt(action.value, applyWithValue);
             return;
@@ -2239,6 +2253,66 @@ private:
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Matches defineProperty(target, key, getOwnPropertyDescriptor(source, key)) with one key value and an untouched descriptor.
+    struct DescriptorReadUnderSameKey {
+        ValueFlowObjectID descriptor;
+        bool isTouched { false };
+    };
+    std::optional<DescriptorReadUnderSameKey> findDescriptorReadUnderSameKey(const BuiltinPropertyAction& action)
+    {
+        constexpr uint32_t numberOfOperandsBeforeArguments = 2;
+        constexpr OptionSet<ObjectMutation> mutationsOfDescriptor { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty,
+            ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation, ObjectMutation::StoreOfOtherType };
+        if (!m_call.operation || action.value.kind != BuiltinPlaceKind::Operand || action.value.operand->kind() != BuiltinOperand::Kind::Argument
+            || action.key.kind != BuiltinKeyKind::Operand || action.key.operand->kind() != BuiltinOperand::Kind::Argument)
+            return std::nullopt;
+        const Function& function = m_program.at(m_call.operation->function);
+        const Value& definition = function.at(m_call.operation->site);
+        uint32_t descriptorIndex = numberOfOperandsBeforeArguments + action.value.operand->argumentIndex();
+        uint32_t keyIndex = numberOfOperandsBeforeArguments + action.key.operand->argumentIndex();
+        if (definition.opcode != Opcode::Call || descriptorIndex >= definition.numberOfOperands() || keyIndex >= definition.numberOfOperands())
+            return std::nullopt;
+
+        ValueID read = definitionThroughTests(function, definition.operand(descriptorIndex));
+        if (function.at(read).opcode != Opcode::Call || function.at(read).numberOfOperands() != numberOfOperandsBeforeArguments + 2)
+            return std::nullopt;
+        const Value& callee = function.at(sameObjectThroughCasts(function, function.at(read).operand(0)));
+        if (callee.opcode != Opcode::Builtin)
+            return std::nullopt;
+        BuiltinID reader = m_builtins.canonicalID(callee.builtin());
+        if (reader != Builtins::ObjectGetOwnPropertyDescriptor && reader != Builtins::ReflectGetOwnPropertyDescriptor)
+            return std::nullopt;
+        if (definitionThroughTests(function, function.at(read).operand(numberOfOperandsBeforeArguments + 1)) != definitionThroughTests(function, definition.operand(keyIndex)))
+            return std::nullopt;
+
+        ValueFlowObjectID descriptor;
+        bool holdsOtherObject = false;
+        forEachOperandAt(action.value, [&](const ValueFlowOperand& value) {
+            m_context.forEachMember(m_context.restrict(m_context.valueOf(value), m_universe.objects()), [&](ValueFlowObjectID object) {
+                const ValueFlowSite* site = m_universe.siteOf(object);
+                if (site && site->origin == ValueFlowSiteOrigin::BuiltinResult && site->value == read && m_universe.functionOf(object) == m_call.operation->function && (!descriptor || descriptor == object))
+                    descriptor = object;
+                else
+                    holdsOtherObject = true;
+            });
+        });
+        if (!descriptor)
+            return DescriptorReadUnderSameKey { { }, holdsOtherObject };
+        ClimbingSet alone(m_context.maker().of(descriptor));
+        bool isTouched = holdsOtherObject || m_context.meet(m_context.markedAmong(alone, mutationsOfDescriptor), ValueSets::anything) || m_context.holdsAnyOf(alone, escaped()) || m_context.holdsAnyOf(alone, ValueFlowProgramNodes::lost());
+        return DescriptorReadUnderSameKey { descriptor, isTouched };
+    }
+
+    void copyDescribedProperties(const BuiltinPropertyAction& action, ValueFlowObjectID descriptor)
+    {
+        BuiltinPropertyAction copy = action;
+        copy.kind = BuiltinPropertyActionKind::DefinesFrom;
+        ValueFlowOperand sources = operandOfBuiltinAt(m_context.read(ClimbingSet(m_context.maker().of(descriptor)), describedObjectName));
+        forEachOperandAt(action.object, [&](const ValueFlowOperand& object) {
+            Typed::applyPropertyAction(m_context, copy, { object, { }, sources, { }, m_call.thrown });
+        });
     }
 
     void assignFrom(const BuiltinPropertyAction& action, const ValueFlowOperand& source)

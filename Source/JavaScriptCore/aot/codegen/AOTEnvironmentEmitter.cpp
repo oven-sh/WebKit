@@ -88,6 +88,11 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::RecordCallee, { in<CellPointer>(value->closureOperand()) });
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

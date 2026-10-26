@@ -14,6 +14,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSort.h"
@@ -824,7 +825,7 @@ static bool isArgumentOfHasInstanceMethod(const Program& program, const Function
 
 std::optional<uint32_t> entryParameterOf(const Function& callee, const Value& call, uint32_t operandIndex)
 {
-    if (effectRuleOf(call.opcode) != EffectRule::Call)
+    if (effectRuleOf(call.opcode) != EffectRule::Call || isHeldOperand(call, operandIndex))
         return std::nullopt;
 
     std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);

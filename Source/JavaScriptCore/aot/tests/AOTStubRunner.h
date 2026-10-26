@@ -109,7 +109,9 @@ struct StubEnvironment {
     InstancePrefix prefix;
     Instance instance;
     std::array<uint8_t, InstanceLayout::offsetOfStringCells - sizeof(Instance)> unusedBelowStringCells;
-    std::array<uint32_t, 16> stringCells;
+    std::array<uint32_t, InstanceLayout::granuleAboveInstance / sizeof(uint32_t)> stringCells;
+    std::array<uint64_t, 2> siteCache;
+    uint32_t nameOfSiteCache;
     ZeroedStorage<VM> vm;
     std::array<void*, numberOfEntries> runtimeTable;
     void* stub;
@@ -131,6 +133,7 @@ struct StubEnvironment {
     std::array<uint8_t, 0x2000> emptyStructures;
 };
 static_assert(OBJECT_OFFSETOF(StubEnvironment, instance) == OBJECT_OFFSETOF(StubEnvironment, prefix) + sizeof(InstancePrefix));
+static_assert(OBJECT_OFFSETOF(StubEnvironment, siteCache) == OBJECT_OFFSETOF(StubEnvironment, instance) + StubOptions { }.offsetOfSiteCaches);
 static_assert(OBJECT_OFFSETOF(StubEnvironment, stringCells) == OBJECT_OFFSETOF(StubEnvironment, instance) + InstanceLayout::offsetOfStringCells && sizeof(uint32_t) == InstanceLayout::sizeOfStringCell);
 
 struct StubRun {
@@ -160,6 +163,13 @@ public:
     uint64_t closureWord(unsigned numberOfParameters, ClosureWord::Flags flags = { }) const { return ClosureWord::encode({ distanceOfCompiledFunction, numberOfParameters }, 1, flags); }
     Instance& instance() { return m_environment->instance; }
     uint32_t& stringCell(uint32_t number) { return m_environment->stringCells[number]; }
+    // Site cache 0, which is empty at first.
+    Slot& siteCache() { return *reinterpret_cast<Slot*>(m_environment->siteCache.data()); }
+    void setNameOfSiteCache(uint32_t name)
+    {
+        m_environment->nameOfSiteCache = name;
+        m_environment->instance.image.siteNames = &m_environment->nameOfSiteCache;
+    }
 
     template<typename Function>
     void install(Entry entry, Function* function) { m_environment->runtimeTable[indexOf(entry)] = operationPointer(function); }
@@ -424,7 +434,7 @@ inline StubRunner::StubRunner(const StubOptions& options, StubPolicy&& policy, s
     instance.propertyCaches.missesOfPairs = m_environment->missesOfPairs.data();
     instance.prefix().structureIDBase = std::bit_cast<uintptr_t>(m_environment->emptyStructures.data());
     for (SlotHandlerTable table : allSlotHandlerTables) {
-        for (Slot::Kind kind : allSlotKinds)
+        for (Slot::Kind kind : slotKindsWithHandlers)
             instance.slotHandlers()[static_cast<unsigned>(table)][static_cast<unsigned>(kind)] = addressOf(slotHandlerFor(table, kind));
     }
     compileLandings();

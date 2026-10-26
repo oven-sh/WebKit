@@ -512,7 +512,7 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
         ValueFlowName name = stretches[position].name;
         for (const WrittenNode& node : stretches[position].nodes) {
             if (ValueSets::isComplement(node.objects)) {
-                foundByWorker[worker].append({ UINT32_MAX, PropertyKeyID() });
+                foundByWorker[worker].append({ UINT32_MAX, isListed(name.kind) ? PropertyKeyID(name.payload) : PropertyKeyID() });
                 continue;
             }
             if (!setsWithClosures[worker].contains(node.objects))
@@ -528,6 +528,31 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
         added.appendVector(WTF::move(found));
     sortAndRemoveDuplicates(loops, added);
     return added;
+}
+
+// A stack frame shows the own property `name` or `displayName` of the function object. What code that nobody has seen may do to a closure is written down as stores under unknown keys.
+static BitVector findFunctionsWhoseClosuresMayBeRenamed(const Program& program, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
+{
+    Vector<PropertyKeyID, 2> keys { program.keyOf(BuiltinNames::name) };
+    if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
+        if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
+            keys.append(*key);
+    }
+
+    BitVector functions(program.functions.size());
+    for (const AllocationClass& closures : classesOfClosures) {
+        bool isSeenByKnownCodeAlone = closures.impossibleMutations.containsAll({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
+        auto mayNameFrames = [&](PropertyKeyID key) {
+            return key ? keys.contains(key) : isSeenByKnownCodeAlone;
+        };
+        uint32_t index = closures.closureFunction.index();
+        LayoutID constructedClass = program.functions[index].constructedClass;
+        if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
+            || std::ranges::any_of(std::ranges::equal_range(added, UINT32_MAX, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
+            || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key)))
+            functions.quickSet(index);
+    }
+    return functions;
 }
 
 static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, std::span<AllocationClass> classes)
@@ -621,6 +646,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         classes.append(WTF::move(closures));
     });
     noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
+    tables.functions.functionsWhoseClosuresMayBeRenamed = findFunctionsWhoseClosuresMayBeRenamed(program, added, classesOfClosures.span());
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }
 

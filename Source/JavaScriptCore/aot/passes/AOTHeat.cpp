@@ -756,6 +756,39 @@ HeatClass heatClassOf(FunctionPassContext& context, BlockID block)
     return heatClassOf(context.inputs.heat, context.analyses, block);
 }
 
+// A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
+static bool runsCodeOfHotFunction(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Heat& heat = context.inputs.heat;
+    if (heat.isOfVeryLargeProgram())
+        return false;
+    const Function& function = context.function;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = function.at(loop.at(index));
+        if (block.frequency != BlockFrequency::Normal)
+            continue;
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::CallDirect && isHot(heat.of(context.program, value.function())))
+                return true;
+            if (!value.inlineFrame)
+                continue;
+            FunctionID callee = function.inlineFrames[value.inlineFrame].callee;
+            if (isHot(heat.of(context.program, callee)))
+                return true;
+            // The loop itself came out of a function, where it ran as often.
+            if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(context.program, callee, frequencyConstants.iterationsPerLoop)))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool isHotLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    return context.analyses.blockFrequencies().classOf(loop.header()) == BlockFrequency::Normal && (isHot(heatClassOf(context, loop.header())) || runsCodeOfHotFunction(context, loop));
+}
+
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
 static constexpr size_t sitesInLongHashRun = 1024;
 

@@ -388,13 +388,16 @@ class SiteCaches {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SiteCaches);
 public:
     SiteCaches() = default;
-    SiteCaches(uint32_t count, uint32_t numberOfSitesWithoutCache)
-        : m_count(count)
+    SiteCaches(Vector<PropertyKeyID>&& keys, uint32_t numberOfSitesWithoutCache)
+        : m_count(static_cast<uint32_t>(keys.size()))
         , m_numberOfSitesWithoutCache(numberOfSitesWithoutCache)
+        , m_keys(WTF::move(keys))
     {
     }
 
     uint32_t count() const { return m_count; }
+    // [SiteCacheID::index()]: the name that the site asks for. A site of several names has none.
+    std::span<const PropertyKeyID> keys() const { return m_keys.span(); }
     uint32_t numberOfSitesWithoutCache() const { return m_numberOfSitesWithoutCache; }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
@@ -402,6 +405,7 @@ public:
 private:
     uint32_t m_count { 0 };
     uint32_t m_numberOfSitesWithoutCache { 0 };
+    Vector<PropertyKeyID> m_keys;
 };
 
 // For a store by name whose receiver is proven to have a layout with a plain field of the name, at one place in the record of every layout that it may have: how far behind the data of the layout the record of the field lies.

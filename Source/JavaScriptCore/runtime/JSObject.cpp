@@ -1987,9 +1987,8 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         return;
 
     // Realm is always non-nullptr since realmless Structure's objects (e.g. WasmGC Struct) cannot call setPrototypeDirect.
-    if (mayBePrototype()) {
-        if (!chainAlreadyMayInterceptIndexedAccesses)
-            realm()->haveABadTime(vm, this);
+    if (mayBePrototype() && !chainAlreadyMayInterceptIndexedAccesses) {
+        realm()->haveABadTime(vm, this);
         return;
     }
 
@@ -4598,7 +4597,7 @@ JSValue JSObject::getMethod(JSGlobalObject* globalObject, CallData& callData, co
 bool JSObject::anyObjectInChainMayInterceptIndexedAccesses() const
 {
     for (const JSObject* current = this; ;) {
-        if (current->structure()->mayInterceptIndexedAccesses() || current->hasFrozenElementsInPlace())
+        if (current->structure()->mayInterceptIndexedAccesses() || current->hasFrozenElementsInPlace() || JSGlobalObject::isTakenToInterceptIndexedAccesses(current))
             return true;
         if (isTypedArrayType(current->type())) [[unlikely]] {
             auto* globalObject = realmMayBeNull();

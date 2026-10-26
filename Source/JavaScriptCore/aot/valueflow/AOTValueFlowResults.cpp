@@ -467,6 +467,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
         computeClosuresNeverCompared(inputs, heap, tables);
+        computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
         findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);

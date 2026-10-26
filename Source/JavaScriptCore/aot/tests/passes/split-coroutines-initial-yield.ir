@@ -72,7 +72,7 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: Jump -> next [[rest0]]()
 # CHECK-NEXT: [[suspends0]]():
 # CHECK-NEXT: [[undefined0]]: undefined = Undefined
-# CHECK-NEXT: [[yield0]]{{*}}= YieldBySavingFrame [[driver0]], [[undefined0]] @10
+# CHECK-NEXT: [[yield0]]{{*}}= YieldBySavingFrame [[driver0]], [[undefined0]], v0, v1 @10
 # CHECK-NEXT: [[sent0]]: anything = ResultAt [[yield0]]
 # CHECK-NEXT: [[mode0]]: int[0, 2] = ResultAt [[yield0]] index=1
 # CHECK-NEXT: Switch [[mode0]] cases=[1, 2] -> case [[throw0]](), case [[return0]](), otherwise [[rest0]]()
@@ -87,7 +87,7 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: v2: anything = Call v1 @20
 # CHECK-NEXT: TakeGeneratorPrototype [[driver1]], v0 @21
 # CHECK-NEXT: [[undefined1]]: undefined = Undefined
-# CHECK-NEXT: [[yield1]]{{*}}= YieldBySavingFrame [[driver1]], [[undefined1]] @21
+# CHECK-NEXT: [[yield1]]{{*}}= YieldBySavingFrame [[driver1]], [[undefined1]], v0, v1, v2 @21
 # CHECK-NEXT: [[sent1]]: anything = ResultAt [[yield1]]
 # CHECK-NEXT: [[mode1]]: int[0, 2] = ResultAt [[yield1]] index=1
 # CHECK-NEXT: Switch [[mode1]] cases=[1, 2] -> case [[throw1]](), case [[return1]](), otherwise [[rest1]]()
@@ -103,7 +103,7 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NOT: AwaitBySavingFrame
 # CHECK: b0(v0: function, v1: anything, [[driver2]]: AsyncGenerator):
 # CHECK-NEXT: [[undefined2]]: undefined = Undefined
-# CHECK-NEXT: [[yield2]]{{*}}= YieldBySavingFrame [[driver2]], [[undefined2]] @30
+# CHECK-NEXT: [[yield2]]{{*}}= YieldBySavingFrame [[driver2]], [[undefined2]], v0, v1 @30
 # CHECK-NEXT: [[sent2]]: anything = ResultAt [[yield2]]
 # CHECK-NEXT: [[mode2]]: int[0, 2] = ResultAt [[yield2]] index=1
 # CHECK-NEXT: Switch [[mode2]] cases=[1, 2] -> case [[throw2]](), case [[return2]](), otherwise [[rest2]]()
@@ -149,7 +149,7 @@ function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: b2(v4: anything):
 # CHECK-NEXT: TakeGeneratorPrototype [[driver5]], v0 @51
 # CHECK-NEXT: [[undefined5]]: undefined = Undefined
-# CHECK-NEXT: [[yield5]]{{*}}= YieldBySavingFrame [[driver5]], [[undefined5]] @51
+# CHECK-NEXT: [[yield5]]{{*}}= YieldBySavingFrame [[driver5]], [[undefined5]], v0, v1, v4 @51
 # CHECK-NEXT: [[sent5]]: anything = ResultAt [[yield5]]
 # CHECK-NEXT: [[mode5]]: int[0, 2] = ResultAt [[yield5]] index=1
 # CHECK-NEXT: Switch [[mode5]] cases=[1, 2] -> case [[throw5]](), case [[return5]](), otherwise [[rest5]]()

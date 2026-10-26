@@ -76,6 +76,11 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 }
 
 #if ENABLE(AOT)
+StackFrame::StackFrame(VM& vm, JSCell* owner, const AOT::TraceFrame& frame, JSCell* callee)
+    : m_frameData(CompiledFrameData { frame, callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>() })
+{
+}
+
 void StackFrame::appendCompiledFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
 {
     results.reserveCapacity(results.size() + std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses));
@@ -99,8 +104,8 @@ static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFram
     AOT::FunctionDescription description(compiledFrame.frame.function);
     if (description.codeType() == ModuleCode)
         return "module code"_s;
-    if (!compiledFrame.isAsyncFrame)
-        return description.nameInFrames(vm);
+    if (!compiledFrame.frame.isAsyncFrame)
+        return description.nameInFrames(vm, compiledFrame.callee.get());
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
         return emptyString();
@@ -200,7 +205,10 @@ void StackFrame::visitAggregate(Visitor& visitor)
         },
         [](const WasmFrameData&) { }
 #if ENABLE(AOT)
-        , [](const CompiledFrameData&) { }
+        , [&visitor](const CompiledFrameData& compiledFrame) {
+            if (compiledFrame.callee)
+                visitor.append(compiledFrame.callee);
+        }
 #endif
     );
 }
@@ -215,7 +223,9 @@ bool StackFrame::isMarked(VM& vm) const
         },
         [](const WasmFrameData&) { return true; }
 #if ENABLE(AOT)
-        , [](const CompiledFrameData&) { return true; }
+        , [&vm](const CompiledFrameData& compiledFrame) {
+            return !compiledFrame.callee || vm.heap.isMarked(compiledFrame.callee.get());
+        }
 #endif
     );
 }

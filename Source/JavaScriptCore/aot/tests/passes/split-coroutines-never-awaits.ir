@@ -132,7 +132,7 @@ function f10 name="callsTheRamp" parameters=[{type=number}] results=[{type=anyth
 # CHECK-LABEL: function f12 name="awaitsOnOnePath"
 # CHECK: role=CoroutineBody flags=[IsAsync]
 # CHECK: b0(v0: boolean, v1: anything, [[driver12]]: undefined|Promise):
-# CHECK: v2: anything = AwaitBySavingFrame v1, [[driver12]] @10
+# CHECK: v2: anything = AwaitBySavingFrame v1, [[driver12]], v1 @10
 # CHECK-NEXT: = ReturnAsyncResult [[driver12]], v2
 # CHECK: = ReturnAsyncResult [[driver12]], v1
 

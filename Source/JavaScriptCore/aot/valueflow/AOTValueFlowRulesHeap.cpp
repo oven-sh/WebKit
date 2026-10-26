@@ -123,7 +123,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             add(m_statement.result, only(m_universe.objectOf(named)));
         } else if (isNamed)
             connect(m_context.lookup(bun, name), m_statement.result);
-        else if (object.node && m_context.holdsAnyOf(bun, object.node)) {
+        else if ((object.node && m_context.holdsAnyOf(bun, object.node)) || hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())))) {
             // The read already answers a value nobody knows, which stands for whatever has escaped.
             connect(m_context.lookup(bun, name), ValueFlowProgramNodes::escaped());
         }
@@ -417,6 +417,28 @@ ClimbingSet HeapRule::settersFoundFrom(ClimbingSet start, const HeapKey& key)
     return holdsAnything(others) ? m_context.unite(setters, m_context.valueOf(m_context.lookup(others, name))) : setters;
 }
 
+bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey& key, PropertySearch search, const ValueFlowOperand* value)
+{
+    bool isFound = false;
+    for (const ValueFlowMemberReplacedBySetter& member : m_tables.membersReplacedBySetters()) {
+        if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != member.key))
+            continue;
+        ClimbingSet holder(only(member.holder));
+        bool isListed = m_context.contains(search == PropertySearch::OwnProperty ? receivers : chainFrom(receivers).objects, member.holder);
+        bool isNamedOnObjectNobodyFollows = key.keyClass == HeapKeyClass::Name && ((mayBeUnknownObject(receivers) && hasEscaped(holder)) || (mayBeUntrackedObject(receivers) && hasBeenLost(holder)));
+        if (!isListed && !isNamedOnObjectNobodyFollows)
+            continue;
+        isFound = true;
+        HeapKey named { HeapKeyClass::Name, member.key };
+        add(m_context.written(holder, writtenName(named, HeapPropertyPart::Setter)), only(m_tables.undescribedNativeCode()));
+        if (!value)
+            continue;
+        write(holder, writtenName(named, HeapPropertyPart::Value), *value);
+        noteWrittenMembers(holder, named);
+    }
+    return isFound;
+}
+
 void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, const ValueFlowOperand& value)
 {
     ClimbingSet setters = settersFoundFrom(start, key);
@@ -509,6 +531,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
         callSettersOfReceivers(start, key, value);
     });
+    replaceMembersThroughSettersFoundFrom(receivers, key, PropertySearch::WholeChain, &value);
     mayThrow();
 }
 
@@ -646,7 +669,7 @@ void HeapRule::runOperation()
         forEachKey(operand(At::ElemGet::property), [&](HeapKey key) {
             key.namesEnumerableProperty = namesEnumerableProperty && key.keyClass == HeapKeyClass::Unknown;
             read(receiversUnder(operand(At::ElemGet::object), key), key);
-        }, { &operand(At::ElemGet::object), nullptr, true });
+        }, { &operand(At::ElemGet::object), nullptr, true, true });
         mayThrow();
         return;
     }

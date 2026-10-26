@@ -79,6 +79,10 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         return false;
     case Slot::Kind::Value:
     case Slot::Kind::Uncacheable:
@@ -538,6 +542,10 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         RELEASE_ASSERT(!hasStoreArm(traits, slot.kind()));
         miss.append(jit.jump());
         break;

@@ -735,6 +735,7 @@ enum class BuiltinMark : uint8_t {
     HoldsLoader,
     IsSpy,
     IsNotEnumerable,
+    IsReplacedBySetter,
 };
 
 struct BuiltinMarkedEntry {

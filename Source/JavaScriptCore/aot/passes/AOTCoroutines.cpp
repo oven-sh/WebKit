@@ -20,6 +20,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTFuseGeneratorLoops.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTPassRunner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -78,20 +79,24 @@ static ValueID driverOfAsyncBody(const Function& body)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ValueID appendAwait(IRBuilder& builder, ValueID awaited)
+ValueID appendAwait(IRBuilder& builder, ValueID awaited, std::span<const ValueID> held)
 {
     Function& function = builder.function();
     if (function.isUnsplitCoroutine())
         return builder.append(Opcode::Await, { awaited });
-    return builder.append(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
+    Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
+    await.setHeldOperands(held);
+    return builder.append(WTF::move(await));
 }
 
 // Where the iterator does not answer at once the step suspends this frame, and whoever finishes the step resumes the frame through its driver.
-ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent)
+ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent, std::span<const ValueID> held)
 {
     Function& function = builder.function();
     ValueID driver = function.isUnsplitCoroutine() ? builder.appendUndefined() : driverOfAsyncBody(function);
-    return builder.append(Opcode::StepAsyncGenerator, { iterator, sent, driver });
+    Value step = IRBuilder::make(Opcode::StepAsyncGenerator, { iterator, sent, driver });
+    step.setHeldOperands(held);
+    return builder.append(WTF::move(step));
 }
 
 Value makeIteratorResultObject(const Program& program, ValueID value, ValueID done, AllocationSiteID site)
@@ -627,6 +632,54 @@ static void replaceReturns(BodyRewrite& body)
     body.analyses.didChangeValues();
 }
 
+// A suspended function holds what it reads behind the suspension, and its parameters until it ends. A later pass may answer such a read without the object: what the object holds lives on as long as the function would have held the object.
+static void holdLiveValuesAtSuspensions(BodyRewrite& body)
+{
+    Function& function = body.function;
+    const Program& program = body.analyses.program();
+    body.analyses.didChangeControlFlow();
+
+    auto isHeld = [&](ValueID id) {
+        return id != body.driver && mayHoldObject(program.typeOf(function, id));
+    };
+    Vector<ValueID, 8> parameters;
+    for (ValueID parameter : function.at(entryBlock).parameters) {
+        if (isHeld(parameter))
+            parameters.append(parameter);
+    }
+
+    Vector<uint32_t, 4> suspensionIndexes;
+    Vector<ValueID, 16> held;
+    for (BlockID block : body.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (canHoldOperands(function.at(values[index]).opcode) && body.analyses.maySuspend(values[index]))
+                suspensionIndexes.append(index);
+        }
+        if (suspensionIndexes.isEmpty())
+            continue;
+
+        Liveness::LocalCalc localCalc(body.analyses.liveness(), block);
+        uint32_t pointIndex = values.size();
+        while (!suspensionIndexes.isEmpty()) {
+            uint32_t suspensionIndex = suspensionIndexes.takeLast();
+            while (pointIndex > suspensionIndex + 1)
+                localCalc.execute(--pointIndex);
+            held.shrink(0);
+            for (ValueID parameter : parameters) {
+                if (!localCalc.isLive(parameter))
+                    held.append(parameter);
+            }
+            localCalc.forEachLive([&](ValueID live) {
+                if (live != values[suspensionIndex] && isHeld(live))
+                    held.append(live);
+            });
+            setHeldOperands(function.edit(values[suspensionIndex]), held.span());
+        }
+    }
+    body.analyses.didChangeValues();
+}
+
 static Function buildCoroutineBody(const AnalysisContext& context, TypeArena& types, Function&& unsplit, const CoroutinePlan& plan)
 {
     Function function = WTF::move(unsplit);
@@ -655,6 +708,7 @@ static Function buildCoroutineBody(const AnalysisContext& context, TypeArena& ty
     }
 
     replaceReturns(body);
+    holdLiveValuesAtSuspensions(body);
     builder.setHandler(std::nullopt);
     return function;
 }
@@ -1036,9 +1090,10 @@ static bool isAwaitableCallAtEndOf(FunctionPassContext& context, BlockID block, 
 }
 
 // An expected type is set only where it says more than the type.
-static Value makeAwaitLike(FunctionPassContext& context, const Value& original, ValueID awaited)
+static Value makeAwaitLike(FunctionPassContext& context, const Value& original, ValueID awaited, std::span<const ValueID> held)
 {
     Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, original.promiseOperand() });
+    await.setHeldOperands(held);
     TypeID expected = original.expected();
     if (!expected)
         return await;
@@ -1079,6 +1134,13 @@ static std::optional<AwaitOfMergedValues> findAwaitOfMergedValues(FunctionPassCo
     if (merge.isHandlerBlock() || !hasOnlyPureValues(context, merge.values.span().first(awaitLocation.index)) || context.analyses.isEnteredFromUnreachableBlock(block))
         return std::nullopt;
 
+    // An await that moves in front of the merge holds what is defined there.
+    for (ValueID held : heldOperandsOf(function.at(await))) {
+        ValueLocation location = useLists.locationOf(held);
+        if (location.placement == ValuePlacement::InBlock && location.block == block)
+            return std::nullopt;
+    }
+
     AwaitOfMergedValues found { await, block, parameterLocation.index, { } };
     bool awaitsCall = false;
     for (Edge edge : context.analyses.cfg().incomingEdges(block)) {
@@ -1116,8 +1178,13 @@ static unsigned sinkAwaitsOfMergedValues(FunctionPassContext& context, IRBuilder
 
         builder.setOrigin(await.origin());
         for (BlockID predecessor : site.predecessors) {
-            ValueID incoming = function.at(predecessor).terminator.next().arguments[site.parameterIndex];
-            ValueID result = builder.insertBefore(pointBeforeTerminatorOf(function, predecessor), makeAwaitLike(context, await, incoming));
+            const Arguments& arguments = function.at(predecessor).terminator.next().arguments;
+            ValueID incoming = arguments[site.parameterIndex];
+            Vector<ValueID, 8> held = WTF::map<8>(await.heldOperands(), [&](ValueID held) {
+                size_t index = function.at(site.block).parameters.find(held);
+                return index == notFound ? held : arguments[index];
+            });
+            ValueID result = builder.insertBefore(pointBeforeTerminatorOf(function, predecessor), makeAwaitLike(context, await, incoming, held.span()));
             function.edit(predecessor, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.next().arguments[site.parameterIndex] = result;
         }
         builder.applyInsertions();
@@ -1183,12 +1250,12 @@ static bool giveCallersOfNextTheirOwnAwait(FunctionPassContext& context, IRBuild
 
     Value await = function.at(id);
     IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
-    builder.endExpansion(expansion, builder.append(makeAwaitLike(context, await, await.awaitedOperand())));
+    builder.endExpansion(expansion, builder.append(makeAwaitLike(context, await, await.awaitedOperand(), await.heldOperands())));
 
     builder.setOrigin(await.origin());
     Vector<ValueID, 2> ownAwaits;
     for (BlockID block : blocksThatCall)
-        ownAwaits.append(builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAwaitLike(context, await, function.at(block).terminator.next().arguments[0])));
+        ownAwaits.append(builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAwaitLike(context, await, function.at(block).terminator.next().arguments[0], await.heldOperands())));
     builder.applyInsertions();
     for (size_t index = 0; index < ownAwaits.size(); ++index)
         builder.redirectEdge(Edge { blocksThatCall[index], 0 }, expansion.continuation, { ownAwaits[index] });
@@ -1254,12 +1321,13 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
     replaced.add(effects, function, function.at(site.await));
 
     TypeID type = function.at(site.await).type;
-    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected()](Value& value) {
+    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected(), held = Vector<ValueID, 8>(function.at(site.await).heldOperands())](Value& value) {
         const Value& call = function.at(site.call);
         value.become(Opcode::AwaitCallBySavingFrame);
         value.setFunction(site.callee.entryWithoutPromise);
         value.setPromiseOperand(promise);
         value.setArgumentsOperands(call.argumentsOperands());
+        setHeldOperands(value, held.span());
         value.setOrigin(call.origin());
         value.setAccessSite(call.accessSite());
         value.setExpected(expected);
@@ -1327,7 +1395,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
 
     builder.setOrigin(awaitOrigin);
     builder.moveToEndOf(awaiting);
-    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited)), DeclaredType { .type = await.type }));
+    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited, await.heldOperands())), DeclaredType { .type = await.type }));
 }
 
 // `for await` is Await(Call(next)) as well, so the step that serves it takes as many turns of the job queue as the call and the await.
@@ -1341,6 +1409,7 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     Origin callOrigin = function.at(site.call).origin();
     BlockFrequency frequency = function.at(site.point.block).frequency;
     TypeID type = function.at(site.await).type;
+    Vector<ValueID, 8> held(heldOperandsOf(function.at(site.await)));
 
     auto appendWithKey = [&](Opcode opcode, std::initializer_list<ValueID> operands, PropertyKeyID key) {
         Value access = IRBuilder::make(opcode, operands);
@@ -1354,7 +1423,9 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     ValueID value = site.resultReads ? builder.addParameter(expansion.continuation, TypeTable::anything) : ValueID();
     ValueID done = site.resultReads ? builder.addParameter(expansion.continuation, TypeTable::anything) : ValueID();
 
-    ValueID step = builder.append(Opcode::StepAsyncGenerator, { generator, sent, driver });
+    Value stepOfGenerator = IRBuilder::make(Opcode::StepAsyncGenerator, { generator, sent, driver });
+    stepOfGenerator.setHeldOperands(held.span());
+    ValueID step = builder.append(WTF::move(stepOfGenerator));
     ValueID stepped = builder.append(makeResultAt(step, static_cast<uint32_t>(StepGeneratorResult::Value)));
     ValueID status = builder.append(makeResultAt(step, static_cast<uint32_t>(StepGeneratorResult::Status)));
     auto appendStatusTest = [&](AsyncGeneratorStepStatus expected) {

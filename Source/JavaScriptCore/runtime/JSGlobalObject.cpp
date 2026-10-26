@@ -2928,7 +2928,7 @@ private:
         JSGlobalObject* realm = object ? object->realmMayBeNull() : nullptr;
         bool typedArraysIntercept = realm && realm->typedArraysInterceptIndexedStores();
         for (JSObject* current = object; current;) {
-            if (current == m_interceptor || (typedArraysIntercept && isTypedArrayType(current->type())))
+            if (current == m_interceptor || (typedArraysIntercept && isTypedArrayType(current->type())) || JSGlobalObject::isTakenToInterceptIndexedAccesses(current))
                 return true;
             JSValue prototype = current->getPrototypeDirect();
             if (prototype.isNull())
@@ -3160,6 +3160,15 @@ void JSGlobalObject::haveABadTime(VM& vm)
     }
 }
 
+bool JSGlobalObject::isTakenToInterceptIndexedAccesses(const JSObject* object)
+{
+    Structure* structure = object->structure();
+    if (!structure->mayBePrototype())
+        return false;
+    JSGlobalObject* realm = structure->realm();
+    return realm && realm->m_prototypesThatCanChangeInterceptIndexedAccesses && !(structure->hasImmutableIndexedProperties() && structure->hasImmutablePrototype());
+}
+
 void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
 {
     ASSERT(&vm == &this->vm());
@@ -3180,9 +3189,10 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     Vector<JSObject*> foundObjects;
     Vector<JSGlobalObject*> affectedRealms;
     ObjectsWithInterceptorInChainFinder finder(interceptor, foundObjects, affectedRealms);
-    if (finder.findsNothingBelowInterceptor(vm))
+    if (m_prototypesThatCanChangeInterceptIndexedAccesses || finder.findsNothingBelowInterceptor(vm))
         foundObjects.append(interceptor);
     else {
+        m_prototypesThatCanChangeInterceptIndexedAccesses = true;
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
     }

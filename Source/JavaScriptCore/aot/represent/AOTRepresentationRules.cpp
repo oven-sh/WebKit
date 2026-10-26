@@ -12,6 +12,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTCFG.h"
 #include "AOTChooseCallingConventions.h"
+#include "AOTHeldOperands.h"
 #include "AOTOperatorForms.h"
 #include "AOTPlacement.h"
 #include "AOTResultRules.h"
@@ -477,7 +478,7 @@ static Representation wantedByResults(const RepresentationInputs& inputs, const 
 static Representation wantedByDeclaredPosition(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)
 {
     ValueID operand = user.operand(operandIndex);
-    if (!operand)
+    if (!operand || isHeldOperand(user, operandIndex))
         return Representation::Unchosen;
 
     const Placement& placement = inputs.placement;

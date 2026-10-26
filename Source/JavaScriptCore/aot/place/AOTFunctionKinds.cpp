@@ -457,7 +457,7 @@ bool rejectsOnThrow(const Program& program, const Function& function)
 // StackFrame gives an async frame of such a function no name. The frame of an async function keeps the name the function itself has, not one it takes from a variable or a property.
 static bool isNamedByOwner(const Function& function)
 {
-    if (function.role != FunctionRole::CoroutineBody && function.role != FunctionRole::AsyncWorker)
+    if (function.role != FunctionRole::CoroutineBody)
         return false;
     bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
     switch (kindOfCoroutine(function)) {
@@ -545,6 +545,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.isNamedByOwner = isNamedByOwner(function);
     record.isNakedConstructor = source.has(FunctionFlags::IsNakedConstructor);
     record.isNamedBySymbol = source.has(FunctionFlags::IsNamedBySymbol);
+    record.recordsCallee = source.has(FunctionCapabilities::RecordsCallee);
     return record;
 }
 

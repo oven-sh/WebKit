@@ -23,7 +23,17 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     ValueFlowName everySetter = foundName(unknownHeapKey, HeapPropertyPart::Setter);
     ValueFlowName valueUnderUnknownKey = writtenName(unknownHeapKey, HeapPropertyPart::Value);
 
+    if (storesThroughSetters) {
+        ValueFlowOperand anyValue { { }, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult) };
+        replaceMembersThroughSettersFoundFrom(targets, unknownHeapKey, PropertySearch::WholeChain, &anyValue);
+    }
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
+    // A source nobody knows stands for whatever has escaped.
+    bool mayBeBunThatEscaped = mayBeUnknownObject(sources) && hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())));
+    if (mayBeBunThatEscaped)
+        add(m_context.written(known(targets), copiedFromName), only(m_universe.objectOf(Builtins::Bun)));
+    if (mayBeBunThatEscaped || holdsNamedBun(source))
+        add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
     notePrototypeObjectsListedAtWrite(target, targets, unknownHeapKey);
     connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));
 
@@ -157,6 +167,10 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     auto addFunctionNobodyFollows = [&] {
         add(m_statement.result, m_context.restrict(ClimbingSet(Typed::unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult)), m_universe.objects()));
     };
+    // Whoever has the setter in hand calls it with any value.
+    ValueFlowOperand anyValue { { }, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult) };
+    if (replaceMembersThroughSettersFoundFrom(receivers, key, search, part == HeapPropertyPart::Setter ? &anyValue : nullptr))
+        addFunctionNobodyFollows();
     if (search == PropertySearch::OwnProperty && holdsOnlyWhatWasWritten(receivers) && holdsOnlyWhatWasWritten(withSourcesOfCopies(m_context, known(receivers)))) {
         readOwn(withSourcesOfCopies(m_context, known(receivers)), foundName(key, part), m_statement.result);
         if (mayFindAccessorOfArguments)
@@ -179,7 +193,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
     const ValueFlowOperand& object = operands.object;
     const ValueFlowOperand& value = operands.value;
     auto forEachKey = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor, const ValueFlowOperand* stored = nullptr) {
-        forEachKeyOfAction(action.key, operands.key, functor, { &object, stored });
+        forEachKeyOfAction(action.key, operands.key, functor, { &object, stored, false, action.kind == BuiltinPropertyActionKind::ReadsByKey });
     };
 
     PropertySearch search = action.value.kind == BuiltinPlaceKind::ResultField ? PropertySearch::OwnProperty : PropertySearch::WholeChain;

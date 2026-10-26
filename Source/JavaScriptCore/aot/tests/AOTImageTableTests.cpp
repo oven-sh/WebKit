@@ -820,10 +820,10 @@ static void testSlotHandlerOffsets()
 {
     const Image& loaded = *smallImage().image;
     std::span<const uint32_t> offsets = loaded.slotHandlerOffsets();
-    AOT_TEST_CHECK(offsets.size() == numberOfSlotHandlerTables * numberOfSlotKinds);
+    AOT_TEST_CHECK(offsets.size() == numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     for (SlotHandlerTable table : allSlotHandlerTables) {
-        for (Slot::Kind kind : allSlotKinds) {
-            uint32_t offset = offsets[static_cast<unsigned>(table) * numberOfSlotKinds + static_cast<unsigned>(kind)];
+        for (Slot::Kind kind : slotKindsWithHandlers) {
+            uint32_t offset = offsets[static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers + static_cast<unsigned>(kind)];
             const void* address = loaded.stubAddress(slotHandlerFor(table, kind));
             AOT_TEST_CHECK(address ? address == loaded.sharedCodeCopy(0) + offset : offset == offsetOfAbsentStub);
         }

@@ -21,6 +21,7 @@ struct TraceFrame {
     bool isInlined;
     bool isConstructCall;
     bool isClassCalledWithoutNew { false };
+    bool isAsyncFrame { false };
 
     static TraceFrame of(CompiledFrameIterator&);
 };

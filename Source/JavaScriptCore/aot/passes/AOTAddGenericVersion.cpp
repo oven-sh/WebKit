@@ -438,17 +438,47 @@ struct GenericVersionBuilder {
         });
     }
 
-    // `fiber === cursor.current`: beside what is no number, no string and no bigint the bits are compared, whatever the checked value is.
-    bool isOnlyComparedByBits(ValueID check)
+    // What a test has left of the value goes on as a parameter of the block behind the test.
+    void addValuesNarrowedBehind(BlockID from, const BitVector& isSameValue, NOESCAPE const auto& add)
     {
-        const Type& anything = types.at(TypeTable::anything);
+        forEachEdgeResultParameter(function, from, [&](ValueID parameter, EdgeResultPosition position) {
+            ValueID narrowed = operandNarrowedOnEdge(function, position);
+            if (narrowed && isSameValue.get(narrowed.index()))
+                add(parameter);
+        });
+    }
+
+    void addValuesNarrowedByAnswer(ValueID answer, const BitVector& isSameValue, NOESCAPE const auto& add)
+    {
+        for (const Use& useOfAnswer : analyses.useLists().usesOf(answer)) {
+            if (useOfAnswer.kind == Use::Kind::TerminatorOperand)
+                addValuesNarrowedBehind(useOfAnswer.block, isSameValue, add);
+        }
+    }
+
+    // `fiber === cursor.current`: beside what is no number, no string and no bigint the bits are compared, whatever the checked value is.
+    bool comparesBits(const Use& use)
+    {
+        if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::StrictEq)
+            return false;
+        // The other side must not owe its type to a check that goes for the same reason.
+        ValueID other = function.at(use.user).operand(1 - use.operandIndex);
+        return function.at(other).opcode != Opcode::Check && canCompareBits(typeOf(other), types.at(TypeTable::anything));
+    }
+
+    bool isComparedByBitsAtEachUse(ValueID check)
+    {
         std::span<const Use> uses = analyses.useLists().usesOf(check);
-        return !uses.empty() && std::ranges::all_of(uses, [&](const Use& use) {
-            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::StrictEq)
+        return !uses.empty() && std::ranges::all_of(uses, [&](const Use& use) { return comparesBits(use); });
+    }
+
+    bool isOnlyComparedBehindComparisons(ValueID check, Vector<ValueID, 8>& casts)
+    {
+        return acceptsEveryUseOfCheckedValue(check, casts, [](Opcode) { return false; }, [&](const Use& use, const BitVector& isSameValue, const auto& add) {
+            if (!comparesBits(use))
                 return false;
-            // The other side must not owe its type to a check that goes for the same reason.
-            ValueID other = function.at(use.user).operand(1 - use.operandIndex);
-            return function.at(other).opcode != Opcode::Check && canCompareBits(typeOf(other), anything);
+            addValuesNarrowedByAnswer(use.user, isSameValue, add);
+            return true;
         });
     }
 
@@ -458,20 +488,11 @@ struct GenericVersionBuilder {
         const Type& checked = types.at(function.at(check).castType());
         if (!checked.hasLiteralStrings() || !checked.hasOnlyPrimitives(Primitive::LiteralString | Primitive::UndefinedOrNull))
             return false;
-        const UseLists& useLists = analyses.useLists();
         return acceptsEveryUseOfCheckedValue(check, casts, isCastWithoutTest, [&](const Use& use, const BitVector& isSameValue, const auto& add) {
-            // What a test has left of the value goes on as a parameter of the block behind the test.
-            auto addValuesNarrowedBehind = [&](BlockID from) {
-                forEachEdgeResultParameter(function, from, [&](ValueID parameter, EdgeResultPosition position) {
-                    ValueID narrowed = operandNarrowedOnEdge(function, position);
-                    if (narrowed && isSameValue.get(narrowed.index()))
-                        add(parameter);
-                });
-            };
             if (use.kind == Use::Kind::TerminatorOperand) {
                 if (function.at(use.block).terminator.kind != TerminatorKind::SwitchString)
                     return false;
-                addValuesNarrowedBehind(use.block);
+                addValuesNarrowedBehind(use.block, isSameValue, add);
                 return true;
             }
             const Value& user = function.at(use.user);
@@ -483,10 +504,7 @@ struct GenericVersionBuilder {
             // An operation that takes any value, only looks at it and answers yes or no.
             if (user.operandKind(use.operandIndex) != OperandKind::Any || user.operandUses(use.operandIndex) != OperandUses { OperandUse::Inspects } || !typeOf(use.user).isBoolean())
                 return false;
-            for (const Use& useOfAnswer : useLists.usesOf(use.user)) {
-                if (useOfAnswer.kind == Use::Kind::TerminatorOperand)
-                    addValuesNarrowedBehind(useOfAnswer.block);
-            }
+            addValuesNarrowedByAnswer(use.user, isSameValue, add);
             return true;
         });
     }
@@ -499,18 +517,24 @@ struct GenericVersionBuilder {
             return false;
         Vector<ValueID, 8> dropped;
         Vector<ValueID, 8> erasedCasts;
+        Vector<ValueID, 8> usedBehindComparisons;
         const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
         for (const CheckSite& site : sites) {
             Vector<ValueID, 8> casts { site.check };
             auto isHandedOnParameter = [&] {
                 return entryParameters.contains(sameObjectThroughCasts(function, function.at(site.check).valueOperand())) && !isReliedOn(site.check, casts);
             };
-            if (!isOnlyComparedByBits(site.check) && !isListedTextThatIsOnlyCompared(site.check, casts) && !isHandedOnParameter())
+            bool isCompared = isComparedByBitsAtEachUse(site.check);
+            if (isCompared && !isOnlyComparedBehindComparisons(site.check, casts)) {
+                usedBehindComparisons.append(site.check);
+                continue;
+            }
+            if (!isCompared && !isListedTextThatIsOnlyCompared(site.check, casts) && !isHandedOnParameter())
                 continue;
             dropped.append(site.check);
             erasedCasts.appendVector(casts);
         }
-        if (dropped.isEmpty())
+        if (dropped.isEmpty() && usedBehindComparisons.isEmpty())
             return false;
 
         // What an operation makes of the value does not depend on its type, so nothing but the casts changes.
@@ -521,8 +545,10 @@ struct GenericVersionBuilder {
         didChangeCastsInPlace();
         valuesTurnedAway.appendVector(dropped);
         context.build.statistics().count(StatisticID::ChecksReplacedByGuards, dropped.size());
+        // What a comparison has left of the value goes on, and all that is typed from it there starts over.
+        replaceChecksWithGuards(usedBehindComparisons.span());
         typeAgain();
-        sites.removeAllMatching([&](const CheckSite& site) { return dropped.contains(site.check); });
+        sites.removeAllMatching([&](const CheckSite& site) { return dropped.contains(site.check) || usedBehindComparisons.contains(site.check); });
         return true;
     }
 

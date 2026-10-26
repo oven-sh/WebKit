@@ -388,9 +388,9 @@ static void testPut(LoadedProgram& program)
     PutPropertySlot displayNameSlot(closureWithDisplayName, true);
     AOT_TEST_CHECK(put(program, closureWithDisplayName, vm.propertyNames->displayName, jsNontrivialString(vm, "shown"_s), displayNameSlot));
     AOT_TEST_CHECK(!displayNameSlot.isCacheablePut());
-    // A function that captures has many function objects, and a frame does not say which of them runs in it: nothing is written down.
-    AOT_TEST_CHECK(captureCountsOf(function).captures && !FunctionTables::of(vm).hasDisplayNames.load());
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "arrow"_s);
+    // The frames of this function do not record the function object that runs in them: the name stands for all of them.
+    AOT_TEST_CHECK(captureCountsOf(function).captures && FunctionTables::of(vm).hasDisplayNames.load());
+    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown"_s);
 }
 
 static void storeDisplayName(LoadedProgram& program, JSObject* closure, ASCIILiteral displayName)

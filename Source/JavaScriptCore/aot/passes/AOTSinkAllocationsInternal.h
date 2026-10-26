@@ -10,6 +10,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFreshResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTLiveness.h"
 #include "AOTSinkAllocations.h"
@@ -350,9 +351,6 @@ struct RewriteTables {
     BitVector blocksLeftAsTheyAre;
     // Of a function that reads its arguments. No analysis can be made of a function that is half rewritten.
     Vector<ValueID> identityOfValue;
-    // Those that control may enter after the function was suspended.
-    BitVector blocksBehindSuspensions;
-    bool maySuspend { false };
 };
 
 class RewriteCursor {
@@ -535,8 +533,6 @@ private:
     void findNames();
     const BitVector& findBlocksWithLiveDefinition(VirtualObjectID);
     void findWhetherObjectsAreBuiltBeforeBranches();
-    void findBlocksBehindSuspensions();
-    void keepOnlySpecifiedValuesAlive(IRBuilder&);
     void computeInputs();
     void computeInputsOf(BlockID);
 
@@ -652,7 +648,7 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
-bool buildsItsOperands(const Program&, const Value& user);
+bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed
 

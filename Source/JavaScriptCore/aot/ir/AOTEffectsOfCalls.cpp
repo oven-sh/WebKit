@@ -134,6 +134,8 @@ static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, Eff
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
+    if (callee.has(FunctionCapabilities::RecordsCallee))
+        description.addOwn(declaredBoundOf(Opcode::RecordCallee));
 }
 
 static bool takesThisFromConstruction(const Function& callee)

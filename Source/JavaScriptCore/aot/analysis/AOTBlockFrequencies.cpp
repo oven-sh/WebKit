@@ -69,12 +69,32 @@ static bool isForwardEdge(const CFG& cfg, BlockID from, BlockID to)
     return cfg.reversePostOrderIndex(from) < cfg.reversePostOrderIndex(to);
 }
 
+// Each operand of a condition reaches the arm through a block of its own, which only narrows or names values and jumps on. Such a block is a part of the edge.
+static bool isPartOfEdgeToUnlikelyBlock(const Function& function, BlockID id)
+{
+    const Block& block = function.at(id);
+    if (id == entryBlock || block.terminator.targets.size() != 1 || function.at(block.terminator.targets[0].block).frequency != BlockFrequency::Unlikely)
+        return false;
+    return std::ranges::all_of(block.values, [&](ValueID valueID) {
+        const Value& value = function.at(valueID);
+        return value.opcode == Opcode::Upcast || value.opcode == Opcode::AssumeType || isRematerializable(value);
+    });
+}
+
+static BlockFrequency recordedFrequencyOf(const Function& function, BlockID id)
+{
+    BlockFrequency recorded = function.at(id).frequency;
+    if (recorded == BlockFrequency::Normal && isPartOfEdgeToUnlikelyBlock(function, id))
+        return BlockFrequency::Unlikely;
+    return recorded;
+}
+
 static bool isEnteredByJumpFromLikelierBlock(const Function& function, const CFG& cfg, BlockID block)
 {
     return std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
         if (edge.isHandlerEdge() || !hasSingleTarget(function, edge.from) || !isForwardEdge(cfg, edge.from, block))
             return false;
-        switch (function.at(edge.from).frequency) {
+        switch (recordedFrequencyOf(function, edge.from)) {
         case BlockFrequency::Normal:
             return true;
         case BlockFrequency::Unlikely:
@@ -103,7 +123,7 @@ RecordedFrequencyUse recordedFrequencyUseOf(const Function& function, const CFG&
 
 static BlockFrequency appliedFrequencyOf(const FrequencyInputs& inputs, std::span<const FrequencyFacts::BlockFacts> blocks, BlockID id)
 {
-    BlockFrequency recorded = inputs.function.at(id).frequency;
+    BlockFrequency recorded = recordedFrequencyOf(inputs.function, id);
     if (recorded != BlockFrequency::Unlikely)
         return recorded;
     if (inputs.ignoresBranchHints)
@@ -259,10 +279,15 @@ static FrequencyFacts collectFacts(const FrequencyInputs& inputs)
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         FrequencyFacts::BlockFacts& blockFacts = facts.blocks[id.index()];
-        blockFacts.recorded = block.frequency;
+        blockFacts.recorded = recordedFrequencyOf(function, id);
         blockFacts.applied = appliedFrequencyOf(inputs, facts.blocks.span(), id);
         blockFacts.isInherentlyRare = isInherentlyRare(function, block);
         blockFacts.isNormalExit = isNormalExit(block.terminator);
+    }
+    for (BlockID id : cfg.reversePostOrder()) {
+        const Block& block = function.at(id);
+        if (facts.blocks[id.index()].recorded != block.frequency && facts.blocks[block.terminator.targets[0].block.index()].applied == BlockFrequency::Normal)
+            facts.blocks[id.index()].applied = BlockFrequency::Normal;
     }
     for (unsigned index = 0; index < cfg.numNodes(); ++index) {
         BlockID id(index);
@@ -344,6 +369,8 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
             edges[firstSuccessor[block.index()] + 1] = rarerOf(edges[firstSuccessor[block.index()] + 1], BlockFrequency::Unlikely);
             break;
         }
+        if (facts[block.index()].recorded != function.at(block).frequency)
+            edges[firstSuccessor[block.index()]] = BlockFrequency::Normal;
         if (hasHandlers && cfg.hasHandler(block))
             edges[firstSuccessor[block.index() + 1] - 1] = BlockFrequency::Rare;
         if (facts[block.index()].isRare())
@@ -407,7 +434,7 @@ bool BlockFrequencies::describes(const AnalysisContext& context, const Function&
     for (BlockID id : m_cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         const FrequencyFacts::BlockFacts& known = m_facts.blocks[id.index()];
-        if (block.frequency != known.recorded || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
+        if (recordedFrequencyOf(function, id) != known.recorded || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
             return false;
     }
 

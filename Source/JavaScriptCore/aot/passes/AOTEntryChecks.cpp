@@ -1067,6 +1067,11 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
         emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
+        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee)) {
+            Value record = IRBuilder::make(Opcode::RecordCallee);
+            record.setClosureOperand(closure);
+            builder.append(WTF::move(record));
+        }
         Vector<ValueID, 8> captures = appendCaptures(builder, request.target, closure);
         ValueID call = appendDirectCall(builder, {
             .callee = request.target,

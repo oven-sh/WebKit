@@ -58,9 +58,9 @@ String FunctionDescription::name(VM& vm) const
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, m_function, NameForm::AsWritten);
 }
 
-String FunctionDescription::nameInFrames(VM& vm) const
+String FunctionDescription::nameInFrames(VM& vm, JSCell* callee) const
 {
-    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, m_function, NameForm::InFrames);
+    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, m_function, NameForm::InFrames, callee ? asObject(callee) : nullptr);
 }
 
 #define AOT_DEFINE_FLAG_OF_TRACE_RECORD(flag) \
@@ -69,6 +69,7 @@ AOT_DEFINE_FLAG_OF_TRACE_RECORD(isStrict)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isConstructor)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNakedConstructor)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedBySymbol)
+AOT_DEFINE_FLAG_OF_TRACE_RECORD(recordsCallee)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isAsync)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(isNamedByOwner)
 AOT_DEFINE_FLAG_OF_TRACE_RECORD(rejectsOnThrow)
@@ -143,6 +144,7 @@ public:
         return *m_site;
     }
     bool isAtFirstReadSite() const { return m_isAtFirstReadSite && site().site.firstReadSite; }
+    void* callerStackPointer() const { return stackPointerOfCaller(m_callFrame, bytesAboveReturnAddressOf(site())); }
     const CompiledFrameExit& exit() const
     {
         ASSERT(isAtEnd());
@@ -285,6 +287,7 @@ struct CapturedRun {
     size_t numberShown { 0 };
     size_t numberOmitted { 0 };
     bool foundConstructorToSkip { false };
+    bool hasFrameNamedByCallee { false };
 };
 
 struct FramesAboveRun {
@@ -310,7 +313,7 @@ static NEVER_INLINE void countLogicalFrames(const Image& image, const CallSiteCa
     }
 }
 
-static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered)
+static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSCell* lastConstructorToSkip, const FramesAboveRun& framesAbove, bool calleeWasEntered, bool hasRecordedCallees)
 {
     using Trace = ReturnAddressTrace;
     ASSERT(!walk.isAtEnd());
@@ -325,6 +328,10 @@ static void captureRun(RunWalk& walk, CapturedRun& run, size_t maxStackSize, JSC
         if (site.site.isConstruct && !run.returnAddresses.isEmpty())
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         outermostCode = site.code;
+        if (hasRecordedCallees && FunctionDescription(walk.image().rootFunctionOf(site.code.index())).recordsCallee()) [[unlikely]] {
+            run.hasFrameNamedByCallee = true;
+            return;
+        }
 
         run.append(Trace::encode(site.address, codeStart));
         if (walk.isAtFirstReadSite())
@@ -428,6 +435,14 @@ static std::optional<RunStart> findRunAtTop(VM& vm)
     return RunStart { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false };
 }
 
+void recordCallee(VM& vm, JSObject* closure)
+{
+    CallFrame* operationRecord = vm.topCallFrame;
+    RunWalk walk(vm.aotState(), { stackPointerOfCaller(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), vm.topEntryFrame, false, false });
+    RELEASE_ASSERT(!walk.isAtEnd());
+    FunctionTables::of(vm).recordCallee(vm, walk.callerStackPointer(), closure);
+}
+
 static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
 {
     std::optional<CompiledFrameIterator> frames;
@@ -482,6 +497,8 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
             return nullptr;
         framesAbove = { results.size(), true };
     }
+    // A return address does not say which function object runs in the frame.
+    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCalleesAbove(start->stackPointer);
     Instance* instance = findInstance(vm, *start);
     if (!instance)
         return nullptr;
@@ -490,8 +507,8 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     if (walk.isAtEnd())
         return nullptr;
     CapturedRun run;
-    captureRun(walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered);
-    if (!run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
+    captureRun(walk, run, maxStackSize, lastConstructorToSkip, framesAbove, start->calleeWasEntered, hasRecordedCallees);
+    if (run.hasFrameNamedByCallee || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
         return nullptr;
 
     assertNoGC.reset();
@@ -692,7 +709,7 @@ static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, WTF::V
 
 bool isSuspendedAsyncFunction(JSCell* cell)
 {
-    return !!findSuspendedAsyncFunction(cell).coroutine;
+    return findSuspendedAsyncFunction(cell).coroutine && !isSuspendedModuleBody(cell->vm(), cell);
 }
 
 bool isSuspendedModuleBody(VM& vm, JSValue coroutine)

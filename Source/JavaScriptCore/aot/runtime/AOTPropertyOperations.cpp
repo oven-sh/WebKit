@@ -139,12 +139,72 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdSloppy, void, (Instance* instance, E
     OPERATION_RETURN(scope);
 }
 
+// Files what the stubs can repeat for the next object of this Structure, or that they cannot.
+static NEVER_INLINE bool deleteAndFile(Instance* instance, JSObject* object, PropertyName property)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    constexpr SlotAccess access = SlotAccess::Delete;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    Structure* structureBefore = object->structure();
+    Object* compiled = compiledObjectOrNull(object);
+    JSObject* extra = compiled ? compiled->extraProperties() : nullptr;
+    bool belongsToOneObject = extra && !compiled->compiledStructure().extraPropertiesSlot();
+    if (belongsToOneObject || !caches.shouldFile(structureBefore->id(), property.uid(), access))
+        RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
+    CachedAccess filed { structureBefore, { property.uid(), std::nullopt }, access };
+    // The next object arrives as this one did, so nothing is gained by a Structure that says more.
+    bool listsExtraProperties = extra && compiled->compiledStructure().listsEveryExtraProperty();
+    if (extra && !listsExtraProperties && !compiled->fieldNamed(compiled->state(), property)) {
+        caches.cache(filed, PropertyAnswer::uncacheable(access));
+        RELEASE_AND_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
+    }
+    uint32_t orderWordBefore = compiled ? compiled->orderWord() : 0;
+    DeletePropertySlot slot;
+    bool deleted = object->methodTable()->deleteProperty(object, globalObject, property, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    PropertyAnswer answer = PropertyAnswer::uncacheable(access);
+    if (deleted) {
+        if (listsExtraProperties)
+            compiled->ensureStructureForExtraProperties(vm);
+        answer = classifyDeletion({ globalObject, object, structureBefore, orderWordBefore, property.uid(), slot });
+    }
+    // Whoever arrives with this Structure again finds a slot, and does not ask for one to be filed.
+    caches.cache(filed, answer.didFlatten ? PropertyAnswer::uncacheable(access) : answer);
+    return deleted;
+}
+
+static ALWAYS_INLINE size_t deleteNamedProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName property, bool isStrict, Instance* instanceThatFiles)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Structure* structure = object->structure(); object->type() == FinalObjectType && structure->isDictionary() && !structure->isUncacheableDictionary()) {
+        // Every name that a cacheable dictionary gives up makes a Structure and a copy of its table.
+        unsigned attributes;
+        if (isValidOffset(structure->get(vm, property, attributes)) && !(attributes & PropertyAttribute::DontDelete))
+            object->convertToUncacheableDictionary(vm);
+    }
+    bool deleted = instanceThatFiles ? deleteAndFile(instanceThatFiles, object, property) : JSCell::deleteProperty(object, globalObject, property);
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (!deleted && isStrict)
+        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+    return deleted;
+}
+
 static size_t deleteFromValue(JSGlobalObject* globalObject, JSValue base, const Identifier* name, JSValue key, bool isStrict)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = base.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
+    if (uint32_t index; !name && key.getUInt32(index)) {
+        bool deleted = object->methodTable()->deletePropertyByIndex(object, globalObject, index);
+        RETURN_IF_EXCEPTION(scope, 0);
+        if (!deleted && isStrict)
+            throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+        return deleted;
+    }
     Identifier nameOfKey;
     if (auto longKeyName = name ? std::nullopt : findNameEqualToLongString(object, key, false)) [[unlikely]] {
         if (!*longKeyName)
@@ -154,18 +214,7 @@ static size_t deleteFromValue(JSGlobalObject* globalObject, JSValue base, const 
         nameOfKey = key.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, 0);
     }
-    PropertyName property = name ? *name : nameOfKey;
-    if (Structure* structure = object->structure(); object->type() == FinalObjectType && structure->isDictionary() && !structure->isUncacheableDictionary()) {
-        // Every name that a cacheable dictionary gives up makes a Structure and a copy of its table.
-        unsigned attributes;
-        if (isValidOffset(structure->get(vm, property, attributes)) && !(attributes & PropertyAttribute::DontDelete))
-            object->convertToUncacheableDictionary(vm);
-    }
-    bool deleted = JSCell::deleteProperty(object, globalObject, property);
-    RETURN_IF_EXCEPTION(scope, 0);
-    if (!deleted && isStrict)
-        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
-    return deleted;
+    RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, name ? *name : nameOfKey, isStrict, nullptr));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDeleteById, size_t, (Instance* instance, EncodedJSValue base, uint32_t name))
@@ -192,6 +241,35 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValSloppy, size_t, (Instance* insta
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeleteByValSloppy);
     OPERATION_RETURN(scope, deleteFromValue(globalObject, JSValue::decode(base), nullptr, JSValue::decode(key), false));
+}
+
+static ALWAYS_INLINE size_t deleteByName(Instance* instance, JSCell* base, UniquedStringImpl* uid, bool isStrict)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = JSValue(base).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    Instance* instanceThatFiles = nullptr;
+    // The stub found the Structure and the name in no table, and not for the first time.
+    if (instance->propertyCaches.missIsDueForFiling) [[unlikely]] {
+        instance->propertyCaches.missIsDueForFiling = 0;
+        if (object == base)
+            instanceThatFiles = instance;
+    }
+    RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, uid, isStrict, instanceThatFiles));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByName, size_t, (Instance* instance, JSCell* base, UniquedStringImpl* uid))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeleteByName);
+    OPERATION_RETURN(scope, deleteByName(instance, base, uid, true));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByNameSloppy, size_t, (Instance* instance, JSCell* base, UniquedStringImpl* uid))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeleteByNameSloppy);
+    OPERATION_RETURN(scope, deleteByName(instance, base, uid, false));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Instance* instance, EncodedJSValue home, uint32_t homeKind))

@@ -25,6 +25,7 @@
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFuseGeneratorLoops.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccess.h"
@@ -209,6 +210,8 @@ struct IterationExpansion {
     SSARepair* repair;
     IterationOrigin origin { IterationOrigin::Source };
     const IRBuilder::Expansion* operation { nullptr };
+    // What the operation holds while the function is suspended in it.
+    std::span<const ValueID> held { };
     ValueID positionInFrontOfStep { };
     ValueID positionBehindStep { };
 
@@ -272,7 +275,8 @@ struct IterationExpansion {
     ValueID appendElement(ValueID object, ValueID index) { return builder.append(makeWith(Opcode::ElemGet, { object, index }, &Value::setKeyIsIntegral, true)); }
     ValueID appendRequireObject(ValueID value, RuntimeErrorKind kind) { return builder.append(makeWith(Opcode::RequireObject, { value }, &Value::setRuntimeError, kind)); }
     ValueID appendUnspecifiedLike(ValueID model) { return builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, function.at(model).type)); }
-    ValueID appendAwaitIfAsync(IteratorKind kind, ValueID value) { return kind == IteratorKind::Async ? appendAwait(builder, value) : value; }
+    ValueID appendAwait(ValueID value) { return Typed::appendAwait(builder, value, held); }
+    ValueID appendAwaitIfAsync(IteratorKind kind, ValueID value) { return kind == IteratorKind::Async ? appendAwait(value) : value; }
     ValueID appendIteratorMethodCall(ValueID method, ValueID iterable, RuntimeErrorKind errorKind = RuntimeErrorKind::IteratorIsNotAnObject) { return appendRequireObject(appendCall(method, iterable, { }), errorKind); }
     IRBuilder::ProvenBranch branchOnInRange(const ArmState& state, ValueID length) { return builder.emitBranchWithProof(builder.append(Opcode::Less, { state.position->anyDefinition, length })); }
     IRBuilder::BranchBlocks branchOnNotStepped(ValueID status) { return builder.emitBranch(appendIsEqualToInteger(status, GeneratorStepStatus::NotStepped), BlockFrequency::Rare, BlockFrequency::Normal); }
@@ -1312,7 +1316,7 @@ static void emitProtocolStep(IterationExpansion& expansion, const ArmState& stat
         IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
         // %AsyncFromSyncIteratorPrototype%.next passes on what it was called with: where nothing is sent, the iterator's `next` is called without an argument.
         ValueID sent = request.sent ? request.sent : builder.append(Opcode::Absent, { });
-        finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(builder, state.subject, sent), request);
+        finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(builder, state.subject, sent, expansion.held), request);
         builder.moveToEndOf(blocks.notTaken);
     }
     emitStepByCall(expansion, state, request);
@@ -1350,7 +1354,7 @@ static void emitAsyncGeneratorStep(IterationExpansion& expansion, const ArmState
         return;
     }
     ValueID sent = request.sent ? request.sent : expansion.builder.appendUndefined();
-    finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(expansion.builder, state.subject, sent), request);
+    finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(expansion.builder, state.subject, sent, expansion.held), request);
 }
 
 static void emitGeneratorClose(IterationExpansion& expansion, const ArmState& state, IteratorCompletion completion)
@@ -2365,6 +2369,7 @@ struct ArmDispatcher {
             // The overload without reads looks them up in the whole function and erases them wherever they stand, which moves the points of the sites still to come.
             IRBuilder::Expansion operation = isStep ? builder.beginExpansion(site.point, site.resultReads.span()) : builder.beginExpansion(site.point);
             expansion.operation = &operation;
+            expansion.held = heldOperandsOf(original);
 
             bool tracksDone = done && isStep && (!hasCopyPerArm || states[site.copy].patternRead == PatternRead::BySteps);
             if (tracksDone) {
@@ -2403,7 +2408,7 @@ struct ArmDispatcher {
         if (original.opcode == Opcode::IteratorClose) {
             // %AsyncFromSyncIteratorPrototype%.return finds no method to call on the iterator of such an arm and answers with a fulfilled promise, which the close awaits.
             if (state.arm.awaitsEachValue)
-                appendAwait(builder, builder.appendUndefined());
+                expansion.appendAwait(builder.appendUndefined());
             if (state.arm.awaitsEachValue || !state.arm.hasMethodsToCall())
                 expansion.finishClose();
             else if (state.arm.form == IterationForm::Generator)
@@ -2452,13 +2457,13 @@ struct ArmDispatcher {
 
         builder.moveToEndOf(thrown);
         ValueID exception = builder.append(Opcode::CatchException, { });
-        appendAwait(builder, builder.appendUndefined());
+        expansion.appendAwait(builder.appendUndefined());
         builder.emitRethrow(exception);
 
         builder.moveToEndOf(step.continuation);
         bool isInAsyncGenerator = function.role == FunctionRole::CoroutineBody ? coroutineOfBody(function).kind == CoroutineKind::AsyncGenerator : function.has(FunctionFlags::IsAsync) && function.has(FunctionFlags::IsGenerator);
         if (!isInAsyncGenerator) {
-            ValueID value = appendAwait(builder, step.results[valueResult]);
+            ValueID value = expansion.appendAwait(step.results[valueResult]);
             function.edit(value, ValueEdit::Definition).setTakesExtraTurn(true);
             expansion.finishStep(step.results[doneResult], value);
             return;
@@ -2473,10 +2478,10 @@ struct ArmDispatcher {
         builder.emitJump(awaiting);
 
         builder.moveToEndOf(awaiting);
-        builder.emitJump(awaited, { appendAwait(builder, step.results[valueResult]) });
+        builder.emitJump(awaited, { expansion.appendAwait(step.results[valueResult]) });
 
         builder.moveToEndOf(awaited);
-        appendAwait(builder, builder.appendUndefined());
+        expansion.appendAwait(builder.appendUndefined());
         expansion.finishStep(step.results[doneResult], value);
     }
 

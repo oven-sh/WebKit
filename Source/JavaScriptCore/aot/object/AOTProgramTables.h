@@ -106,6 +106,7 @@ static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTabl
     v(constructedAllocations, ConstructedAllocationData) \
     v(shapeSetBits, uint64_t) \
     v(propertyRuns, uint32_t) \
+    v(siteNames, uint32_t) \
     v(fieldTable, uint32_t) \
     v(fieldRecordIndices, uint16_t) \
     v(classMemberRows, uint32_t) \

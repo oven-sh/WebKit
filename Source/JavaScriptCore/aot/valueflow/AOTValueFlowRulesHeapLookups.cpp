@@ -646,8 +646,11 @@ void HeapRule::collectChain()
         if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
             connect(m_context.masked(m_context.lookup(m_context.valueWithinAskedLast(ClimbingSet(objectsOfProgram), links), prototypeLinkName), m_universe.holdersOfLibraryExports()), m_statement.result);
     }
-    above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName)))));
+    ValueFlowNodeID sourcesOfCopies = readWhereWritten(known(start), copiedFromName);
+    above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(sourcesOfCopies))));
     add(m_statement.result, known(above));
+    if (sourcesOfCopies && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), sourcesOfCopies))
+        add(m_statement.result, only(ValueFlowUniverse::markOfNamedBun()));
 
     if (m_context.numberOfMembersOfKey() != 1 || !hasBeenLost(known(start)))
         return;

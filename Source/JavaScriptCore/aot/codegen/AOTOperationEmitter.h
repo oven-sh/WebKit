@@ -119,6 +119,7 @@ protected:
     Pointer argumentBuffer(std::span<const Boxed>);
     Word32 identifierNumber(PropertyKeyID);
     Pointer siteCacheAddress(SiteCacheID);
+    static uint32_t siteCacheOperand(SiteCacheID id) { return id.index() * sizeof(uint32_t); }
 
     void fail(const OperationContext& context, InternalErrorKind kind) { m_generator.fail(context, kind); }
 

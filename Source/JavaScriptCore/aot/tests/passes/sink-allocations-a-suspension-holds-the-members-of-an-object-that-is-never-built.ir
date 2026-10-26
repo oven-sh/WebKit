@@ -1,5 +1,5 @@
-# What an object holds lives as long as the object. Where the object is never built, a use of it behind a suspension keeps alive each member that may be an object.
-# A member that is no object needs nothing, and neither does a use that no suspension comes before.
+# A suspended function holds what its suspension lists. Where a listed object is never built, the suspension lists each member that may be an object in its place.
+# A member that is no object is not listed.
 # FORM: Prepared
 # RUN: pass SinkAllocations
 
@@ -15,12 +15,11 @@ function f0 name="readBehindAwait" role=CoroutineRamp flags=[IsAsync] parameters
 function f1 name="readBehindAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=3} {
     v4 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v5 = FinishObject v4
-    v6 = AwaitBySavingFrame v2, v3
+    v6 = AwaitBySavingFrame v2, v3, v5
     v7 = PropGet v5 key="n" receivers=[L0]
     Return v7
 # CHECK-NOT: NewObject
-# CHECK: AwaitBySavingFrame
-# CHECK: KeepAlive v0
+# CHECK: AwaitBySavingFrame v2, v3, v0
 }
 
 function f2 name="holdsOnlyNumbers" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=3} {
@@ -32,25 +31,10 @@ function f2 name="holdsOnlyNumbers" role=CoroutineRamp flags=[IsAsync] parameter
 function f3 name="holdsOnlyNumbers" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=3} {
     v4 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v5 = FinishObject v4
-    v6 = AwaitBySavingFrame v2, v3
+    v6 = AwaitBySavingFrame v2, v3, v5
     v7 = PropGet v5 key="n" receivers=[L0]
     Return v7
 # CHECK-NOT: NewObject
-# CHECK-NOT: KeepAlive
-}
-
-function f4 name="readBeforeAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=3} {
-    v3 = NewPromise
-    v4 = CallDirect v0, v1, v2, v3 function=f5
-    Return v3
-}
-
-function f5 name="readBeforeAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=3} {
-    v4 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
-    v5 = FinishObject v4
-    v6 = PropGet v5 key="n" receivers=[L0]
-    v7 = AwaitBySavingFrame v2, v3
-    Return v6
-# CHECK-NOT: NewObject
-# CHECK-NOT: KeepAlive
+# CHECK-NOT: AwaitBySavingFrame v2, v3,
+# CHECK: AwaitBySavingFrame v2, v3
 }

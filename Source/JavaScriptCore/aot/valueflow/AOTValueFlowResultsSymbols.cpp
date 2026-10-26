@@ -113,9 +113,12 @@ void computeClosuresMadeOnce(const ValueFlowResultInputs& inputs, FlowResultTabl
         bool isMadeElsewhere = isMadeSomewhere.set(closure.function.index());
         hasOneClosure.set(closure.function.index(), closure.isMadeAtMostOnce && !isMadeElsewhere);
     }
+    tables.functions.functionsWhoseClosuresAreMadeOnce = hasOneClosure;
     for (const Variable& variable : program.variables) {
-        if (variable.initialization == VariableInitialization::Function && variable.function)
+        if (variable.initialization == VariableInitialization::Function && variable.function) {
             hasOneClosure.clear(variable.function.index());
+            tables.functions.functionsWhoseClosuresAreMadeOnce.set(variable.function.index(), !isMadeSomewhere.get(variable.function.index()));
+        }
     }
     for (const Layout& layout : program.layouts) {
         for (const ClassMember& member : layout.classFlow.members) {

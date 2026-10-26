@@ -281,6 +281,11 @@ void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfSta
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);
 
 // What filled a site was not in the field table: an access that the table answers never gets as far as a fill.
+// A caller names its site by the offset of the site's word in ProgramTables::siteNames(), which holds the name of the access. Only the ways behind a hit ask for the name.
+BaseIndex wordOfSite(StubAssembler&, GPRReg offsetOfName, ptrdiff_t offsetInSlot);
+void loadAddressOfSite(StubAssembler&, GPRReg offsetOfName, GPRReg site);
+// The offset and the site may have one register.
+void loadNameAndAddressOfSite(StubAssembler&, GPRReg offsetOfName, GPRReg name, GPRReg site);
 Jump branchIfSiteIsFilled(StubAssembler&, GPRReg site);
 void countSiteCacheMiss(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForRefill);
 void countMissOfEmptySite(StubAssembler&, GPRReg site, GPRReg scratch, JumpList& isDueForFill);

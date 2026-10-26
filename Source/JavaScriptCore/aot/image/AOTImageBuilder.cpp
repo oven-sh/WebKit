@@ -412,9 +412,9 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
 {
     Vector<uint32_t> offsets;
-    offsets.reserveInitialCapacity(numberOfSlotHandlerTables * numberOfSlotKinds);
+    offsets.reserveInitialCapacity(numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     for (SlotHandlerTable table : allSlotHandlerTables) {
-        for (Slot::Kind kind : allSlotKinds)
+        for (Slot::Kind kind : slotKindsWithHandlers)
             offsets.append(blob.offsetOf(slotHandlerFor(table, kind)).value_or(offsetOfAbsentStub));
     }
     return bytesOf(offsets);

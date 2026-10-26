@@ -147,6 +147,7 @@ struct ImageWords {
     const uint64_t* data;
     // Where the kind of function 0 would lie if ProgramTables::closureFunctionKinds() began with it: a stub adds the number of a closure's function.
     uintptr_t closureFunctionKindsOrigin;
+    const uint32_t* siteNames;
 };
 
 struct LazyStringWords {
@@ -382,7 +383,7 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
 #else
     constexpr ptrdiff_t offsetOfHandlers = AOT_INSTANCE_OFFSET(propertyCaches.handlers);
 #endif
-    return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKinds * sizeof(void*));
+    return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers * sizeof(void*));
 }
 
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()

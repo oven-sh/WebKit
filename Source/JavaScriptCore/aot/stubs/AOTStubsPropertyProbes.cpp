@@ -766,7 +766,7 @@ void CachedSlot::loadOwnWordIndex(StubAssembler& jit, GPRReg result) const
         jit.signExtend32ToPtr(m_payload, result);
         return;
     }
-    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition);
+    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal);
     if (payload == SlotPayload::Holder && m_form == SlotForm::PackedSlot)
         jit.signExtend32ToPtr(m_header, result);
     else
@@ -825,7 +825,7 @@ GPRReg CachedSlot::registerOfFirstPayloadWord() const
     const SlotPayload payload = Slot::payloadOf(m_kind);
     if (payload == SlotPayload::Field || payload == SlotPayload::Transition || payload == SlotPayload::CustomAccessor)
         return m_form == SlotForm::Slot ? m_payload : m_header;
-    RELEASE_ASSERT(m_form == SlotForm::Slot && (payload == SlotPayload::WordIndex || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition));
+    RELEASE_ASSERT(m_form == SlotForm::Slot && (payload == SlotPayload::WordIndex || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition || payload == SlotPayload::Removal || payload == SlotPayload::OrderWords));
     return m_payload;
 }
 
@@ -839,7 +839,7 @@ void CachedSlot::loadSecondPayloadWord(StubAssembler& jit, GPRReg result) const
     const SlotPayload payload = Slot::payloadOf(m_kind);
     const bool mayBePacked = payload == SlotPayload::Field || payload == SlotPayload::ExtraProperty || payload == SlotPayload::Transition;
     if (m_form == SlotForm::Slot) {
-        RELEASE_ASSERT(mayBePacked || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition);
+        RELEASE_ASSERT(mayBePacked || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition || payload == SlotPayload::Removal || payload == SlotPayload::OrderWords);
         jit.urshift64(m_payload, TrustedImm32(secondPayloadWordShift), result);
         return;
     }
@@ -890,6 +890,8 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     case SlotPayload::WordIndex:
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Removal:
+    case SlotPayload::OrderWords:
     case SlotPayload::Constant:
         break;
     }
@@ -1122,7 +1124,7 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
 {
     const SlotHandlerTableTraits traits = traitsOf(table);
     const SlotHandlerOperands operands = operandsOfSlotHandler(table);
-    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const std::array handlers = slotHandlerKeys(table);
     const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
     RELEASE_ASSERT(header == operands.header);
     RELEASE_ASSERT(noOverlap(scratch, operands.receiver, operands.header, operands.payload, operands.value, operands.keyCell, operands.identifierNumber, siteRegisterOf(traits).value_or(InvalidGPRReg), instanceGPR));
@@ -1137,7 +1139,7 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
 
 void callSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg kind)
 {
-    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const std::array handlers = slotHandlerKeys(table);
     const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
 #if CPU(ARM64) && defined(BUN_HARDENED)
     jit.add32(TrustedImm32(offsetOfHandlers / static_cast<int32_t>(sizeof(void*))), kind);
@@ -1337,6 +1339,36 @@ void markStaticsCard(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeO
     jit.urshift32(TrustedImm32(ProgramStatics::cardShift), offsetInStatics);
     jit.sub64(roundedSizeOfStatics, offsetInStatics);
     jit.store8(TrustedImm32(ProgramStatics::cardIsDirty), BaseIndex(staticsBase, offsetInStatics, CCallHelpers::TimesOne));
+}
+
+static_assert(sizeof(Slot) == 4 * sizeof(uint32_t));
+
+BaseIndex wordOfSite(StubAssembler& jit, GPRReg offsetOfName, ptrdiff_t offsetInSlot)
+{
+    return BaseIndex(instanceGPR, offsetOfName, CCallHelpers::TimesFour, static_cast<int32_t>(jit.options().offsetOfSiteCaches + offsetInSlot));
+}
+
+void loadAddressOfSite(StubAssembler& jit, GPRReg offsetOfName, GPRReg site)
+{
+#if CPU(ARM64)
+    // The site caches begin at a multiple of 4 KB, which one instruction adds.
+    static_assert(!(InstanceLayout::granuleAboveInstance % (4 * KB)) && !(InstanceLayout::offsetOfStringCells % (4 * KB)));
+    const uint32_t pages = jit.options().offsetOfSiteCaches / (4 * KB);
+    if (isUInt12(pages)) {
+        jit.m_assembler.add<64>(site, instanceGPR, offsetOfName, ARM64Assembler::LSL, 2);
+        jit.m_assembler.add<64>(site, site, UInt12(pages), 12);
+        return;
+    }
+#endif
+    jit.getEffectiveAddress(wordOfSite(jit, offsetOfName, 0), site);
+}
+
+void loadNameAndAddressOfSite(StubAssembler& jit, GPRReg offsetOfName, GPRReg name, GPRReg site)
+{
+    RELEASE_ASSERT(noOverlap(offsetOfName, name, instanceGPR) && noOverlap(site, name, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.siteNames)), name);
+    jit.load32(BaseIndex(name, offsetOfName, CCallHelpers::TimesOne), name);
+    loadAddressOfSite(jit, offsetOfName, site);
 }
 
 Jump branchIfSiteIsFilled(StubAssembler& jit, GPRReg site)

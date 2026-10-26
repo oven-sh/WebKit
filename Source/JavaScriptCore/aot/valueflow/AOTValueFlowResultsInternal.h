@@ -811,6 +811,7 @@ struct ValueFlowUsesOfHeapDeleter {
 };
 std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> computeUsesOfHeap(const ValueFlowResultInputs&);
 void listStoresByLayout(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const FlowResultTables&);
+void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs&, ValueFlowHeapView&, const ValueFlowUsesOfHeap&, FlowResultTables&);
 ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap&);
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);

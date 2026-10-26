@@ -8,9 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
+#include "AOTCompiledStructure.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsField.h"
+#include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
 #include "JSObject.h"
@@ -54,6 +57,8 @@ static StubSignature signatureOfKeyedOperands(unsigned numberOfOperands, StubRes
 StubSignature signatureOfGetByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedCells(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfInByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
+StubSignature signatureOfDeleteByIdCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
+StubSignature signatureOfDeleteByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfPutByValCached(StubKey) { return signatureOfKeyedOperands(3, StubResult::None); }
 StubSignature signatureOfDefineByValCached(StubKey) { return signatureOfKeyedOperands(3, StubResult::None); }
 StubSignature signatureOfToPropertyKey(StubKey) { return signatureOfKeyedOperands(1, StubResult::GPR); }
@@ -608,6 +613,159 @@ void generateInByValCached(StubAssembler& jit)
     jit.move(header, base);
     needsOperation.link(&jit);
     jit.exitOnMiss(asksIn ? Entry::operationAOTInByValAndCache : Entry::operationAOTHasOwnByValAndCache, { .secondArgumentIn = base, .thirdArgumentIn = key });
+}
+
+static void returnTrue(StubAssembler& jit)
+{
+    jit.move(TrustedImm32(1), jit.result());
+    jit.returnToCaller();
+}
+
+// While a collector marks, every cell owes a barrier, so nothing here is seen half done.
+static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& probed, JumpList& needsOperation)
+{
+    const GPRReg base = registers.base;
+    const GPRReg kind = registers.key;
+    const GPRReg wordIndex = registers.key;
+    const GPRReg storage = registers.entry;
+    const GPRReg scratch = registers.structureID;
+
+    static_assert(Slot::Kind::Uncacheable < Slot::Kind::Removal && Slot::Kind::NothingToRemove == static_cast<Slot::Kind>(numberOfSlotKinds - 1));
+    needsOperation.append(jit.branch32(CCallHelpers::Below, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::Removal))));
+    Jump isNotInOwnStorage = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::Removal)));
+    const CachedSlot removal(probed.form, Slot::Kind::Removal, probed.header, probed.payload);
+    needsOperation.append(branchIfBarrierIsNeeded(jit, base, scratch));
+    removal.loadOwnWordIndex(jit, wordIndex);
+    jit.move(base, storage);
+    Jump isInline = removal.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(base, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.store32(removal.registerOfFirstPayloadWord(), Address(base, JSCell::structureIDOffset()));
+    jit.store64(TrustedImm32(0), BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
+    returnTrue(jit);
+
+    isNotInOwnStorage.link(&jit);
+    Jump isNotAmongExtraProperties = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::ExtraPropertyRemoval)));
+    const CachedSlot extraRemoval(probed.form, Slot::Kind::ExtraPropertyRemoval, probed.header, probed.payload);
+    const GPRReg newStructure = registers.key;
+    const GPRReg extraProperties = registers.entry;
+    extraRemoval.loadSecondPayloadWord(jit, scratch);
+    needsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(base, offsetOfOrderWord), scratch));
+    needsOperation.append(branchIfBarrierIsNeeded(jit, base, scratch));
+    extraRemoval.loadFirstPayloadWord(jit, newStructure);
+    decodeStructureID(jit, newStructure);
+    jit.load32(Address(newStructure, CompiledStructure::offsetOfExtraPropertiesSlot()), scratch);
+    jit.and32(TrustedImm32(SlotData::maxOffset), scratch);
+    loadExtraProperties(jit, base, scratch, extraProperties, needsOperation);
+    needsOperation.append(branchIfBarrierIsNeeded(jit, extraProperties, scratch));
+    jit.load32(Address(newStructure, CompiledStructure::offsetOfExtraPropertiesStructureID()), scratch);
+    jit.store32(scratch, Address(extraProperties, JSCell::structureIDOffset()));
+    jit.store32(extraRemoval.registerOfFirstPayloadWord(), Address(base, JSCell::structureIDOffset()));
+    extraRemoval.loadOwnWordIndex(jit, wordIndex);
+    Jump isInCell = extraRemoval.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(extraProperties, JSObject::butterflyOffset()), extraProperties);
+    isInCell.link(&jit);
+    jit.store64(TrustedImm32(0), BaseIndex(extraProperties, wordIndex, CCallHelpers::TimesEight));
+    returnTrue(jit);
+
+    isNotAmongExtraProperties.link(&jit);
+    Jump isNoField = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::FieldRemoval)));
+    const CachedSlot fieldRemoval(probed.form, Slot::Kind::FieldRemoval, probed.header, probed.payload);
+    needsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(base, offsetOfOrderWord), fieldRemoval.registerOfFirstPayloadWord()));
+    fieldRemoval.loadSecondPayloadWord(jit, scratch);
+    jit.store32(scratch, Address(base, offsetOfOrderWord));
+    const GPRReg pattern = registers.key;
+    const GPRReg offset = registers.entry;
+    const BaseIndex slotOfField(base, offset, CCallHelpers::TimesOne);
+    fieldRemoval.loadHiddenWordOffset(jit, offset);
+    jit.urshift64(probed.header, TrustedImm32(Slot::flagsShiftInHeader + Slot::absentPatternShift), pattern);
+    jit.and32(TrustedImm32(Slot::absentPatternMask), pattern);
+    JumpList isCleared;
+    auto writeIfPatternIs = [&](AbsentPattern candidate, unsigned width, uint64_t bits) {
+        Jump isOther = jit.branch32(CCallHelpers::NotEqual, pattern, TrustedImm32(static_cast<int32_t>(candidate)));
+        jit.move(TrustedImm64(static_cast<int64_t>(bits)), scratch);
+        if (width == sizeof(uint64_t))
+            jit.store64(scratch, slotOfField);
+        else if (width == sizeof(uint32_t))
+            jit.store32(scratch, slotOfField);
+        else
+            jit.store8(scratch, slotOfField);
+        isCleared.append(jit.jump());
+        isOther.link(&jit);
+    };
+    writeIfPatternIs(AbsentPattern::ZeroInEightBytes, sizeof(uint64_t), 0);
+    writeIfPatternIs(AbsentPattern::ZeroInFourBytes, sizeof(uint32_t), 0);
+    writeIfPatternIs(AbsentPattern::Int32, sizeof(uint32_t), static_cast<uint32_t>(absentInt32));
+    writeIfPatternIs(AbsentPattern::Double, sizeof(uint64_t), absentDouble);
+    writeIfPatternIs(AbsentPattern::Integer, sizeof(uint64_t), static_cast<uint64_t>(absentInteger));
+    static_assert(absentPatternOf(SlotRepresentation::OptionalBoolean) == AbsentPattern::ZeroInOneByte);
+    jit.move(TrustedImm32(0), scratch);
+    jit.store8(scratch, slotOfField);
+    isCleared.link(&jit);
+    Jump staysAsBorn = fieldRemoval.branchUnlessFlag(jit, Slot::leavesStateOfBirth);
+    jit.load8(Address(base, JSCell::typeInfoFlagsOffset()), scratch);
+    jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
+    jit.store8(scratch, Address(base, JSCell::typeInfoFlagsOffset()));
+    staysAsBorn.link(&jit);
+    returnTrue(jit);
+
+    isNoField.link(&jit);
+    returnTrue(jit);
+}
+
+// The base is a cell and its name is in registers.uid, where it stays for the operation. The register of the key is free.
+static void removeNamedPropertyAndReturn(StubAssembler& jit, const KeyedProbeRegisters& registers)
+{
+    JumpList needsOperation;
+    JumpList isInNoTable;
+    // A dictionary gives a name up and remains the same Structure.
+    loadStructure(jit, registers.base, registers.entry);
+    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(registers.entry, Structure::bitFieldOffset()), TrustedImm32(Structure::s_dictionaryKindMask << Structure::s_dictionaryKindShift)));
+    jit.load32(Address(registers.base, JSCell::structureIDOffset()), registers.structureID);
+    findHashedSlot(jit, SlotAccess::Delete, {
+        .structureID = registers.structureID,
+        .uid = registers.uid,
+        .entry = registers.entry,
+        .header = registers.header,
+        .payload = registers.payload,
+        .scratch = registers.payload,
+        .kind = registers.key,
+    }, isInNoTable);
+    removeBySlotAndReturn(jit, registers, { SlotForm::Slot, registers.header, registers.payload }, needsOperation);
+
+    isInNoTable.link(&jit);
+    countMissOfPair(jit, registers.structureID, registers.uid, registers.header, needsOperation);
+    needsOperation.link(&jit);
+    jit.and64(TrustedImm32(~static_cast<int32_t>(HashedSlot::accessMask)), registers.uid);
+    jit.exitOnMiss(static_cast<PutMode>(jit.key().form()) == PutMode::Sloppy ? Entry::operationAOTDeleteByNameSloppy : Entry::operationAOTDeleteByName, { .secondArgumentIn = registers.base, .thirdArgumentIn = registers.uid });
+}
+
+void generateDeleteByIdCached(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    const GPRReg identifierNumber = registers.key;
+    JumpList hasNoName;
+
+    hasNoName.append(jit.branchIfNotCell(registers.base));
+    loadIdentifier(jit, identifierNumber, registers.uid, hasNoName);
+    removeNamedPropertyAndReturn(jit, registers);
+
+    hasNoName.link(&jit);
+    jit.exitOnMiss(static_cast<PutMode>(jit.key().form()) == PutMode::Sloppy ? Entry::operationAOTDeleteByIdSloppy : Entry::operationAOTDeleteById, { .secondArgumentIn = registers.base, .thirdArgumentIn = identifierNumber });
+}
+
+void generateDeleteByValCached(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    JumpList hasNoName;
+
+    hasNoName.append(jit.branchIfNotCell(registers.key));
+    hasNoName.append(jit.branchIfNotCell(registers.base));
+    loadNameOfKeyCell(jit, registers, StructureIDOfBase::IsNotLoaded, hasNoName);
+    removeNamedPropertyAndReturn(jit, registers);
+
+    hasNoName.link(&jit);
+    jit.exitOnMiss(static_cast<PutMode>(jit.key().form()) == PutMode::Sloppy ? Entry::operationAOTDeleteByValSloppy : Entry::operationAOTDeleteByVal, { .secondArgumentIn = registers.base, .thirdArgumentIn = registers.key });
 }
 
 // No table has the Structure and the name.

@@ -1595,6 +1595,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     const Function& function = program.at(id);
     ValueSetMaker& maker = positions.maker();
     BitVector isDecided(function.values.size());
+    BitVector isTypedByReplacedCheck;
+    std::optional<Type> anyValue;
 
     auto mayComeFromUnseenCaller = [&](ValueID value) {
         return callers != CallerState::AllKnown && function.at(entryBlock).parameters.find(value) != notFound;
@@ -1606,9 +1608,10 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (isDecided.quickSet(value.index()) || mayComeFromUnseenCaller(value) || hasTypeOfNarrowedLocation(application, function.at(value)))
             return;
         ValueSetID held = findHeld();
-        const Type& asRead = program.typeOf(function, value);
+        bool keepsTypeAsRead = !isTypedByReplacedCheck.get(value.index());
+        const Type& asRead = keepsTypeAsRead ? program.typeOf(function, value) : *anyValue;
         std::optional<ValueFlowNumbers> answered = function.at(value).opcode == Opcode::Call ? numbers.ofCall(id, value) : std::nullopt;
-        bool isRemembered = valuesWithoutProof && !answered;
+        bool isRemembered = valuesWithoutProof && !answered && keepsTypeAsRead;
         uint64_t question = static_cast<uint64_t>(function.at(value).type.index()) << 32 | held.index();
         if (isRemembered) {
             if (valuesWithoutProof->inside.contains(question))
@@ -1632,29 +1635,34 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (!isSaidByPosition || inputs.build.validates())
             update.proofs.append(FlowValueProof { value, types.intern(*narrowed) });
     };
-    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
-        if (statement.kind != ValueFlowStatementKind::Operation)
-            continue;
-        const Value& operation = function.at(statement.site);
-        if (statement.result && !numberOfResultsOf(program, function, operation))
-            prove(statement.site, [&] { return inputs.solver().possibleValuesOf(statement.result); });
-        if (!statement.result && PayloadWord::allocationSite(statement.opcode)) {
-            ValueFlowObjectID object = inputs.universe().siteObject(statement);
-            const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
-            if (site && site->origin == ValueFlowSiteOrigin::Operation && !site->layout && site->builtinClass)
-                prove(statement.site, [&] { return maker.of(object); });
-        }
+    auto proveValuesOfStatements = [&] {
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+            if (statement.kind != ValueFlowStatementKind::Operation)
+                continue;
+            const Value& operation = function.at(statement.site);
+            if (statement.result && !numberOfResultsOf(program, function, operation))
+                prove(statement.site, [&] { return inputs.solver().possibleValuesOf(statement.result); });
+            if (!statement.result && PayloadWord::allocationSite(statement.opcode)) {
+                ValueFlowObjectID object = inputs.universe().siteObject(statement);
+                const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
+                if (site && site->origin == ValueFlowSiteOrigin::Operation && !site->layout && site->builtinClass)
+                    prove(statement.site, [&] { return maker.of(object); });
+            }
 
-        std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-        if (operands.size() != operation.numberOfOperands())
-            continue;
-        for (uint32_t index = 0; index < operands.size(); ++index) {
-            if (operation.operand(index))
-                prove(operation.operand(index), [&] { return inputs.possibleValuesOf(maker, operands[index]); });
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (operands.size() != operation.numberOfOperands())
+                continue;
+            for (uint32_t index = 0; index < operands.size(); ++index) {
+                if (operation.operand(index))
+                    prove(operation.operand(index), [&] { return inputs.possibleValuesOf(maker, operands[index]); });
+            }
         }
-    }
+    };
+    proveValuesOfStatements();
 
-    for (const ValueFlowObservedValue& observed : std::ranges::equal_range(inputs.bodies().observedValues(), id, { }, &ValueFlowObservedValue::function)) {
+    auto observedValues = std::ranges::equal_range(inputs.bodies().observedValues(), id, { }, &ValueFlowObservedValue::function);
+    Vector<ValueID, 4> replacedChecks;
+    for (const ValueFlowObservedValue& observed : observedValues) {
         if (!observed.test)
             continue;
         const Value& test = function.at(observed.test);
@@ -1667,11 +1675,32 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         } else if (positions.isSurelyInside(held, program.at(test.castType()), test.castType()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
-            if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.castType())))
+            if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.castType()))) {
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
+                replacedChecks.append(observed.test);
+            }
         }
         if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(held, program.at(test.castType())))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
+    }
+
+    // What stands behind a replaced check is typed anew from what arrives, so only what flow holds is known of it.
+    if (!replacedChecks.isEmpty()) {
+        isTypedByReplacedCheck = computeTaintedValues(function, CFG(function), replacedChecks.span());
+        bool provesAnew = update.proofs.removeAllMatching([&](const FlowValueProof& proof) {
+            if (!isTypedByReplacedCheck.get(proof.value.index()))
+                return false;
+            isDecided.quickClear(proof.value.index());
+            return true;
+        });
+        if (provesAnew) {
+            anyValue = Type::anything().withPrimitives(Primitive::Absent);
+            proveValuesOfStatements();
+            for (const ValueFlowObservedValue& observed : observedValues) {
+                if (observed.test)
+                    prove(function.at(observed.test).operand(0), [&] { return inputs.possibleValuesOf(maker, observed.operand); });
+            }
+        }
     }
     AOT::sort(update.proofs, { }, &FlowValueProof::value);
     AOT::sort(update.claims, { }, &FlowClaimUpdate::claim);

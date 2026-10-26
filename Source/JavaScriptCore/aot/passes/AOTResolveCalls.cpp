@@ -207,6 +207,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     const Function& callee = program.at(request.callee);
     RELEASE_ASSERT(request.captures.size() == callee.captures.size());
     RELEASE_ASSERT(request.calleeValue || !callee.has(FunctionFlags::TakesCallee));
+    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || insertion.function.role == FunctionRole::GenericEntrypoint);
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
@@ -347,7 +348,7 @@ TailCallRequirement tailCallRequirementOf(const Function& body)
 
 static bool canBeConstructTarget(const Function& constructor)
 {
-    return constructor.hasBody() && (constructor.role == FunctionRole::Source || constructor.role == FunctionRole::Library);
+    return constructor.hasBody() && !constructor.capabilities.contains(FunctionCapabilities::RecordsCallee) && (constructor.role == FunctionRole::Source || constructor.role == FunctionRole::Library);
 }
 
 static bool canPassRestArguments(const Program& program, const Function& callee)
@@ -367,7 +368,7 @@ bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
     FunctionKind kind = callee.kind;
-    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || !(kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter))
+    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || !(kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter))
         return false;
     return !callee.isUnsplitCoroutine() && callee.results.size() == 1 && canPassRestArguments(program, callee);
 }

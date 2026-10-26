@@ -81,11 +81,11 @@ struct OrderedKey {
     unsigned attributes;
 };
 
-static bool extraPropertiesNeedGenericPath(JSObject* extra)
+static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
 {
     Structure* structure = extra->structure();
     return extra->type() != FinalObjectType
-        || JSC::hasIndexedProperties(extra->indexingType())
+        || (elements == Elements::AreLeftOut ? extra->canHaveExistingOwnIndexedGetterSetterProperties() : JSC::hasIndexedProperties(extra->indexingType()))
         || structure->hasAnyKindOfGetterSetterProperties()
         || structure->isUncacheableDictionary()
         || extra->hasNonReifiedStaticProperties();
@@ -275,7 +275,7 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
     return visitKeysInOrder(vm, *typed, extra, filter, visitor);
 }
 
-Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor)
+Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements)
 {
     Object* typed = compiledObjectOrNull(object);
     if (!typed)
@@ -308,7 +308,7 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         });
         return isStopped ? Result::Stopped : Result::Completed;
     }
-    if (extraPropertiesNeedGenericPath(extra))
+    if (extraPropertiesNeedGenericPath(extra, elements))
         return Result::NeedsGenericPath;
     if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
         return *result;
@@ -476,9 +476,22 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
         names.append(own.name);
         values.appendWithCrashOnOverflow(own.value);
         return IterationStatus::Continue;
-    });
+    }, Elements::AreLeftOut);
     if (result != Result::Completed || !wouldPerformFastPut(vm, &target))
         return false;
+    JSObject* holder = objectHoldingIndexedProperties(source);
+    if (holder && holder->canHaveExistingOwnIndexedProperties()) {
+        JSObject* elementsOfTarget = objectHoldingIndexedProperties(&target);
+        if (target.anyObjectInChainMayInterceptIndexedAccesses() || (elementsOfTarget && elementsOfTarget->canHaveExistingOwnIndexedGetterSetterProperties()))
+            return false;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSGlobalObject* realm = target.structure()->realm();
+        holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
+            Object::putByIndex(&target, realm, index, value, true);
+            scope.assertNoException();
+            return IterationStatus::Continue;
+        });
+    }
     return definePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
 }
 

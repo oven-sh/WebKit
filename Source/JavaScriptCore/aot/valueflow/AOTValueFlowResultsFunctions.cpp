@@ -13,6 +13,7 @@
 #include "AOTFlowStamps.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
+#include "AOTValueFlowResultsFieldsInternal.h"
 #include <atomic>
 #include <optional>
 #include <tuple>
@@ -863,6 +864,12 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     Vector<Witness> witnessesOfEscapes = findWitnessesOfEscapes(inputs, maker);
     times.didFinish("functions: bound functions, named by table"_s);
 
+    // A read of a name finds a value that was stored, on the closure or above it, or nothing.
+    constexpr OptionSet<ObjectMutation> mutationsThatLetReadsRunCode { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
+    bool objectsAboveFunctionsAreReadWithoutCode = std::ranges::none_of(std::array { Builtins::FunctionPrototype, Builtins::ObjectPrototype }, [&](BuiltinID above) {
+        return markedMutationsOf(inputs, universe.objectOf(above)).containsAny(mutationsThatLetReadsRunCode);
+    });
+
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         FunctionFlow& flow = tables.functions.functions[index];
         ValueFlowObjectID closure = universe.closureOf(FunctionID(index));
@@ -893,6 +900,10 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         capabilities.add(FunctionCapabilities::IsNeverCalledByHost);
         if (!calls.functionsInStamps.get(index) && !calls.functionsEnteredWithoutStamp.get(index))
             capabilities.add(FunctionCapabilities::HasOnlyDirectCallers);
+        const Function& function = inputs.program.functions[index];
+        bool inheritsFromFunctionPrototype = !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }) && (!function.constructedClass || inputs.program.at(function.constructedClass).has(LayoutFlags::IsConstructorFunction));
+        if (objectsAboveFunctionsAreReadWithoutCode && inheritsFromFunctionPrototype && inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !markedMutationsOf(inputs, closure).containsAny(mutationsThatLetReadsRunCode))
+            capabilities.add(FunctionCapabilities::ClosuresAreReadWithoutCode);
     });
 }
 
@@ -902,6 +913,53 @@ static bool mayTellClosuresApart(const BuiltinParameter& parameter)
     constexpr OperandUses callsOrKeeps { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::Retains };
     OperandUses others = parameter.uses - usesThatDoNotLook;
     return !others.isEmpty() && (others != OperandUses { OperandUse::Inspects } || !parameter.uses.containsAny(callsOrKeeps));
+}
+
+static std::array<BuiltinID, 3> builtinsThatWatchTheirArguments(const BuiltinTable& builtins)
+{
+    return { builtins.canonicalID(Builtins::WeakRef), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeRegister), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeUnregister) };
+}
+
+void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, const ValueFlowUsesOfHeap& usesOfHeap, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    Vector<ValueSetID> parts;
+    // An unknown value is an object that has reached code outside the program, which its layout says by itself.
+    auto note = [&](ValueSetID value) {
+        if (value && value != ValueSets::nothing && value != ValueSets::anything)
+            parts.append(value);
+    };
+    for (uint32_t index = 0; index < builtins.slotCount(); ++index) {
+        BuiltinClassID owner = builtins.at(BuiltinSlotID(index)).owner;
+        if (owner == BuiltinClasses::WeakRef || owner == BuiltinClasses::FinalizationRegistry || owner == BuiltinClasses::WeakMap || owner == BuiltinClasses::WeakSet)
+            note(heap.writtenUnder(ValueSets::anything, ValueFlowName { ValueFlowNameKind::Slot, index }));
+    }
+    const std::array watchingBuiltins = builtinsThatWatchTheirArguments(builtins);
+    BitVector watches(builtins.builtinCount());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (std::ranges::contains(watchingBuiltins, builtins.canonicalID(BuiltinID(index))))
+            watches.quickSet(index);
+    }
+    forEachBuiltinApplication(inputs, heap, watches, [&](const ValueFlowBuiltinApplication& application) {
+        note(application.otherArguments);
+        for (ValueSetID argument : application.arguments)
+            note(argument);
+    });
+    ValueSetID held = parts.isEmpty() ? ValueSets::nothing : heap.maker().uniteAll(parts.span());
+
+    BitVector& neverHeld = tables.sites.layoutsNeverHeldWeakly;
+    neverHeld = BitVector(program.layouts.size());
+    if (ValueSets::isComplement(held))
+        return;
+    BitVector isHeldWeakly(program.layouts.size());
+    usesOfHeap.layoutsOfObjects->forEachLayoutOfMembers(held, [&](LayoutID layout) {
+        isHeldWeakly.quickSet(layout.index());
+    });
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        if (!isHeldWeakly.quickGet(index) && inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
+            neverHeld.quickSet(index);
+    }
 }
 
 void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
@@ -969,7 +1027,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     BitVector builtinsThatLook = builtinsWithOverload(builtins, [](const BuiltinOverload& overload) {
         return (overload.receiver && mayTellClosuresApart(*overload.receiver)) || std::ranges::any_of(overload.parameters, mayTellClosuresApart);
     });
-    const std::array watchingBuiltins { builtins.canonicalID(Builtins::WeakRef), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeRegister), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeUnregister) };
+    const std::array watchingBuiltins = builtinsThatWatchTheirArguments(builtins);
     auto watchesItsArguments = [&](BuiltinID builtin) {
         return std::ranges::contains(watchingBuiltins, builtins.canonicalID(builtin));
     };

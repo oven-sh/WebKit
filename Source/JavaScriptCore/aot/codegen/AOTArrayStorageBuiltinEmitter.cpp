@@ -39,30 +39,7 @@ static ArrayStorageFormList formsStartingWith(const ArrayStorageForm& expected)
 
 Operand ArrayStorageBuiltinEmitter::lengthResult(const InlineCall& call, Integer length)
 {
-    Representation representation = resultRepresentationOf(call);
-    switch (representation) {
-    case Representation::Void:
-        return { };
-    case Representation::Int32:
-        return low32(length);
-    case Representation::Int64:
-        return length;
-    case Representation::Double:
-        return toNumber(length);
-    case Representation::JSValue:
-        return emitter<ConversionEmitter>().boxInteger(length, Range::uint32());
-    case Representation::Unchosen:
-    case Representation::Boolean:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::LiteralString:
-    case Representation::RawWord:
-        break;
-    }
-    fail(call.context(), InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(representation);
+    return emitter<ConversionEmitter>().inRepresentation(call.context(), length, Type::integer(Range::uint32()), resultRepresentationOf(call));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayLength(const InlineCall& call)

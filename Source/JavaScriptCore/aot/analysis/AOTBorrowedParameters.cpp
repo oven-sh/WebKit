@@ -77,7 +77,7 @@ static void forEachLostPart(uint64_t bits, const Invocable<void(uint32_t entryPa
     }
 }
 
-// A function that saves its frame where it waits runs on the stack of its caller until then, and the saved frame keeps only what is live.
+// A function that saves its frame where it waits runs on the stack of its caller until then, and the saved frame keeps only what is live and what the suspension lists.
 static constexpr OpcodeSet suspensionsThatKeepOnlyLiveValues { Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame };
 
 static OpcodeSet opcodesOfFunctionsThatBorrowNothing()

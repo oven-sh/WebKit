@@ -250,6 +250,9 @@ public:
     JS_EXPORT_PRIVATE void advance();
     JS_EXPORT_PRIVATE void advanceToCallerMachineFrame();
     JS_EXPORT_PRIVATE bool isConstructCall();
+    // The function object that runs in the frame, where its function records it.
+    JS_EXPORT_PRIVATE JSObject* recordedCallee();
+    void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }

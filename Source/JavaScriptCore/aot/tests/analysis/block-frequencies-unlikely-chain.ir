@@ -27,9 +27,10 @@ function f0 name="chain" parameters=[{type=boolean}, {type=boolean}, {type=boole
 # CHECK-NEXT: b5 frequency: Unlikely
 # CHECK-NEXT: b6 frequency: Unlikely
 
-function f1 name="enteredFromNormalBlocks" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+function f1 name="enteredFromNormalBlocks" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
+    v2 = Call v1
     Jump -> next b2()
   b2() frequency=Unlikely:
     Jump -> next b3()

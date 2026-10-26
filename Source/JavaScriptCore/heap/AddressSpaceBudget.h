@@ -17,6 +17,8 @@
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#include <stdlib.h>
+#include <string.h>
 #endif
 
 namespace JSC {
@@ -64,6 +66,9 @@ inline size_t addressSpaceToReserve()
 inline void shareCLibraryHeapBetweenThreads()
 {
 #if defined(__GLIBC__)
+    const char* tunables = getenv("GLIBC_TUNABLES");
+    if (getenv("MALLOC_ARENA_MAX") || (tunables && strstr(tunables, "glibc.malloc.arena_max")))
+        return;
     mallopt(M_ARENA_MAX, 1);
 #endif
 }

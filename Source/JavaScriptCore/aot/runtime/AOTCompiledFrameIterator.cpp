@@ -10,6 +10,8 @@
 
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledCallee.h"
+#include "AOTFunctionNames.h"
+#include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTModules.h"
 #include "AOTShownFrameFilter.h"
@@ -496,6 +498,46 @@ bool CompiledFrameIterator::isConstructCall()
             caller = callerOfInlinedFrame(*m_image, m_inlineFrames, entry->code, caller);
         }
     }
+}
+
+JSObject* CompiledFrameIterator::recordedCallee()
+{
+    const auto& recordedCallees = FunctionTables::of(*m_vm).recordedCallees;
+    if (recordedCallees.isEmpty()) [[likely]]
+        return nullptr;
+
+    // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
+    FunctionID source = FunctionDescription(frame().function).sourceFunction();
+    auto hasOnlyEntrypoints = [&](CompiledFunctionID code, LogicalFrame logical) {
+        while (logical.inlineFrame) {
+            logical = callerOfInlinedFrame(*m_image, m_inlineFrames, code, logical);
+            if (!isEntrypointOf(logical.function, source))
+                return false;
+        }
+        return true;
+    };
+    if (!hasOnlyEntrypoints(m_frame.code, { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted }))
+        return nullptr;
+
+    Cursor cursor = m_cursor;
+    Exit exit;
+    RunEnd runEnd;
+    const void* stackPointer = callerStackPointer();
+    while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
+        if (!isEntrypointOf(entry->innermostFunction, source) || !hasOnlyEntrypoints(entry->code, { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false }))
+            break;
+        stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
+    }
+    if (runEnd.resumesSavedFrame)
+        return nullptr;
+
+    for (size_t index = recordedCallees.size(); index--;) {
+        if (recordedCallees[index].stackPointerOfCaller < stackPointer)
+            continue;
+        JSObject* closure = recordedCallees[index].closure;
+        return recordedCallees[index].stackPointerOfCaller == stackPointer && sourceFunctionOf(*functionOf(closure)) == source ? closure : nullptr;
+    }
+    return nullptr;
 }
 
 bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)

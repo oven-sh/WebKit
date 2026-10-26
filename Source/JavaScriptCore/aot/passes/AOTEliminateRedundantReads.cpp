@@ -2219,37 +2219,10 @@ struct LoopPathSeparator : LoopEditor {
         return narrowed;
     }
 
-    // A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
-    bool runsCodeOfHotFunction(const NaturalLoop& loop)
-    {
-        const Heat& heat = m_context.inputs.heat;
-        if (heat.isOfVeryLargeProgram())
-            return false;
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            const Block& block = m_function.at(loop.at(index));
-            if (block.frequency != BlockFrequency::Normal)
-                continue;
-            for (ValueID id : block.values) {
-                const Value& value = m_function.at(id);
-                if (value.opcode == Opcode::CallDirect && isHot(heat.of(m_program, value.function())))
-                    return true;
-                if (!value.inlineFrame)
-                    continue;
-                FunctionID callee = m_function.inlineFrames[value.inlineFrame].callee;
-                if (isHot(heat.of(m_program, callee)))
-                    return true;
-                // The loop itself came out of a function, where it ran as often.
-                if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(m_program, callee, frequencyConstants.iterationsPerLoop)))
-                    return true;
-            }
-        }
-        return false;
-    }
-
     std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables)
     {
         BlockID header = loop.header();
-        if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || (!isHot(heatClassOf(m_context, header)) && !runsCodeOfHotFunction(loop)))
+        if (!isHotLoop(m_context, loop))
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;

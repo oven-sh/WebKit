@@ -20,6 +20,7 @@ struct Type;
 struct ProvenAccess {
     bool isComplete { false };
     bool mayFindNothing { false };
+    bool mayFindStoredValue { false };
     bool isLookupByKey { false };
     bool mayFindPrototypeProperty { false };
     bool definesOwnProperty { false };

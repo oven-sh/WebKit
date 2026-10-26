@@ -2694,6 +2694,7 @@ void encodeTables(TableEncoder& encoder)
         { encodeLayoutTables, StatisticID::ProgramTableBytesLayouts },
         { encodePropertyRunTable, StatisticID::ProgramTableBytesLayouts },
         { encodeFieldTable, StatisticID::ProgramTableBytesFieldTable },
+        { encodeSiteNames, StatisticID::ProgramTableBytesOther },
         { encodeMethodTable, StatisticID::ProgramTableBytesOther },
         { encodeStaticsTables, StatisticID::ProgramTableBytesStatics },
         { encodeFunctionTables, StatisticID::ProgramTableBytesFunctions },

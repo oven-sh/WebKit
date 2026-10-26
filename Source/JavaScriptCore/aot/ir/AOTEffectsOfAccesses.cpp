@@ -264,7 +264,7 @@ void describeAccess(const Program& program, const Function& function, const Valu
     if (proven.definesOwnProperty)
         description.addOwn(effectsOfDefinition);
     describeAccessors(program, value, proven.accessors.span(), description);
-    if (!proven.methods.isEmpty() || !proven.builtins.isEmpty() || proven.mayFindNothing) {
+    if (!proven.methods.isEmpty() || !proven.builtins.isEmpty() || proven.mayFindNothing || proven.mayFindStoredValue) {
         Effects walk = effectsOfChainWalk(program, proven.key);
         description.addOwn(declared.mayCallUnknownCode ? walk : walk.intersectedWith(declared));
     }

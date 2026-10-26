@@ -1,4 +1,4 @@
-# A frame lists what a KeepAlive names as references. Where an object that is never built meets a path without it, its members are unspecified on that path, so no KeepAlive names them behind the meeting.
+# Where an object that is never built meets a path without it, its members are unspecified on that path. A suspension behind the meeting lists them all the same: nothing reads what a suspension lists.
 # FORM: Prepared
 # RUN: pass SinkAllocations
 
@@ -14,21 +14,21 @@ function f0 name="unspecifiedOnOnePath" role=CoroutineRamp flags=[IsAsync] param
 function f1 name="unspecifiedOnOnePath" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=boolean}, {type=boolean}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=5} {
     v6 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v7 = FinishObject v6
-    v8 = AwaitBySavingFrame v2, v5
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v7)
   b2():
-    v9 = Undefined
-    Jump -> next b3(v9)
-  b3(v10: undefined|L0):
+    v8 = Undefined
+    Jump -> next b3(v8)
+  b3(v9: undefined|L0):
+    v10 = AwaitBySavingFrame v2, v5, v9
     Branch v4 -> taken b4(), notTaken b5()
   b4():
-    Return v10
+    Return v9
   b5():
     Return v1
-# CHECK: AwaitBySavingFrame
 # CHECK: Unspecified
-# CHECK-NOT: KeepAlive
+# CHECK-NOT: NewObject
+# CHECK: AwaitBySavingFrame
 # CHECK: NewObject
 }

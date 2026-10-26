@@ -326,6 +326,18 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
     });
 }
 
+bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
+}
+
+bool FlowResults::closureIsMadeOnce(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresAreMadeOnce.get(analyzed.index());
+}
+
 bool FlowResults::closuresGoUnnoticed(FunctionID closureFunction) const
 {
     constexpr OptionSet<ObjectMutation> mutationsThatShowOrFill { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty, ObjectMutation::ChangePrototype };

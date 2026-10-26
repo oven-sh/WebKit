@@ -14,6 +14,7 @@
 #include "AOTEffectsDescription.h"
 #include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -171,6 +172,8 @@ static std::optional<uint32_t> mappedEntryParameter(const Function& callee, cons
 {
     if (Value::opcodesWithCallees.contains(call.opcode))
         return entryParameterOf(callee, call, operandIndex);
+    if (isHeldOperand(call, operandIndex))
+        return std::nullopt;
     return call.variadicOperandIndex(operandIndex);
 }
 

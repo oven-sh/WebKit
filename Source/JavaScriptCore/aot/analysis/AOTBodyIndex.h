@@ -140,7 +140,7 @@ struct RecordFacts {
         , role(function.role)
         , kind(function.kind)
         , creatorKind(function.creator.kind())
-        , numberOfResults(static_cast<uint8_t>(std::min<size_t>(function.results.size(), UINT8_MAX)))
+        , numberOfResults(static_cast<uint8_t>(std::min<size_t>(function.results.size(), 127)))
         , hasBody(function.hasBody())
     {
     }
@@ -158,8 +158,8 @@ struct RecordFacts {
     FunctionRole role { FunctionRole::Source };
     FunctionKind kind { FunctionKind::Plain };
     CreatorRecord::Kind creatorKind { CreatorRecord::Kind::None };
-    uint8_t numberOfResults { 0 };
-    bool hasBody { false };
+    uint8_t numberOfResults : 7 { 0 };
+    uint8_t hasBody : 1 { false };
 };
 static_assert(sizeof(RecordFacts) <= 8);
 

@@ -303,6 +303,7 @@ void encodeTypeTables(TableEncoder&);
 void encodeLayoutTables(TableEncoder&);
 void encodePropertyRunTable(TableEncoder&);
 void encodeFieldTable(TableEncoder&);
+void encodeSiteNames(TableEncoder&);
 void encodeMethodTable(TableEncoder&);
 void encodeStaticsTables(TableEncoder&);
 void encodeFunctionTables(TableEncoder&);

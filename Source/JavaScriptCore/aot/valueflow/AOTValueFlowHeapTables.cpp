@@ -614,8 +614,19 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_membersUnderNames.grow(layOutByKey(m_endOfMembersUnderName));
         for (const NamedMember& named : namedMembers)
             m_membersUnderNames[m_endOfMembersUnderName[named.name.index()]++] = named.member;
+        Objects keysOfMembersOfBun;
+        for (const NamedMember& named : namedMembers) {
+            PropertyKeyID key = program.keyOf(named.name);
+            if (key && builtins.canonicalID(named.member.holder) == Builtins::Bun)
+                keysOfMembersOfBun.append(universe.keyConstant(key));
+        }
+        m_keysOfMembersOfBun = maker.of(keysOfMembersOfBun.span());
         AOT::sort(m_closedHoldersListingNames);
         AOT::sort(m_prototypesOfInstancesWithNames);
+        for (auto [mark, member] : builtins.marked(BuiltinMark::IsReplacedBySetter)) {
+            if (PropertyKeyID key = program.keyOf(builtins.at(member).name))
+                m_membersReplacedBySetters.append({ key, universe.objectOf(builtins.at(member).holder) });
+        }
 
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());

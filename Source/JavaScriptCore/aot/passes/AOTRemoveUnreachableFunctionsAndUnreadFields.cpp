@@ -16,6 +16,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
 #include "AOTRemoveUnreadExports.h"
@@ -270,16 +271,82 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
 
 // An object lives as long as a place that holds it, whether or not the place is read.
 // A built-in function and the symbol of a key live as long as the program. A closure that is only called, that nothing tells from another and that captures nothing holds nothing, and nobody sees it go.
-static bool mayHoldObject(const Program& program, const FlowResults& flow, const Type& type)
-{
-    if (type.isOpaque(OpaqueKind::Guard))
-        return false;
-    if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
-        return true;
-    return std::ranges::any_of(type.functions, [&](FunctionID function) {
-        return !program.at(function).captures.isEmpty() || !flow.closuresGoUnnoticed(function);
-    });
-}
+// Nobody sees a record or an instance go either where only code of the program has such an object in hand, nothing holds one weakly, and all that one holds is of the same kind.
+class UnnoticedObjects {
+public:
+    UnnoticedObjects(const Program& program, const FlowResults& flow)
+        : m_program(program)
+        , m_flow(flow)
+        , m_layouts(program.layouts.size())
+    {
+        Vector<Vector<LayoutID, 1>> holders(program.layouts.size());
+        Vector<LayoutID> noticed;
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            auto addHeld = [&](LayoutID held) {
+                holders[held.index()].append(LayoutID(index));
+            };
+            if (isSeenByProgramAlone(LayoutID(index)) && listLayoutsHeld(LayoutID(index), addHeld))
+                m_layouts.quickSet(index);
+            else
+                noticed.append(LayoutID(index));
+        }
+        while (!noticed.isEmpty()) {
+            for (LayoutID holder : holders[noticed.takeLast().index()]) {
+                if (m_layouts.quickClear(holder.index()))
+                    noticed.append(holder);
+            }
+        }
+    }
+
+    bool mayHoldObject(const Type& type) const
+    {
+        return mayHoldObjectWithoutLayout(type) || std::ranges::any_of(membersOf(m_program, type), [&](LayoutID id) {
+            return !m_layouts.quickGet(id.index());
+        });
+    }
+
+private:
+    bool mayHoldObjectWithoutLayout(const Type& type) const
+    {
+        if (type.isOpaque(OpaqueKind::Guard))
+            return false;
+        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol || hasMembersWithoutLayout(m_program, type))
+            return true;
+        return std::ranges::any_of(type.functions, [&](FunctionID function) {
+            return !m_program.at(function).captures.isEmpty() || !m_flow.closuresGoUnnoticed(function);
+        });
+    }
+
+    // The prototype of a class that is evaluated once lives as long as the program, with all that it holds.
+    bool isSeenByProgramAlone(LayoutID id) const
+    {
+        constexpr OptionSet<ObjectMutation> mutationsThatShowOrFill { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty, ObjectMutation::ChangePrototype };
+        constexpr OptionSet<LayoutFlags> flagsOfOtherObjects { LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsOfCreatedObject };
+        const Layout& layout = m_program.at(id);
+        bool hasLastingPrototype = layout.kind == LayoutKind::Record || (layout.kind == LayoutKind::Instance && isEvaluatedOnce(m_program, layout));
+        return hasLastingPrototype && !layout.flags.containsAny(flagsOfOtherObjects) && m_flow.objectsAreNeverHeldWeakly(id) && layout.flow.impossibleMutations.containsAll(mutationsThatShowOrFill);
+    }
+
+    // Names the layouts of what an object of the layout may hold, and the classes above and below its own. Says no where it may hold anything else.
+    bool listLayoutsHeld(LayoutID id, const Invocable<void(LayoutID)> auto& functor) const
+    {
+        const Layout& layout = m_program.at(id);
+        if (layout.flow.baseState == BaseState::Layout)
+            functor(layout.flow.base);
+        else if (layout.flow.baseState != BaseState::None)
+            return false;
+        std::ranges::for_each(m_program.layoutsBelow(id), functor);
+        return std::ranges::none_of(layout.fields, [&](const Field& field) {
+            const Type& type = m_program.at(slotTypeOf(m_program, field));
+            std::ranges::for_each(membersOf(m_program, type), functor);
+            return field.form.contains(FieldForm::IsAccessor) || mayHoldObjectWithoutLayout(type);
+        });
+    }
+
+    const Program& m_program;
+    const FlowResults& m_flow;
+    BitVector m_layouts;
+};
 
 // Remembers which functions return only new objects that hold no object. An answer depends on the function and on how many calls deep the search may go, so every thread finds the same one.
 class FreshDataFunctions {
@@ -313,9 +380,10 @@ private:
 // Whether a store in one function keeps an object alive that would go without it.
 class StoresOfObjects {
 public:
-    StoresOfObjects(const Program& program, const FlowResults& flow, const EffectSummaries* effects, FunctionID id, FreshDataFunctions* freshDataFunctions = nullptr, unsigned callDepth = FreshDataFunctions::maxCallDepth)
+    StoresOfObjects(const Program& program, const FlowResults& flow, const UnnoticedObjects& unnoticedObjects, const EffectSummaries* effects, FunctionID id, FreshDataFunctions* freshDataFunctions = nullptr, unsigned callDepth = FreshDataFunctions::maxCallDepth)
         : m_program(program)
         , m_flow(flow)
+        , m_unnoticedObjects(unnoticedObjects)
         , m_effects(effects)
         , m_id(id)
         , m_function(program.at(id))
@@ -326,7 +394,7 @@ public:
 
     bool keepsObjectAlive(ValueID stored, ValueID holder, unsigned depth = 3)
     {
-        if (stored == holder || !mayHoldObject(m_program, m_flow, m_program.typeOf(m_function, stored)))
+        if (stored == holder || !m_unnoticedObjects.mayHoldObject(m_program.typeOf(m_function, stored)))
             return false;
         if (!depth)
             return true;
@@ -436,7 +504,7 @@ private:
         const Function& function = m_program.at(callee);
         bool answer = !function.blocks.isEmpty() && function.results.size() == 1 && function.hasOrdinaryFrame() && !function.isUnsplitCoroutine();
         if (answer) {
-            StoresOfObjects stores(m_program, m_flow, m_effects, callee, m_freshDataFunctions, callDepth);
+            StoresOfObjects stores(m_program, m_flow, m_unnoticedObjects, m_effects, callee, m_freshDataFunctions, callDepth);
             answer = std::ranges::none_of(function.blocks, [&](const Block& block) {
                 if (block.terminator.kind == TerminatorKind::Return)
                     return !block.terminator.valueOperand() || stores.keepsObjectAlive(block.terminator.valueOperand(), ValueID());
@@ -475,6 +543,7 @@ private:
 
     const Program& m_program;
     const FlowResults& m_flow;
+    const UnnoticedObjects& m_unnoticedObjects;
     const EffectSummaries* m_effects;
     FunctionID m_id;
     const Function& m_function;
@@ -703,6 +772,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     };
     using FunctionAccesses = std::pair<FunctionID, Vector<RemovableAccess>>;
     FreshDataFunctions freshDataFunctions(program.functions.size());
+    UnnoticedObjects unnoticedObjects(program, inputs.flow);
     Vector<FunctionAccesses> functions = collectInParallel<FunctionAccesses>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         const Function& function = program.at(id);
@@ -710,7 +780,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             return;
         bool canChangeFunction = build.isEnabled(PassID::RemoveUnreadFields, id);
         std::optional<BitVector> usedValues;
-        StoresOfObjects stores(program, inputs.flow, &inputs.effects, id, &freshDataFunctions);
+        StoresOfObjects stores(program, inputs.flow, unnoticedObjects, &inputs.effects, id, &freshDataFunctions);
         Vector<RemovableAccess> accesses;
         forEachListedValue(program, id, scannedOpcodes, [&](BlockID block, uint32_t, ValueID valueID, const Value& value) {
             Opcode opcode = value.opcode;
@@ -972,9 +1042,10 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
     using FunctionStores = std::pair<FunctionID, Vector<VariableID, 4>>;
     Vector<uint8_t> mayHoldObjects(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
     EffectSummaries unknownSummaries;
+    UnnoticedObjects unnoticedObjects(program, flow);
     Vector<FunctionStores> stores = collectInParallel<FunctionStores>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionStores>& found) {
         Vector<VariableID, 4> storedVariables;
-        StoresOfObjects storesOfObjects(program, flow, &unknownSummaries, FunctionID(index));
+        StoresOfObjects storesOfObjects(program, flow, unnoticedObjects, &unknownSummaries, FunctionID(index));
         forEachListedValue(program, FunctionID(index), { Opcode::PutModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
             if (!unreadVariables.get(value.variable().index()))
                 return;

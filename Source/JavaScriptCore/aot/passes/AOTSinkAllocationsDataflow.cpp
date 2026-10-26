@@ -754,15 +754,15 @@ void AllocationSinking::setAside(uint32_t join)
     m_joinsSetAside.append(join);
 }
 
-bool buildsItsOperands(const Program& program, const Value& user)
+bool buildsOperand(const Program& program, const Value& user, uint32_t operandIndex)
 {
-    return interpretationOf(program, user) == Interpretation::None && familyOf(user.opcode) != OperationFamily::RuntimeValidation;
+    return interpretationOf(program, user) == Interpretation::None && familyOf(user.opcode) != OperationFamily::RuntimeValidation && !isHeldOperand(user, operandIndex);
 }
 
 bool AllocationSinking::isBuiltInItsBlock(const Candidate& allocation) const
 {
     return std::ranges::any_of(m_analyses.useLists().usesOf(allocation.definition), [&](const Use& use) {
-        return use.kind == Use::Kind::Operand && use.block == allocation.block && buildsItsOperands(m_program, m_function.at(use.user));
+        return use.kind == Use::Kind::Operand && use.block == allocation.block && buildsOperand(m_program, m_function.at(use.user), use.operandIndex);
     });
 }
 

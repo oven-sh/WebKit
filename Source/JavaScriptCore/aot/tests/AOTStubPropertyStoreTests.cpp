@@ -1559,10 +1559,10 @@ static void testFieldsStoredByTheirRecords()
     // At an empty site one such store in 256 goes the way of the caches. A store that the table answers by itself counts for nothing.
     uint8_t& storesAtEmptySites = stores.runner.instance().propertyCaches.storesAtEmptySites;
     for (PutMode mode : { PutMode::Strict, PutMode::Sloppy, PutMode::Define }) {
-        std::array<uint64_t, 2> site { };
+        stores.runner.setNameOfSiteCache(PropertyStores::unboundName);
         auto leavesAtSite = [&](uint32_t shape) {
             FakeObjectWithShape object(shape, bitsOf(jsNumber(1)));
-            bool leaves = stores.runner.run(putByIdAtSite(mode), { object.address(), bitsOf(jsNumber(42)), std::bit_cast<uint64_t>(site.data()) }, PropertyStores::unboundName).calledOperation;
+            bool leaves = stores.runner.run(putByIdAtSite(mode), { object.address(), bitsOf(jsNumber(42)) }, 0).calledOperation;
             AOT_TEST_CHECK(object.field() == bitsOf(jsNumber(leaves ? 1 : 42)));
             return leaves;
         };

@@ -760,6 +760,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     };
     if (hasSitesIn(SiteList::SimplifiedIntrinsics))
         rewrites += simplifyIntrinsics(context);
+    if (hasSitesIn(SiteList::TemplateObjects))
+        rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))
         rewrites += takeConstantListsApart(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListCalls)) {

@@ -6,7 +6,7 @@
 # RUN(X64): generate-code
 # REQUIRES(X64): x86_64
 # X64: f6: size=15 
-# X64: f7: size=28 
+# X64: f7: size=20 
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
