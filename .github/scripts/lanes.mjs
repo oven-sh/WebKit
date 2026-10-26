@@ -109,6 +109,8 @@ const variants = {
   // in the libraries.
   "lto-hardened-aot-no-webassembly": { buildType: "Release", mimalloc: true, lto: true, hardened: true, webAssembly: false },
 };
+// Where bun links without LTO whatever it is told (`lto` in its scripts/build/config.ts), so nothing would download "lto".
+const NO_LTO = ["release", "aot", "debug-aot"];
 const NO_ASAN = ["release", "aot", "lto", "lto-aot", "debug-aot"];
 const ALL = [...NO_ASAN, "asan-aot", "debug-asan-aot"];
 const FUZZING = ["assertions-aot", "coverage-aot", "assertions-coverage-aot"];
@@ -221,7 +223,7 @@ const platforms = [
       amd64: ["release", "aot", "lto", "lto-aot", "debug-aot", "asan-aot"],
       // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      arm64: ["release", "aot", "debug-aot"],
+      arm64: NO_LTO,
     },
     lto: LTO_WINDOWS,
     bunTests: arch => [arch === "arm64" ? "release" : "lto"],
@@ -241,7 +243,7 @@ const platforms = [
     label: arch => `bun-webkit-freebsd-${arch}`,
     dockerfile: "Dockerfile.freebsd",
     packageOS: "freebsd",
-    lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
+    lanes: { amd64: NO_LTO, arm64: NO_LTO },
     image: arch => `freebsd-${arch}`,
     args: arch => ({
       ...ICU,
@@ -255,7 +257,7 @@ const platforms = [
     label: arch => `bun-webkit-linux-${arch}-android`,
     dockerfile: "Dockerfile.android",
     packageOS: "android",
-    lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
+    lanes: { arm64: NO_LTO, amd64: NO_LTO },
     image: () => "android",
     args: arch => ({
       ...ICU,
