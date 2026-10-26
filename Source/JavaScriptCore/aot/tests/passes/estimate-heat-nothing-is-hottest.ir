@@ -4,8 +4,8 @@
 # RUN: pass EstimateHeat
 
 # CHECK: f0 Warm 8 10
-# CHECK-NEXT: f1 Hot 91 104
-# CHECK-NEXT: f2 Warm 0 14.3
+# CHECK-NEXT: f1 Hot 91 110
+# CHECK-NEXT: f2 Warm 0 20
 # CHECK-NEXT: hottest:
 # CHECK-NOT: f
 # CHECK: thresholds:

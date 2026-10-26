@@ -298,7 +298,8 @@ public:
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
-    bool listsKeysOf(BuiltinID canonicalHolder) const { return m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
+    bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
+    void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
@@ -326,6 +327,8 @@ public:
     // By one operation that runs once, or by the first read of the variable that starts with the function.
     bool closureIsMadeOnce(FunctionID closureFunction) const;
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
+    // By a statement that is seen to reach the closures and names the key.
+    bool closuresAreStoredUnder(FunctionID closureFunction, PropertyKeyID) const;
     bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
     bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
@@ -385,6 +388,7 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
+    bool m_mayListKeysOfEveryHolder { false };
     bool m_unseenCodeCanRun { true };
     bool m_unseenScriptsCanRun { true };
     UnknownRecords m_unknown { };

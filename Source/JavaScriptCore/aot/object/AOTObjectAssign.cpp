@@ -752,12 +752,17 @@ static bool tryDescribeForStub(MappedCopy::Move& move)
         return isMadeIn(Run::Bytes, 0, 0);
     case Kind::ByteUnlessZero:
         return isMadeIn(Run::Bytes, 0, 1);
-    case Kind::QuarterWord:
-    case Kind::BoxedOptionalInt32:
-    case Kind::BoxedInt32:
     case Kind::OptionalInt32AsDouble:
+        return isMadeIn(Run::Int32sAsDoubles, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
     case Kind::Int32AsDouble:
+        return isMadeIn(Run::Int32sAsDoubles, 0, 0);
+    case Kind::BoxedOptionalInt32:
+        return isMadeIn(Run::BoxedInt32s, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
+    case Kind::BoxedInt32:
+        return isMadeIn(Run::BoxedInt32s, 0, 0);
     case Kind::WideNarrowReference:
+        return isMadeIn(Run::WidenedReferences, 0, 1);
+    case Kind::QuarterWord:
     case Kind::OtherForm:
     case Kind::Tested:
         return false;
@@ -779,10 +784,11 @@ void describeMovesForStub(MappedCopy& copy)
         run.end = &move + 1;
         run.negativeSize -= sizeof(MappedCopy::Move);
     }
-    auto hasMovesIn = [&](MappedCopy::RunOfStub run) {
-        return !!copy.runsOfStub[static_cast<size_t>(run)].negativeSize;
+    auto hasMovesBehind = [&](MappedCopy::RunOfStub run) {
+        return std::ranges::any_of(std::span { copy.runsOfStub }.subspan(static_cast<size_t>(run) + 1), &MappedCopy::Run::negativeSize);
     };
-    copy.hasWordsOrBytesForStub = hasMovesIn(MappedCopy::RunOfStub::Words) || hasMovesIn(MappedCopy::RunOfStub::Bytes);
+    copy.hasRunsBehindSecondForStub = hasMovesBehind(MappedCopy::RunOfStub::NarrowedReferences);
+    copy.hasRunsBehindFourthForStub = hasMovesBehind(MappedCopy::RunOfStub::Bytes);
     copy.structureOfSourceForStub = copy.structureOfSource;
 }
 
@@ -828,7 +834,7 @@ static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, MappedCopy&
 bool clearFieldsMovedInVain(const MappedCopy& copy, const MappedCopy::Move* end, JSCell* target)
 {
     for (const MappedCopy::Move* move = copy.moves.begin(); move != end; ++move) {
-        if (!move->writesExtension)
+        if (!move->writesExtension && !move->overwritesField)
             clearSlot(move->representationOfTarget, reinterpret_cast<uint8_t*>(target) + move->to);
     }
     return false;
@@ -868,7 +874,7 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     copy.granuleBitsOfSource = sourceLayout.hasExtension() ? granuleBitsOf(source.extension()) : 0;
     copy.granuleBitsOfTargetBefore = targetLayout.hasExtension() ? granuleBitsOf(target.extension()) : 0;
     // Where nobody lists the keys, the order word says nothing of what the target holds.
-    bool writesFieldThatIsListed = !listsKeys && target.orderWord() != unorderedOrderWord;
+    bool mayHoldFieldsUnknownHere = !listsKeys && target.orderWord() != unorderedOrderWord;
     Vector<MappedCopy::Move> moves;
     moves.reserveInitialCapacity(entries.size());
     for (uint16_t index : entries) {
@@ -893,10 +899,9 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
         copy.mayStoreCells |= traitsOf(to.slot.representation()).holdsCell;
         if (to.isOutOfLine())
             copy.granuleBitsFilled |= granuleBitOf(to.slot.offset);
-        if (listsKeys && !isListed.set(key))
+        moves.last().overwritesField = listsKeys && isListed.set(key);
+        if (listsKeys && !moves.last().overwritesField)
             keysAfter.append(key);
-        else
-            writesFieldThatIsListed |= listsKeys;
     }
     for (MappedCopy::Move& move : moves) {
         if (move.readsExtension)
@@ -913,7 +918,7 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     }
     copy.moves = WTF::move(moves);
     copy.state = MappedCopy::State::IsServed;
-    copy.mayTakeNoFrame = !writesFieldThatIsListed && !copy.granuleBitsOfTargetBefore;
+    copy.mayTakeNoFrame = !mayHoldFieldsUnknownHere && !copy.granuleBitsOfTargetBefore;
     return true;
 }
 

@@ -409,16 +409,50 @@ static void checkFrameAtFaultingAccesses(unsigned sizeOfAccess)
     uint32_t returnOffsetBeforeFrame = accessBeforeFrame + sizeOfNearCall;
     uint32_t returnOffsetInFrame = lastAccessInFrame + sizeOfNearCall;
 
-    AOT_TEST_CHECK(loaded.hasFrameAt(index, returnOffsetBeforeFrame - 1));
+    AOT_TEST_CHECK(!loaded.hasFrameAt(index, accessBeforeFrame));
     AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, returnOffsetBeforeFrame));
-    AOT_TEST_CHECK(!loaded.hasFrameAt(index, returnOffsetInFrame - 1));
+    AOT_TEST_CHECK(loaded.hasFrameAt(index, lastAccessInFrame));
     AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffsetInFrame));
+}
+
+// The access is the only site of the function, and the frame ends behind it. The function in front has another frame.
+static void checkFrameOfLoneFaultingAccess(unsigned sizeOfAccess)
+{
+    Vector<uint32_t> returnOffsets;
+    CompiledCode other = bodyWithEpilogues(1, returnOffsets);
+    other.frame.frameSizeInBytes = 48;
+
+    CodeSketch sketch(2);
+    uint32_t begin = sketch.pinnedBytes(1);
+    uint32_t access = sketch.pinnedBytes(sizeOfAccess);
+    uint32_t end = sketch.pinnedBytes(1);
+    sketch.end();
+    sketch.code().frame.frameSizeInBytes = 16;
+    sketch.code().frame.hasFrameRecord = false;
+    sketch.code().frame.frameRanges.append(CodeRange { begin + 1, end });
+    sketch.code().sites.faultingAccesses.append(FaultingAccess { access, sketch.addSite(), { 1 } });
+
+    TestBuild build(3);
+    TestImage image = build.build(bodies(WTF::move(other), sketch.take()));
+    const Image& loaded = *image.image;
+    uint32_t index = image.indexOf(2);
+    uint32_t returnOffset = access + sizeOfNearCall;
+
+    AOT_TEST_CHECK(loaded.frameOf(image.indexOf(1)).frameSizeInBytes() == 48);
+    AOT_TEST_CHECK(loaded.hasFrameAt(index, access));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffset));
+    for (const ImageFrame& frame : { loaded.frameOf(index), loaded.frameAtReturnOffset(index, returnOffset), loaded.returnSiteInfoAt(index, returnOffset).frame }) {
+        AOT_TEST_CHECK(frame.frameSizeInBytes() == 16);
+        AOT_TEST_CHECK(!frame.hasFrameRecord());
+    }
 }
 
 static void testFrameAtFaultingAccesses()
 {
-    for (unsigned sizeOfAccess : { 2u, 3u, 4u })
+    for (unsigned sizeOfAccess : { 2u, 3u, 4u }) {
         checkFrameAtFaultingAccesses(sizeOfAccess);
+        checkFrameOfLoneFaultingAccess(sizeOfAccess);
+    }
 }
 #endif
 

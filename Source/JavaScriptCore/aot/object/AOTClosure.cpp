@@ -572,7 +572,9 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     bool isName = propertyName == vm.propertyNames->name;
     if ((propertyName == vm.propertyNames->hasInstanceSymbol || isLength || isName) && closure->kind().isBound()) [[unlikely]]
         closure->adoptBoundFunctionStructure(vm);
-    else if ((isLength || (isName && !closure->kind().notesLooksForName())) && closure->hasStructureOfNewClosure(vm)) {
+    else if ((isLength || (isName && !closure->kind().hasInitialNamePrefix())) && closure->hasStructureOfNewClosure(vm)) {
+        if (isName && closure->kind().notesLooksForNameInCell())
+            closure->noteLookForName();
         JSValue value = isLength ? jsNumber(functionLengthOf(closure->function())) : JSValue(initialNamePropertyString(vm, closure->state(), closure->function()));
         slot.setValue(closure, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, value);
         return true;
@@ -987,7 +989,7 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         return true;
     }
     if (name == vm.propertyNames->name) {
-        if (closure->kind().notesLooksForNameInSlimClosure())
+        if (closure->kind().notesLooksForNameInCell())
             closure->noteLookForName();
         else if (closure->kind().notesLooksForName()) {
             closure->reify(vm);

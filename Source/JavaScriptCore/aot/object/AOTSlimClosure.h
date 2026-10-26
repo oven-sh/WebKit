@@ -73,11 +73,8 @@ public:
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
-    // Where an object with indexed storage says what it may hold there. Nobody takes the lock of a slim closure, and JSCell::setStructure() clears the bit when the closure gets its properties.
-    static constexpr IndexingType nameWasLookedForBit = MayHaveIndexedAccessors;
-    static_assert(!NonArray && (AllArrayTypesAndHistory & nameWasLookedForBit) && !(AllArrayTypes & nameWasLookedForBit));
-    bool nameWasLookedFor() const { return indexingTypeAndMisc() & nameWasLookedForBit; }
-    void noteLookForName() { *(reinterpret_cast<uint8_t*>(this) + indexingTypeAndMiscOffset()) = nameWasLookedForBit; }
+    bool nameWasLookedFor() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
+    void noteLookForName() { setPerCellBit(true); }
     enum class PrototypeObject : bool { MadeAtFirstRead, MadeNow };
     ReifiedSlimClosure* reify(VM&, PrototypeObject = PrototypeObject::MadeAtFirstRead);
     ReifiedSlimClosure* reifyWithAddedProperty(VM&, Structure* structureWithProperty, PropertyOffset, JSValue);

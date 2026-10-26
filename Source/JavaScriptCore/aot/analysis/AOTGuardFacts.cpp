@@ -631,8 +631,9 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
-static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, PropertyKeyID key)
+static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, const Value& user)
 {
+    PropertyKeyID key = user.key();
     const Program& program = analyses.program();
     const Function& function = analyses.function();
     const Value& allocation = function.at(allocationID);
@@ -640,9 +641,6 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
         return false;
     auto mayBeMarker = [&](ValueID stored) {
         return program.typeOf(function, stored).mayBeUndefinedOrNull();
-    };
-    auto mayStoreIntoWhatIsMade = [&](const Value& store) {
-        return analyses.escape().mayAlias(store.objectOperand(), allocationID);
     };
     std::span<const uint32_t> fields = allocation.fields();
     std::span<const ValueID> values = allocation.variadicOperands();
@@ -653,23 +651,34 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
     }
     if (!listsValue)
         return false;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
+
+    BlockID blockOfAllocation;
+    Vector<std::pair<BlockID, ValueID>, 4> markerStores;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
             const Value& store = function.at(id);
+            if (id == allocationID)
+                blockOfAllocation = block;
             if (store.opcode == Opcode::PutSlots) {
                 PayloadListView<PlacedKey> keys = store.placedKeys();
                 std::span<const ValueID> stored = store.variadicOperands();
                 for (uint32_t index = 0; index < keys.size() && index < stored.size(); ++index) {
-                    if (keys[index].key == key && mayBeMarker(stored[index]) && mayStoreIntoWhatIsMade(store))
-                        return false;
+                    if (keys[index].key == key && mayBeMarker(stored[index]))
+                        markerStores.append({ block, id });
                 }
                 continue;
             }
-            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)) && mayStoreIntoWhatIsMade(store))
-                return false;
+            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)))
+                markerStores.append({ block, id });
         }
     }
-    return true;
+    if (markerStores.isEmpty())
+        return true;
+    // Who names the allocation means the object that it made last. From a store that can be reached without making one, every way to such a user makes a new one.
+    bool namesAllocation = blockOfAllocation && analyses.identityOf(guardedOperandOf(user)) == analyses.identityOf(allocationID);
+    return std::ranges::none_of(markerStores, [&](const auto& store) {
+        return (!namesAllocation || analyses.dominators().dominates(blockOfAllocation, store.first)) && analyses.escape().mayAlias(function.at(store.second).objectOperand(), allocationID);
+    });
 }
 
 static bool provesSlotFilledForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
@@ -677,7 +686,7 @@ static bool provesSlotFilledForUser(FunctionAnalyses& analyses, const GuardOrigi
     if (!holdsDeclaredType(user))
         return true;
     if (origin.source == GuardSource::Allocation)
-        return fillsSlotWithDeclaredType(analyses, origin.test, user.key());
+        return fillsSlotWithDeclaredType(analyses, origin.test, user);
     if (origin.source != GuardSource::Test)
         return false;
     const Value& test = analyses.function().at(origin.test);

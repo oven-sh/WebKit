@@ -53,9 +53,8 @@ public:
         CaptureStackOfThrow,
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
-    enum class StackOfError : bool { MadeAnywhere, MadeHere };
-    // Null unless the value is an Error that still holds the return addresses of its own stack, which the Exception then shares.
-    static Exception* tryCreateWithStackOfError(VM&, JSValue thrownValue, StackOfError);
+    // Null unless the value is an Error that was made in the compiled frame on top and still holds the return addresses of its own stack, which the Exception then shares.
+    static Exception* tryCreateWithStackOfErrorMadeHere(VM&, JSValue thrownValue);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 

@@ -377,6 +377,14 @@ bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunctio
     });
 }
 
+bool FlowResults::closuresAreStoredUnder(FunctionID closureFunction, PropertyKeyID key) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, analyzed, [&](const AllocationClass& closures) {
+        return closures.addedKeys.contains(key);
+    });
+}
+
 bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {

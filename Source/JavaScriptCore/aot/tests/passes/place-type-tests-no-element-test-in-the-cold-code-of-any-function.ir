@@ -1,19 +1,26 @@
 # What holds for the cold code of a cold function holds for the cold code of any function: where code is not expected to run, no test stands in front of an access to an element.
 # The general form is one call: smaller than a test, the access in line and a copy of what stands behind them. place-type-tests-store-inside-length-of-proven-storage.ir has the
 # same store where code runs
+# The store stands behind four even branches: one entry in sixteen comes there
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="storeBelowLengthInAnArm" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
-    v3 = GetArrayLength v0
-    v4 = Less v1, v3
-    Branch v4 -> taken b1(), notTaken b2()
+function f0 name="storeBelowLengthInAnArm" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    Branch v3 -> taken b1(), notTaken b5()
   b1():
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    Branch v5 -> taken b3(), notTaken b5()
+  b3():
+    v6 = GetArrayLength v0
+    v7 = Less v1, v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
     ElemSet v0, v1, v2 mode=Strict
     Return
-  b2():
+  b5():
     Return
 # CHECK-NOT: IsInBounds
 # CHECK: ElemSet v0, v1, v2

@@ -841,7 +841,7 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
             return false;
         const Type& typeBefore = types.at(before);
         const Type& type = types.at(now);
-        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives);
+        return (type.anyObject && !typeBefore.anyObject) || (type.anyFunction && !typeBefore.anyFunction) || (type.primitives & ~typeBefore.primitives) || !type.integers.isSubsetOf(typeBefore.integers);
     };
     std::optional<ProofScope> scope;
     auto replaceIfItCutsValue = [&](ValueID upcast, ValueID id) {

@@ -10,6 +10,7 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTHeldOperands.h"
@@ -19,6 +20,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaResultRules.h"
 #include "AOTValueIdentity.h"
+#include "TypedArrayType.h"
 #include <algorithm>
 #include <wtf/StringPrintStream.h>
 
@@ -643,10 +645,12 @@ static bool handsBitsOfNaNOnToResult(const User& user)
     return computesWithNumbers(user) || (builtin && builtinsThatComputeWithNumbers.contains(*builtin));
 }
 
-// A typed array takes the bits as they are. An array of doubles takes no NaN, and the store boxes what it hands on.
+// A typed array takes the bits as they are. On x86-64 no instruction converts to a Float16, and the JIT hands such a store a boxed number. An array of doubles takes no NaN, and the store boxes what it hands on.
 static bool storesAsElement(const Value& value, uint32_t operandIndex)
 {
-    return value.opcode == Opcode::PutTypedArrayElement || (value.opcode == Opcode::PutArrayElement && OperandPosition::value(value.opcode) == operandIndex);
+    if (value.opcode == Opcode::PutTypedArrayElement)
+        return value.typedArrayType() != TypeFloat16 || targetOfThisBuild().architecture != BuiltinArchitecture::X86_64;
+    return value.opcode == Opcode::PutArrayElement && OperandPosition::value(value.opcode) == operandIndex;
 }
 
 static bool storesAsElement(const Terminator&, uint32_t)

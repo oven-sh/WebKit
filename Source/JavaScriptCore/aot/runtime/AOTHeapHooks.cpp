@@ -49,8 +49,6 @@ static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
         return;
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
     VMState& state = vm.aotState();
-    if (state.functionTables)
-        state.functionTables->visitRecordedCallees(vm, visitor);
     state.caches->visitRoots(visitor, volatility);
 
     Locker locker { state.instancesLock };
@@ -109,7 +107,19 @@ void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
 
 namespace HeapHooks {
 
-void finalize(VM& vm, CollectionScope scope)
+void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
+{
+    if (auto& tables = vm.aotState().functionTables)
+        tables->visitRecordedCallees(vm, visitor, phase);
+}
+
+void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
+{
+    if (auto& tables = vm.aotState().functionTables)
+        tables->visitRecordedCallees(vm, visitor, phase);
+}
+
+void finalize(VM& vm, CollectionScope scope, uint64_t phase)
 {
     VMState& state = vm.aotState();
     {
@@ -124,7 +134,7 @@ void finalize(VM& vm, CollectionScope scope)
     }
 
     if (state.functionTables)
-        state.functionTables->finalizeRecordedCallees(vm);
+        state.functionTables->finalizeRecordedCallees(vm, phase);
 
     CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
     state.caches->finalize(vm, scope, validation);

@@ -17,5 +17,5 @@
 # CHECK: function f2 x1
 # CHECK: f9: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: function f3 x1
-# CHECK: statistic FunctionsWithoutFrame 6
+# CHECK: statistic FunctionsWithoutFrame 5
 # PROGRAM-OF: entrypoints-that-hand-on-what-they-were-given.ir

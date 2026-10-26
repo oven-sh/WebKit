@@ -248,6 +248,8 @@ static ALWAYS_INLINE size_t deleteByName(Instance* instance, JSCell* base, Uniqu
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // The stub hands over the name alone, without the string or the symbol that it read the name from.
+    Identifier name = Identifier::fromUid(vm, uid);
     JSObject* object = JSValue(base).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, 0);
     Instance* instanceThatFiles = nullptr;
@@ -257,7 +259,7 @@ static ALWAYS_INLINE size_t deleteByName(Instance* instance, JSCell* base, Uniqu
         if (object == base)
             instanceThatFiles = instance;
     }
-    RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, uid, isStrict, instanceThatFiles));
+    RELEASE_AND_RETURN(scope, deleteNamedProperty(globalObject, object, name, isStrict, instanceThatFiles));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByName, size_t, (Instance* instance, JSCell* base, UniquedStringImpl* uid))

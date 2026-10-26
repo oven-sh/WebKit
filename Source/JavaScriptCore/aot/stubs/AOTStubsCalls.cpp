@@ -64,6 +64,7 @@ StubSignature callConventionSignatureWithCount()
 StubSignature signatureOfCallValue(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueWithoutThis(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueCell(StubKey) { return callConventionSignature({ }); }
+StubSignature signatureOfCallValueCellWithoutThis(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueNotClosure(StubKey) { return callConventionSignature({ closureWordRegister }); }
 StubSignature signatureOfCallValueLending(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfCallValueWithCount(StubKey) { return callConventionSignatureWithCount(); }
@@ -122,18 +123,22 @@ ClosureHeaderBranches branchIfNotPlainClosureHeader(StubAssembler& jit, GPRReg s
 void loadClosureWordOfThisRealm(StubAssembler& jit, GPRReg closure, const CallRegisters& registers, JumpList& isNotClosureOfThisRealm)
 {
     ASSERT(noOverlap(closure, registers.word, registers.scratch));
+    auto appendUnlessOfThisRealm = [&] {
+        loadStructure(jit, closure, registers.scratch);
+        isNotClosureOfThisRealm.append(branchIfNotOfThisRealm(jit, registers.scratch));
+    };
     jit.load8(Address(closure, JSCell::typeInfoTypeOffset()), registers.scratch);
     Jump isFull = jit.branch32(CCallHelpers::Equal, registers.scratch, TrustedImm32(CompiledClosureType));
     jit.sub32(TrustedImm32(SlimClosureType), registers.scratch);
     isNotClosureOfThisRealm.append(jit.branch32(CCallHelpers::Above, registers.scratch, TrustedImm32(SlimClosureWithPropertiesType - SlimClosureType)));
-    loadStructure(jit, closure, registers.scratch);
-    isNotClosureOfThisRealm.append(branchIfNotOfThisRealm(jit, registers.scratch));
+    // In an image with one instance every slim closure is a closure of this instance.
+    if (!jit.options().hasOneInstance)
+        appendUnlessOfThisRealm();
     loadSlimClosureWord(jit, closure, registers.word);
     Jump hasWord = jit.jump();
 
     isFull.link(&jit);
-    loadStructure(jit, closure, registers.scratch);
-    isNotClosureOfThisRealm.append(branchIfNotOfThisRealm(jit, registers.scratch));
+    appendUnlessOfThisRealm();
     jit.load64(Address(closure, offsetOfClosureEntry), registers.word);
     hasWord.link(&jit);
 }
@@ -151,12 +156,20 @@ void emitFillMissingArgumentRegisters(StubAssembler& jit, GPRReg count, GPRReg s
         jit.moveConditionally32(CCallHelpers::Above, count, TrustedImm32(i), argumentGPR(i), scratch, argumentGPR(i));
 }
 
+// A call that is written with more arguments than there are registers passes its count too.
+static void emitFillArgumentRegistersUnlessEveryOneIsPassed(StubAssembler& jit, GPRReg scratch)
+{
+    Jump everyOneIsPassed = jit.branch32(CCallHelpers::AboveOrEqual, countGPR, TrustedImm32(numberOfArgumentGPRs));
+    emitFillMissingArgumentRegisters(jit, countGPR, scratch);
+    everyOneIsPassed.link(&jit);
+}
+
 void emitEnterClosure(StubAssembler& jit, const CallRegisters& registers, std::optional<unsigned> count, JumpList& isNotCallable)
 {
     static_assert(ClosureWord::isNotCallableBit > ClosureWord::numberOfParametersShift && ClosureWord::takesNewTargetBit < ClosureWord::numberOfParametersShift && ClosureWord::functionShift + ClosureWord::numberOfFunctionBits <= ClosureWord::numberOfParametersShift);
     if (!count) {
         isNotCallable.append(jit.branchTest64(CCallHelpers::NonZero, registers.word, TrustedImm64(isNotCallableMask)));
-        emitFillMissingArgumentRegisters(jit, countGPR, registers.scratch);
+        emitFillArgumentRegistersUnlessEveryOneIsPassed(jit, registers.scratch);
         toCodeAddress(jit, registers.word, registers.scratch, StackIsTested::No);
         jit.farJump(registers.word, JSEntryPtrTag);
         return;
@@ -181,11 +194,12 @@ static Jump branchIfTopByteRefusesCount(StubAssembler& jit, ptrdiff_t offsetOfWo
     return jit.branch8(CCallHelpers::LessThan, Address(calleeGPR, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(count)));
 }
 
-static void emitEnterCodeOfWordAt(StubAssembler& jit, const CallRegisters& registers, ptrdiff_t offsetOfWord, unsigned count)
+static void emitEnterCodeOfWordAt(StubAssembler& jit, const CallRegisters& registers, ptrdiff_t offsetOfWord, std::optional<unsigned> count)
 {
     static_assert(ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32);
     jit.checkStackBeforeEnteringCallee();
-    jit.move(TrustedImm32(count), countGPR);
+    if (count)
+        jit.move(TrustedImm32(*count), countGPR);
     jit.load32(Address(calleeGPR, offsetOfWord), registers.word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), registers.word);
     jit.farJump(registers.word, JSEntryPtrTag);
@@ -199,9 +213,10 @@ static Jump branchIfSlimClosureWordRefusesCount(StubAssembler& jit, const CallRe
     return jit.branch64(CCallHelpers::LessThan, registers.word, registers.scratch);
 }
 
-static void emitEnterCodeOfWord(StubAssembler& jit, const CallRegisters& registers, unsigned count)
+static void emitEnterCodeOfWord(StubAssembler& jit, const CallRegisters& registers, std::optional<unsigned> count)
 {
-    jit.move(TrustedImm32(count), countGPR);
+    if (count)
+        jit.move(TrustedImm32(*count), countGPR);
     toCodeAddress(jit, registers.word, registers.scratch, StackIsTested::No);
     jit.farJump(registers.word, JSEntryPtrTag);
 }
@@ -211,25 +226,28 @@ static void emitEnterCodeOfWord(StubAssembler& jit, const CallRegisters& registe
 static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isNotCallable)
 {
 #if CPU(X86_64)
-    // In an image with one instance every slim closure is a closure of this instance, and the top byte of the word at that place tells one that is as it was created from every other cell.
+    Jump isNotSlim;
     if (jit.options().hasOneInstance) {
+        // In an image with one instance every slim closure is a closure of this instance, and the top byte of the word at that place tells one that is as it was created from every other cell.
         Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, count);
         emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
         notCommonCase.link(&jit);
-    }
-    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-    Jump isNotSlim = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders[0])));
-    if (!jit.options().hasOneInstance) {
+        isNotSlim = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, ClosureWord::maxNumberOfParameters);
+    } else {
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+        isNotSlim = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders[0])));
         Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, count);
         emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
         notCommonCase.link(&jit);
+        isNotCallable.append(jit.branch8(CCallHelpers::LessThan, Address(calleeGPR, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(0)));
     }
     // What may be called declares more parameters than the call passes arguments.
-    isNotCallable.append(jit.branch8(CCallHelpers::LessThan, Address(calleeGPR, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(0)));
     emitFillMissingArgumentRegisters(jit, count);
     emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
 
     isNotSlim.link(&jit);
+    if (jit.options().hasOneInstance)
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
     Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
     Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfClosureEntry, count);
     emitEnterCodeOfWordAt(jit, registers, offsetOfClosureEntry, count);
@@ -238,11 +256,24 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
     emitEnterClosure(jit, registers, count, isNotCallable);
     return isNeither;
 #else
-    // As above. The whole word is loaded, and compared as the top byte is there.
     if (jit.options().hasOneInstance) {
+        // As above. The whole word is loaded, and compared as the top byte is there.
         Jump notCommonCase = branchIfSlimClosureWordRefusesCount(jit, registers, count);
+        Label enter = jit.label();
         emitEnterCodeOfWord(jit, registers, count);
         notCommonCase.link(&jit);
+        jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(ClosureWord::maxNumberOfParameters)), registers.scratch);
+        Jump isNotSlim = jit.branch64(CCallHelpers::LessThan, registers.word, registers.scratch);
+        emitFillMissingArgumentRegisters(jit, count);
+        jit.jump().linkTo(enter, &jit);
+
+        isNotSlim.link(&jit);
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])), registers.scratch);
+        Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, registers.scratch);
+        jit.loadPtr(Address(calleeGPR, offsetOfClosureEntry), registers.word);
+        emitEnterClosure(jit, registers, count, isNotCallable);
+        return isNeither;
     }
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
     auto [isSlim, isNeither] = branchIfNotPlainClosureHeader(jit, registers.word, registers.scratch);
@@ -361,14 +392,13 @@ void generateCallValue(StubAssembler& jit)
     constexpr unsigned sizeOfMove = isX86_64() ? 5 : 4;
     while ((jit.m_assembler.codeSize() + sizeOfMove) % 16)
         jit.nop();
-    jit.bindEntry(callValueWithoutThis(count));
+    jit.bindEntry(callValueCellWithoutThis(count));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
     RELEASE_ASSERT(!(jit.m_assembler.codeSize() % 16));
-    jit.bindEntry(callValue(count));
+    jit.bindEntry(callValueCell(count));
+    Label isCell = jit.label();
 
     JumpList isEngineCallee;
-    Jump isNotCell = jit.branchIfNotCell(calleeGPR);
-    jit.bindEntry(callValueCell(count));
     Jump isNeither = emitEnterClosureCell(jit, registers, count, isEngineCallee);
 
     isNeither.link(&jit);
@@ -379,7 +409,10 @@ void generateCallValue(StubAssembler& jit)
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineCallee());
 
-    isNotCell.link(&jit);
+    jit.bindEntry(callValueWithoutThis(count));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+    jit.bindEntry(callValue(count));
+    jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
 }
 
@@ -511,14 +544,56 @@ void generateCallValueWithCount(StubAssembler& jit)
     JumpList isNotClosure;
     isNotClosure.append(jit.branchIfNotCell(calleeGPR));
     jit.bindEntry(callCellWithCount());
-    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-    auto [isSlim, isNeither] = branchIfNotPlainClosureHeader(jit, registers.word, registers.scratch);
-    jit.load64(Address(calleeGPR, offsetOfClosureEntry), registers.word);
-    emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
+#if CPU(X86_64)
+    auto enterCodeOfWordAt = [&](ptrdiff_t offsetOfWord) {
+        emitFillArgumentRegistersUnlessEveryOneIsPassed(jit, registers.scratch);
+        emitEnterCodeOfWordAt(jit, registers, offsetOfWord, std::nullopt);
+    };
+    auto branchIfWordIsNotCallableAt = [&](ptrdiff_t offsetOfWord) {
+        return jit.branch8(CCallHelpers::LessThan, Address(calleeGPR, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(0));
+    };
+    // As in emitEnterClosureCell().
+    Jump isNotSlim;
+    if (jit.options().hasOneInstance)
+        isNotSlim = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, ClosureWord::maxNumberOfParameters);
+    else {
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+        isNotSlim = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders[0])));
+        isNotClosure.append(branchIfWordIsNotCallableAt(offsetOfSlimClosureWord));
+    }
+    enterCodeOfWordAt(offsetOfSlimClosureWord);
 
-    isSlim.link(&jit);
-    jit.load64(Address(calleeGPR, offsetOfSlimClosureWord), registers.word);
-    emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
+    isNotSlim.link(&jit);
+    if (jit.options().hasOneInstance)
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+    Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
+    isNotClosure.append(branchIfWordIsNotCallableAt(offsetOfClosureEntry));
+    enterCodeOfWordAt(offsetOfClosureEntry);
+#else
+    Jump isNeither;
+    if (jit.options().hasOneInstance) {
+        Jump isNotSlim = branchIfSlimClosureWordRefusesCount(jit, registers, ClosureWord::maxNumberOfParameters);
+        emitFillArgumentRegistersUnlessEveryOneIsPassed(jit, registers.scratch);
+        emitEnterCodeOfWord(jit, registers, std::nullopt);
+
+        isNotSlim.link(&jit);
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])), registers.scratch);
+        isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, registers.scratch);
+        jit.load64(Address(calleeGPR, offsetOfClosureEntry), registers.word);
+        emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
+    } else {
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+        ClosureHeaderBranches branches = branchIfNotPlainClosureHeader(jit, registers.word, registers.scratch);
+        isNeither = branches.isNeither;
+        jit.load64(Address(calleeGPR, offsetOfClosureEntry), registers.word);
+        emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
+
+        branches.isSlim.link(&jit);
+        jit.load64(Address(calleeGPR, offsetOfSlimClosureWord), registers.word);
+        emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
+    }
+#endif
 
     isNeither.link(&jit);
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, isNotClosure);

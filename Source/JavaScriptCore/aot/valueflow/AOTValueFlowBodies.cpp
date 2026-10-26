@@ -587,6 +587,14 @@ private:
 
     static bool isStrictlyEqualOnlyToItself(const Type& type) { return (type.isSingleValue() || !type.hasObjects()) && !(type.primitives & Primitive::Number); }
 
+    bool isNumberInEveryVersion(ValueID value) const
+    {
+        if (!isBehindCheck(value))
+            return typeOf(value).isNumber();
+        std::optional<Type> widest = tryWidestNaturalTypeOf(m_function.at(value));
+        return widest && widest->isNumber();
+    }
+
     uint32_t maskOfCase(const Terminator& terminator, uint32_t caseIndex)
     {
         if (terminator.kind == TerminatorKind::Switch)
@@ -611,7 +619,7 @@ private:
                     ValueID other = test.operand(result.operandIndex ? 0 : 1);
                     if (!isBehindCheck(other) && isStrictlyEqualOnlyToItself(typeOf(other)))
                         mask = maskInside(m_function.at(other).type, ValueFlowMaskKind::Checked);
-                    else if (!isBehindCheck(other) && typeOf(other).isNumber())
+                    else if (isNumberInEveryVersion(other))
                         mask = maskInside(TypeTable::number, ValueFlowMaskKind::Checked);
                 } else if (test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
@@ -1170,7 +1178,7 @@ private:
         Vector<ValueID, 8> worklist = m_returnedValues;
         while (!worklist.isEmpty()) {
             ValueID value = worklist.takeLast();
-            if (isVisited.set(value.index()) || at(value).role == Role::Nothing || !typeOf(value).hasObjects() || isObjectUnderConstruction(value))
+            if (isVisited.set(value.index()) || at(value).role == Role::Nothing || (!isBehindCheck(value) && !typeOf(value).hasObjects()) || isObjectUnderConstruction(value))
                 continue;
             if (at(value).role != Role::Passing)
                 return false;

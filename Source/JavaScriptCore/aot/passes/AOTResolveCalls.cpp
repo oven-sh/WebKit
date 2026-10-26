@@ -241,7 +241,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     const Function& callee = program.at(request.callee);
     RELEASE_ASSERT(request.captures.size() == callee.captures.size());
     RELEASE_ASSERT(request.calleeValue || !callee.has(FunctionFlags::TakesCallee));
-    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || insertion.function.role == FunctionRole::GenericEntrypoint);
+    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint);
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
@@ -402,6 +402,12 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     return !program.at(id).capabilities.contains(FunctionCapabilities::RecordsCallee) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+}
+
+bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program& program, FunctionID id)
+{
+    const Function& callee = program.at(id);
+    return (!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
@@ -1206,6 +1212,7 @@ struct CallArm {
     FunctionID callee;
     ValueID closureCreation;
     bool capturesReceiver { false };
+    bool isNeverInlined { false };
     LayoutSetID receivers;
     MemberConditions conditions;
 };
@@ -1581,6 +1588,29 @@ struct CallResolver {
         builder.moveToEndOf(branch.taken);
     }
 
+    // The test costs bytes. Code that seldom runs keeps the one call of the value. A name that was changed stays changed, so the call behind a failed test stays as it is.
+    bool paysToTestFunctionNames(const CallSite& site)
+    {
+        context.planAsksAboutPlace = true;
+        BlockID block = site.position.block;
+        if (function.at(block).frequency != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)))
+            return false;
+        return !hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site);
+    }
+
+    void branchOnFunctionNames()
+    {
+        RELEASE_ASSERT(expansion.isOpen());
+        BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+        BlockID failedUnasked = builder.beginPrediction();
+        ValueID areUnchanged = expansion.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
+        IRBuilder::BranchBlocks branch = builder.emitBranch(areUnchanged, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
+        builder.endPrediction(failedUnasked, branch.notTaken);
+        builder.moveToEndOf(branch.notTaken);
+        expansion.finishArm(expansion.appendOriginal({ }));
+        builder.moveToEndOf(branch.taken);
+    }
+
     ValueID appendCall(const CallArm& arm, ValueID thisValue, ValueID closure, std::span<const ValueID> arguments)
     {
         RELEASE_ASSERT(expansion.isOpen() && arm.kind == CallArmKind::DirectCall);
@@ -1605,7 +1635,7 @@ struct CallResolver {
             .accessSite = original.accessSite(),
             .calledBuiltin = original.opcode == Opcode::Call ? original.calledBuiltin() : BuiltinID(),
             .isConstruction = !!newTarget,
-            .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
+            .isNeverInlined = arm.isNeverInlined || (original.opcode == Opcode::Call && original.isNeverInlined()),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
         });
@@ -2012,13 +2042,24 @@ struct CallResolver {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
-        auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectly);
+        // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
+        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return !mayBeCalledDirectly(program, member) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
+        bool mayTestNames = std::ranges::any_of(candidates.listed(), isEnteredByValueOnceRenamed) && paysToTestFunctionNames(site);
+        auto members = chooseDispatchedCallees(site, candidates, mayTestNames ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged : mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
 
-        auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) { return directCallArm(member, { }, candidates.value); });
-        return [this, &site, proof = candidates.proof, arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
+        bool testsNames = mayTestNames && std::ranges::any_of(*members, isEnteredByValueOnceRenamed);
+        auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) {
+            CallArm arm = directCallArm(member, { }, candidates.value);
+            // A copy of the body at every place costs more bytes than the few calls of a place win back.
+            arm.isNeverInlined = isEnteredByValueOnceRenamed(member) && !isHot(heatClassOf(context, site.position.block));
+            return arm;
+        });
+        return [this, &site, testsNames, proof = candidates.proof, arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
             expansion.begin(site.position);
+            if (testsNames)
+                branchOnFunctionNames();
             const Value& original = expansion.original();
             emitCalleeDispatch(proof, split, OperandIndex::Call::callee, [&](uint32_t armIndex, ValueID narrowed) {
                 expansion.finishArm(appendCall(arms[armIndex], original.thisValueOperand(), narrowed, original.variadicOperands()));

@@ -18,6 +18,8 @@
 #include "SourceOrigin.h"
 #include "Strong.h"
 #include <wtf/HashMap.h>
+#include <wtf/RefCounted.h>
+#include <wtf/RefPtr.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -169,6 +171,8 @@ public:
     bool isFileOfProgram(ModuleID module) const { return !data(module).isOfLibrary() && (data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs); }
     bool isLoadedWithRequests(ModuleID module) const { return isFileOfProgram(module) && data(module).kind == ModuleKind::SourceText; }
     bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)); }
+    bool isBuiltinModuleOfLoader(ModuleID) const;
+    bool isBuiltinModuleNewToLoader(ModuleID) const;
     bool needsLoaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
     void appendRequestsForLoader(ModuleID, ModuleRecord*);
@@ -215,7 +219,9 @@ public:
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID);
 
-    ModuleRecord* exposeRecord(ModuleID);
+    enum class RecordHolder : uint8_t { Anyone, Loader };
+    ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
+    void retireRecordsOfSettledLoads();
     AbstractModuleRecord* uncompiledRecord(ModuleID);
     // The record that stands for the module in ResolveExport() and GetExportedNames().
     AbstractModuleRecord* recordForResolution(ModuleID);
@@ -280,6 +286,7 @@ private:
     void setFailed(ModuleID, JSValue error);
     ModuleRecord* ensureRecordWithoutStatus(ModuleID);
     void retireRecord(ModuleRecord*);
+    bool hasRunToItsEndWithItsCycle(const ModuleRecord&) const;
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
     LoadedModule* loadedIfExists(ModuleID) const;
@@ -318,7 +325,19 @@ private:
 
     void evaluateWithOwnStack(ModuleID root);
     void holdJobsBehind(size_t numberOfJobs, ModuleID file);
+    struct LevelOfLoad;
+    struct PlanOfLoad;
     bool planLevelsOfLoad(ModuleID root);
+    bool isLeftAsLoaded(ModuleID) const;
+    bool isModuleWithoutRecord(const ModuleData&, StoredModuleStatus) const;
+    bool isNeitherOfProgramNorData(const ModuleData&, StoredModuleStatus) const;
+    bool isFoundWithoutRecord(ModuleID, const ModuleData&, StoredModuleStatus);
+    bool isStillToBeLoaded(ModuleID);
+    void layWayOfLoad(PlanOfLoad&, LevelOfLoad* above);
+    void layWayOfLoadAgain(LevelOfLoad&);
+    void countStepsOfLevel(PlanOfLoad&, size_t depth);
+    void takeUpWaysOfLoads();
+    void markModulesOfPlan(const PlanOfLoad&);
     JSValue callBody(ModuleID);
     JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus, bool runsImportedFilesAlone = false);
     Vector<ModuleID, 8> modulesThatEvaluationWillBegin(ModuleID root);
@@ -336,7 +355,7 @@ private:
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
-    ModuleRecord* registerWithLoader(ModuleID);
+    ModuleRecord* registerWithLoader(ModuleID, RecordHolder = RecordHolder::Anyone);
     const Identifier& resolvedKey(ModuleID);
 
     State& m_state;
@@ -360,8 +379,9 @@ private:
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
     Structure* m_namespaceStructure { nullptr };
     Identifier m_moduleExportsName;
-    // The pairs of a requiring and a required module that recordRequire() has seen, and whether a require() of the pair has returned.
-    UncheckedKeyHashMap<uint64_t, bool> m_recordedRequires;
+    // The pairs of a requiring and a required module that recordRequire() has seen.
+    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain };
+    UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
@@ -379,11 +399,50 @@ private:
         bool isWalked { false };
         bool hasMarksBelowRoot { false };
         bool isLoaded { false };
+        RefPtr<PlanOfLoad> planWithoutMarks;
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;
+    Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
     BitVector m_modulesBelowWalkedRoots;
     // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:
     // when it comes to the module of a level on that way, the files of the level that stand in front of the module run. It comes to the first file behind the module too, and those behind that one run with it.
+    // What lay below the root and was not loaded when the loader came to the root. A require() may load a part of it before the loader comes there: what is left stands on the level where it stood.
+    struct PlanOfLoad : RefCounted<PlanOfLoad> {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfLoad);
+
+        struct Found {
+            ModuleID module;
+            // A place in the list.
+            uint32_t importer;
+            // A request for what another module of the same level has asked for hears of it one step later. The most such requests on a way from the root.
+            uint32_t laterRequests : 29;
+            uint32_t isFile : 1;
+            uint32_t wasLoadedSince : 1;
+            // Until the next require() comes between.
+            uint32_t isKnownToBeLeft : 1;
+        };
+        struct Level {
+            uint32_t first;
+            // The most of a module or file of the level, and where one with so many stands.
+            uint32_t laterRequests;
+            uint32_t placeOfMostLaterRequests;
+            bool hasFiles;
+        };
+        static constexpr uint32_t jobsOfLevel = 5;
+
+        // The levels stand one behind the other, each in the order in which the loader asks.
+        Vector<Found, 64> found;
+        Vector<Level, 32> levels;
+        Vector<uint32_t> knownToBeLeft;
+        // From the step in which the loader asks the root for its requests to the one in which the last request so far is heard of.
+        uint32_t steps { 0 };
+        // Nothing of it was loaded since.
+        bool isWhole { true };
+        Strong<Unknown> firstErrorOnWayTakenUp;
+
+        std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
+    };
+    bool isLeftToLoad(PlanOfLoad&, PlanOfLoad::Found&);
     struct LevelOfLoad {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
 
@@ -391,8 +450,13 @@ private:
         std::optional<ModuleID> firstFileBehindNext;
         Vector<ModuleID, 4> files;
         Strong<Unknown> firstError;
+        RefPtr<PlanOfLoad> plan;
+        uint32_t depth { 0 };
+        bool isAskedFor { false };
     };
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    Vector<uint32_t> m_placesSeenByPlans;
+    uint32_t m_firstPlaceOfNextPlan { 1 };
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;

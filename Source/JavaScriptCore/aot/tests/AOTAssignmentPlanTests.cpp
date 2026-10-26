@@ -632,7 +632,8 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
 }
 
-static void testCopiesWithoutFrameWriteNoFieldThatTheTargetHolds(LoadedProgram& program)
+// Where a later move fails, a field that the target lists keeps what the copy has stored there, which whoever copies in another way stores again.
+static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Instance& instance = program.instance();
@@ -654,11 +655,25 @@ static void testCopiesWithoutFrameWriteNoFieldThatTheTargetHolds(LoadedProgram& 
     AOT_TEST_CHECK(didCopyBesideLabel && hasKeys(program, labeled, { "label"_s, "x"_s, "y"_s }));
     AOT_TEST_CHECK(labeled->get(program.realm(), Identifier::fromString(vm, "label"_s)) == jsNumber(5) && labeled->get(program.realm(), Identifier::fromString(vm, "x"_s)) == jsNumber(1) && labeled->get(program.realm(), Identifier::fromString(vm, "y"_s)) == jsNumber(2));
 
-    Object* pair = allocate(program, "Pair"_s);
-    put(program, pair, "y"_s, 3);
-    put(program, pair, "x"_s, 4);
-    auto [point, didCopyOverX] = copyAfterTwoCopiesInFrame("Point"_s, pair);
-    AOT_TEST_CHECK(!didCopyOverX && hasKeys(program, point, { "x"_s }) && point->get(program.realm(), Identifier::fromString(vm, "x"_s)) == jsNumber(5));
+    auto createPair = [&](ASCIILiteral first, ASCIILiteral second) {
+        Object* pair = allocate(program, "Pair"_s);
+        put(program, pair, first, 3);
+        put(program, pair, second, 4);
+        return pair;
+    };
+    auto valueOf = [&](Object* object, ASCIILiteral name) {
+        return object->get(program.realm(), Identifier::fromString(vm, name));
+    };
+    for (auto [first, second] : { std::pair { "x"_s, "y"_s }, std::pair { "y"_s, "x"_s } }) {
+        auto [point, didCopy] = copyAfterTwoCopiesInFrame("Point"_s, createPair(first, second));
+        AOT_TEST_CHECK(didCopy && hasKeys(program, point, { "x"_s, "y"_s }) && valueOf(point, first) == jsNumber(3) && valueOf(point, second) == jsNumber(4));
+
+        Object* pairWithoutSecond = createPair(first, second);
+        pairWithoutSecond->clear(*pairWithoutSecond->fieldNamed(program.state(), Identifier::fromString(vm, second).impl()));
+        Object* target = createWithFirstField("Point"_s);
+        AOT_TEST_CHECK(!tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(pairWithoutSecond), 0));
+        AOT_TEST_CHECK(valueOf(target, first) == jsNumber(3) && valueOf(target, "x"_s) == jsNumber(first == "x"_s ? 3 : 5));
+    }
 }
 
 static void testIntegersMoveIntoSlotsThatMayHoldNone()
@@ -708,7 +723,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
-        { "assignment-plans/copies-without-frame-write-no-field-that-the-target-holds"_s, withPoints<testCopiesWithoutFrameWriteNoFieldThatTheTargetHolds> },
+        { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
     };
     return tests;

@@ -15,6 +15,7 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
 
@@ -57,6 +58,8 @@ public:
     void resizeToFunction();
 
     unsigned numberOfBlocks() const { return m_terminators.size(); }
+    // Of all the analyses of the function: the first one ends the build, and what they hold behind it need not be right, so no other is reported.
+    void reportOutdatedAnswer(String&& detail) const;
     bool didReportOutdatedAnswer() const { return m_didReportOutdatedAnswer; }
 
     const EffectsOnEdges* findKept(ValueID) const LIFETIME_BOUND;
@@ -100,7 +103,7 @@ private:
     UncheckedKeyHashMap<uint64_t, OperandSummary, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_operandSummaryOfStamp;
     uint32_t m_round { 1 };
     Diagnostics* const m_diagnosticsForOutdatedAnswers;
-    bool m_didReportOutdatedAnswer { false };
+    mutable bool m_didReportOutdatedAnswer { false };
     uint64_t m_numberOfComputedAnswers { 0 };
     uint64_t m_numberOfKeptAnswers { 0 };
 };

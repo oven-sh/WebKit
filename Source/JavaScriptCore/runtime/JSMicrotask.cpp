@@ -1209,6 +1209,13 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = context->module();
 #if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && compiled->takeStepBehindLoad()) {
+                JSPromise* loadedOneStepLater = JSPromise::create(vm, globalObject->promiseStructure());
+                loadedOneStepLater->markAsHandled();
+                loadedOneStepLater->fulfill(vm, module);
+                loadedOneStepLater->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
+                return;
+            }
             if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeStepOfMainModule()) {
                 // The entry point is loaded from here on, for whoever asks the loader for it. Who asked for the program hears of it in the next step.
                 JSPromise* loadedBelowMainModule = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1392,6 +1399,10 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
+#if ENABLE(AOT)
+    if (!context->dynamic())
+        AOT::didSettleLoad(resultPromise);
+#endif
 }
 
 static void moduleLoadSpecifierTransform(JSGlobalObject*, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
@@ -1753,6 +1764,9 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
         resultPromise->resolve(globalObject, vm, asObject(arguments[1]));
     } else
         resultPromise->reject(vm, arguments[1]);
+#if ENABLE(AOT)
+    AOT::didSettleLoad(resultPromise);
+#endif
     return;
 }
 

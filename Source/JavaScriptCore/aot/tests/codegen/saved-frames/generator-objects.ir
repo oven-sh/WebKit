@@ -1,7 +1,7 @@
 # Each kind of generator object comes from its form of one stub, a step calls the form of the stub for its check or, of an async generator, the form for the kind of function that takes the step, and the tests for an unmodified generator are code without a call
 # FORM: Selected
 # RUN: generate-code calls
-# OPTIONS: check=validate-back-end
+# OPTIONS: check=validate-back-end heat=OnlyLoopsAreHot
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="generator" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f10 promiseParameter=1} {

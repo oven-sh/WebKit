@@ -245,6 +245,8 @@ bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 bool namesWaysToModuleObjects(const Program&);
+// `require` hands the module to this function of the host, so a stack trace lists it between what the module runs and the code that called `require`.
+BuiltinID functionOfHostThatRequireCallsFor(const Module&);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

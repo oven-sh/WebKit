@@ -471,7 +471,9 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
 
     ValueFlowObjectID undefinedAndNull[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
     ValueSetID neverReceivers = context.maker().of(undefinedAndNull);
-    ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(context.valueOf(context.operandsOf(statement)[1]), universe.knownObjects()));
+    const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
+    ClimbingSet all = context.valueOf(receiver);
+    ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
     for (ValueSetID group : receivers.groups) {
         ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(key)));
         context.forEachMember(context.restrict(answered, universe.closures()), [&](ValueFlowObjectID closure) {
@@ -491,7 +493,29 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
             }
         });
     }
-    return { ValueSets::complement(context.maker().unite(universe.knownObjects(), neverReceivers)), receivers.rest };
+
+    // Primitives and objects nobody knows go, as a known object does, to the functions that their own lookup answers.
+    ValueSetID others = ValueSets::complement(context.maker().unite(universe.knownObjects(), neverReceivers));
+    ClimbingSet otherReceivers = context.restrict(all, others);
+    if (context.meet(otherReceivers, ValueSets::anything)) {
+        Vector<ValueFlowObjectID, 8> found;
+        context.forEachMember(context.restrict(context.valueOf(context.lookup(otherReceivers, ValueFlowName::property(key))), universe.closures()), [&](ValueFlowObjectID closure) {
+            if (!context.contains(closures, closure))
+                return;
+            found.append(closure);
+            FunctionID function = universe.closureFunction(closure);
+            const auto* summary = statement.result && receiver.node ? context.nodes().resultSummaryOf(function) : nullptr;
+            if (!summary || program.at(function).isUnsplitCoroutine() || throwsInsteadOfRunning(program.at(function), false))
+                return;
+            for (const auto& passed : summary->passedParameters) {
+                if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
+                    context.connect(context.masked(context.masked(context.masked(receiver.node, receiver.mask, receiver.maskKind), others), passed.mask, passed.maskKind), statement.result);
+            }
+        });
+        if (!found.isEmpty())
+            passThis(context, statement, receiver, { others, ValueSets::nothing }, context.group(ClimbingSet(context.maker().of(found.span())), ValueFlowCallKind::Call).thisValue);
+    }
+    return { ValueSets::nothing, receivers.rest };
 }
 
 static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

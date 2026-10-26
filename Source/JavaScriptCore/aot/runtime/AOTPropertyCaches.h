@@ -232,6 +232,7 @@ public:
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
+    void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);

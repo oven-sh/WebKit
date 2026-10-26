@@ -1085,6 +1085,14 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
     }
 }
 
+void VMPropertyCaches::didStartWatchingReplacements()
+{
+    for (Instance* instance : m_vm.aotState().instances) {
+        if (std::exchange(instance->propertyCaches.placesTakeReplacementsAsUnwatched, 0))
+            zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
+    }
+}
+
 void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAccess access, const Slot& slot)
 {
     StructureID id = structure->id();
@@ -1430,23 +1438,35 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
 {
     if (structure->id() == m_structureMadeForAdditionByKey)
         return true;
-    // Zero stands for no pair.
-    uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | 1;
+    // A pair that came once has the highest bit set. One that came again has it clear: it is still found once nothing holds its Structure any more, until a newcomer takes its place. Zero stands for no pair.
+    constexpr uint32_t cameOnce = 1u << 31;
+    uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
     constexpr uint32_t numberOfSets = numberOfFirstAdditionsByKey / firstAdditionsByKeyPerSet;
     static_assert(hasOneBitSet(numberOfSets) && !(firstAdditionsByKeyPerSet % SIMD::stride<uint32_t>));
-    uint32_t* set = &m_firstAdditionsByKey[(hash >> 1) % numberOfSets * firstAdditionsByKeyPerSet];
-    auto findInSet = [&](uint32_t wanted) -> uint32_t* {
+    uint32_t* set = &m_firstAdditionsByKey[hash % numberOfSets * firstAdditionsByKeyPerSet];
+    auto findInSet = [&](auto matches) -> uint32_t* {
         for (uint32_t* places = set; places < set + firstAdditionsByKeyPerSet; places += SIMD::stride<uint32_t>) {
-            if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::load(places), SIMD::splat32(wanted))))
+            if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(matches(SIMD::load(places))))
                 return places + *index;
         }
         return nullptr;
     };
-    if (uint32_t* found = findInSet(hash)) {
+    auto holdsPair = [&](auto words) {
+        return SIMD::equal(SIMD::bitOr(words, SIMD::splat32(cameOnce)), SIMD::splat32(hash));
+    };
+    if (uint32_t* found = findInSet(holdsPair)) {
+        // Newcomers take the lowest place that they may, so it moves above the free ones.
         *found = 0;
+        uint32_t* highestFree = set + firstAdditionsByKeyPerSet - 1;
+        while (*highestFree)
+            --highestFree;
+        *highestFree = hash & ~cameOnce;
         return true;
     }
-    uint32_t* place = findInSet(0);
+    auto isForNewcomers = [&](auto words) {
+        return SIMD::lessThan(words, SIMD::splat32(cameOnce));
+    };
+    uint32_t* place = findInSet(isForNewcomers);
     if (!place) {
         // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
         m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;

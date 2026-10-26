@@ -83,20 +83,6 @@ static void emitCallMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry
     otherwise.link(&jit);
 }
 
-static uint32_t slimFunctionKindBit()
-{
-    FunctionKindData kind { };
-    kind.isSlim = 1;
-    return std::bit_cast<uint16_t>(kind);
-}
-
-static uint32_t asyncFunctionKindBit()
-{
-    FunctionKindData kind { };
-    kind.isAsync = 1;
-    return std::bit_cast<uint16_t>(kind);
-}
-
 // A field that defers its closure makes it when the field is read.
 static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
 {

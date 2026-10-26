@@ -974,13 +974,22 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
 }
 
 // The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it. aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
-function closeFunctions({ builder }: EntryContext): void {
+// A constructor has `prototype` besides. The comparison loads no module, so a constructor that only a module hands out lists what the table knows of it and may have more.
+function closeFunctions({ builder, ownPropertyLists }: EntryContext): void {
+  const moduleObjects = new Set(builder.modules.map(module => builder.find(joinPath(module.namespace.path))));
+  const rootOf = (builtin: ModelBuiltin): ModelBuiltin => (builtin.holder === null ? builtin : rootOf(builtin.holder));
+  const isHandedOutByModule = (builtin: ModelBuiltin): boolean =>
+    rootOf(builtin).scope !== "Realm" || moduleObjects.has(rootOf(builtin));
   for (const builtin of builder.builtins) {
-    if (builtin.kind !== "Function" && builtin.kind !== "Method") continue;
+    if (builtin.kind !== "Function" && builtin.kind !== "Method" && builtin.kind !== "Constructor") continue;
     const described = builtin.sameObjectAs ?? builtin;
     if (builder.functionsOfUnknownClass.has(described) || columnOf(builder, described, "hasUndeclaredMembers"))
       continue;
+    if (builtin.kind === "Constructor" && isHandedOutByModule(described)) continue;
     addFlag(builtin, "ListsAllMembers");
+    if (builtin.kind !== "Constructor" || builtin.sameObjectAs !== null || ownPropertyLists.has(builtin)) continue;
+    const path = joinPath(builder.memberPathOf(joinPath(builtin.path), prototypeName));
+    if (builder.find(path) === undefined) builder.create(path, "DataProperty", builder.sourceOf(builtin));
   }
 }
 

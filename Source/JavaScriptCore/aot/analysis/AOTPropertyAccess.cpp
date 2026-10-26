@@ -20,11 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet namedAccesses {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
-};
-
 static constexpr bool isPrivateAccess(Opcode opcode) { return familyOf(opcode) == OperationFamily::PrivateAccess; }
 
 static constexpr bool hasNamedAccessColumns(Opcode opcode)
@@ -175,6 +170,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
     query.access = accessOf(opcode);
     query.key = keyOfNamedAccess(program, access);
     query.isOwnLookup = opcode == Opcode::PropHasOwn;
+    query.asksForDeclaredMember = opcode == Opcode::FindsDeclaredMember;
     query.site = access.accessSite();
     query.module = function.module;
     if (std::optional<uint8_t> stored = storedOf(opcode))
@@ -260,7 +256,7 @@ PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const Pro
             setConstant(Opcode::Boolean, true);
     };
 
-    switch (answer.kind) {
+    switch (query.asksForDeclaredMember && !isMemberOfClass(answer) ? MemberKind::Unknown : answer.kind) {
     case MemberKind::Unknown:
         break;
     case MemberKind::Absent:

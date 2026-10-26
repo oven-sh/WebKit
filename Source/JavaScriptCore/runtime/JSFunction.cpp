@@ -33,6 +33,7 @@
 #include "BuiltinNames.h"
 #include "CallFrame.h"
 #include "CommonIdentifiers.h"
+#include "CustomGetterSetter.h"
 #include "FunctionExecutableInlines.h"
 #include "GeneratorPrototype.h"
 #include "JSBoundFunction.h"
@@ -58,6 +59,8 @@ JSC_DEFINE_HOST_FUNCTION(callHostFunctionAsConstructor, (JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMError(globalObject, scope, createNotAConstructorError(globalObject, callFrame->jsCallee()));
 }
+
+static JSC_DECLARE_CUSTOM_GETTER(nameOfFunctionNamedAsBound);
 
 const ClassInfo JSFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFunction) };
 const ClassInfo JSStrictFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStrictFunction) };
@@ -721,6 +724,12 @@ JSFunction::PropertyStatus JSFunction::reifyLazyNameIfNeeded(VM& vm, JSGlobalObj
     return PropertyStatus::Eager;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(nameOfFunctionNamedAsBound, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    JSFunction* function = uncheckedDowncast<JSFunction>(JSValue::decode(thisValue));
+    return JSValue::encode(uncheckedDowncast<NativeExecutable>(function->executable())->nameJSString(globalObject->vm()));
+}
+
 JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -755,6 +764,14 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
+        unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        rareData->setHasReifiedName();
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        if (uncheckedDowncast<NativeExecutable>(executable())->isNamedAsBound()) {
+            // A custom value: what looks for a name that the program gave the function finds none.
+            putDirectCustomAccessor(vm, nameIdent, CustomGetterSetter::create(vm, nameOfFunctionNamedAsBound, nullptr), initialAttributes | PropertyAttribute::CustomValue);
+            return PropertyStatus::Reified;
+        }
         JSString* name = nullptr;
 #if ENABLE(AOT)
         if (isCompiledClosure())
@@ -762,9 +779,6 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         else
 #endif
             name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
-        unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
-        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     }
     return PropertyStatus::Reified;

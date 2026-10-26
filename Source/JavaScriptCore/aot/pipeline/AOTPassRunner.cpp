@@ -965,7 +965,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         }
     }
     if (errors.isEmpty()) {
-        context.analyses.verifyCached();
+        if (!context.analyses.verifyCached())
+            run.isStopped = true;
         return;
     }
 

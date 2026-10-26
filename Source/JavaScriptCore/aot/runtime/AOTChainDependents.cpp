@@ -272,6 +272,12 @@ void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
     }
 }
 
+void RuntimeHooks::didStartWatchingReplacements(VM& vm)
+{
+    if (vm.aotState().propertyCaches)
+        vm.aotState().propertyCaches->didStartWatchingReplacements();
+}
+
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);

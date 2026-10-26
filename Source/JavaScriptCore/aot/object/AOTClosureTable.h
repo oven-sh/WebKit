@@ -38,6 +38,9 @@ public:
     // The first lookup of `prototype`, the first construction and the guards of a constructor function each give the closure another Structure. None of them changes what any other name finds.
     void didGivePrototypePropertyTo(VM&, JSObject* closure);
 
+    // A region is what the collector visits of the table once one of its cells was written.
+    static constexpr unsigned regionShift = 8;
+
     JSCell* closure(VM&, FunctionID);
     JSCell* closureIfCreated(FunctionID) const;
     bool hasCellFor(FunctionID) const;
@@ -58,8 +61,6 @@ private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     void createStructures(VM&);
     void didCreateClosureFor(FunctionID, JSCell*);
-
-    static constexpr unsigned regionShift = 8;
 
     State& m_state;
     const ProgramTables& m_tables;

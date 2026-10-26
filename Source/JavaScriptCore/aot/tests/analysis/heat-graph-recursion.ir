@@ -54,7 +54,7 @@ function f6 name="once" role=OutlinedBody results=[{type=undefined}] {
 # CHECK-NEXT: f5 size 2 mass 2.000000: f4*1.000000
 # CHECK-NEXT: f6 size 1 mass 1.000000:
 # CHECK-NEXT: host: f0*1.000000
-# CHECK-NEXT: unknown: f0*1.000000
+# CHECK-NEXT: unknown:
 # CHECK-NEXT: activations:
 # CHECK-NEXT: f0 1.000000
 # CHECK-NEXT: f1 10.000000

@@ -1,5 +1,4 @@
-# A spread of a string or a number, behind a test of that value for a string that failed, tests it again, and what passes goes to the function that walks anything.
-# A validating build checks the tested value at the head of that block, and the check stays in front of the call
+# A spread of a string or a number, behind a test of that value for a string that failed, does not test it again: there is nothing to walk, and it throws where it stands
 # FORM: Prepared optimizing
 # OPTIONS: validate
 # RUN: pass ExpandIteration
@@ -19,15 +18,9 @@ function f0 name="spreadsWhatFailedTheTest" parameters=[{type=string|number}] re
     Return v4
 # CHECK: Jump -> next [[entry]](v0)
 # CHECK: [[entry]]([[operand]]: number|string):
-# CHECK-NEXT: [[isString]]: boolean = TypeTest [[operand]] testedType=string
-# CHECK-NEXT: Branch [[isString]] -> taken [[walks]](| 0), notTaken [[throws]](| 0)
-# CHECK: [[walks]]([[string]]: string)
-# CHECK-NEXT: ValidateType [[operand]] validatedType=string
-# CHECK-NEXT: CallDirect v4, [[string]] function={{*}} [isNeverInlined]
-# CHECK-NEXT: Jump
-# CHECK: [[throws]]([[number]]: number) frequency=Rare:
-# CHECK-NEXT: never = ThrowNotIterable [[number]] [isSpread]
+# CHECK-NEXT: never = ThrowNotIterable [[operand]] [isSpread]
 # CHECK-NEXT: Unreachable
+# CHECK-NOT: CallDirect
 }
 
 function f1 name="namesTheKey" parameters=[{type=anything}] results=[{type=anything}] {

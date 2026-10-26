@@ -1359,6 +1359,16 @@ static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& progr
     AOT_TEST_CHECK(countTurnsUntilAllGetStructures(moreNamesThanAreRemembered, 256) <= 256);
 }
 
+static void testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns(LoadedProgram& program)
+{
+    PropertyCaches& caches = *program.state().propertyCaches;
+    Structure* structure = program.realm()->nullPrototypeObjectStructure();
+    Identifier name = Identifier::fromString(program.vm(), "nameThatReturns"_s);
+    AOT_TEST_CHECK(!caches.shouldMakeStructureForAdditionByKey(structure, name.impl()));
+    for (unsigned i = 0; i < 3; ++i)
+        AOT_TEST_CHECK(caches.shouldMakeStructureForAdditionByKey(structure, name.impl()));
+}
+
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1448,6 +1458,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/store-is-filed-one-miss-earlier-than-read"_s, withProgram<testStoreIsFiledOneMissEarlierThanRead> },
         { "property-lookup/pairs-that-miss-in-turn-are-all-filed"_s, withProgram<testPairsThatMissInTurnAreAllFiled> },
         { "property-lookup/additions-by-key-that-take-turns-all-get-structures"_s, withProgram<testAdditionsByKeyThatTakeTurnsAllGetStructures> },
+        { "property-lookup/addition-by-key-that-came-again-gets-a-structure-whenever-it-returns"_s, withProgram<testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },

@@ -13,7 +13,9 @@
 #include "AOTOperationScope.h"
 #include "AOTVector.h"
 #include "Completion.h"
+#include "DeferGCInlines.h"
 #include "JSLock.h"
+#include "ObjectConstructor.h"
 #include "SourceCode.h"
 #include <stdlib.h>
 #include <wtf/text/MakeString.h>
@@ -42,6 +44,7 @@ static_assert(!runtimeOperationOf(operationOutsideSchema));
 static constexpr const char* violationRequestVariable = "TESTAOT_VIOLATE_OPERATION_EFFECTS";
 static constexpr ASCIILiteral undeclaredCollectionTest = "operation-scope/undeclared-collection-crashes"_s;
 static constexpr ASCIILiteral undeclaredVMEntryTest = "operation-scope/undeclared-vm-entry-crashes"_s;
+static constexpr ASCIILiteral undeclaredAllocationTest = "operation-scope/undeclared-allocation-crashes-where-assertions-are-on"_s;
 
 namespace {
 
@@ -82,6 +85,19 @@ public:
         AOT_TEST_CHECK(vm().didEnterVM);
     }
 
+    void allocateInOperation(Entry entry)
+    {
+        OperationValidationScope scope(vm(), entry);
+        constructEmptyObject(m_globalObject.get());
+    }
+
+    void allocateWhileCollectionsArePutOffInOperation(Entry entry)
+    {
+        OperationValidationScope scope(vm(), entry);
+        DeferGCForAWhile deferGC(vm());
+        constructEmptyObject(m_globalObject.get());
+    }
+
     void doNothingInOperation(Entry entry)
     {
         OperationValidationScope scope(vm(), entry);
@@ -112,7 +128,7 @@ static void setViolationRequestForChildren(bool isRequested)
 #endif
 }
 
-static void checkViolationCrashes(ASCIILiteral test, ValidationFailureKind kind)
+static void checkViolationCrashes(ASCIILiteral test, const String& report)
 {
     ChildProcessLauncher launcher(String(programPath()), { });
     Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(test) };
@@ -120,7 +136,12 @@ static void checkViolationCrashes(ASCIILiteral test, ValidationFailureKind kind)
     ChildProcessResult result = launcher.run(arguments.span());
     setViolationRequestForChildren(false);
     AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
-    AOT_TEST_CHECK(result.output.contains(makeString("AOT validation: "_s, nameOf(kind))));
+    AOT_TEST_CHECK(result.output.contains(report));
+}
+
+static void checkViolationCrashes(ASCIILiteral test, ValidationFailureKind kind)
+{
+    checkViolationCrashes(test, makeString("AOT validation: "_s, nameOf(kind)));
 }
 
 static NEVER_INLINE bool JIT_OPERATION_ATTRIBUTES frameRecordHoldsReturnAddress()
@@ -174,7 +195,19 @@ static void testNothingIsCheckedWithoutValidation()
     TestRealm realm(Validation::Off);
     realm.vm().didEnterVM = false;
     realm.collectInOperation(readOnlyOperation);
-    realm.enterVMInOperation(readOnlyOperation);
+    realm.enterVMInOperation(collectingOperation);
+}
+
+static void testUndeclaredAllocationCrashesWhereAssertionsAreOn()
+{
+    if (ASSERT_ENABLED && !isViolationRequested()) {
+        checkViolationCrashes(undeclaredAllocationTest, "AssertNoGC"_s);
+        return;
+    }
+    TestRealm realm(Validation::Off);
+    realm.allocateInOperation(collectingOperation);
+    realm.allocateWhileCollectionsArePutOffInOperation(readOnlyOperation);
+    realm.allocateInOperation(readOnlyOperation);
 }
 
 static void testUndeclaredCollectionCrashes()
@@ -207,6 +240,7 @@ std::span<const NativeTest> operationScopeTests()
         { "operation-scope/nothing-is-checked-without-validation"_s, testNothingIsCheckedWithoutValidation },
         { undeclaredCollectionTest, testUndeclaredCollectionCrashes },
         { undeclaredVMEntryTest, testUndeclaredVMEntryCrashes },
+        { undeclaredAllocationTest, testUndeclaredAllocationCrashesWhereAssertionsAreOn },
     };
     return tests;
 }

@@ -270,6 +270,9 @@ public:
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     void removeFailedFetchEntry(ModuleRegistryEntry*);
+#if ENABLE(AOT)
+    void removeEntryOfRecord(AbstractModuleRecord*);
+#endif
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
@@ -308,6 +311,9 @@ private:
 
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
+#if ENABLE(AOT)
+    bool m_realmLoadedModuleUnderAnotherKey { false };
+#endif
 
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)

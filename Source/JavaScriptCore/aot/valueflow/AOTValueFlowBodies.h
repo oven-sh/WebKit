@@ -95,7 +95,7 @@ public:
     static constexpr ValueFlowObjectID markOfNamedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 2); }
     // Goes with the answer of a read under a key nobody knows of what a built-in module answers, where the read left out a member that lets in unseen code, along the same edges. A read that names the member finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
     static constexpr ValueFlowObjectID markOfMemberLeftOut() { return ValueFlowObjectID(numberOfPrimitiveKinds + 3); }
-    // Goes beside Bun from a load of "bun" under a constant name, and with the answer of a read under a key nobody knows of a Bun that was so loaded or named, along the same edges. A read that names a member of Bun finds it where its answer holds the mark.
+    // Goes beside Bun from a load of "bun" under a constant name, and with the answer of a read under a key nobody knows of a Bun that was so loaded or named, along the same edges. So do the values of a copy of such a Bun, and a descriptor of one of them. A read that names a member of Bun finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
     static constexpr ValueFlowObjectID markOfLoadedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 4); }
     ValueFlowObjectID objectOf(BuiltinID builtin) const { return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index()); }
     ValueFlowObjectID objectOf(BuiltinID, ModuleID) const;
@@ -339,9 +339,11 @@ enum class ValueFlowHostNode : uint8_t {
     GettersUnderUnknownKeyInHeldHoldersOfExports,
     SettersUnderUnknownKeyInHeldHoldersOfExports,
     MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses,
+    SourcesOfCopiesIntoUnknownObject,
+    SourcesOfCopiesIntoUntrackedObject,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 50;
+inline constexpr unsigned numberOfValueFlowHostNodes = 52;
 
 class ValueFlowProgramNodes {
 public:

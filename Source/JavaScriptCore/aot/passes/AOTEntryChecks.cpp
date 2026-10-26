@@ -298,6 +298,8 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         return checks;
     for (ValueID id : entry.values) {
         const Value& value = function.at(id);
+        if (value.opcode == Opcode::ValidateType)
+            continue;
         if (value.opcode != Opcode::Check && !narrowsWithoutTest(value.opcode))
             break;
         ValueID source = value.valueOperand();
@@ -385,7 +387,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            if (narrowsWithoutTest(value.opcode) && find(id))
+            if ((narrowsWithoutTest(value.opcode) && find(id)) || value.opcode == Opcode::ValidateType)
                 continue;
             if (CheckedEntryValue* checked = value.opcode == Opcode::Check && value.cause() != CheckCause::MayFail ? find(value.valueOperand()) : nullptr) {
                 // Nobody wants what a check without a use lets through.

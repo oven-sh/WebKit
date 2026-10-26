@@ -123,8 +123,9 @@ inline constexpr OpcodeSet foldableOpcodes = [] {
 }();
 
 inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField };
+inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 // Whether a value is truthy never changes.
-inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | OpcodeSet { Opcode::ToBoolean };
+inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean };
 
 // These convert a number to int32, which costs nothing where the number is an integer.
 inline constexpr OpcodeSet operatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };

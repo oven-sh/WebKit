@@ -175,7 +175,8 @@ public:
     void didChangeControlFlow(std::span<const BlockID> changedBlocks);
     void didRenumber(const Renumbering&);
 
-    void verifyCached();
+    // False: an answer that they hold is not what the function says, which has been reported.
+    bool verifyCached();
 
     void setRunningPass(PassID pass)
     {

@@ -35,11 +35,7 @@ void forEachValueSite(FunctionAnalyses& analyses, const Function& function, cons
 }
 
 // The operations for which isNamedAccess() or elementAccessOf() answers. SplitUnions looks at no other.
-inline constexpr OpcodeSet accessesByNameOrKey {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
-};
+inline constexpr OpcodeSet accessesByNameOrKey = namedAccesses | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas };
 
 void checkRewrite(FunctionPassContext&, const ValueSite&, const ReplacedEffects&);
 

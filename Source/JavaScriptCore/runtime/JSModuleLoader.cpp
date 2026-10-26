@@ -1165,6 +1165,9 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
             Locker locker { owner->cellLock() };
             AbstractModuleRecord::LoadedModuleRequest value { vm, moduleRequest, *resultRecord, owner };
             loadedModules.add(WTF::move(key), WTF::move(value));
+#if ENABLE(AOT)
+            m_realmLoadedModuleUnderAnotherKey |= owner == this && moduleRequest.m_specifier.impl() != (*resultRecord)->moduleKey().impl();
+#endif
         }
     }
 
@@ -1420,6 +1423,26 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
     m_moduleMap.remove(iter);
     didRemoveModuleMapEntry(moduleMapKey.second);
 }
+
+#if ENABLE(AOT)
+void JSModuleLoader::removeEntryOfRecord(AbstractModuleRecord* record)
+{
+    ModuleMapKey moduleMapKey { record->moduleKey().impl(), ScriptFetchParameters::Type::JavaScript };
+    auto entry = m_moduleMap.find(moduleMapKey);
+    bool hasEntry = entry != m_moduleMap.end() && entry->value->record() == record;
+    auto loaded = m_loadedModules.find(moduleMapKey);
+    bool isLoadedByRealm = loaded != m_loadedModules.end() && loaded->value.m_module.get() == record;
+    if (!hasEntry && !isLoadedByRealm && !m_realmLoadedModuleUnderAnotherKey)
+        return;
+    Locker locker { cellLock() };
+    if (hasEntry)
+        m_moduleMap.remove(entry);
+    if (m_realmLoadedModuleUnderAnotherKey) [[unlikely]]
+        m_loadedModules.removeIf([&](auto& request) { return request.value.m_module.get() == record; });
+    else if (isLoadedByRealm)
+        m_loadedModules.remove(loaded);
+}
+#endif
 
 void JSModuleLoader::addResolutionFailure(VM& vm, const ResolutionMapKey& key, JSValue error)
 {

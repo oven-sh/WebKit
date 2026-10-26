@@ -244,7 +244,7 @@ static Vector<uint32_t, 32> collectOffsetsAskedForFrame(const CompiledCode& code
     for (const ReturnSite& site : code.body.returnSites)
         addReturnOffset(site.offset);
     for (const FaultingAccess& access : code.sites.faultingAccesses)
-        addReturnOffset(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall));
+        offsets.append(access.codeOffset);
     for (const PollSite& poll : code.sites.pollSites)
         addReturnOffset(poll.returnOffset());
     AOT::sort(offsets);

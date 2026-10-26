@@ -659,7 +659,7 @@ function resolveCreatedTextForm(
   const { builder, textForms } = context;
   const textForm = builder.resolve(textFormPathOf(builtin), source);
   if (textForm === null) return null;
-  const nativeFunction = { symbol, length: builder.lengthOf(builtin) ?? 0, header: null };
+  const nativeFunction = { symbol, length: builder.lengthOf(builtin) ?? 0, header: null, name: null };
   textForms.set(builtin, { builtin: textForm, nativeFunction });
   return textForm;
 }
@@ -765,18 +765,18 @@ function findStubFunction(
     );
     return null;
   }
-  return { symbol: nativeSymbols[0], length, header: null };
+  return { symbol: nativeSymbols[0], length, header: null, name: null };
 }
 
 function findFunctionObjectCode(
   builder: ModelBuilder,
   builtin: ModelBuiltin,
-  { value: { symbol, header }, source }: Written<NativeCodeRef>,
+  { value: { symbol, header, name }, source }: Written<NativeCodeRef>,
 ): ModelNativeFunction | null {
   // What is written for a native binding describes the function that it makes, which has an entry of its own.
   if (builtin.kind === "NativeBinding") return null;
   const length = builder.lengthOf(builtin);
-  if (length !== null) return { symbol, length, header: header ?? null };
+  if (length !== null) return { symbol, length, header: header ?? null, name: name ?? null };
   builder.problems.add(
     source,
     `${builtin.text} names the native code of its function object and not the length of that function`,

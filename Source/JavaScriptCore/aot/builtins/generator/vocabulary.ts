@@ -452,6 +452,8 @@ export interface NativeCodeRef {
   symbol: string;
   /** Declares it. Without one, a name with a namespace is declared in that namespace and any other is a C function. */
   header?: string;
+  /** The name of the function object, under which a stack trace lists the function. Without one no stack trace lists it. */
+  name?: string;
 }
 
 export type ConditionSpec =

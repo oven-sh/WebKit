@@ -24,6 +24,7 @@ operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unkno
 operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime throws ; runtime = NativeBinding ; flow = Unsound ; flowRule = Module
 operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant ; flow = Unsound
 operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May ; flow = Checks
+operation FindsDeclaredMember (object: Any/inspects, key: PropertyKey, with AccessStamp) -> natural(boolean) ; reads(MemberGuards) ; access = Has ; receiver = object ; branches = May ; flow = TableProves
 operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ; reads(InternalFields, PromiseState, CollectionStorage) ; flow = Copies ; flowRule = Heap
 operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap
 

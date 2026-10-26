@@ -930,8 +930,13 @@ static void emitStringStep(IterationExpansion& expansion, const ArmState& state)
     IRBuilder::ProvenBranch branch = expansion.branchOnInRange(state, builder.append(Opcode::GetStringLength, { state.subject }));
     ValueID index = branch.provenOnTaken;
 
-    ValueID codePointAt = expansion.appendBuiltin(Builtins::StringPrototypeCodePointAt);
-    ValueID codePoint = expansion.appendCall(codePointAt, state.subject, singleElementSpan(index));
+    TypingContext typing { expansion.program, expansion.function, expansion.types };
+    BuiltinOperandTypes operands = operandTypesOf(typing, state.subject, singleElementSpan(index));
+    OverloadMatch match = matchOverload({ typing, Builtins::StringPrototypeCodePointAt, BuiltinCallMode::Call, operands, operands });
+    bool isResolved = match.state == BuiltinMatchState::Proven && match.requirements.isEmpty();
+    ValueID codePoint = isResolved
+        ? builder.append(makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { state.subject, { index } }, { }))
+        : expansion.appendCall(expansion.appendBuiltin(Builtins::StringPrototypeCodePointAt), state.subject, singleElementSpan(index));
     ValueID isAstral = builder.append(Opcode::Greater, { codePoint, builder.appendInteger(0xFFFF) });
 
     BlockID merge = expansion.addSiblingBlock();
@@ -2699,7 +2704,7 @@ static PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builde
 
 // Where the protocol finds no method of the program in the operand, the effects of a spread say that it runs no code, and tests are placed by them. A call of the function that walks anything
 // counts as running any code, so nothing of such an operand goes there: a string is walked here, and the rest throws. Answers what is left to walk.
-static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, BlockFrequency frequency)
+static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, BlockFrequency frequency)
 {
     Type type = pass.program.typeOf(pass.function, source);
     if (type.without(pass.types.at(TypeTable::string), pass.types).isNever() || protocolMayFindMember(pass.program, type, Protocol::Iterate))
@@ -2707,7 +2712,7 @@ static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilde
 
     ValueID string;
     BlockID blockOfString;
-    if (type.primitives & Primitive::AnyString) {
+    if (!hasFailedStringTest && type.primitives & Primitive::AnyString) {
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::string), OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
         string = branch.provenOnTaken;
         blockOfString = branch.taken;
@@ -2724,8 +2729,19 @@ static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilde
     return string;
 }
 
-static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramPoint point, const IterationPlan& plan, Vector<SpreadLoop>& loops)
+namespace {
+
+struct SpreadSite {
+    ProgramPoint point;
+    IterationPlan plan;
+    bool hasFailedStringTest;
+};
+
+} // anonymous namespace
+
+static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site, Vector<SpreadLoop>& loops)
 {
+    const auto& [point, plan, hasFailedStringTest] = site;
     Function& function = pass.function;
     ValueID id = function.at(point.block).values[point.index];
     ReplacedEffects replaced;
@@ -2791,7 +2807,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramP
     if (!loopEntry)
         return;
     builder.moveToEndOf(loopEntry);
-    source = emitThrowWhereNoMethodIsFound(pass, builder, source, loopFrequency);
+    source = emitThrowWhereNoMethodIsFound(pass, builder, source, hasFailedStringTest, loopFrequency);
     if (!source)
         return;
     loopEntry = builder.currentBlock();
@@ -2862,21 +2878,22 @@ static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const Spread
 
 static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
-    Vector<std::pair<ProgramPoint, IterationPlan>> sites;
+    Vector<SpreadSite> sites;
     forEachValueSite(pass.analyses, pass.function, { Opcode::AppendSpread }, [&](const ValueSite& site) {
         ValueID iterable = pass.function.at(site.value).iterableOperand();
         Arms arms = findClassArms(pass, PlannedValue { iterable, site.block, { PristineAspects::Storage, PristineAspects::Names } });
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
         arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
-        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)) });
+        bool hasFailedStringTest = pass.analyses.findEarlierTest(makeTypeTest(iterable, TypeTable::string), site.block) == EarlierTest::Failed;
+        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest });
     });
     if (sites.isEmpty())
         return PassOutcome::Unchanged;
 
-    AOT::sort(sites, std::ranges::greater { }, [](const auto& site) { return blockAndIndexOf(site.first); });
+    AOT::sort(sites, std::ranges::greater { }, [](const SpreadSite& site) { return blockAndIndexOf(site.point); });
     Vector<SpreadLoop> loops;
-    for (auto& [point, plan] : sites)
-        expandSpread(pass, builder, point, plan, loops);
+    for (const SpreadSite& site : sites)
+        expandSpread(pass, builder, site, loops);
 
     for (SpreadLoop& loop : loops)
         loop.outlinedLoop = findOutlinedLoop(pass, loop);

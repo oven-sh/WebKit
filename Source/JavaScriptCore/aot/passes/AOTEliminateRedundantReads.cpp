@@ -2277,6 +2277,55 @@ struct LoopPathSeparator : LoopEditor {
         return false;
     }
 
+    // A test of every turn that asks about what was there ahead of the loop has one answer once nothing that stays in the loop writes what it reads. The back end asks it ahead of the loop where the failing path does not come back into the loop.
+    bool leavesTestWithOneAnswer(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        auto stays = [&](BlockID block) {
+            return isInLoop.get(block.index()) && !leaves.get(block.index());
+        };
+        LocationMasks writes;
+        bool runsOtherCode = false;
+        auto add = [&](const Effects& effects) {
+            runsOtherCode |= effects.mayRunOtherCode();
+            writes.merge(effects.writes);
+        };
+        for (size_t index : isInLoop) {
+            if (leaves.get(index))
+                continue;
+            for (ValueID value : m_function.blocks[index].values)
+                add(m_analyses.effectsOf(value).onAnyEdge());
+            add(m_analyses.effectsOfTerminator(BlockID(index)).onAnyEdge());
+        }
+        if (runsOtherCode)
+            return false;
+
+        BitVector changesBetweenTurns(m_function.values.size());
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (!stays(block))
+                continue;
+            const Block& contents = m_function.at(block);
+            for (ValueID parameter : contents.parameters)
+                changesBetweenTurns.set(parameter.index());
+            for (ValueID id : contents.values) {
+                Effects effects = m_analyses.effectsOf(id).onAnyEdge();
+                bool changes = !effects.isUnobservable() || effects.reads.overlaps(writes);
+                m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    changes |= changesBetweenTurns.get(operand.index());
+                });
+                if (changes)
+                    changesBetweenTurns.set(id.index());
+            }
+            const Terminator& terminator = contents.terminator;
+            if (terminator.kind != TerminatorKind::Branch || !contents.values.contains(terminator.conditionOperand()) || changesBetweenTurns.get(terminator.conditionOperand().index()))
+                continue;
+            if (m_analyses.effectsOf(terminator.conditionOperand()).onAnyEdge().reads.isEmpty())
+                continue;
+            if (std::ranges::any_of(terminator.targets, [&](const Target& target) { return leaves.get(target.block.index()); }))
+                return true;
+        }
+        return false;
+    }
+
     // A loop that is only expected to run earns its copy when a number gets another representation on the likely paths and a value that is computed from itself in every iteration depends on it: the next iteration waits for that arithmetic. An integer costs the same in either width.
     bool changesRepresentationOfLoopCarriedNumber(BlockID header, const BitVector& isInLoop, const BitVector& leaves)
     {
@@ -2443,7 +2492,7 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) || (isShort && leavesAllocationAlone(isInLoop, leaves)) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
+        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) || (isShort && (leavesAllocationAlone(isInLoop, leaves) || leavesTestWithOneAnswer(isInLoop, leaves))) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());

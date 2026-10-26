@@ -19,6 +19,8 @@ namespace AOT {
 void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder);
 void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status);
 void runCompiledModuleImportStep(JSValue importPromise, JSValue module, uint8_t stepsLeft);
+// Behind the last step that the loader takes for a graph.
+void didSettleLoad(JSPromise* settled);
 
 } // namespace AOT
 } // namespace JSC

@@ -477,10 +477,10 @@ static void emitBarrierPreservingOperands(StubAssembler& jit, GPRReg owner, GPRR
 }
 
 // registers.awaited is a promise of the realm. Nothing is stored before the last exit.
-static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& needsOperation, uint64_t reactionBits = resumeReactionBits)
+static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& takesNoInlineReaction, JumpList& needsOperation, uint64_t reactionBits = resumeReactionBits)
 {
     const auto [savedFrame, promise, word, other] = registers;
-    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, registers, needsOperation);
+    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, registers, takesNoInlineReaction);
     jit.move(TrustedImm64(static_cast<int64_t>(reactionBits)), other);
     jit.or64(other, word);
     // The reaction keeps the context where that of a task with a cell keeps the cell: JSPromise::performPromiseThenWithInternalMicrotask.
@@ -499,7 +499,7 @@ static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegister
 }
 
 // registers.awaited is a cell that a call without a promise returned.
-static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& needsOperation)
+static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& takesNoInlineReaction, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
     const auto [waiter, awaited, word, other] = registers;
@@ -513,7 +513,7 @@ static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& 
     jit.loadPtr(Address(awaited, SavedFrame::offsetOfPromiseOrWaiter()), awaited);
 
     isPromise.link(&jit);
-    emitResumeWhenPromiseSettles(jit, registers, needsOperation);
+    emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, needsOperation);
     Jump isRegistered = jit.jump();
 
     hasNoContinuation.link(&jit);
@@ -651,10 +651,12 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         JumpList isResumedByJob;
         JumpList isResumedByOthers;
         JumpList isOtherObjectInSavedFrame;
+        JumpList takesNoInlineReaction;
+        const GPRReg promise = awaitsCallWithoutPromise ? second : awaited;
         isResumedByJob.append(jit.branchIfNotCell(awaited));
         if (awaitsCallWithoutPromise) {
             jit.move(awaited, second);
-            emitResumeWhenCallSettles(jit, { savedFrame, second, word, other }, isResumedByJob, needsOperation);
+            emitResumeWhenCallSettles(jit, { savedFrame, second, word, other }, isResumedByJob, takesNoInlineReaction, needsOperation);
             emitBarrierPreservingOperands(jit, second, result, siteWord, word);
         } else {
             Jump isObject = jit.branchIfObject(awaited);
@@ -663,7 +665,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
             isResumedByJob.append(jit.jump());
             isObject.link(&jit);
             emitBranchUnlessHolds(jit, awaitedHasPromiseStructure, registers, isOtherObjectInSavedFrame);
-            emitResumeWhenPromiseSettles(jit, registers, needsOperation);
+            emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, needsOperation);
             emitBarrierPreservingOperands(jit, awaited, result, siteWord, word);
         }
         isResumedByOthers.link(&jit);
@@ -677,8 +679,18 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         Label queuesJob = jit.label();
         const JobRegisters job { count, word, other, second };
         emitReserveJob(jit, job, needsOperation);
+        Label fillsJob = jit.label();
         emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, awaited, savedFrame, JobAsyncContext::Current }, job);
         jit.jump().linkTo(isRegistered, &jit);
+
+        // The job of a fulfilled promise is queued at once too, with what the promise holds. The operation wants the awaited value as it came.
+        RELEASE_ASSERT(noOverlap(result, awaited, savedFrame, siteWord, count, word, other, second));
+        takesNoInlineReaction.link(&jit);
+        emitBranchUnlessHolds(jit, awaitedIsFulfilled, { savedFrame, promise, word, other }, needsOperation);
+        jit.load64(Address(promise, JSPromise::offsetOfSlot()), result);
+        emitReserveJob(jit, job, needsOperation);
+        jit.move(result, awaited);
+        jit.jump().linkTo(fillsJob, &jit);
 
         if (!isOtherObjectInSavedFrame.empty()) {
             isOtherObjectInSavedFrame.link(&jit);
@@ -719,15 +731,24 @@ void emitRunGeneratorJobWhenSettled(StubAssembler& jit, InternalMicrotask task, 
     isLeftToEngine.append(branchIfWatchpointSetIsNotWatched(jit, Address(other, OBJECT_OFFSETOF(JSGlobalObject, m_promiseSpeciesWatchpointSet)), other));
     if (!siteWord)
         isLeftToEngine.append(branchIfBarrierIsNeeded(jit, awaited, other));
-    emitResumeWhenPromiseSettles(jit, registers, isLeftToEngine, inlineReactionBitsOf(task));
+    JumpList takesNoInlineReaction;
+    emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, isLeftToEngine, inlineReactionBitsOf(task));
     if (siteWord)
         emitBarrierPreservingOperands(jit, awaited, awaited, *siteWord, word);
     Jump isRegistered = jit.jump();
+
+    // The job of a fulfilled promise takes what the promise holds.
+    takesNoInlineReaction.link(&jit);
+    emitBranchUnlessHolds(jit, awaitedIsFulfilled, registers, isLeftToEngine);
+    emitReserveJob(jit, job, isLeftToEngine);
+    jit.load64(Address(awaited, JSPromise::offsetOfSlot()), awaited);
+    Jump fillsJob = jit.jump();
 
     isOtherObject.link(&jit);
     emitBranchIfMayBeThenable(jit, awaited, word, other, isLeftToEngine);
     isResumedByJob.link(&jit);
     emitReserveJob(jit, job, isLeftToEngine);
+    fillsJob.link(&jit);
     emitFillJob(jit, { task, JSPromise::Status::Fulfilled, awaited, generator, JobAsyncContext::Current }, job);
 
     isRegistered.link(&jit);

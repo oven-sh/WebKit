@@ -137,12 +137,10 @@ void Exception::takeStackFrom(VM& vm, ErrorInstance& error)
     retainReturnAddresses(vm, error.returnAddresses(), otherFrames ? Vector<StackFrame>(*otherFrames) : Vector<StackFrame>());
 }
 
-Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue, StackOfError accepted)
+Exception* Exception::tryCreateWithStackOfErrorMadeHere(VM& vm, JSValue thrownValue)
 {
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
-    if (!error)
-        return nullptr;
-    if (accepted == StackOfError::MadeHere && !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
+    if (!error || !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
         return nullptr;
     // The end of a collection may turn the stack of the Error into text.
     DeferGC deferGC(vm);

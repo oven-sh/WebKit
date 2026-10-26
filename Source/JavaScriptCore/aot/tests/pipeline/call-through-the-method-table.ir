@@ -3,6 +3,7 @@
 # Whatever changes what an object finds under the name sends the entries that it touches to the lookup of the selector, which calls what the receiver has under the name, as plain JavaScript does:
 # a store to a prototype, an own property, a deleted method, another prototype, an accessor. The other class keeps its entry
 # FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot
 # RUN(IR): pipeline ChooseCallingConventions
 # RUN: run-in-shell globalThis.register = (call, A, B) => { const a = new A(), b = new B(); const show = () => { let text = ""; for (const o of [a, b, new A(), new B()]) { try { text += " " + call(o, 10); } catch (error) { text += " " + (error instanceof TypeError ? "TypeError" : "error"); } } print(text); }; show(); B.prototype.m = x => x * 3; show(); a.m = x => x * 5; show(); delete A.prototype.m; show(); Object.setPrototypeOf(b, A.prototype); show(); Object.defineProperty(A.prototype, "m", { get() { return x => x * 7; }, configurable: true }); show(); print(call({ m: x => x * 9 }, 10)); };
 # STATISTIC: TableLookups = 1

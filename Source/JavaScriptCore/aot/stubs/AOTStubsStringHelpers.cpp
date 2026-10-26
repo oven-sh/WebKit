@@ -13,6 +13,7 @@
 #include "AOTStubRegisters.h"
 #include "JSString.h"
 #include <algorithm>
+#include <bit>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -21,15 +22,12 @@ void loadSubstringBaseAndOffset(StubAssembler& jit, GPRReg string, GPRReg base, 
 {
     using CompactFibers = JSRopeString::CompactFibers;
     RELEASE_ASSERT(noOverlap(string, base, offset));
-    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16, "load32 and load16 read the two parts of fiber 1");
-    jit.load16(Address(string, JSRopeString::offsetOfFiber2()), offset);
-    jit.load32(Address(string, JSRopeString::offsetOfFiber1Lower()), base);
-#if CPU(ARM64)
-    jit.orLeftShift64(base, offset, TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), base);
-#else
-    jit.lshift64(TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), offset);
-    jit.or64(offset, base);
-#endif
+    // The six bytes of fiber 1 end a word that begins two bytes in front of them, inside the length.
+    constexpr int32_t bytesInFrontOfFiber1 = sizeof(uint64_t) - 6;
+    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
+    static_assert(std::endian::native == std::endian::little && JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1 >= JSRopeString::offsetOfLength());
+    jit.load64(Address(string, JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1), base);
+    jit.urshift64(TrustedImm32(8 * bytesInFrontOfFiber1), base);
     jit.load64(Address(string, JSRopeString::offsetOfFiber2()), offset);
     jit.urshift64(TrustedImm32(CompactFibers::shiftOfFiber2InUpperWord), offset);
 }

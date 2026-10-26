@@ -3363,7 +3363,7 @@ ValueSetID ValueFlowSolver::valueShownTo(ValueFlowStatementID statement, ValueFl
 ValueSetID ValueFlowSolver::findFamilyObjectsOf(ValueSetID mask, ValueSetMaker& maker) const
 {
     ValueSetID listed = maker.intersect(mask, m_objectsSaidToBeSomething);
-    return m_sets.isSubset(listed, m_objectsOfProgram) ? listed : ValueSetID();
+    return listed != ValueSets::nothing && m_sets.isSubset(listed, m_objectsOfProgram) ? listed : ValueSetID();
 }
 
 ValueSetID ValueFlowSolver::familyObjectsOf(ValueSetID mask, ValueSetMaker& maker) const

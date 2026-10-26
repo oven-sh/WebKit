@@ -211,14 +211,14 @@ Vector<ValueID, 2> constructorRootsOf(const Program& program, const Function& fu
     return roots;
 }
 
-bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, std::span<const ValueID> constructorRoots, ValueID result)
+bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, const BitVector& valuesBehindChecks, std::span<const ValueID> constructorRoots, ValueID result)
 {
     const Function& constructor = analyses.function();
     BitVector isVisited(constructor.values.size());
     Vector<ValueID, 4> valuesToVisit { result };
     while (!valuesToVisit.isEmpty()) {
         ValueID value = valuesToVisit.takeLast();
-        if (isVisited.set(value.index()) || !program.typeOf(constructor, value).hasObjects())
+        if (isVisited.set(value.index()) || (!valuesBehindChecks.get(value.index()) && !program.typeOf(constructor, value).hasObjects()))
             continue;
         ValueID object = sameObjectThroughConversionsToObject(constructor, value);
         if (std::ranges::contains(constructorRoots, object))
@@ -237,13 +237,13 @@ bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, std
     return true;
 }
 
-bool returnsOnlyConstructedObject(const Program& program, FunctionAnalyses& analyses, std::span<const ValueID> constructorRoots)
+bool returnsOnlyConstructedObject(const Program& program, FunctionAnalyses& analyses, const BitVector& valuesBehindChecks, std::span<const ValueID> constructorRoots)
 {
     return std::ranges::all_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
         const Terminator& terminator = analyses.function().at(block).terminator;
         if (terminator.kind != TerminatorKind::Return)
             return terminator.kind != TerminatorKind::ReturnCall;
-        return !terminator.valueOperand() || isConstructedObject(program, analyses, constructorRoots, terminator.valueOperand());
+        return !terminator.valueOperand() || isConstructedObject(program, analyses, valuesBehindChecks, constructorRoots, terminator.valueOperand());
     });
 }
 
@@ -534,7 +534,8 @@ std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const ValueFlowR
         return result;
 
     Vector<ValueID, 2> roots = constructorRootsOf(program, function);
-    result->returnsOnlyConstructedObject = returnsOnlyConstructedObject(program, *result->analyses, roots.span());
+    const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(id);
+    result->returnsOnlyConstructedObject = returnsOnlyConstructedObject(program, *result->analyses, valuesBehindChecks ? *valuesBehindChecks : valuesTypedBehindChecks(program, function, result->analyses->cfg()), roots.span());
     for (ValueID parameter : function.at(entryBlock).parameters) {
         if (mayBeReference(program.typeOf(function, parameter)) && !roots.contains(parameter))
             roots.append(parameter);
@@ -1454,6 +1455,22 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
             current = predictedHeritageOf(program.at(current));
         return current;
     };
+    // Where the written chain of bases ends at an expression, the class objects that are found above it say who allocates.
+    auto forEachAllocatingClassOf = [&](ValueFlowObjectID closure, NOESCAPE const Invocable<void(LayoutID)> auto& functor) {
+        LayoutID current = program.at(universe.closureFunction(closure)).constructedClass;
+        for (size_t steps = 0; current && predictedHeritageOf(program.at(current)) && steps < program.layouts.size(); ++steps)
+            current = predictedHeritageOf(program.at(current));
+        if (!current)
+            return;
+        if (!program.at(current).has(LayoutFlags::HasHeritage))
+            return functor(current);
+        ValueSetID above = heap.chainOf(heap.prototypesOf(maker.of(universe.closureOf(program.at(current).constructor))));
+        inputs.sets().forEachMember(maker.intersect(above, universe.closures()), [&](ValueFlowObjectID parent) {
+            LayoutID constructed = program.at(universe.closureFunction(parent)).constructedClass;
+            if (constructed && !program.at(constructed).has(LayoutFlags::HasHeritage))
+                functor(constructed);
+        });
+    };
     auto withWhatOtherCallablesConstruct = [&](ValueSetID callees) {
         callees = heap.expand(callees);
         if (inputs.sets().meet(callees, universe.otherCallables()))
@@ -1469,11 +1486,16 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
     auto add = [&](ValueSetID callees, ValueSetID newTargets) {
         constexpr uint32_t severalCallees = UINT32_MAX;
         MapByNumber<uint32_t, uint32_t> calleeByAllocatingClass;
+        Vector<ValueFlowObjectID, 8> constructed;
         inputs.sets().forEachMember(maker.intersect(withWhatOtherCallablesConstruct(callees), universe.closures()), [&](ValueFlowObjectID callee) {
-            LayoutID allocatingClass = allocatingClassOf(callee);
-            if (allocatingClass && !calleeByAllocatingClass.add(allocatingClass.index(), callee.index()).isNewEntry)
-                calleeByAllocatingClass.set(allocatingClass.index(), severalCallees);
+            constructed.append(callee);
         });
+        for (ValueFlowObjectID callee : constructed) {
+            forEachAllocatingClassOf(callee, [&](LayoutID allocatingClass) {
+                if (!calleeByAllocatingClass.add(allocatingClass.index(), callee.index()).isNewEntry)
+                    calleeByAllocatingClass.set(allocatingClass.index(), severalCallees);
+            });
+        }
         inputs.sets().forEachMember(maker.intersect(heap.expand(newTargets), universe.closures()), [&](ValueFlowObjectID newTarget) {
             LayoutID allocatingClass = allocatingClassOf(newTarget);
             auto callee = allocatingClass ? calleeByAllocatingClass.find(allocatingClass.index()) : calleeByAllocatingClass.end();

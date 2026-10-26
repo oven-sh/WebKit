@@ -1942,6 +1942,10 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
         result.iterator->value = WatchpointSet::create(IsWatched);
         rareData->incrementActiveReplacementWatchpointSet();
         structure->setIsWatchingReplacement(true);
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode())
+            AOT::RuntimeHooks::didStartWatchingReplacements(vm);
+#endif
     }
     return result.iterator->value.get();
 }

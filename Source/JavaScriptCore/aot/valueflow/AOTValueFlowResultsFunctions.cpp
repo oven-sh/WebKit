@@ -11,6 +11,7 @@
 #include "AOTBlockCycles.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTFlowStamps.h"
+#include "AOTHeatGraph.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTValueFlowResultsFieldsInternal.h"
@@ -141,6 +142,101 @@ static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const
         }
     }
     return times.value_or(BuiltinCallbackTimes::Once);
+}
+
+// What the program itself stored in the holders, under one name or under every name.
+static ValueSetID seenValuesStoredIn(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, ValueSetID holders, BuiltinName name)
+{
+    ValueSetID found = ValueSets::nothing;
+    auto take = [&](std::span<const ValueFlowHeapIndex::WrittenNode> nodes) {
+        for (const ValueFlowHeapIndex::WrittenNode& node : nodes) {
+            if (!ValueSets::isComplement(node.seenValue) && inputs.sets().meet(node.objects, holders))
+                found = maker.unite(found, node.seenValue);
+        }
+    };
+    if (name) {
+        if (const ValueFlowHeapIndex::NodesWrittenUnderName* nodes = inputs.heapIndex->findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(name))))
+            take(nodes->nodes.span());
+        return found;
+    }
+    for (const ValueFlowHeapIndex::Stretch& stretch : inputs.heapIndex->stretchesOfNodesWrittenUnder([](ValueFlowName written) { return written.kind == ValueFlowNameKind::Property; }))
+        take(stretch.nodes);
+    return found;
+}
+
+static std::optional<ValueSetID> seenValuesAt(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowStatement& call, BuiltinOperand position)
+{
+    if (passesList(call.opcode))
+        return std::nullopt;
+    std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
+    ValueSetID seen = ValueSets::nothing;
+    switch (position.kind()) {
+    case BuiltinOperand::Kind::Receiver:
+        return inputs.seenValuesOf(maker, operands[1]);
+    case BuiltinOperand::Kind::Argument:
+        return position.argumentIndex() + 2 < operands.size() ? inputs.seenValuesOf(maker, operands[position.argumentIndex() + 2]) : ValueSets::nothing;
+    case BuiltinOperand::Kind::ArgumentsFrom:
+        for (size_t index = position.argumentIndex() + 2; index < operands.size(); ++index)
+            seen = maker.unite(seen, inputs.seenValuesOf(maker, operands[index]));
+        return seen;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A handler in an options object has escaped once the call has kept the object. Where other code may then store over it, the unknown object stands for it and no group of callees names it.
+// The stores of the program still say which functions were registered.
+static std::optional<ValueSetID> handlersSeenAt(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowStatement& call, const BuiltinPlace& place)
+{
+    if (place.kind != BuiltinPlaceKind::Member)
+        return std::nullopt;
+    std::optional<ValueSetID> holders = seenValuesAt(inputs, maker, call, *place.operand);
+    if (!holders)
+        return std::nullopt;
+    ValueSetID objectsOfProgram = maker.intersect(inputs.universe().knownObjects(), ValueSets::complement(inputs.universe().builtinObjects()));
+    for (BuiltinName step : place.memberPath) {
+        holders = maker.intersect(*holders, objectsOfProgram);
+        if (*holders == ValueSets::nothing)
+            return ValueSets::nothing;
+        holders = seenValuesStoredIn(inputs, maker, *holders, step);
+    }
+    return maker.intersect(*holders, inputs.universe().closures());
+}
+
+namespace {
+
+// Which closures each row of the built-ins at a call was seen to take, and how often the row calls them.
+struct CallbacksOfCall {
+    struct Row {
+        ValueSetID closures;
+        BuiltinCallbackTimes times;
+    };
+
+    Vector<Row, 8> rows;
+    bool everyRowIsListed { true };
+};
+
+} // anonymous namespace
+
+static CallbacksOfCall findCallbacksOfCall(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, const ValueFlowStatement& call, const CalleeSet& stamp)
+{
+    CallbacksOfCall callbacks;
+    auto add = [&](std::optional<ValueSetID> seen, BuiltinCallbackTimes times) {
+        if (!seen || ValueSets::isComplement(*seen)) {
+            callbacks.everyRowIsListed = false;
+            return;
+        }
+        if (ValueSetID closures = maker.intersect(*seen, inputs.universe().closures()); closures != ValueSets::nothing)
+            callbacks.rows.append({ closures, times });
+    };
+    for (BuiltinID builtin : stamp.builtins) {
+        for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
+            for (const BuiltinCallback& callback : overload.flow.callbacks)
+                add(seenValuesAt(inputs, maker, call, callback.callee), callback.times);
+            for (const BuiltinHandlerCall& handlerCall : overload.flow.handlerCalls)
+                add(handlersSeenAt(inputs, maker, call, handlerCall.callee), handlerCall.times);
+        }
+    }
+    return callbacks;
 }
 
 static auto callOrderOf(const FlowIndirectCall& call)
@@ -288,6 +384,8 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         }
     }
 
+    // Only an estimate of how often code runs reads these, and a very large program has none.
+    const bool listsWhatWasSeen = !isVeryLargeProgram(program, inputs.build);
     tables.functions.indirectCalls = collectInParallel<FlowIndirectCall>(inputs.loops(), numberOfFunctions, [&](unsigned index, Vector<FlowIndirectCall>& calls) {
         FunctionID id(index);
         if (!inputs.isReached(id))
@@ -300,6 +398,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             const FlowCallStamp* stampOfCall = hasCalleeStamp(statement) ? findByValue(application.bodies[index].calls.span(), statement.site, &FlowCallStamp::value) : nullptr;
             const CalleeSet* stamp = stampOfCall ? &program.at(stampOfCall->callees) : nullptr;
             std::optional<BuiltinCallbackTimes> timesOfCallbacksOfStatement;
+            std::optional<CallbacksOfCall> callbacksOfStatement;
             ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
             size_t firstOfStatement = calls.size();
             // The accessors that one site enters count together, however many of its receivers find each of them.
@@ -345,13 +444,30 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                         call.isInCycle = valuesInCycles.quickGet(statement.site.index());
                     }
                     if (call.kind == FlowIndirectCallKind::BuiltinCallback) {
-                        if (!timesOfCallbacksOfStatement)
-                            timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp);
-                        call.times = *timesOfCallbacksOfStatement;
+                        std::optional<BuiltinCallbackTimes> timesOfRows;
+                        if (callbacksOfStatement) {
+                            for (const CallbacksOfCall::Row& row : callbacksOfStatement->rows) {
+                                if (sets.contains(row.closures, callee))
+                                    timesOfRows = timesOfRows ? mergeTimes(*timesOfRows, row.times) : row.times;
+                            }
+                        }
+                        if (!timesOfRows && (!callbacksOfStatement || !callbacksOfStatement->everyRowIsListed)) {
+                            if (!timesOfCallbacksOfStatement)
+                                timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp);
+                            timesOfRows = *timesOfCallbacksOfStatement;
+                        }
+                        call.times = timesOfRows.value_or(BuiltinCallbackTimes::Once);
                     }
                     calls.append(call);
                 });
             };
+
+            if (listsWhatWasSeen && stamp && !stamp->builtins.isEmpty()) {
+                BorrowedValueSetMaker maker(inputs.makerPool());
+                callbacksOfStatement = findCallbacksOfCall(inputs, maker.get(), statement, *stamp);
+                for (const CallbacksOfCall::Row& row : callbacksOfStatement->rows)
+                    add(EnteredGroup { row.closures, ValueFlowCallKind::CallByNativeCode }, nullptr);
+            }
 
             Vector<uint32_t, 8> worklist;
             auto follow = [&](uint32_t number) {

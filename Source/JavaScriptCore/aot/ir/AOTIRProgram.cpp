@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFamilyTables.h"
 #include "AOTSort.h"
@@ -661,6 +662,22 @@ ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
         return { };
     const Module& file = program.at(first.target);
     return file.kind == ModuleKind::CommonJs && file.exportsVariable ? first.target : ModuleID();
+}
+
+BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
+{
+    switch (module.kind) {
+    case ModuleKind::CommonJs:
+        return Builtins::PrivateGlobalsRequireCommonJS;
+    case ModuleKind::SourceText:
+        return Builtins::PrivateGlobalsEsmLoadSync;
+    case ModuleKind::Data:
+    case ModuleKind::RuntimeSource:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 bool namesWaysToModuleObjects(const Program& program)

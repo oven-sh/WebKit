@@ -43,6 +43,7 @@
 #include "Interpreter.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
+#include "JSFunction.h"
 #include "LLIntThunks.h"
 #include "ObjectPrototype.h"
 #include "OwedOutOfMemoryError.h"
@@ -255,7 +256,13 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
-        throwException(globalObject, scope, isParent ? createNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
+        StringView name = isParent ? StringView() : nameOfCalleeAtCallSite(vm);
+        if (auto* function = dynamicDowncast<JSFunction>(callee); function && function->isHostFunction()) {
+            scope.release();
+            throwNotAConstructorErrorInFrameOf(globalObject, function, name);
+            return { };
+        }
+        throwException(globalObject, scope, isParent ? createNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, name));
         return { };
     }
     if (auto* errorConstructor = isParent ? dynamicDowncast<ErrorConstructor>(callee) : nullptr; errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {

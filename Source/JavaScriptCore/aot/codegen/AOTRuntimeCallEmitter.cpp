@@ -531,7 +531,7 @@ bool RuntimeCallEmitter::leavesRegistersForHostFrame(std::span<const LValue> arg
     return countGPRArguments(arguments) <= directCalleeArgumentIndex;
 }
 
-LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
+LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame, BuiltinID calledBuiltin)
 {
     Effects effects = context.effects().onAnyEdge();
     bool isLeaf = !effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode;
@@ -550,7 +550,9 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
     }
 
     DirectFunctionCall form = isLeaf ? DirectFunctionCall::Leaf : hostFrame ? DirectFunctionCall::WithHostFrame : DirectFunctionCall::WithFrame;
-    return emitCall(&context, requestOfDirectFunction(form, number, arguments, keptAlive)).first;
+    CallRequest request = requestOfDirectFunction(form, number, arguments, keptAlive);
+    request.options.calledBuiltin = calledBuiltin;
+    return emitCall(&context, request).first;
 }
 
 RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createRequest(StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const

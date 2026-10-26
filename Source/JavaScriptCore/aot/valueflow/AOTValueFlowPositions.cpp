@@ -814,6 +814,8 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = inputs.program.builtins();
+    if (object == universe.resultOf(Builtins::JSONParse, 0) || object == universe.resultOf(Builtins::JSONParse, 1))
+        return true;
     const ValueFlowSite* site = universe.isObject(object) ? universe.siteOf(object) : nullptr;
     FunctionID function = site ? universe.functionOf(object) : FunctionID();
     if (!function || site->origin != ValueFlowSiteOrigin::BuiltinResult || !site->value)

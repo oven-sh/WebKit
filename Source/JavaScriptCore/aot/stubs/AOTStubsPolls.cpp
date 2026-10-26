@@ -22,6 +22,7 @@
 namespace JSC { namespace AOT {
 
 static constexpr Address softStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
+static constexpr Address trapAwareSoftStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit() };
 
 // In a frame with a record, with the stack pointer aligned as at the entry of a stub.
 static void callPollSlow(StubAssembler& jit)
@@ -150,36 +151,46 @@ void generatePollAtLoop(StubAssembler& jit)
 
 void generatePollBeforeEntering(StubAssembler& jit)
 {
+    // Once calls by value record their callees every one of them comes here, and few are calls of a function that was renamed.
+    const bool recordsCallees = static_cast<PollBeforeEnteringForm>(jit.key().form()) == PollBeforeEnteringForm::FunctionObject;
+    static_assert(ClosureWord::functionShift == 32);
+    constexpr Address isRenamedAtRunTime { instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.isRenamedAtRunTime) };
+    constexpr Address typeOfCallee { calleeGPR, JSCell::typeInfoTypeOffset() };
+    constexpr Address upperHalfOfSlimClosureWord { calleeGPR, offsetOfSlimClosureWord + static_cast<int32_t>(sizeof(uint32_t)) };
+    constexpr Address upperHalfOfClosureEntry { calleeGPR, offsetOfClosureEntry + static_cast<int32_t>(sizeof(uint32_t)) };
 #if CPU(X86_64)
     constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
     jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
-    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
-    if (static_cast<PollBeforeEnteringForm>(jit.key().form()) == PollBeforeEnteringForm::FunctionObject) {
-        // Once calls by value record their callees every one of them comes here, and few are calls of a function that was renamed.
-        const Address isRenamedAtRunTime(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.isRenamedAtRunTime));
+    Jump doesNotFit;
+    if (recordsCallees) {
+        // The limit that traps raise is the limit of the stack or lies above it.
+        Jump mayNotFit = jit.branchPtr(CCallHelpers::Below, scratch, trapAwareSoftStackLimitWord);
         JumpList callsRunTime;
         callsRunTime.append(jit.branchTestPtr(CCallHelpers::Zero, isRenamedAtRunTime));
-        callsRunTime.append(jit.branchPtr(CCallHelpers::Below, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
-        jit.load8(Address(calleeGPR, JSCell::typeInfoTypeOffset()), scratch);
-        Jump isFull = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(CompiledClosureType));
-        Jump isSlim = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(SlimClosureType));
-        jit.loadPtr(Address(calleeGPR, offsetOfSlimClosureWord), scratch);
-        jit.load32(Address(scratch, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), scratch);
-        Jump hasFunction = jit.jump();
-        isFull.link(&jit);
-        jit.load32(Address(calleeGPR, offsetOfClosureEntry + sizeof(uint32_t)), scratch);
-        Jump hasUpperHalf = jit.jump();
-        isSlim.link(&jit);
-        jit.load32(Address(calleeGPR, offsetOfSlimClosureWord + sizeof(uint32_t)), scratch);
-        hasUpperHalf.link(&jit);
-        static_assert(ClosureWord::functionShift == 32);
+        Jump isNotSlim = jit.branch8(CCallHelpers::NotEqual, typeOfCallee, TrustedImm32(SlimClosureType));
+        jit.load32(upperHalfOfSlimClosureWord, scratch);
+        Label hasUpperHalf = jit.label();
         jit.and32(TrustedImm32(ClosureWord::functionMask), scratch);
-        hasFunction.link(&jit);
+        Label hasFunction = jit.label();
         jit.add64(isRenamedAtRunTime, scratch);
         callsRunTime.append(jit.branchTest8(CCallHelpers::NonZero, Address(scratch)));
         jit.ret();
+
+        isNotSlim.link(&jit);
+        Jump hasProperties = jit.branch8(CCallHelpers::NotEqual, typeOfCallee, TrustedImm32(CompiledClosureType));
+        jit.load32(upperHalfOfClosureEntry, scratch);
+        jit.jump().linkTo(hasUpperHalf, &jit);
+
+        hasProperties.link(&jit);
+        jit.loadPtr(Address(calleeGPR, offsetOfSlimClosureWord), scratch);
+        jit.load32(Address(scratch, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), scratch);
+        jit.jump().linkTo(hasFunction, &jit);
+
+        mayNotFit.link(&jit);
+        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
         callsRunTime.link(&jit);
-    }
+    } else
+        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
     jit.emitFunctionPrologue();
     // The frame record, the return address of this stub and the return address of the call.
     callPollBeforeEntering(jit, 3 * sizeof(void*));
@@ -201,6 +212,33 @@ void generatePollBeforeEntering(StubAssembler& jit)
     constexpr GPRReg scratch = ARM64Registers::x17;
     Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord);
     jit.pushPair(siteReturnAddress, CCallHelpers::linkRegister);
+    if (recordsCallees) {
+        // Both return addresses are on the stack.
+        constexpr GPRReg isRenamed = siteReturnAddress;
+        JumpList callsRunTime;
+        callsRunTime.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimitWord));
+        jit.loadPtr(isRenamedAtRunTime, isRenamed);
+        callsRunTime.append(jit.branchTestPtr(CCallHelpers::Zero, isRenamed));
+        jit.load8(typeOfCallee, scratch);
+        Jump isSlim = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(SlimClosureType));
+        Jump isFull = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(CompiledClosureType));
+        jit.loadPtr(Address(calleeGPR, offsetOfSlimClosureWord), scratch);
+        jit.load32(Address(scratch, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), scratch);
+        Jump hasFunction = jit.jump();
+        isFull.link(&jit);
+        jit.load32(upperHalfOfClosureEntry, scratch);
+        Jump hasUpperHalf = jit.jump();
+        isSlim.link(&jit);
+        jit.load32(upperHalfOfSlimClosureWord, scratch);
+        hasUpperHalf.link(&jit);
+        jit.and32(TrustedImm32(ClosureWord::functionMask), scratch);
+        hasFunction.link(&jit);
+        jit.load8(CCallHelpers::BaseIndex(isRenamed, scratch, CCallHelpers::TimesOne), scratch);
+        callsRunTime.append(jit.branchTest32(CCallHelpers::NonZero, scratch));
+        jit.popPair(CCallHelpers::linkRegister, scratch);
+        jit.m_assembler.ret(scratch);
+        callsRunTime.link(&jit);
+    }
     callPollBeforeEntering(jit, 2 * sizeof(void*));
     constexpr GPRReg exception = siteReturnAddress;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);

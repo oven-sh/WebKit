@@ -27,6 +27,8 @@
 #include "AOTRuntimeType.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "ArgList.h"
+#include "ConstructData.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
@@ -464,6 +466,18 @@ JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue calle
 {
     String source = name.isNull() ? String() : tryMakeString("new "_s, name);
     return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
+}
+
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name)
+{
+    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
+    CallData constructData;
+    constructData.type = CallData::Type::Native;
+    constructData.native.function = function->nativeConstructor();
+    constructData.native.isBoundFunction = false;
+    constructData.native.isWasm = false;
+    construct(globalObject, function, constructData, ArgList());
 }
 
 JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)

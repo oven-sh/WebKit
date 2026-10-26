@@ -234,8 +234,54 @@ void Modules::retireRecord(ModuleRecord* record)
     ASSERT(!record->evaluationError());
     ASSERT(record->asyncEvaluationOrder().isUnset());
     setStoredStatus(record->module(), StoredModuleStatus::Evaluated);
+    loader()->removeEntryOfRecord(record);
     Locker locker { m_state.caches->lock() };
     m_records.remove(record->module());
+}
+
+// An import() of a module of a cycle settles as the evaluation of the root of the cycle does.
+bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
+{
+    auto hasRunToItsEnd = [](const CyclicModuleRecord& module) {
+        return module.status() == CyclicModuleRecord::Status::Evaluated && !module.evaluationError() && module.asyncEvaluationOrder().isUnset();
+    };
+    const CyclicModuleRecord* root = record.cycleRoot();
+    return hasRunToItsEnd(record) && (!root || hasRunToItsEnd(*root));
+}
+
+// An ES module of the program that has run needs no record, like one that ran with the graph of another: whoever asks for it again is handed a record that says so.
+void Modules::retireRecordsOfSettledLoads()
+{
+    if (m_instance.vm->m_synchronousModuleQueue || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+        return;
+    // The host loads the graph of the entry point.
+    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
+        return;
+    if (m_loadsInFlight.containsIf([](const LoadInFlight& load) { return load.promise->status() == JSPromise::Status::Pending; }))
+        return;
+    m_loadsInFlight.clear();
+    for (ModuleID module : std::exchange(m_modulesWhoseRecordsLoaderHolds, { })) {
+        ModuleRecord* record = m_records.get(module);
+        if (!record)
+            continue;
+        record->setIsHeldByLoader(false);
+        if (record->isRetained() || !isLoadedWithRequests(module))
+            continue;
+        // The table has the status of a module that compiled code began.
+        record->takeStatus();
+        if (!record->holdsStatus())
+            continue;
+        if (status(module) == ModuleStatus::Linked)
+            recordEvaluationIfNothingIsLeftToRun(module);
+        if (hasRunToItsEndWithItsCycle(*record))
+            retireRecord(record);
+    }
+}
+
+void didSettleLoad(JSPromise* settled)
+{
+    if (Modules* modules = modulesOf(settled->realm()))
+        modules->retireRecordsOfSettledLoads();
 }
 
 void Modules::setFailed(ModuleID module, JSValue error)
@@ -712,9 +758,12 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
-    if (isImportedByLoader(module)) {
+    bool isFile = isImportedByLoader(module);
+    bool isBuiltinModule = !isFile && isBuiltinModuleOfLoader(module);
+    if (isFile || isBuiltinModule) {
         VM& vm = *m_instance.vm;
-        if (loaderOnlyHandsOverNamespace(module)) {
+        bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);
+        if ((!isBuiltinModule || isBuiltinModuleThatLoaderHas) && loaderOnlyHandsOverNamespace(module)) {
             JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
             if (promise->isThenFastAndNonObservable()) [[likely]] {
                 queueStepOfImport(promise, jsNumber(module.index()), std::size(jobsOfImportOfEvaluatedModule));
@@ -722,15 +771,15 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             }
         }
         // `bun run` has loaded a module with the graph that first came to it, and its loader knows the module from then on.
-        if (data(module).kind == ModuleKind::SourceText && !isNotLoaded(module)) {
-            ModuleRecord* record = registerWithLoader(module);
+        if (isBuiltinModuleThatLoaderHas || (data(module).kind == ModuleKind::SourceText && !isNotLoaded(module))) {
+            ModuleRecord* record = registerWithLoader(module, RecordHolder::Loader);
             RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
             if (ModuleRegistryEntry* entry = loader()->registryEntry(record->moduleKey()); entry && entry->record() == record)
                 entry->markLoaded();
         }
         bool wasAskingHost = setIsAskingHost(true);
         // What the host would answer when it is asked to fetch the module.
-        ModuleRecord* record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module);
+        ModuleRecord* record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module, RecordHolder::Loader);
         JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(realm, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
         setIsAskingHost(wasAskingHost);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -765,10 +814,11 @@ bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
     if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->m_synchronousModuleQueue || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
         return false;
     // An import() of a module of a cycle settles as the evaluation of the root of the cycle does, which may wait or have failed behind an await when the module itself has run.
-    if (data(module).isSynchronous())
+    // Such a module has a record.
+    ModuleRecord* record = data(module).isSynchronous() ? nullptr : recordIfExists(module);
+    if (!record)
         return true;
-    ModuleRecord* record = recordIfExists(module);
-    CyclicModuleRecord* root = record ? record->cycleRoot() : nullptr;
+    CyclicModuleRecord* root = record->cycleRoot();
     return root && root->status() == CyclicModuleRecord::Status::Evaluated && !root->evaluationError();
 }
 
@@ -949,7 +999,7 @@ void Modules::admitCodeNamedBy(JSValue specifier)
     });
 }
 
-ModuleRecord* Modules::exposeRecord(ModuleID module)
+ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -961,7 +1011,12 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
         keepLinkWalk(WTF::move(linkWalk));
     }
     ModuleRecord* record = ensureRecord(module);
-    record->retain();
+    if (holder == RecordHolder::Anyone)
+        record->retain();
+    else if (!record->isRetained()) {
+        record->setIsHeldByLoader(true);
+        m_modulesWhoseRecordsLoaderHolds.append(module);
+    }
     if (record->status() != CyclicModuleRecord::Status::New || !record->requestedModules().isEmpty())
         return record;
 
@@ -997,6 +1052,22 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     });
 }
 
+// `bun run` reads what is imported from a module with an open namespace from the object that stands for the namespace, and requests nothing.
+bool Modules::isBuiltinModuleOfLoader(ModuleID module) const
+{
+    const ModuleData& moduleData = data(module);
+    if (moduleData.exportRule != SyntheticExportRule::RuntimeModule)
+        return false;
+    std::optional<uint32_t> registryID = moduleData.registryID();
+    return registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::HasOpenNamespace);
+}
+
+// The loader of `bun run` fetches a built-in module for the first graph that imports it, in steps of its own, and has it from then on. A require() does not ask the loader.
+bool Modules::isBuiltinModuleNewToLoader(ModuleID module) const
+{
+    return !isSettledForLinks(module) && !m_filesLoadedWithoutLoader.get(module.index()) && isBuiltinModuleOfLoader(module);
+}
+
 void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -1006,9 +1077,18 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         std::unique_ptr<LevelOfLoad> level = m_levelsOfLoads.take(module);
         if (!level)
             return false;
+        if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next))) {
+            layWayOfLoadAgain(*level);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        // Nobody sees how many steps are taken before require() returns.
+        if (level->next && level->plan && !m_instance.vm->m_synchronousModuleQueue)
+            countStepsOfLevel(*level->plan, level->depth + 1);
         for (std::optional<ModuleID> target : { level->next, level->firstFileBehindNext }) {
             if (!target)
                 continue;
+            if (auto asked = m_levelsOfLoads.find(*target); asked != m_levelsOfLoads.end())
+                asked->value->isAskedFor = true;
             Identifier key = keyOfRequest(*target);
             record->appendRequestedModule(key, nullptr, ModulePhase::Evaluation);
             record->didRequestCompiledModule(key, *target);
@@ -1060,7 +1140,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
                 record->appendRequestedModule(name, nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
                 return;
             }
-        } else if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data || isFileOfProgram(target))
+        } else if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data || isFileOfProgram(target) || isBuiltinModuleNewToLoader(target))
             keptAlive.append(keyOfRequest(target));
         else
             continue;
@@ -1129,10 +1209,10 @@ ModuleRecord* Modules::appendRequestsOfUncompiledCode(ModuleID module, ModuleRec
     return record;
 }
 
-ModuleRecord* Modules::registerWithLoader(ModuleID module)
+ModuleRecord* Modules::registerWithLoader(ModuleID module, RecordHolder holder)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    ModuleRecord* record = exposeRecord(module);
+    ModuleRecord* record = exposeRecord(module, holder);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ModuleRegistryEntry* entry = loader()->ensureRegistered(m_instance.globalObject, record->moduleKey(), ScriptFetchParameters::Type::JavaScript);
     if (!entry->record() && entry->status() == ModuleRegistryEntry::Status::New)
@@ -1206,11 +1286,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* i
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module))));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer))
+JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordRequire);
     modulesOf(*instance).recordRequire(ModuleID(module), ModuleID(referrer));
-    scope.assertNoException();
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t, uint32_t isURL))
@@ -1503,7 +1583,8 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
     }
     if (modules->isAskingHost() && modules->isCommonJSFileOrFace(module))
         RELEASE_AND_RETURN(scope, modules->recordOfCommonJSFile(module));
-    RELEASE_AND_RETURN(scope, modules->exposeRecord(module));
+    // A module of the image asks through the loader. Code that is not compiled binds what it imports to the record.
+    RELEASE_AND_RETURN(scope, modules->exposeRecord(module, modules->isAskingHost() ? Modules::RecordHolder::Loader : Modules::RecordHolder::Anyone));
 }
 
 bool isCompiledModuleRecord(AbstractModuleRecord* record)

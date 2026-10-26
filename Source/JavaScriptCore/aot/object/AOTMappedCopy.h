@@ -41,8 +41,8 @@ struct MappedCopy {
         Tested,
     };
     // The moves that the stub in front of the operation makes: in a run all are made by the same few instructions.
-    enum class RunOfStub : uint8_t { HalfWords, NarrowedReferences, Words, Bytes };
-    static constexpr unsigned numberOfRunsOfStub = 4;
+    enum class RunOfStub : uint8_t { HalfWords, NarrowedReferences, Words, Bytes, Int32sAsDoubles, BoxedInt32s, WidenedReferences };
+    static constexpr unsigned numberOfRunsOfStub = 7;
     // An offset counts from the cell, or from the Extension with the granules that it has in such a copy.
     struct Move {
         uint32_t from;
@@ -55,6 +55,8 @@ struct MappedCopy {
         SlotRepresentation representationOfTarget;
         uint8_t acceptedKinds;
         uint16_t fieldOfTarget;
+        // The target lists the field before the copy. Whoever makes the copy in another way, once a later move has failed, stores the same value there again.
+        bool overwritesField { false };
         RunOfStub runOfStub { RunOfStub::HalfWords };
         // The stub leaves the copy to the operation where the bits that it has read, less the first, are below the number.
         uint64_t firstBitsRefusedByStub { 0 };
@@ -77,7 +79,7 @@ struct MappedCopy {
     uint32_t orderWordAfter { 0 };
     State state { State::IsUnknown };
     bool mayStoreCells { false };
-    // The slots that the copy writes hold nothing yet, and it takes loads and stores alone and at the most a new Extension out of a free list.
+    // It takes loads and stores alone and at the most a new Extension out of a free list.
     bool takesNoFrame { false };
     // Whether it does is asked when the copy is made for the second time: many a kind of copy is made once.
     bool mayTakeNoFrame { false };
@@ -87,7 +89,9 @@ struct MappedCopy {
     StructureID structureOfSource;
     // That of no cell where the stub leaves the moves to the operation. Else the moves lie in the order of the runs, so the operation begins a copy again that the stub has left.
     StructureID structureOfSourceForStub;
-    bool hasWordsOrBytesForStub { false };
+    // Most copies have moves of the first two runs alone, and few have any behind the first four.
+    bool hasRunsBehindSecondForStub { false };
+    bool hasRunsBehindFourthForStub { false };
     std::array<Run, numberOfRunsOfStub> runsOfStub { };
     uint32_t offsetOfExtensionWordInTarget { 0 };
     uint32_t offsetOfExtensionWordInSource { 0 };

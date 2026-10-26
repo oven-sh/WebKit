@@ -11,6 +11,7 @@
 #include "AOTAnalysisContext.h"
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTPredictedValues.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -351,10 +352,18 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
             worklist.append(terminator.valueOperand());
     }
 
+    std::optional<PredictedValues> predicted;
+    auto isNeverObject = [&](ValueID value) {
+        if (program.typeOf(constructor, value).hasObjects())
+            return false;
+        if (!predicted)
+            predicted.emplace(constructor, analyses.cfg(), PredictedValues::Options { .programToReadComparisonsWith = &program });
+        return !predicted->isBehindCheck(value);
+    };
     BitVector isVisited(constructor.values.size());
     while (!worklist.isEmpty()) {
         ValueID returned = analyses.identityOf(worklist.takeLast());
-        if (isVisited.set(returned.index()) || returned == thisParameter || !program.typeOf(constructor, returned).hasObjects())
+        if (isVisited.set(returned.index()) || returned == thisParameter || isNeverObject(returned))
             continue;
         const Value& value = constructor.at(returned);
         if (value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList || (value.opcode == Opcode::NewObject && program.at(value.layout()).kind == LayoutKind::Instance))

@@ -32,6 +32,7 @@ struct ValueCall {
     CalledBuiltin builtin { };
     // AOTStubsCalls.h, callValueLending().
     uint8_t lentArguments { 0 };
+    bool calleeIsCell { false };
 };
 
 struct ConventionCall {
@@ -120,7 +121,7 @@ private:
     B3::PatchpointValue* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&);
     void defineResultsOfCall(const ValueContext&, std::span<const ArgumentLocation> results, B3::PatchpointValue*);
     Operand resultOfCall(const ArgumentLocation&, LValue);
-    void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand);
+    void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand, bool calleeIsCell);
 
     void meetLandingOfMisfit(const ValueContext&, LValue returned);
     void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&);

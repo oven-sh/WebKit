@@ -2049,7 +2049,10 @@ static bool hasFunctionText(const Program& program, const Function& function)
 {
     if (!function.module || function.text.start >= function.text.end)
         return false;
-    return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && program.at(function.module).kind != ModuleKind::RuntimeSource;
+    const Module& module = program.at(function.module);
+    if (isBundlerHelperModule(program, module))
+        return true;
+    return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
 static void appendFunctionTexts(TableEncoder& encoder)

@@ -70,6 +70,7 @@ ClosureTable::ClosureTable(State& state)
     for (unsigned i = 0; i < FunctionTables::numberOfExecutables; ++i)
         instance.closures.executables[i] = shared.executables[i].get();
     state.caches->add(CacheKind::StrongRoots, "closures"_s, *this);
+    m_writtenRegions.setCardsAreWrittenWithoutRecord();
     createStructures(*instance.vm);
 }
 
@@ -272,8 +273,10 @@ bool ClosureTable::hasSingletonClosure(FunctionID function) const
 
 void ClosureTable::didCreateClosureFor(FunctionID function, JSCell* cell)
 {
-    if (!functionKindData(function).isInRuntimeModule)
+    if (!functionKindData(function).isInRuntimeModule) {
         m_state.statics->ensureProgramStaticsInitialized();
+        m_state.instance.closureTable.cards = m_writtenRegions.cards();
+    }
     uint32_t number = cellNumberOf(m_tables, function);
     RELEASE_ASSERT(number);
     if (m_state.instance.options().useWideReferences()) {

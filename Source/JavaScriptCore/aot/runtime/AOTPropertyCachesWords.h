@@ -205,6 +205,8 @@ struct PropertyCacheWords {
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
+    // A place for stores was filled while nobody watched the Structure for replacements. Such a place holds until somebody does.
+    uint8_t placesTakeReplacementsAsUnwatched;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;

@@ -14,6 +14,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinUses.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfRules.h"
@@ -137,6 +138,34 @@ std::optional<ElementAccessSite> planElementAccessSite(FunctionPassContext& cont
     return ElementAccessSite { site, WTF::move(*plan) };
 }
 
+// Whoever asks what kind of value it is tells one closure of a function from another no more than a call does.
+static bool asksForKindOfValue(Opcode opcode)
+{
+    Proof proof = provesOf(opcode);
+    return proof == Proof::TestedType || proof == Proof::Truthiness;
+}
+
+// What the answer proves about the value on an edge is the same value.
+static void appendValuesNarrowedBy(const Function& function, const UseLists& uses, ValueID test, ValueID subject, Vector<ValueID, 4>& sameValues)
+{
+    for (const Use& use : uses.usesOf(test)) {
+        if (use.kind != Use::Kind::TerminatorOperand)
+            continue;
+        const Terminator& terminator = function.at(use.block).terminator;
+        for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+            uint32_t firstResult = firstEdgeResultParameter(function, use.block, targetIndex);
+            uint32_t numberOfResults = numberOfEdgeResults(function, use.block, targetIndex);
+            for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
+                if (operandNarrowedOnEdge(function, { use.block, targetIndex, resultIndex }) != subject)
+                    continue;
+                ValueID narrowed = function.at(terminator.targets[targetIndex].block).parameters[firstResult + resultIndex];
+                if (!sameValues.contains(narrowed))
+                    sameValues.append(narrowed);
+            }
+        }
+    }
+}
+
 bool isOnlyCalled(FunctionAnalyses& analyses, ValueID read)
 {
     const Function& function = analyses.function();
@@ -160,6 +189,35 @@ bool isOnlyCalled(FunctionAnalyses& analyses, ValueID read)
         }
     }
     return isCalled;
+}
+
+// A call whose callee is known by its type no longer names the value that it called, so what is left of `const method = object.method; if (method !== undefined) method.call(object)` may be the test alone.
+static bool isNobodysObject(FunctionAnalyses& analyses, ValueID read)
+{
+    const Function& function = analyses.function();
+    const UseLists& uses = analyses.useLists();
+
+    bool isCalledOrAsked = false;
+    Vector<ValueID, 4> sameValues { read };
+    for (size_t position = 0; position < sameValues.size(); ++position) {
+        ValueID value = sameValues[position];
+        for (const Use& use : uses.usesOf(value)) {
+            if (use.kind != Use::Kind::Operand)
+                return false;
+
+            Opcode user = function.at(use.user).opcode;
+            if (isCast(user) && !use.operandIndex) {
+                sameValues.append(use.user);
+                continue;
+            }
+            if (asksForKindOfValue(user))
+                appendValuesNarrowedBy(function, uses, use.user, value, sameValues);
+            else if ((user != Opcode::Call || use.operandIndex != OperandIndex::Call::callee) && (user != Opcode::CallList || use.operandIndex != OperandIndex::CallList::callee))
+                return false;
+            isCalledOrAsked = true;
+        }
+    }
+    return isCalledOrAsked;
 }
 
 AccessOperands operandsOfNamedAccess(const Value& access)
@@ -985,7 +1043,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
                 PropertyAccessPlan planOfCalledRead = planPropertyAccess(accessContext, *query);
                 isRefused = isRefused && isRefusedWhereverItStands(planOfCalledRead) && planOfCalledRead.limit == plan.limit;
                 if (!isRefused) {
-                    query->isOnlyCalled = isOnlyCalled(context.analyses, site.value);
+                    query->isOnlyCalled = isNobodysObject(context.analyses, site.value);
                     if (query->isOnlyCalled)
                         plan = WTF::move(planOfCalledRead);
                 }

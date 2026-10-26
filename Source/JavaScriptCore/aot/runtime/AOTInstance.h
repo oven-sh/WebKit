@@ -80,6 +80,12 @@ struct CallByValueWords {
     const uint8_t* isRenamedAtRunTime;
 };
 
+// For the stub that reads the closure table and makes the function object that is not there yet.
+struct ClosureTableWords {
+    // RememberedSlotSet::cards() of the table. Null until the static variables of the program are filled in.
+    uint8_t* cards;
+};
+
 // On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
     int64_t minInt64;
@@ -297,7 +303,8 @@ struct NumberWords {
     v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \
     v(lazyStrings, LazyStringWords) \
-    v(callsByValue, CallByValueWords)
+    v(callsByValue, CallByValueWords) \
+    v(closureTable, ClosureTableWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {

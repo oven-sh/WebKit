@@ -8,7 +8,8 @@
 # CHECK-NEXT: [[proven]]: Set<anything, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=Set<anything, proven, pristine[Storage, Names]>
 # CHECK-NEXT: = NewClosure [[proven]] function=f1
 
-module m0 path="main.ts" displayPath="main.ts"
+module m0 path="main.ts" displayPath="main.ts" body=f2
+entry module=m0
 
 function f0 name="outer" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
     Jump -> next b1()
@@ -32,4 +33,16 @@ function f0 name="outer" parameters=[{type=anything}, {type=anything}] results=[
 }
 function f1 name="inner" kind=Arrow captures=[{type=Set<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
     Return v0
+}
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1, v1 function=f0
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
 }

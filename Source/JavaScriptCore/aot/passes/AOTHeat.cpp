@@ -186,6 +186,10 @@ HeatClass Heat::classOf(const Program& program, FunctionID id, double activation
         return HeatClass::Hot;
     double heat = activations * frequencyInFunction;
     HeatClass heatClass = classOf(heat);
+    if (m_hotIsByRank && !m_classOfEverything && !isCold(heatClass)) {
+        heat = m_entries.of(program, id).rank * frequencyInFunction;
+        heatClass = heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
+    }
     if (!isHot(heatClass) || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
         return heatClass;
     return m_entries.of(program, id).isCalledInLoop && !leadsToBody(program.at(id)) ? heatClass : HeatClass::Warm;
@@ -197,13 +201,9 @@ HeatClass Heat::classOf(double heat) const
         return *m_classOfEverything;
     if (!m_thresholds)
         return HeatClass::Unknown;
-    if (!(heat > 0))
+    if (!(heat > 0) || heat < m_thresholds->cold)
         return HeatClass::Cold;
-    if (heat >= m_thresholds->hot)
-        return HeatClass::Hot;
-    if (heat < m_thresholds->cold)
-        return HeatClass::Cold;
-    return HeatClass::Warm;
+    return heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
 }
 
 static void printWithThreeDigits(PrintStream& out, double number)
@@ -548,8 +548,12 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     if (!summariesFromFlow)
         summariesFromFlow = &ownSummaries.emplace(createSummariesFromFlow(program, flow, build));
     times.didFinish("createSummariesFromFlow"_s);
-    HeatGraph graph = buildHeatGraph(program, callGraph, flow, *summariesFromFlow, build, references, keptWeights, madeWeights);
+    HeatGraph graphOfClasses;
+    HeatGraph graph = buildHeatGraph(program, callGraph, flow, *summariesFromFlow, build, references, keptWeights, madeWeights, &graphOfClasses);
     times.didFinish("buildHeatGraph"_s);
+    const bool estimatesTwice = graphOfClasses.numberOfFunctions();
+    Vector<double> ranks;
+    Vector<double> placesInOrder;
 
     unsigned count = graph.numberOfFunctions();
     Heat heat;
@@ -563,7 +567,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         totalSize += graph.sizeOf(FunctionID(i));
     // Most of a very large program never runs, and which part does is not in the estimate: its products along paths of calls pass every bound, and a call that nobody follows spreads evenly over all that it may reach.
     // The thresholds of a very large program are fixed, and no class in it comes from a threshold.
-    const bool isVeryLargeProgram = totalSize > HeatModel::warmCodeLimitsInVeryLargeProgram * build.limit(LimitID::MaxWarmCodeValues);
+    const bool isVeryLargeProgram = totalSize > maxValuesOfOrdinaryProgram(build);
     heat.m_hasWeights = heatFor == HeatFor::Everything || !isVeryLargeProgram;
     Vector<uint8_t> isCalledInLoop;
     Vector<uint8_t> runsInLoop;
@@ -574,7 +578,11 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     runTasksInParallel(loops, {
         [&] {
             if (heat.m_hasWeights)
-                activations = estimateActivations(graph);
+                activations = estimateActivations(estimatesTwice ? graphOfClasses : graph);
+        },
+        [&] {
+            if (heat.m_hasWeights && estimatesTwice)
+                ranks = estimateActivations(graph);
         },
         [&] {
             if (!isVeryLargeProgram)
@@ -604,12 +612,58 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     if (functionsWithBody.isEmpty())
         return Heat();
 
+    Vector<uint8_t> runsWithEveryEvent;
+    if (estimatesTwice && heat.m_hasWeights) {
+        for (unsigned index = 0; index < count; ++index)
+            activations[index] = std::max(activations[index], graphOfClasses.entriesPerEventOf(FunctionID(index)));
+        placesInOrder = ranks;
+        runsWithEveryEvent = followNearlyCertainCalls(graph, isCalledPerEvent);
+        // A rank says which of two functions runs more often, not that either runs often: what comes with events has one only where it is entered as often for each event as a loop in a loop would enter it.
+        // The streams, emitters and sockets of the library call each other in cycles that are no loops: of the library, only what a loop calls has one.
+        // What a handler of the application calls nearly every time runs as often as the handler, and keeps its rank.
+        for (unsigned index = 0; index < count; ++index) {
+            if (graphOfClasses.entriesPerEventOf(FunctionID(index)) < 1)
+                continue;
+            bool isOfLibrary = isLibraryCode(program, program.functions[index]);
+            if (runsWithEveryEvent[index] && !isOfLibrary)
+                continue;
+            if (activations[index] <= HeatModel::minEntriesPerEventOfHotCode * HeatModel::eventsPerRun || (isOfLibrary && !isCalledInLoop[index]))
+                ranks[index] = 0;
+        }
+    }
+    if (heat.m_hasWeights && !isVeryLargeProgram) {
+        std::optional<HeatThresholds> thresholdsOfRanks;
+        if (estimatesTwice)
+            thresholdsOfRanks = computeThresholds(loops, applicationBlocks, ranks, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
+        heat.m_thresholds = computeThresholds(loops, WTF::move(applicationBlocks), activations, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
+        if (thresholdsOfRanks) {
+            // Most of the library runs in no one program: its code is hot only where both estimates put it beside the application's hot code.
+            if (std::isfinite(thresholdsOfRanks->hot)) {
+                double ranksPerActivation = thresholdsOfRanks->hot / heat.m_thresholds->hot;
+                for (uint32_t index : functionsWithBody) {
+                    if (isLibraryCode(program, program.functions[index]))
+                        ranks[index] = std::min(ranks[index], activations[index] * ranksPerActivation);
+                }
+            }
+            heat.m_thresholds->hot = thresholdsOfRanks->hot;
+            heat.m_hotIsByRank = true;
+        }
+    }
     Vector<uint8_t> percentiles;
+    if (estimatesTwice && heat.m_hasWeights) {
+        // A helper of the library that is entered from many places keeps its place among the functions: whoever calls it takes it in.
+        for (unsigned index = 0; index < count; ++index) {
+            bool isBusyHelper = graph.sizeOf(FunctionID(index)) <= HeatModel::maxSizeOfHelper && activations[index] > HeatModel::minEntriesPerEventOfHotCode * HeatModel::eventsPerRun && isLibraryCode(program, program.functions[index]);
+            if (!isBusyHelper)
+                placesInOrder[index] = ranks[index];
+        }
+    }
+    const Vector<double>& ranksOrActivations = estimatesTwice ? placesInOrder : activations;
     if (heat.m_hasWeights) {
         heat.m_allocationsOfLayouts.fill(0, program.layouts.size());
         for (const AllocationSite& site : flow.allocationSites()) {
             if (site.layout && site.function && site.layout.index() < program.layouts.size() && site.function.index() < activations.size()) {
-                heat.m_allocationsOfLayouts[site.layout.index()] += activations[site.function.index()];
+                heat.m_allocationsOfLayouts[site.layout.index()] += ranksOrActivations[site.function.index()];
                 if (ModuleID module = program.at(site.function).module)
                     heat.m_modulesThatAllocate.append(packedKeyOf(site.layout, module));
             }
@@ -617,18 +671,10 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         AOT::sort(heat.m_modulesThatAllocate);
         removeRepeatedElements(heat.m_modulesThatAllocate);
 
-        runTasksInParallel(loops, {
-            [&] {
-                if (!isVeryLargeProgram)
-                    heat.m_thresholds = computeThresholds(loops, WTF::move(applicationBlocks), activations, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
-            },
-            [&] {
-                Vector<FunctionDensity> order = sortByDensity(loops, graph, functionsWithBody, activations);
-                percentiles = computePercentiles(graph, order, totalSize);
-                heat.m_hottestFirst = Vector<FunctionID>(order.size(), [&](size_t k) {
-                    return order[k].function;
-                });
-            },
+        Vector<FunctionDensity> order = sortByDensity(loops, graph, functionsWithBody, ranksOrActivations);
+        percentiles = computePercentiles(graph, order, totalSize);
+        heat.m_hottestFirst = Vector<FunctionID>(order.size(), [&](size_t k) {
+            return order[k].function;
         });
     }
     times.didFinish("computeThresholds"_s);
@@ -637,11 +683,24 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         FunctionID id(i);
         // Without weights: classifyByCallers gives the entry its activations and its percentile.
         heat.m_entries[id] = heat.m_hasWeights ? Heat::Entry { activations[i], HeatClass::RunsOnce, percentiles[i], activations[i] } : Heat::Entry { 1, HeatClass::RunsOnce };
+        if (heat.m_hotIsByRank)
+            heat.m_entries[id].rank = ranks[i];
         heat.m_entries[id].isCalledInLoop = runsInLoop[i];
         heat.m_entries[id].isCalledPerEvent = !isVeryLargeProgram && isCalledPerEvent[i] && !isLibraryCode(program, program.functions[i]);
         if (!flow.runsAtMostOnce(program, id))
             heat.m_entries[id].heatClass = heat.classOf(program, id, 1);
     });
+    if (estimatesTwice) {
+        for (uint32_t i : functionsWithBody) {
+            Heat::Entry& entry = heat.m_entries[FunctionID(i)];
+            entry.isCompact = !(activations[i] > 0) && entry.heatClass == HeatClass::Cold && graph.sizeOf(FunctionID(i)) > HeatModel::maxSizeOfSmallFunction;
+        }
+        // A call of a built-in enters the function that stands behind it, and no edge of the graph says so.
+        for (const RuntimeFunctionEntry& behindBuiltin : program.runtimeFunctions) {
+            if (behindBuiltin.function)
+                heat.m_entries[behindBuiltin.function].isCompact = false;
+        }
+    }
     times.didFinish("classifyFunctions"_s);
     if (isVeryLargeProgram) {
         forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
@@ -672,6 +731,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     case HeatOverride::OnlyLoopsAreHot:
         for (uint32_t i : functionsWithBody)
             heat.m_entries[FunctionID(i)] = Heat::Entry { 1, HeatClass::Warm, 50 };
+        heat.m_hotIsByRank = false;
         heat.m_valuesInCompactFunctions = 0;
         heat.m_valuesInAllFunctions = 0;
         heat.m_thresholds = HeatThresholds { .cold = frequencyConstants.unlikelyEdgeShare, .hot = frequencyConstants.iterationsPerLoop };

@@ -1479,8 +1479,17 @@ static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBe
     const Value& test = function.at(terminator.conditionOperand());
     if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
         return false;
+    // What a validating build asks again changes nothing, and nobody but the validation takes the answer.
+    auto isThereForValidationAlone = [&](ValueID earlier) {
+        if (familyOf(function.at(earlier).opcode) == OperationFamily::RuntimeValidation)
+            return true;
+        std::span<const Use> uses = context.analyses.useLists().usesOf(earlier);
+        return !uses.empty() && context.analyses.effectsOf(earlier).normal.isUnobservable() && std::ranges::all_of(uses, [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && familyOf(function.at(use.user).opcode) == OperationFamily::RuntimeValidation;
+        });
+    };
     return std::ranges::all_of(function.at(location.block).values.span().first(location.index), [&](ValueID earlier) {
-        return found.proofs.contains(earlier);
+        return found.proofs.contains(earlier) || isThereForValidationAlone(earlier);
     });
 }
 

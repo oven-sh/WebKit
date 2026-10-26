@@ -16,6 +16,7 @@
 namespace JSC {
 
 class Identifier;
+class JSFunction;
 class JSGlobalObject;
 class JSObject;
 class VM;
@@ -51,6 +52,8 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const I
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);
+// The engine enters a native function that is no constructor, and the function refuses in a frame of its own.
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject*, JSFunction*, StringView name);
 JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
 JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
 

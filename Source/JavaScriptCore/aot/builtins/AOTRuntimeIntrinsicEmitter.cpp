@@ -78,6 +78,16 @@ void RuntimeIntrinsicEmitter::generateHasJSType(const ValueContext& value)
     }), m_program.at(TypeTable::boolean));
 }
 
+// Where a pass knew the member, tests of the class stand in the place of the operation. What is left is a place where nobody knows.
+void RuntimeIntrinsicEmitter::generateFindsDeclaredMember(const ValueContext& value)
+{
+    if (value.isBranchCondition()) {
+        branch(boolean(false), value.branchTargets());
+        return;
+    }
+    defineAs(value, boolean(false), m_program.at(TypeTable::boolean));
+}
+
 TypedPointer RuntimeIntrinsicEmitter::internalField(const Value& value)
 {
     return m_out.address(cellOperand(value.objectOperand()).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[value.index()]);

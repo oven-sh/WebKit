@@ -15,8 +15,10 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
+#include "AOTKnownClosures.h"
 #include "AOTLayout.h"
 #include "AOTNameCreatedSymbols.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
@@ -364,6 +366,38 @@ const ValueFlowMembersOfHolder& ValueFlowHeapTables::describeMembersOf(BuiltinID
     m_describedMembersOfHolders.append(std::make_unique<ValueFlowMembersOfHolder>(ValueFlowMembersOfHolder { m_maker.unite(m_maker.of(values.span()), primitives), m_maker.of(accessors.span()), m_maker.of(accessorsWithGetEntry.span()), m_maker.of(accessorsWithSetEntry.span()), hasNativeBinding, m_maker.of(leftOut.span()) }));
     described.store(m_describedMembersOfHolders.last().get(), std::memory_order_release);
     return *m_describedMembersOfHolders.last();
+}
+
+bool isAnswerOfModuleOperation(const Function& function, ValueID value)
+{
+    const Value* definition = &function.at(definitionThroughSameValues(function, value));
+    if (definition->opcode == Opcode::Await)
+        definition = &function.at(definitionThroughSameValues(function, definition->operand(OperandIndex::Await::value)));
+    return flowRuleOf(definition->opcode) == FlowRule::Module;
+}
+
+ConstantsHoldingModules::ConstantsHoldingModules(const Program& program)
+    : m_variables(program.variables.size())
+{
+    for (const Function& function : program.functions) {
+        for (const Value& store : function.values) {
+            if (store.opcode == Opcode::PutModuleVariable) {
+                if (program.at(store.variable()).flags.contains(VariableFlags::IsImmutable) && isAnswerOfModuleOperation(function, store.valueOperand()))
+                    m_variables.set(store.variable().index());
+            } else if (store.opcode == Opcode::PutEnvironmentField) {
+                if (program.at(store.layout()).fields[store.field()].flags.contains(FieldFlags::IsImmutable) && isAnswerOfModuleOperation(function, store.valueOperand()))
+                    m_fields.append(keyOf(store.layout(), store.field()));
+            }
+        }
+    }
+    std::ranges::sort(m_fields);
+}
+
+bool ConstantsHoldingModules::isReadBy(const Value& read) const
+{
+    if (read.opcode == Opcode::GetModuleVariable)
+        return m_variables.get(read.variable().index());
+    return read.opcode == Opcode::GetEnvironmentField && std::ranges::binary_search(m_fields, keyOf(read.layout(), read.field()));
 }
 
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
@@ -897,6 +931,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         },
         [&] {
             m_functionsNamedAtOneOperation = findFunctionsNamedAtOneOperation(program, loops);
+        },
+        [&] {
+            m_constantsHoldingModules = ConstantsHoldingModules(program);
         },
         [&] {
             maker.sets().forEachMember(universe.arrays(), [&](ValueFlowObjectID object) {

@@ -597,12 +597,18 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
     DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
     const BuiltinOverload& overload = m_builtins.at(value->overload());
     // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
-    bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins) && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
-    bool makesErrors = !generator().validates() && overload.throws() && !overload.onlyPropagatesErrors() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span()) && hasFunctionObject;
+    bool makesErrors = overload.throws() && !overload.onlyPropagatesErrors() && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
+    bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
+    bool canMakeFrame = hasFunctionObject && !generator().validates() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span());
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
-    if (operands.takesFrame || makesErrors)
+    if (operands.takesFrame || (makesErrors && canMakeFrame))
         hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { (value->receiverOperand() ? boxedOperand(value, value->receiverOperand()) : undefined()).value(), calleeOf(value, overload).value() };
-    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame));
+    // Where there is no such frame, the site says which function it calls.
+    BuiltinID callee = m_builtins.canonicalID(overload.builtin);
+    std::optional<BuiltinNativeFunction> nativeFunction = BuiltinBindings::nativeFunctionOf(callee);
+    bool hasNameInFrames = hasFunctionObject || (nativeFunction && !nativeFunction->name.isNull());
+    BuiltinID listedAtSite = makesErrors && !hostFrame && hasNameInFrames ? callee : BuiltinID();
+    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame, listedAtSite));
 }
 
 StubCallResult BuiltinCallEmitter::callDirectFunctionReturningFields(const ValueContext& value, uint32_t number)

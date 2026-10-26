@@ -66,7 +66,7 @@ function f8 name="inRareBlock" role=OutlinedBody results=[{type=undefined}] {
 # CHECK-NEXT: f7 size 1 mass 1.000000:
 # CHECK-NEXT: f8 size 1 mass 1.000000:
 # CHECK-NEXT: host: f0*1.000000 f1*1.000000 f2*1.000000 f3*1.000000 f4*1.000000
-# CHECK-NEXT: unknown: f0*0.200000 f1*0.200000 f2*0.200000 f3*0.200000 f4*0.200000
+# CHECK-NEXT: unknown:
 # CHECK-NEXT: activations:
 # CHECK-NEXT: f0 1.000000
 # CHECK-NEXT: f1 2.000000

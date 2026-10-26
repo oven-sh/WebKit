@@ -308,7 +308,14 @@ void EffectsCache::reportIfOutdated(const Answer& answer, const Carrier& carrier
 {
     const EffectsOnEdges& kept = m_entries.at(answer.entry);
     EffectsOnEdges fresh = Typed::effectsOf(m_context, m_function, carrier);
-    if (kept == fresh || std::exchange(m_didReportOutdatedAnswer, true))
+    if (kept == fresh || m_didReportOutdatedAnswer)
+        return;
+    reportOutdatedAnswer(makeString("the pass asked for the effects of "_s, value ? makeString('v', value.index(), " ("_s, nameOf(m_function.at(value).opcode), ')') : makeString("the end of b"_s, block.index()), " after an edit that the analyses were not told of: they answered "_s, toString(kept), ", and the effects are "_s, toString(fresh)));
+}
+
+void EffectsCache::reportOutdatedAnswer(String&& detail) const
+{
+    if (std::exchange(m_didReportOutdatedAnswer, true))
         return;
     const CurrentWork& work = currentWork();
     uint32_t functionPlusOne = work.functionPlusOne.load(std::memory_order_relaxed);
@@ -316,7 +323,7 @@ void EffectsCache::reportIfOutdated(const Answer& answer, const Carrier& carrier
         .kind = InternalErrorKind::VerificationFailedAfterPass,
         .function = functionPlusOne ? FunctionID(functionPlusOne - 1) : FunctionID(),
         .pass = work.pass.load(std::memory_order_relaxed),
-        .detail = makeString("the pass asked for the effects of "_s, value ? makeString('v', value.index(), " ("_s, nameOf(m_function.at(value).opcode), ')') : makeString("the end of b"_s, block.index()), " after an edit that the analyses were not told of: they answered "_s, toString(kept), ", and the effects are "_s, toString(fresh)),
+        .detail = WTF::move(detail),
     });
 }
 

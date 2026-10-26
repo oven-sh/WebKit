@@ -12,6 +12,7 @@
 #include "AOTValueFlow.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <wtf/BitVector.h>
@@ -80,6 +81,24 @@ struct ValueFlowMembersOfHolder {
 };
 
 bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
+
+// What an operation that loads or names a module hands on, an awaited import() too.
+bool isAnswerOfModuleOperation(const Function&, ValueID);
+
+// The constants that are set to such an answer: variables of modules and fields of environments.
+class ConstantsHoldingModules {
+public:
+    ConstantsHoldingModules() = default;
+    explicit ConstantsHoldingModules(const Program&);
+
+    bool isReadBy(const Value&) const;
+
+private:
+    static uint64_t keyOf(LayoutID environment, uint32_t field) { return static_cast<uint64_t>(environment.index()) << 32 | field; }
+
+    BitVector m_variables;
+    Vector<uint64_t> m_fields;
+};
 
 #define FOR_EACH_AOT_VALUE_OF_HEAP_TABLES(macro) \
     macro(ValueSetID, holdersThatAnswerUnderSomeKey) \
@@ -167,6 +186,7 @@ public:
     std::span<const ValueFlowMemberReplacedBySetter> membersReplacedBySetters() const LIFETIME_BOUND { return m_membersReplacedBySetters.span(); }
     bool isSymbolUsedOnlyAsKey(PropertyKeyID key) const { return m_symbolsUsedOnlyAsKeys.get(key.index()); }
     bool isNamedAtOneOperation(FunctionID function) const { return m_functionsNamedAtOneOperation.get(function.index()); }
+    const ConstantsHoldingModules& constantsHoldingModules() const LIFETIME_BOUND { return m_constantsHoldingModules; }
 
     std::atomic<uint64_t>* prototypesOfBlock(uint64_t nameOfBlock) const { return &m_prototypesOfBlocks[((nameOfBlock * 0x9e3779b97f4a7c15ull) >> m_shiftOfBlocks) * 5]; }
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
@@ -260,6 +280,7 @@ private:
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     BitVector m_symbolsUsedOnlyAsKeys;
     BitVector m_functionsNamedAtOneOperation;
+    ConstantsHoldingModules m_constantsHoldingModules;
     ZeroFilledPages<std::atomic<uint64_t>> m_prototypesAtCreation;
     ZeroFilledPages<std::atomic<uint64_t>> m_prototypesOfBlocks;
     unsigned m_shiftOfBlocks { 64 };

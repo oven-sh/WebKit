@@ -9,7 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncResumption.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTBuiltinTableBindings.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTCallSiteTable.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
@@ -74,8 +77,17 @@ static constexpr FunctionTraceData traceOfCalledBuiltin {
 
 static String nameOfBuiltin(VM& vm, BuiltinID builtin)
 {
+    if (auto function = BuiltinBindings::nativeFunctionOf(builtin); function && !function->name.isNull())
+        return function->name;
     const BuiltinTable& table = BuiltinTable::singleton();
-    return table.identifierOf(vm, table.at(builtin).name).string();
+    const Builtin& entry = table.at(builtin);
+    // The host names a function that it keeps under a private name as it likes.
+    if (entry.holder == Builtins::PrivateGlobals) {
+        auto found = findInRealm(vm.aotState().instances.first()->globalObject, BuiltinCellKey::object(builtin));
+        if (auto* function = found ? dynamicDowncast<JSFunction>(*found) : nullptr)
+            return function->nameWithoutGC(vm);
+    }
+    return table.identifierOf(vm, entry.name).string();
 }
 
 FunctionDescription::FunctionDescription(FunctionID function)

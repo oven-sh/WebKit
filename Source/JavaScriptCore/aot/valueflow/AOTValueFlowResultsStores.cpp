@@ -1471,7 +1471,7 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         } else
             isGivenValue |= found->value.isGivenValueByDefinition;
     }
-    if (isGivenValue || getters == ValueSets::nothing || !sets.isSubset(values, m_inputs.universe().undefinedValue()))
+    if (isGivenValue || (getters == ValueSets::nothing && setters == ValueSets::nothing) || !sets.isSubset(values, m_inputs.universe().undefinedValue()))
         return { };
     std::optional<OptionSet<FieldForm>> form = AccessorForms::onlyFormIn(forms);
     if (!form)
@@ -1562,7 +1562,7 @@ Vector<PropertyKeyID> StoresByLayout::keysOfAccessorsDefinedIn(ValueSetMaker& ma
 {
     Vector<PropertyKeyID> keys;
     for (const auto& [key, stored] : m_storesOfLayout[layout.index()].underKey) {
-        if (stored.getters != ValueSets::nothing && accessorDefinedUnder(maker, layout, PropertyKeyID(key)).isAccessor())
+        if ((stored.getters != ValueSets::nothing || stored.setters != ValueSets::nothing) && accessorDefinedUnder(maker, layout, PropertyKeyID(key)).isAccessor())
             keys.append(PropertyKeyID(key));
     }
     AOT::sort(keys);

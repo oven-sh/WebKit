@@ -631,11 +631,11 @@ struct FieldResults {
         BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
         ValueSetMaker& maker = borrowedMaker.get();
         Vector<ValueSetID> objectsAboveLayout(FillWith { }, numberOfLayouts, ValueSetID());
-        for (unsigned round = 0; round <= mostRoundsOverCopies; ++round) {
+        auto holdWhatBirthsBring = [&](bool followsCopies) {
             Vector<std::optional<Vector<PropertyKeyID>>> held = keysOfOtherBirths;
             for (const BirthWithCopies& birth : births) {
                 Vector<PropertyKeyID> keys(birth.definedKeys.span());
-                for (const SourceOfCopyAtBirth& source : round ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
+                for (const SourceOfCopyAtBirth& source : followsCopies ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
                     for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
                         if (std::ranges::contains(source.excludedKeys, key))
                             continue;
@@ -652,9 +652,31 @@ struct FieldResults {
                 hasChanged |= keysHeldSinceBirth[layout] != *held[layout];
                 keysHeldSinceBirth[layout] = WTF::move(*held[layout]);
             }
-            if (round && !hasChanged)
-                break;
+            return hasChanged;
+        };
+        auto settles = [&] {
+            for (unsigned round = 0; round < mostRoundsOverCopies; ++round) {
+                if (!holdWhatBirthsBring(true))
+                    return true;
+            }
+            return false;
+        };
+
+        // A source is born before its copy. So what every birth brings where every source holds it is held by all of them: `{ ...state, label }` under the layout of `state` holds what the
+        // literals of that layout list. The rounds begin with every name and take names away; only where they come to rest do they say anything.
+        for (size_t layout : isBornWithCopies) {
+            Vector<PropertyKeyID>& keys = keysHeldSinceBirth[layout];
+            forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference, const Field& field) {
+                if (field.key)
+                    keys.append(field.key);
+            });
+            AOT::sort(keys);
+            removeRepeatedElements(keys);
         }
+        if (settles())
+            return;
+        holdWhatBirthsBring(false);
+        settles();
     }
 
     Vector<FieldReference> findFieldsMissingAtCreation(std::span<const AllocatingOperation> operations) const

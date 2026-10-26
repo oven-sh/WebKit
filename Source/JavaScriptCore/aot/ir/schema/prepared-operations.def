@@ -83,6 +83,7 @@ operation MaterializeEnvironment (environment: Environment/inspects+returns, lay
 operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame
+operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
 
 family BuiltinCall Prepared..Placed
 operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isReflectConstructSyntax] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true
@@ -136,7 +137,7 @@ family Module Prepared..Placed
 operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May
 operation FinishModuleEvaluation (module: Module(Target)) -> none ; writes(ExternalState)
 operation StopLoadingBehindFile (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = StopLoadingBehindFile ; branches = May
-operation EvaluateRequiredModule (module: Module(Target), referrer: Module(Referrer), specifier: String) -> none ; unknownCode ; runtime = RequireModule
+operation EvaluateRequiredModule (module: Module(Target), referrer: Module(Referrer), specifier: String, calledBuiltin?: Builtin) -> none ; unknownCode ; runtime = RequireModule
 operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/inspects) -> none ; Allocates UsesRuntime reads(ExternalState) writes(ExternalState) ; runtime = AbandonModuleEvaluation
 
 family StringBuilder Prepared..Placed

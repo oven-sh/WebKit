@@ -826,20 +826,33 @@ static uint64_t countChecks(const Function& function)
 }
 
 // The front end writes the read of a locked member as a constant.
-static void initializeMembersOfListedHolders(const FlowCastInsertion& insertion)
+static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, const Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
 {
-    const Function& function = insertion.body.function;
-    const BuiltinTable& builtins = insertion.body.program.builtins();
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& constant = function.values[index];
-        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, insertion.body.results, constant.builtin()))
+        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, results, constant.builtin()))
             continue;
-        const UseLists& useLists = insertion.analyses.useLists();
+        const UseLists& useLists = analyses.useLists();
         if (useLists.locationOf(ValueID(index)).placement != ValuePlacement::InBlock)
             continue;
-        insertion.builder.setOrigin(constant.origin());
-        insertion.builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, insertion.body.results, constant));
+        builder.setOrigin(constant.origin());
+        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant));
     }
+}
+
+void initializeMembersOfListedHolders(const Program& program, const FlowResults& results, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+{
+    bool namesBuiltin = std::ranges::any_of(function.values, [](const Value& value) {
+        return value.opcode == Opcode::Builtin;
+    });
+    if (!namesBuiltin)
+        return;
+
+    AnalysisContext context { build, program, nullptr, nullptr, id };
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
+    initializeMembersOfListedHolders(program.builtins(), results, function, analyses, builder);
+    builder.applyInsertions();
 }
 
 // It writes one also where nothing takes the value.
@@ -1105,7 +1118,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
         return constant;
     });
     replaceDefinedValues(insertion, update);
-    initializeMembersOfListedHolders(insertion);
+    initializeMembersOfListedHolders(body.program.builtins(), body.results, body.function, analyses, builder);
     builder.applyInsertions();
     eraseBuiltinConstantsWithoutUse(insertion);
     eraseNamesTakenFromOneKey(insertion, update.namesTakenFromOneKey.span());

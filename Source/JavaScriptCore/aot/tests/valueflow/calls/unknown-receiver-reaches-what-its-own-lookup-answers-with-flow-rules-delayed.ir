@@ -1,10 +1,12 @@
 # class A { m() { this.x } }  class B { m() { this.x } }  function run(o) { o.m() }  run(new A()); run(new B()); run(somethingNoTableLists)
-# method-sees-only-the-receivers-that-answer-it.ir, and a receiver that nobody knows. No lookup says which function it answers, so it arrives as `this` of every callee of the call.
+# method-sees-only-the-receivers-that-answer-it.ir, and a receiver that nobody knows. It asks for `m` as every receiver does, and goes to what that lookup answers: a callee nobody knows. A method that the instances of a class find gets those instances.
+# unknown-receiver-reaches-what-its-own-lookup-answers.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules
 # RUN: valueflow-why values=f2:v1 values=f4:v1
 # CHECK: values=f2:v1
-# CHECK: operand 0 {{*}} unknown
+# CHECK: operand 0 {{*}} 1 members: object
 # CHECK: values=f4:v1
-# CHECK: operand 0 {{*}} unknown
+# CHECK: operand 0 {{*}} 1 members: object
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

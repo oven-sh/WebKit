@@ -693,12 +693,13 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
     context.build.statistics().count(StatisticID::FlowRemainingChecks, total.remainingChecks);
 }
 
-static void applyUnknownResults(Program& program, BuildContext& build)
+static void applyUnknownResults(Program& program, const FlowResults& results, BuildContext& build)
 {
     ProgramEditor editor(program);
     Vector<FunctionID> functions = collectBodiesLargestFirst(program, program.functions.size(), build.parallelLoops());
     editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
         demoteTailCallsWithChecks(program, id, function, arenas.types, build);
+        initializeMembersOfListedHolders(program, results, id, function, arenas.types, build);
     });
 }
 
@@ -739,7 +740,8 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
         for (uint32_t index = 0; index < program.builtins().builtinCount(); ++index)
             removedBuiltins.quickSet(index, isGuardedByRemovedFeature(program.builtins(), BuiltinID(index), build.options().removedFeatures));
         program.setBuiltinsThatMayBeTrimmed(WTF::move(removedBuiltins));
-        applyUnknownResults(program, build);
+        results.setMayListKeysOfEveryHolder();
+        applyUnknownResults(program, results, build);
         return;
     }
     program.setBuiltinsThatMayBeTrimmed(BitVector(results.builtinsThatMayBeTrimmed()));

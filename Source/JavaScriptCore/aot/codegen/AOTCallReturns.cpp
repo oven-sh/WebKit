@@ -299,7 +299,7 @@ void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
-    chooseStubThatCallsValue(conventionCall, countOperand);
+    chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
     tailCallByConvention(value, conventionCall);
 }
 

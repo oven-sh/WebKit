@@ -32,8 +32,8 @@
 #include "AirCode.h"
 #include "AirFrameStates.h"
 #include "AirInstInlines.h"
-#include "AirLiveness.h"
 #include "AirReuseConditionFlags.h"
+#include "AirTmpBoundaryRows.h"
 #include "B3Procedure.h"
 #include <wtf/IndexSet.h>
 #include <wtf/StringPrintStream.h>
@@ -306,19 +306,52 @@ Inst* findMisplacedBlockEntryClobber(Code& code)
     return nullptr;
 }
 
+class TmpRowsAtEntrypoints : public TmpBoundaryRows {
+public:
+    static constexpr bool recordsLayoutBoundaries = false;
+
+    TmpRowsAtEntrypoints(const BlockFacts& facts, Code& code)
+        : TmpBoundaryRows(facts)
+        , m_code(code)
+    {
+    }
+
+    bool needsLiveAtTail(BasicBlock* block) const { return m_code.isEntrypoint(block); }
+
+private:
+    Code& m_code;
+};
+
 std::optional<Tmp> findUndefinedTmp(Code& code)
 {
     if (!anyInstHasNonRegisterTmp(code))
         return std::nullopt;
 
-    UnifiedTmpLiveness liveness(code);
+    UsesAndDefsByBlock usesAndDefs(code, [](Tmp tmp) { return !tmp.isReg(); });
+    BitMatrixLiveness<TmpRowsAtEntrypoints> liveness(code, usesAndDefs.facts(), code);
+    liveness.compute();
+    RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+
+    auto liveColumns = liveness.makeWorkset();
     for (BasicBlock* block : code) {
         if (!code.isEntrypoint(block))
             continue;
-        for (Tmp tmp : liveness.liveAtHead(block)) {
-            if (!tmp.isReg())
-                return tmp;
+        liveness.copyLiveAtTailInto(liveColumns, block);
+        const BlockEnds begin = block->index() ? usesAndDefs.blockEnds[block->index() - 1] : BlockEnds { };
+        const BlockEnds end = usesAndDefs.blockEnds[block->index()];
+        for (unsigned i = begin.defs; i < end.defs; ++i) {
+            if (usesAndDefs.crossesBoundary[usesAndDefs.defs[i]])
+                liveColumns.remove(usesAndDefs.indexToColumn[usesAndDefs.defs[i]]);
         }
+        for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
+            liveColumns.add(usesAndDefs.indexToColumn[usesAndDefs.exposedUses[i]]);
+        std::optional<Tmp> undefinedTmp;
+        liveColumns.forEachSetBit([&](unsigned column) {
+            if (!undefinedTmp)
+                undefinedTmp = Tmp::tmpForLinearIndex(code, usesAndDefs.columnToIndex[column]);
+        });
+        if (undefinedTmp)
+            return undefinedTmp;
     }
     return std::nullopt;
 }

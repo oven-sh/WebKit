@@ -1,0 +1,38 @@
+# Both numbers that enter the loops are only expected to be integers, so no type has a range and the types settle at once. The range that the counters are expected to have is widened far below
+# what they can hold and then shrinks by one a round, until the rounds run out. The types stay as they were settled, and each expected range still holds every value that the counter can have.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RetypeValues
+# LOSS: MaxTypeValuesRounds
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="count" parameters=[{type=boolean}, {type=i32 flags=[IsExpected]}, {type=boolean}, {type=boolean}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything ~ i32, v2: boolean, v3: boolean, v4: anything ~ i32):
+    v5 = Integer integer=2
+    Jump -> next b1(v4)
+  b1(v6):
+    LoopHint
+    v8 = Less v6, v5
+    Branch v8 -> taken b2(| 0), notTaken b6()
+  b2(v9):
+    Jump -> next b3(v9)
+  b3(v10):
+    LoopHint
+    Branch v2 -> taken b4(), notTaken b5(v10)
+  b4():
+    v12 = BitAnd v10, v1
+    v13 = Decrement v12
+    Branch v3 -> taken b3(v13), notTaken b5(v13)
+  b5(v14):
+    v15 = Increment v14
+    Jump -> next b1(v15)
+  b6():
+    Return v6
+# CHECK: b1(v6: anything ~ int[-{{*}}, 2147483647]):
+# CHECK: b2(v9: anything ~ int[-{{*}}, 1]):
+# CHECK: b3(v10: anything ~ int[-{{*}}, 2147483646]):
+# CHECK: v12: i32|bigint ~ i32 = BitAnd v10, v1
+# CHECK: v13: number|bigint ~ int[-2147483649, 2147483646] = Decrement v12
+# CHECK: b5(v14: anything ~ int[-{{*}}, 2147483646]):
+# CHECK: v15: number|bigint ~ int[-{{*}}, 2147483647] = Increment v14
+}

@@ -498,6 +498,7 @@ export interface ModelNativeFunction {
   symbol: string;
   length: number;
   header: string | null;
+  name: string | null;
 }
 
 export interface ModelAttachments {

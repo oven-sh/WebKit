@@ -121,7 +121,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers); holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
         readExportsOfListedHolders(object, receivers);
-        if ((holdsNamedBun(object) || holdsMarkOfLoadedBun(object.node)) && m_context.holdsAnyOf(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node))
+        if (holdsNamedOrLoadedBun(object))
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
@@ -134,7 +134,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             add(m_statement.result, only(m_universe.objectOf(named)));
         } else if (isNamed)
             connect(m_context.lookup(bun, name), m_statement.result);
-        else if ((object.node && m_context.holdsAnyOf(bun, object.node)) || hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())))) {
+        else if ((object.node && m_context.holdsAnyOf(bun, object.node)) || holdsMarkOfLoadedBun(object.node) || hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())))) {
             // The read already answers a value nobody knows, which stands for whatever has escaped.
             connect(m_context.lookup(bun, name), ValueFlowProgramNodes::escaped());
         }
@@ -142,6 +142,17 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
     if (key.keyClass == HeapKeyClass::Name && !mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))
         && hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun()))) && m_context.holdsAnyOf(known(receivers), m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows))) {
         // What was copied stands for whatever has escaped, and the read already answers a value nobody knows.
+        connect(m_context.lookup(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), name), ValueFlowProgramNodes::escaped());
+    }
+    if (key.keyClass == HeapKeyClass::Name && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun)) && holdsMarkOfLoadedBun(m_statement.result)) {
+        // What the read answers came out of Bun under a key nobody knows, so it may be the member of this name. Such a value stands for whatever has escaped.
+        ValueFlowNodeID member = m_context.lookup(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), name);
+        connect(member, m_statement.result);
+        connect(member, ValueFlowProgramNodes::escaped());
+        if (ValueFlowNodeID described = valueOfDescriptorsInAnswer())
+            connect(member, described);
+    } else if (key.keyClass == HeapKeyClass::Name && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun)) && mayAnswerWhatEscapedOutOfBun()) {
+        // The read already answers a value nobody knows, which stands for whatever has escaped.
         connect(m_context.lookup(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), name), ValueFlowProgramNodes::escaped());
     }
     if (key.keyClass == HeapKeyClass::Name && object.node && mayBeUnknownObject(receivers)) {
@@ -160,6 +171,15 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
     readEvaluators(object, key);
     handOutPrototypeObjectsAtCreation(receivers, key);
     mayThrow();
+}
+
+// A descriptor that was read under a key nobody knows, and is found under a name, describes the member of that name.
+ValueFlowNodeID HeapRule::valueOfDescriptorsInAnswer()
+{
+    std::optional<ClimbingSet> descriptors = m_context.holdersUnder(describedObjectName, known(m_context.valueOf(m_statement.result)));
+    if (!descriptors || !holdsAnything(*descriptors))
+        return { };
+    return m_context.written(*descriptors, ValueFlowName::property(m_program.keyOf(BuiltinNames::value)));
 }
 
 void HeapRule::readOwn(ClimbingSet holders, ValueFlowName name, ValueFlowNodeID result)

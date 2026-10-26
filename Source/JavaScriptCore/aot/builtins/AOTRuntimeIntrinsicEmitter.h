@@ -19,6 +19,7 @@ public:
     void generateNativeBinding(const ValueContext&);
     void generateLinkTimeConstant(const ValueContext&);
     void generateHasJSType(const ValueContext&);
+    void generateFindsDeclaredMember(const ValueContext&);
     void generateGetInternalField(const ValueContext&);
     void generatePutInternalField(const ValueContext&);
 

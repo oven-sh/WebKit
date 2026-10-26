@@ -1383,6 +1383,9 @@ static std::optional<AwaitedCall> findAwaitedCall(FunctionPassContext& context, 
     std::optional<Vector<ValueID, 4>> resultReads;
     if (!callee && !collectIteratorResultReads(context, await, resultReads.emplace()))
         resultReads = std::nullopt;
+    // Where somebody takes the result itself, the step makes it, and a layout of which flow has seen no allocation has no cell.
+    if (!callee && !resultReads && context.program.at(context.program.layoutOf(BuiltinLayouts::IteratorResult)).flow.allocation == AllocationState::NeverAllocated)
+        return std::nullopt;
 
     const UseLists& useLists = context.analyses.useLists();
     if (!useLists.singleUse(awaited))

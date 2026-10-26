@@ -57,8 +57,10 @@ public:
     void setHoldsStatus() { m_holdsStatus = true; }
     void clearHoldsStatus() { m_holdsStatus = false; }
 
-    bool isRetained() const { return m_isRetained; }
+    // The loader lets go of a record when no graph is being loaded any more. Whoever else was handed one may keep it.
+    bool isRetained() const { return m_isRetained || m_isHeldByLoader; }
     void retain() { m_isRetained = true; }
+    void setIsHeldByLoader(bool isHeldByLoader) { m_isHeldByLoader = isHeldByLoader; }
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
@@ -67,6 +69,9 @@ public:
     static void didFailToLoad(const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     bool takeStepOfMainModule();
+    // The loader reports the module as loaded so many steps later.
+    void setStepsBehindLoad(uint32_t steps) { m_stepsBehindLoad = steps; }
+    bool takeStepBehindLoad() { return m_stepsBehindLoad && m_stepsBehindLoad--; }
     void takeStatus();
     bool isRunningCommonJSFile();
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
@@ -105,8 +110,10 @@ private:
     // The requests keep the keys. The loader asks in the order of the requests, and not for all of them.
     Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
     unsigned m_nextCompiledRequest { 0 };
+    uint32_t m_stepsBehindLoad { 0 };
     bool m_holdsStatus { false };
     bool m_isRetained { false };
+    bool m_isHeldByLoader { false };
     bool m_runsWhenLoaded { false };
     bool m_isRequestedByWalkedModule { false };
 };

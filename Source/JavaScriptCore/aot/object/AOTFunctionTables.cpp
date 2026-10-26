@@ -25,6 +25,7 @@
 #include "AOTStaticFields.h"
 #include "AOTThreshold.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "FunctionRareData.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
@@ -32,7 +33,10 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <span>
+#include <type_traits>
 #include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
@@ -250,6 +254,7 @@ static RecordedCallee& entryOfCallFrom(std::span<RecordedCallee> storage, uintpt
 static void setRecordedCalleeStorage(VM& vm, FunctionTables& tables, Vector<RecordedCallee>&& storage)
 {
     tables.recordedCalleeStorage = WTF::move(storage);
+    tables.phaseOfLastWalkOfRecordedCallees = std::nullopt;
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances)
@@ -370,33 +375,58 @@ static bool hasReturned(VM& vm, const FunctionTables& tables, const RecordedCall
 }
 
 template<typename Visitor>
-void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor)
+void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor, uint64_t phaseOfCollector)
 {
+    UNUSED_PARAM(phaseOfCollector);
+    if (!hasRecordedCallees() || !vm.isEntered())
+        return;
     Locker locker { recordedCalleesLock };
-    for (const RecordedCallee& entry : recordedCallees()) {
+    std::span<const RecordedCallee> entries = recordedCallees();
+    auto visit = [&](const RecordedCallee& entry) {
         if (JSObject* closure = closureOnHeapOf(entry); closure && !hasReturned(vm, *this, entry))
             visitor.appendUnbarriered(closure);
-    }
+    };
+    // The GC verifier marks on its own and leaves the state of the real collection alone.
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        phaseOfLastWalkOfRecordedCallees = phaseOfCollector;
+        placesFilledAtLastWalk.shrink(0);
+        for (size_t place = 0; place < entries.size(); ++place) {
+            if (entries[place].closure)
+                placesFilledAtLastWalk.append(static_cast<uint32_t>(place));
+        }
+        for (uint32_t place : placesFilledAtLastWalk)
+            visit(entries[place]);
+    } else
+        std::ranges::for_each(entries, visit);
 }
-template void FunctionTables::visitRecordedCallees(VM&, AbstractSlotVisitor&);
-template void FunctionTables::visitRecordedCallees(VM&, SlotVisitor&);
+template void FunctionTables::visitRecordedCallees(VM&, AbstractSlotVisitor&, uint64_t);
+template void FunctionTables::visitRecordedCallees(VM&, SlotVisitor&, uint64_t);
 
-void FunctionTables::finalizeRecordedCallees(VM& vm)
+void FunctionTables::finalizeRecordedCallees(VM& vm, uint64_t phaseOfCollector)
 {
     if (!hasRecordedCallees())
         return;
     Locker locker { recordedCalleesLock };
     bool isInUse = false;
-    for (RecordedCallee& entry : recordedCallees()) {
+    auto finalize = [&](RecordedCallee& entry) {
         if (!entry.closure)
-            continue;
+            return;
         if (hasReturned(vm, *this, entry) || (!liesInFrame(entry) && !vm.heap.isMarked(closureOnHeapOf(entry)))) {
             entry = { 0, nullptr };
-            continue;
+            return;
         }
         entry.closure = std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) | markOfCollection);
         isInUse = true;
-    }
+    };
+    std::span<RecordedCallee> entries = recordedCallees();
+    if (!vm.isEntered()) {
+        if (entries.size() <= leastNumberOfRecordedCallees)
+            zeroSpan(entries);
+    } else if (phaseOfLastWalkOfRecordedCallees && *phaseOfLastWalkOfRecordedCallees + 1 == phaseOfCollector) {
+        for (uint32_t place : placesFilledAtLastWalk)
+            finalize(entries[place]);
+    } else
+        std::ranges::for_each(entries, finalize);
     entryCountAtLastCollection = vm.entryCountFromOutside();
     if (!isInUse && recordedCallees().size() > leastNumberOfRecordedCallees)
         setRecordedCalleeStorage(vm, *this, { });
@@ -432,6 +462,18 @@ static String ownTextProperty(JSObject* closure, const Identifier& name)
     return nullIfEmpty(ownStringProperty(closure, name));
 }
 
+// The look was noted in the cell, and nothing has asked for more than the value of the property since.
+static bool hasInitialNameWithoutProperty(JSObject* callee)
+{
+    if (auto* slim = dynamicDowncast<SlimClosure>(callee))
+        return slim->nameWasLookedFor();
+    auto* closure = dynamicDowncast<Closure>(callee);
+    if (!closure || !closure->nameWasLookedFor())
+        return false;
+    FunctionRareData* rareData = closure->rareData();
+    return !rareData || !rareData->hasReifiedName();
+}
+
 void didChangeDisplayName(VM& vm, JSObject* closure)
 {
     FunctionID closureFunction = *functionOf(closure);
@@ -441,6 +483,8 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
         tables.recordCalleesOf(vm, sourceFunction);
     if (!isNamedInFramesByFunction(closureFunction))
         return;
+    if (hasInitialNameWithoutProperty(closure))
+        didLookForNameProperty(vm, closure);
     auto* classObject = dynamicDowncast<Closure>(closure);
     bool isClassObject = classObject && classObject->classData();
     String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
@@ -507,8 +551,7 @@ static String nameGivenTo(VM& vm, JSObject* callee)
         return name;
     // Such a closure has the property from the first look for it on. A slim closure of any other kind has it from its first property on, whichever that is.
     bool hasNameOnceLookedFor = functionKindData(function).notesLooksForName();
-    bool isHeldBySlimClosure = callee->type() == SlimClosureType && uncheckedDowncast<SlimClosure>(callee)->nameWasLookedFor();
-    String name = isHeldBySlimClosure ? nullIfEmpty(initialNameProperty(function)) : ownTextProperty(callee, vm.propertyNames->name);
+    String name = hasInitialNameWithoutProperty(callee) ? nullIfEmpty(initialNameProperty(function)) : ownTextProperty(callee, vm.propertyNames->name);
     if (!name.isNull() && (hasNameOnceLookedFor || name != initialNameProperty(function)))
         return name;
     if (!hasNameOnceLookedFor) {
@@ -537,7 +580,7 @@ String functionName(VM& vm, const FunctionDescription& description, NameForm for
         if (callee) [[unlikely]] {
             if (String name = nameGivenTo(vm, callee); !name.isNull())
                 return name;
-        } else if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
+        } else if (String name = calleeLiesInFrame ? String() : nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
             return name;
         else if (String name = nameLookedFor(vm, function); !name.isNull()) [[unlikely]]
             return name;
@@ -704,6 +747,25 @@ String name(JSObject* callee)
 unsigned length(JSObject* callee)
 {
     return functionLengthOf(checkedFunctionOf(callee));
+}
+
+bool canAssumeNameAndLengthAreOriginal(VM& vm, JSObject* callee)
+{
+    ASSERT(isSlimClosureType(callee->type()));
+    if (callee->type() == SlimClosureType)
+        return true;
+    FunctionID function = checkedFunctionOf(callee);
+    constexpr unsigned attributesAtCreation = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
+    unsigned attributes = 0;
+    JSValue length = callee->getDirect(vm, vm.propertyNames->length, attributes);
+    if (!length || attributes != attributesAtCreation || length != jsNumber(functionLengthOf(function)))
+        return false;
+    JSValue name = callee->getDirect(vm, vm.propertyNames->name, attributes);
+    if (!name)
+        return false;
+    if (attributes == (attributesAtCreation | PropertyAttribute::CustomValue))
+        return true;
+    return attributes == attributesAtCreation && name.isString() && asString(name)->tryGetValueWithoutGC() == initialNameProperty(function);
 }
 
 JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)

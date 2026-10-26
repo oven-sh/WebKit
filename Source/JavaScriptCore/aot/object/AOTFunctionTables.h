@@ -148,14 +148,17 @@ struct FunctionTables {
     // Nothing unless the last call made from there recorded a function object of the function. Null: one that lies in a frame.
     std::optional<JSObject*> recordedCalleeOfCallFrom(const void* stackPointerOfCaller, FunctionID sourceFunction);
     // Those of calls that may not have returned. The others leave the table.
-    template<typename Visitor> void visitRecordedCallees(VM&, Visitor&);
-    void finalizeRecordedCallees(VM&);
+    template<typename Visitor> void visitRecordedCallees(VM&, Visitor&, uint64_t phaseOfCollector);
+    void finalizeRecordedCallees(VM&, uint64_t phaseOfCollector);
 
     // Only the thread of the VM changes them: compiled code writes an entry, the run time moves the table.
     Lock recordedCalleesLock;
     Vector<RecordedCallee> recordedCalleeStorage;
     // VM::entryCountFromOutside() when the entries that a collection has left in the table were last looked at.
     unsigned entryCountAtLastCollection { 0 };
+    // The program stands still from the last phase in which a collection scans the stack to the phase that ends it. So the end goes by the places that the walk beside that scan found filled.
+    std::optional<uint64_t> phaseOfLastWalkOfRecordedCallees;
+    Vector<uint32_t> placesFilledAtLastWalk;
     // A byte for each function of the image, once there is such a function. It is set for every function that was made from the renamed one too.
     Vector<uint8_t> functionsRenamedAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<const uint8_t*> isRenamedAtRunTime { nullptr };

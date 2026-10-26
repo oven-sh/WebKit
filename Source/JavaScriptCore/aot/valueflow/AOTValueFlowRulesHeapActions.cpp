@@ -36,9 +36,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
 
     ValueFlowNodeID copied = m_context.written(known(targets), valueUnderUnknownKey);
     Vector<ValueFlowNodeID, 3> nodesTakingCopies { copied };
-    auto storeThrough = [&](ClimbingSet placeholder) {
+    auto storeThrough = [&](ClimbingSet placeholder, ValueFlowHostNode sourcesOfCopies) {
         ValueFlowNodeID stored = m_context.written(placeholder, valueUnderUnknownKey);
         ClimbingSet holders = withSourcesOfCopies(m_context, known(sources));
+        add(m_context.nodes().ofHost(sourcesOfCopies), holders);
         connect(m_context.read(holders, everyValue), stored);
         connect(storedThroughUnknownObjectInto(holders, everyValue), stored);
         connect(storedThroughUntrackedObjectInto(holders, everyValue), stored);
@@ -50,9 +51,9 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         return stored;
     };
     if (mayBeUntrackedObject(targets))
-        storeThrough(untrackedObjectAlone());
+        storeThrough(untrackedObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
     if (mayBeUnknownObject(targets)) {
-        connect(storeThrough(unknownObjectAlone()), ValueFlowProgramNodes::escaped());
+        connect(storeThrough(unknownObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject), ValueFlowProgramNodes::escaped());
         connect(m_context.read(known(sources), copiedFromName), ValueFlowProgramNodes::escaped());
         if (keepsAccessors) {
             connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter), ValueFlowProgramNodes::escaped());
@@ -73,6 +74,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         }
     }
 
+    if (holdsNamedOrLoadedBun(source)) {
+        for (ValueFlowNodeID node : nodesTakingCopies)
+            add(node, only(ValueFlowUniverse::markOfLoadedBun()));
+    }
     ClimbingSet hostObjects = m_context.unite(m_context.restrict(sources, m_tables.holdersOfMembersThatHostMakes()), hostObjectsListedBesideUnknownObject(source, sources));
     if (holdsAnything(hostObjects)) {
         ValueFlowNodeID members = m_context.lookup(hostObjects, everyValue);

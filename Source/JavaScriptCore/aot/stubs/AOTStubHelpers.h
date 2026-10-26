@@ -113,6 +113,8 @@ void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratc
 [[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt, CountedUnder = CountedUnder::FamilyOfStub);
 // The upper 32 bits of allocation are zero.
 void countCellOfAllocation(StubAssembler&, GPRReg allocation, GPRReg scratch);
+// Behind an allocation with CountedUnder::Allocation, in a stub whose slow path calls an operation that is counted as making the cell.
+void countAllocatedCellOfStub(StubAssembler&, GPRReg scratch, unsigned cellSize);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
 void fenceAfterAllocation(StubAssembler&);
 

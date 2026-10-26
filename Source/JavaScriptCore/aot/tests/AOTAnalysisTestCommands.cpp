@@ -571,6 +571,7 @@ static void runHeatGraph(TestCommandContext& context)
     Program& program = *context.program;
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
+    bool printsClasses = words.parseFlag("classes"_s);
     if (!words.finish())
         return;
 
@@ -580,13 +581,22 @@ static void runHeatGraph(TestCommandContext& context)
     const EffectSummaries& effects = preparation.effects ? *preparation.effects : unknownEffects;
 
     CallGraph callGraph = buildCallGraph(program, flow, context.build);
-    HeatGraph graph = buildHeatGraph(program, callGraph, flow, effects, context.build);
+    HeatGraph graphOfClasses;
+    HeatGraph graphOfRanks = buildHeatGraph(program, callGraph, flow, effects, context.build, nullptr, nullptr, nullptr, printsClasses ? &graphOfClasses : nullptr);
+    HeatGraph& graph = printsClasses ? graphOfClasses : graphOfRanks;
     graph.dump(context.out);
     Vector<double> activations = estimateActivations(graph);
     context.out.println("activations:");
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (program.functions[index].hasBody())
             context.out.printf("f%u %.6f\n", index, activations[index]);
+    }
+    if (!printsClasses)
+        return;
+    context.out.println("entries per event:");
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (double entries = graph.entriesPerEventOf(FunctionID(index)))
+            context.out.printf("f%u %.6f\n", index, entries);
     }
 }
 

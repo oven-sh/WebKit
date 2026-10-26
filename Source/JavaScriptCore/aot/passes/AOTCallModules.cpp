@@ -523,13 +523,15 @@ static Value makeCall(FunctionID callee, std::span<const ValueID> arguments)
     return call;
 }
 
-static void addCallOfModule(const Program& program, FunctionID callee, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
+static void addCallOfModule(const Program& program, FunctionID callee, BuiltinID calledBuiltin, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
 {
     Vector<ValueID, 1> arguments;
     unsigned numberOfArguments = program.at(callee).numberOfEntryParameters();
     for (unsigned index = 0; index < numberOfArguments; ++index)
         arguments.append(add(IRBuilder::make(Opcode::Undefined)));
-    add(makeCall(callee, arguments.span()));
+    Value call = makeCall(callee, arguments.span());
+    call.setCalledBuiltin(calledBuiltin);
+    add(WTF::move(call));
 }
 
 static Value makeModuleOperation(Opcode opcode, ModuleID module)
@@ -555,7 +557,7 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     builder.moveToEndOf(entry);
     auto appendCallsOf = [&](std::span<const FunctionID> callees) {
         for (FunctionID callee : callees) {
-            addCallOfModule(context.program, callee, [&](Value&& value) {
+            addCallOfModule(context.program, callee, { }, [&](Value&& value) {
                 return builder.append(WTF::move(value));
             });
         }
@@ -697,6 +699,7 @@ static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bo
                 continue;
 
             ModuleID target = value.module();
+            BuiltinID calledBuiltin = value.isCallOfRequire() ? functionOfHostThatRequireCallsFor(program.at(target)) : BuiltinID();
             builder.setOrigin(value.origin());
             std::span<const FunctionID> callees;
             if (evaluated && bareSiteOf[id.index()])
@@ -706,13 +709,14 @@ static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bo
                 Value require = makeModuleOperation(Opcode::EvaluateRequiredModule, target);
                 require.setReferrer(value.referrer());
                 require.setSpecifier(program.at(target).path);
+                require.setCalledBuiltin(calledBuiltin);
                 builder.insertBefore(point, WTF::move(require));
             } else if (plan.startsItself.quickGet(target.index()))
                 callees = singleElementSpan(program.at(target).body);
             else
                 callees = plan.steps[target.index()].span();
             for (FunctionID callee : callees) {
-                addCallOfModule(program, callee, [&](Value&& added) {
+                addCallOfModule(program, callee, calledBuiltin, [&](Value&& added) {
                     return builder.insertBefore(point, WTF::move(added));
                 });
             }
