@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StackVisitor.h"
 
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledCaller.h"
 #include "AOTCompiledFrame.h"
 #include "ClonedArguments.h"
@@ -180,8 +181,14 @@ bool StackVisitor::WithCompiledFrames::showFirstCompiledFrame()
 bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
 {
     auto& frames = *m_frame.m_compiledFrames;
-    for (; !frames.isAtEnd(); frames.advance()) {
+    bool showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins && !std::exchange(m_frame.m_isOfBuiltinCalledByCompiledFrame, false);
+    for (; !frames.isAtEnd(); frames.advance(), showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins) {
         auto& frame = frames.frame();
+        if (showsCalledBuiltin && frame.calledBuiltin) {
+            m_frame.m_isOfBuiltinCalledByCompiledFrame = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
+            setCompiledFrame(frame.callFrame, frame.returnAddress);
+            return true;
+        }
         if (m_shownFrameFilter.shows(frame.visibility, frame.isTailDeleted)) {
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;
@@ -227,7 +234,8 @@ void StackVisitor::WithCompiledFrames::gotoNextCompiledFrame()
         while (!frames.isAtEnd())
             frames.advanceToCallerMachineFrame();
     } else {
-        frames.advance();
+        if (!m_frame.m_isOfBuiltinCalledByCompiledFrame)
+            frames.advance();
         if (showNextCompiledFrame())
             return;
     }
@@ -794,6 +802,8 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
     if (callee().isNativeCallee())
         return false;
 #if ENABLE(AOT)
+    if (isOfBuiltinCalledByCompiledFrame())
+        return AOT::isClosureOf(function, AOT::functionInFramesOf(compiledFrame().calledBuiltin));
     if (isCompiledFrame())
         return compiledFrame().isActivationOf(function);
 #endif

@@ -9,15 +9,20 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
+#include <algorithm>
 #include <stdlib.h>
 #include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/StackAllocation.h>
 
 #if OS(WINDOWS)
 #include <io.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #endif
 
@@ -34,7 +39,7 @@ namespace JSC { namespace AOT {
     _exit(1);
 }
 
-[[noreturn]] static void exitOutOfMemory()
+[[noreturn]] void exitOutOfMemory()
 {
     exitWithError("error: Out of memory while compiling\n"_s);
 }
@@ -61,6 +66,39 @@ void* reservePages(size_t bytes)
     if (!pages) [[unlikely]]
         exitOutOfMemory();
     return pages;
+}
+
+#if !OS(WINDOWS)
+static size_t bytesOfAddressSpaceInUse()
+{
+#if OS(LINUX)
+    int file = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    if (file < 0)
+        return 0;
+    char text[32];
+    ssize_t length = read(file, text, sizeof(text) - 1);
+    close(file);
+    if (length <= 0)
+        return 0;
+    text[length] = 0;
+    return strtoull(text, nullptr, 10) * pageSize();
+#else
+    return 0;
+#endif
+}
+#endif
+
+size_t bytesToReserve(size_t wanted)
+{
+#if !OS(WINDOWS)
+    AOT_THRESHOLD(size_t, reservationsInFreeAddressSpace, 8);
+    struct rlimit limit;
+    if (!getrlimit(RLIMIT_AS, &limit) && limit.rlim_cur != RLIM_INFINITY) {
+        size_t inUse = bytesOfAddressSpaceInUse();
+        return std::min<size_t>(wanted, limit.rlim_cur > inUse ? (limit.rlim_cur - inUse) / reservationsInFreeAddressSpace : 0);
+    }
+#endif
+    return wanted;
 }
 
 void commitPages(void* pages, size_t bytes)

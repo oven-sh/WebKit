@@ -35,7 +35,7 @@ public:
 
         const void* address { nullptr };
         CompiledFunctionID code;
-        CallSiteRecord site { CallSiteIndex(0), 0, false, false, std::nullopt };
+        CallSiteRecord site { CallSiteIndex(0), 0 };
         bool innermostIsInlinedConstructCall { false };
         bool rejectsOnThrow { false };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
@@ -87,7 +87,7 @@ static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberO
 ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
 {
     ASSERT(!isStubReturnSite());
-    if (site.isTailCall && hasShownFrame != calleeWasEntered) [[unlikely]]
+    if (site.isTailCall && hasShownFrame != site.isTailDeleted(calleeWasEntered)) [[unlikely]]
         return std::nullopt;
     return static_cast<unsigned>(hasShownFrame ? shownFrameCount : shownFrameCountOnTop);
 }

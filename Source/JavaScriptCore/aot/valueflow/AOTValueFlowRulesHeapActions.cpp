@@ -28,11 +28,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         replaceMembersThroughSettersFoundFrom(targets, unknownHeapKey, PropertySearch::WholeChain, &anyValue);
     }
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
-    // A source nobody knows stands for whatever has escaped.
-    bool mayBeBunThatEscaped = mayBeUnknownObject(sources) && hasEscaped(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())));
-    if (mayBeBunThatEscaped)
-        add(m_context.written(known(targets), copiedFromName), only(m_universe.objectOf(Builtins::Bun)));
-    if (mayBeBunThatEscaped || holdsNamedBun(source))
+    if (holdsNamedBun(source))
         add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
     notePrototypeObjectsListedAtWrite(target, targets, unknownHeapKey);
     connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));

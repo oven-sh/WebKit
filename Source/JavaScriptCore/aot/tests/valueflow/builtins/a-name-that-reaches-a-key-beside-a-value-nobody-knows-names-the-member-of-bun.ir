@@ -1,7 +1,7 @@
-# name = key; name = "Glob"; [Bun].at(0)[name]()
-# The key may be anything, and it may be the name that the program writes: that name is a use of Bun.Glob. No other member is named
+# name = key; name = "serve"; [Bun].at(0)[name]()
+# The key may be anything, and it may be the name that the program writes: that name is a use of Bun.serve. No other member is named
 # RUN: valueflow-solve used
-# CHECK: BunGlob
+# CHECK: BunServe
 # CHECK-NOT: BunArchive
 # CHECK-NOT: BunSql
 
@@ -12,7 +12,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="key" [isFreeName]
     PutModuleVariable v1 variable=g0
-    v3 = String string="Glob"
+    v3 = String string="serve"
     PutModuleVariable v3 variable=g0
     v5 = Builtin builtin=Bun
     v6 = NewArray v5 contents=anything

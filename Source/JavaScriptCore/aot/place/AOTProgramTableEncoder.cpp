@@ -170,6 +170,27 @@ uint32_t TableEncoder::entrypointOf(FunctionID function, ASCIILiteral use, RowOw
     return indexOrNone(entrypoint);
 }
 
+static String describeNameWithoutIdentifier(const Program& program, StringID text, ASCIILiteral use, RowOwner owner)
+{
+    return makeString('\'', text ? String::fromUTF8ReplacingInvalidSequences(program.string(text)) : String(), "': the name is "_s, use, ' ', describe(program, owner));
+}
+
+uint32_t TableEncoder::identifierNumber(PropertyKeyID key, ASCIILiteral use, RowOwner owner) const
+{
+    std::optional<uint32_t> number = identifiers.numberOf(key);
+    if (!number)
+        fail(ProgramTableRule::NameWithoutIdentifier, owner.layout, owner.function, describeNameWithoutIdentifier(program, key ? program.at(key).text : StringID(), use, owner));
+    return number.value_or(0);
+}
+
+uint32_t TableEncoder::identifierNumberOfText(StringID text, ASCIILiteral use, RowOwner owner) const
+{
+    std::optional<uint32_t> number = identifiers.numberOfText(text);
+    if (!number)
+        fail(ProgramTableRule::NameWithoutIdentifier, owner.layout, owner.function, describeNameWithoutIdentifier(program, text, use, owner));
+    return number.value_or(0);
+}
+
 uint32_t TableEncoder::checkedOffset(uint32_t offset) const
 {
     if (offset <= SlotData::maxOffset)
@@ -325,7 +346,7 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
             return RuntimeCellTest::isClosureOf(entrypoint);
         return std::nullopt;
     case CellTestKind::IsSymbol:
-        return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol));
+        return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s));
     case CellTestKind::SharingModeIs:
         return RuntimeCellTest::sharingModeIs(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
@@ -654,7 +675,7 @@ private:
         for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
             FieldIndex field = fieldOfEachMember[index];
             if (field == noFieldIndex) {
-                otherKeys.append(m_encoder.identifierNumber(object.members[index].key));
+                otherKeys.append(m_encoder.identifierNumber(object.members[index].key, "a member of constant data outside the fields of"_s, layout));
                 otherValues.append(contents[nextWord++]);
                 continue;
             }
@@ -940,7 +961,7 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
         const Field& declaration = fieldAt(program, declarationOf(program, reference));
 
         FieldData& data = fields[*slot.indexInLayoutRecord];
-        data.name = declaration.key ? encoder.identifierNumber(declaration.key) : 0;
+        data.name = declaration.key ? encoder.identifierNumber(declaration.key, "a field in the record of"_s, id) : 0;
         data.isFilledAtBirth = isFilledAtBirth(program, reference);
         data.holdsRawValueFromBirth = holdsRawValueFromBirth(program, reference);
         data.keepsStateOfBirth = keepsStateOfBirth(program, reference);
@@ -1116,7 +1137,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
                 continue;
             MemberCreation memberCreation = index < creation.members.size() ? creation.members[index] : MemberCreation::AtDefinition;
             MethodData method { };
-            method.name = member.key ? encoder.identifierNumber(member.key) : 0;
+            method.name = member.key ? encoder.identifierNumber(member.key, "a member in the record of the class"_s, id) : 0;
             method.kindBits = static_cast<uint32_t>(member.kind);
             method.flags = (member.key ? 0 : methodHasComputedName) | (program.at(member.function).captures.isEmpty() ? 0 : methodTakesEnvironment) | (memberCreation == MemberCreation::AtDefinition ? methodIsCreatedAtDefinition : 0);
             method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function, "a member that the run time creates for the class"_s, id) : indexOrNone(encoder.findEntrypoint(member.function));
@@ -1129,7 +1150,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         if (!field.key || encoder.placement.variable(field.variable).storage == VariableStorage::None)
             continue;
         parts.staticFields.append(FieldData {
-            .name = encoder.identifierNumber(field.key),
+            .name = encoder.identifierNumber(field.key, "a static field in the record of the class"_s, id),
             .flags = 0,
             .operandIndex = 0,
             .slot = placedVariableSlot(encoder, field.variable),
@@ -1141,7 +1162,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     Vector<std::pair<MemberGuardData, MemberGuardAggregates>> guards;
     for (const PlacedGuardBit& placed : table.ofClass(id)) {
         MemberGuardData guard { };
-        guard.name = placed.key ? encoder.identifierNumber(placed.key) : 0;
+        guard.name = placed.key ? encoder.identifierNumber(placed.key, "a guarded member of the class"_s, id) : 0;
         guard.kindBits = static_cast<uint32_t>(placed.kind);
         guard.sideBits = static_cast<uint32_t>(placed.side);
         guard.bit = placed.bit;
@@ -2349,7 +2370,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         if (!isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport))
             continue;
         ModuleExportData entry { };
-        entry.name = encoder.identifierNumberOfText(moduleExport.name);
+        entry.name = encoder.identifierNumberOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
@@ -2362,7 +2383,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
             break;
         case ModuleExportKind::Indirect:
             entry.indirectExport = static_cast<uint32_t>(lists.indirectExports.size());
-            lists.indirectExports.append({ moduleExport.module.index(), encoder.identifierNumberOfText(moduleExport.importName) });
+            lists.indirectExports.append({ moduleExport.module.index(), encoder.identifierNumberOfText(moduleExport.importName, "what another module exports under a name of"_s, id) });
             break;
         }
         lists.exports.append(entry);
@@ -2390,7 +2411,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
         appendExports(encoder, id, module, lists);
         for (const SyntheticExport& syntheticExport : module.syntheticExports) {
             SyntheticExportData entry { };
-            entry.name = encoder.identifierNumberOfText(syntheticExport.name);
+            entry.name = encoder.identifierNumberOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
             entry.absentIsUndefined = syntheticExport.isKnownMember;
             entry.hasVariable = !!syntheticExport.variable;
             entry.variable = syntheticExport.variable ? placedVariableSlot(encoder, syntheticExport.variable) : SlotData { };
@@ -2398,7 +2419,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
         }
         for (const RequiredName& requiredName : module.requiredNames) {
             if (!isNeverEvaluated(program, module))
-                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name) });
+                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
     for (const Entry& entry : program.entries)
@@ -2652,7 +2673,7 @@ void encodeConstantTables(TableEncoder& encoder)
         return encoder.stringNumber(digits);
     });
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::keyCellIdentifiers, encoder.placement.keyCells(), [&](PropertyKeyID key) {
-        return encoder.identifierNumber(key);
+        return encoder.identifierNumber(key, "a key that code holds as a cell"_s);
     });
     encodeLiteralStrings(encoder);
     encodeIdentifierTables(encoder);

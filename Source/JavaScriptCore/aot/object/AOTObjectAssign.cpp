@@ -1024,7 +1024,16 @@ static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, Uniq
     return !isValidOffset(extra->structure()->get(vm, name, attributes)) || !attributes;
 }
 
-bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+static unsigned attributesOfOwnProperty(VM& vm, Object& target, UniquedStringImpl* name)
+{
+    unsigned attributes = 0;
+    return target.getDirectFromNativeCode(vm, name, &attributes) ? attributes : 0;
+}
+
+enum class ExistingAttributes : bool { AreReset, AreKept };
+
+template<ExistingAttributes existingAttributes>
+static bool putPropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
 {
     ASSERT(names.size() == values.size() && !(target.orderWord() & orderWordIntegrityBits));
     State& state = target.state();
@@ -1035,7 +1044,8 @@ bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl
         if (end - index < minNumberOfNamesPutTogether) {
             end = std::max(end, index + 1);
             for (; index < end; ++index) {
-                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), 0))
+                unsigned attributes = existingAttributes == ExistingAttributes::AreKept ? attributesOfOwnProperty(vm, target, names[index]) : 0;
+                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), attributes))
                     return false;
             }
             continue;
@@ -1052,6 +1062,16 @@ bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl
         index = end;
     }
     return true;
+}
+
+bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+{
+    return putPropertiesInOrder<ExistingAttributes::AreReset>(vm, target, names, values);
+}
+
+bool storePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+{
+    return putPropertiesInOrder<ExistingAttributes::AreKept>(vm, target, names, values);
 }
 
 static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, bool defines)

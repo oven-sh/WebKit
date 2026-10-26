@@ -38,6 +38,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxThreadedTestCopyCost, 8, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxThreadedPathCost, 16, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxBlocksOnThreadedPath, 8, CodeSize, "the threaded path ends at the block"_s) \
+    macro(MaxTailsCrossedByCopiedValues, 128, CodeSize, "the block is not copied"_s) \
     macro(MaxThreadedTestDepth, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxPredecessorsForConditionQueries, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxConditionQueriesPerBlock, 32, CompileTime, "the remaining dominating conditions are not asked"_s) \

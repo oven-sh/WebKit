@@ -230,8 +230,9 @@ struct TableEncoder {
     // Of a function, a class, a type: an obfuscated build has the empty string in its place.
     uint32_t shownNameNumber(StringID id) { return shownStringNumber(obfuscates() ? StringID() : id); }
     uint32_t stringConstantNumber(StringID);
-    uint32_t identifierNumber(PropertyKeyID key) const { return numberOrFail(identifiers.numberOf(key), ProgramTableRule::NameWithoutIdentifier); }
-    uint32_t identifierNumberOfText(StringID text) const { return numberOrFail(identifiers.numberOfText(text), ProgramTableRule::NameWithoutIdentifier); }
+    // The message of a failure reads: the name is <use> <owner>.
+    uint32_t identifierNumber(PropertyKeyID, ASCIILiteral use, RowOwner = { }) const;
+    uint32_t identifierNumberOfText(StringID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t typeOffset(TypeID) const;
     uint32_t dataNodeOf(DataID) const;
     FunctionID findEntrypoint(FunctionID) const;

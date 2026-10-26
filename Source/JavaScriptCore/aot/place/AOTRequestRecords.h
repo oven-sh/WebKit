@@ -68,6 +68,13 @@ using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRe
 
 JS_EXPORT_PRIVATE uint32_t sizeInBytesOf(const Program&, const RequestRecord&);
 
+// What the row of a binding holds as numbers of identifiers: the name that evaluated text writes, and the key of the field of an instance that a private name stands for.
+struct EvalBindingNames {
+    StringID name;
+    PropertyKeyID privateKey;
+};
+EvalBindingNames namesInRowOf(const Program&, const EvalBinding&);
+
 inline constexpr uint32_t offsetOfFirstRequest = sizeof(uint32_t);
 
 class RequestTable {

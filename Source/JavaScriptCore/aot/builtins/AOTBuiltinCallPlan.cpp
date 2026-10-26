@@ -332,7 +332,7 @@ BuiltinCallPlan CallPlanner::plan()
 
 void CallPlanner::resetToMatch()
 {
-    m_plan = BuiltinCallPlan { .state = m_match.state, .overload = m_match.overload, .requirements = m_match.requirements };
+    m_plan = BuiltinCallPlan { .state = m_match.state, .overload = m_match.overload, .function = m_table.canonicalID(m_overload->builtin), .requirements = m_match.requirements };
     m_hoistsUserCode = false;
 }
 
@@ -611,7 +611,16 @@ static Value makeRequireObjectCoercible(ValueID value, const NullishCheck& check
     return result;
 }
 
-static ValueID insertStep(const OperandStep& step, ValueID value, const NullishCheck& check, const InsertBeforeCall& insert)
+// A conversion that throws, or that runs code of the program, does so inside the function that is called: a stack trace lists that function there.
+static Value makeConversion(Opcode opcode, ValueID value, BuiltinID function)
+{
+    Value result = IRBuilder::make(opcode, { value });
+    if (function && Value::opcodesWithCalledBuiltin.contains(opcode))
+        result.setCalledBuiltin(function);
+    return result;
+}
+
+static ValueID insertStep(const OperandStep& step, ValueID value, BuiltinID function, const NullishCheck& check, const InsertBeforeCall& insert)
 {
     switch (step.kind) {
     case OperandStepKind::Pass:
@@ -622,7 +631,7 @@ static ValueID insertStep(const OperandStep& step, ValueID value, const NullishC
         return insert(makeRequireObjectCoercible(value, check));
     case OperandStepKind::Convert:
         for (Opcode opcode : conversionOpcodesOf(step.conversion))
-            value = insert(IRBuilder::make(opcode, { value }));
+            value = insert(makeConversion(opcode, value, function));
         return value;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -640,7 +649,7 @@ BuiltinCallOperands insertOperandSteps(const BuiltinCallPlan& plan, const Builti
         BuiltinOperand position = steps.front().operand;
         ValueID value = passed.operandAt(position);
         for (const OperandStep& step : steps)
-            value = insertStep(step, value, check, insert);
+            value = insertStep(step, value, plan.function, check, insert);
         appendOperand(result, position, value);
     }
     return result;

@@ -2125,31 +2125,35 @@ struct LoopPathSeparator : LoopEditor {
         m_analyses.didChangeValues();
     }
 
-    enum class PathsThatOnlyCompute : uint8_t { Stay, Leave };
-
-    // An unlikely block leaves with every unlikely block that leads to it or follows it: a path is in one copy from the edge that enters it to the edge that joins the likely path.
-    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
+    BitVector findUnlikelyBlocks(const NaturalLoop& loop)
     {
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
         BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
-        // What may run out of memory calls into the run time, which is no computation, though it goes away with an unused result.
-        auto onlyComputes = [&](const Block& block) {
-            bool valuesOnlyCompute = std::ranges::all_of(block.values, [&](ValueID value) {
-                return m_analyses.effectsOf(value).onAnyEdge().isUnobservable();
-            });
-            return valuesOnlyCompute && effectsOf(m_analyses.effectContext(), m_function, block.terminator).onAnyEdge().isUnobservable();
-        };
-
         BitVector isUnlikely(m_function.blocks.size());
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            if (frequencies.classOf(loop.at(index)) > frequencyOfLoop)
+                isUnlikely.set(loop.at(index).index());
+        }
+        return isUnlikely;
+    }
+
+    // What may run out of memory calls into the run time, which is no computation, though it goes away with an unused result.
+    bool onlyComputes(const Block& block)
+    {
+        bool valuesOnlyCompute = std::ranges::all_of(block.values, [&](ValueID value) {
+            return m_analyses.effectsOf(value).onAnyEdge().isUnobservable();
+        });
+        return valuesOnlyCompute && effectsOf(m_analyses.effectContext(), m_function, block.terminator).onAnyEdge().isUnobservable();
+    }
+
+    // An unlikely block leaves with every unlikely block that leads to it or follows it: a path is in one copy from the edge that enters it to the edge that joins the likely path.
+    BitVector findLeavingBlocks(const BitVector& isInLoop, const BitVector& isUnlikely, NOESCAPE const Invocable<bool(BlockID)> auto& leavesByItself)
+    {
         BitVector leaves(m_function.blocks.size());
         Vector<BlockID, 16> worklist;
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            BlockID block = loop.at(index);
-            if (frequencies.classOf(block) <= frequencyOfLoop)
-                continue;
-            isUnlikely.set(block.index());
-            if ((pathsThatOnlyCompute == PathsThatOnlyCompute::Leave || !onlyComputes(m_function.at(block))) && !leaves.set(block.index()))
-                worklist.append(block);
+        for (size_t index : isUnlikely) {
+            if (leavesByItself(BlockID(index)) && !leaves.set(index))
+                worklist.append(BlockID(index));
         }
 
         auto visit = [&](BlockID neighbor) {
@@ -2166,8 +2170,8 @@ struct LoopPathSeparator : LoopEditor {
         return leaves;
     }
 
-    // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
-    BitVector findNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves)
+    // The types that the parameters of the staying blocks have once the leaving paths pass them nothing.
+    Vector<std::optional<Type>> typeParametersWithout(const BitVector& isInLoop, const BitVector& leaves)
     {
         Vector<BlockID, 16> blocksWithParameters;
         Vector<std::optional<Type>> typeWithoutLeavingPaths(m_function.values.size());
@@ -2204,19 +2208,82 @@ struct LoopPathSeparator : LoopEditor {
                 }
             }
         }
+        return typeWithoutLeavingPaths;
+    }
 
+    // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
+    bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        Vector<std::optional<Type>> typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
         const UseLists& uses = m_analyses.useLists();
-        BitVector narrowed;
-        for (BlockID block : blocksWithParameters) {
-            for (ValueID parameter : m_function.at(block).parameters) {
-                bool isRead = std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
-                    return use.kind != Use::Kind::EdgeArgument;
-                });
-                if (isRead && !typeOf(parameter).isSubsetOf(*typeWithoutLeavingPaths[parameter.index()], m_program))
-                    narrowed.set(parameter.index());
+        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
+            if (!typeWithoutLeavingPaths[index] || typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
+                continue;
+            bool isRead = std::ranges::any_of(uses.usesOf(ValueID(index)), [](const Use& use) {
+                return use.kind != Use::Kind::EdgeArgument;
+            });
+            if (isRead)
+                return true;
+        }
+        return false;
+    }
+
+    // What the likely paths make of a parameter that gets narrower may get narrower with it.
+    BitVector findValuesMadeOfNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves, const Vector<std::optional<Type>>& typeWithoutLeavingPaths)
+    {
+        BitVector isMadeOfNarrowedParameter(m_function.values.size());
+        Vector<ValueID, 16> worklist;
+        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
+            if (typeWithoutLeavingPaths[index] && !typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
+                worklist.append(ValueID(index));
+        }
+        auto stays = [&](BlockID block) {
+            return isInLoop.get(block.index()) && !leaves.get(block.index());
+        };
+        const UseLists& uses = m_analyses.useLists();
+        while (!worklist.isEmpty()) {
+            for (const Use& use : uses.usesOf(worklist.takeLast())) {
+                if (!stays(use.block))
+                    continue;
+                ValueID made;
+                if (use.kind == Use::Kind::Operand)
+                    made = use.user;
+                else if (use.kind == Use::Kind::EdgeArgument && stays(targetOf(m_function, use.edge()).block))
+                    made = m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex];
+                if (made && !isMadeOfNarrowedParameter.set(made.index()))
+                    worklist.append(made);
             }
         }
-        return narrowed;
+        return isMadeOfNarrowedParameter;
+    }
+
+    // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes.
+    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop)
+    {
+        BitVector isUnlikely = findUnlikelyBlocks(loop);
+        BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+            return !onlyComputes(m_function.at(block));
+        });
+        if (leaves == isUnlikely)
+            return leaves;
+        Vector<std::optional<Type>> typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
+        BitVector mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
+        return findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+            if (leaves.get(block.index()))
+                return true;
+            return std::ranges::any_of(m_function.at(block).terminator.targets, [&](const Target& target) {
+                const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
+                for (size_t position = 0; position < target.arguments.size(); ++position) {
+                    const std::optional<Type>& likely = typeOnLikelyPaths[parameters[position].index()];
+                    if (!likely)
+                        continue;
+                    const std::optional<Type>& passed = typeOnLikelyPaths[target.arguments[position].index()];
+                    if (mayGetNarrower.get(parameters[position].index()) || !(passed ? *passed : typeOf(target.arguments[position])).isSubsetOf(*likely, m_program))
+                        return true;
+                }
+                return false;
+            });
+        });
     }
 
     std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables)
@@ -2242,11 +2309,7 @@ struct LoopPathSeparator : LoopEditor {
             bytes += estimatedCodeBytes(m_program, m_function, m_function.at(block));
         }
 
-        BitVector leaves = findLeavingBlocks(loop, isInLoop, PathsThatOnlyCompute::Stay);
-        // A path that only computes leaves too where a parameter is wider for it alone.
-        BitVector unlikelyBlocks = findLeavingBlocks(loop, isInLoop, PathsThatOnlyCompute::Leave);
-        if (unlikelyBlocks != leaves && findNarrowedParameters(isInLoop, unlikelyBlocks) != findNarrowedParameters(isInLoop, leaves))
-            leaves = WTF::move(unlikelyBlocks);
+        BitVector leaves = findLeavingBlocks(loop, isInLoop);
         plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
@@ -2259,7 +2322,7 @@ struct LoopPathSeparator : LoopEditor {
         bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && findNarrowedParameters(isInLoop, leaves).isEmpty())
+        if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves))
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());

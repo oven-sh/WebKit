@@ -233,14 +233,11 @@ static bool isReadByPositionAlone(FunctionPassContext& context, ValueID template
         if (use.kind != Use::Kind::Operand || use.operandIndex)
             return false;
         const Value& user = function.at(use.user);
-        switch (user.opcode) {
-        case Opcode::ElemGet:
+        if (user.opcode == Opcode::ElemGet)
             return context.program.typeOf(function, user.propertyOperand()).isInteger();
-        case Opcode::PropGet:
+        if (user.opcode == Opcode::PropGet)
             return user.key() == context.program.keyOf(BuiltinNames::length);
-        default:
-            return isCastWithoutTest(user.opcode) && isReadByPositionAlone(context, use.user);
-        }
+        return isCastWithoutTest(user.opcode) && isReadByPositionAlone(context, use.user);
     });
 }
 

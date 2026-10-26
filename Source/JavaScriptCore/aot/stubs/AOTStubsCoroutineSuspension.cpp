@@ -807,6 +807,9 @@ void generateSuspendGenerator(StubAssembler& jit)
         emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
         jit.move(value, awaited);
         emitLoadSettledValue(jit, registers, value, mustSuspend, mustSuspend);
+        // Whoever stepped the body waits for the step from here on, and a stack trace lists nobody who waits.
+        jit.load64(Address(generator, JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(JSAsyncGenerator::Field::Frame))), cursor);
+        jit.store8(TrustedImm32(SavedFrame::hasPassedAwaitOnStackFlag), Address(cursor, SavedFrame::offsetOfFlags()));
         emitReturnAwaitedValue(jit, siteWord);
         mustSuspend.link(&jit);
     }

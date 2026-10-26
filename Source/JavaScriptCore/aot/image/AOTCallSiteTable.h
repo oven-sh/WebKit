@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
@@ -26,10 +27,17 @@ struct SiteHandler;
 struct CallSiteRecord {
     CallSiteIndex callSite;
     unsigned inlineFrame;
-    bool isConstruct;
-    bool isTailCall;
-    std::optional<CallSiteIndex> firstReadSite;
+    // A function that makes a tail call leaves the stack when its callee begins.
+    bool isTailDeleted(bool calleeWasEntered) const { return isTailCall && (calleeWasEntered || isInsideCallee); }
+
+    bool isConstruct : 1 { false };
+    bool isTailCall : 1 { false };
+    bool isInsideCallee : 1 { false };
+    // What is called runs steps of this function, which has no frame of its own.
+    BuiltinID calledBuiltin { };
+    std::optional<CallSiteIndex> firstReadSite { };
 };
+static_assert(sizeof(CallSiteRecord) == 20);
 
 struct InlineFrameRecord {
     unsigned parent;

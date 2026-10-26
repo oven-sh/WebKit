@@ -98,11 +98,11 @@ operation LShift (left: Any/Converted, right: Any/Converted, engine from Selecte
 operation RShift (left: Any/Converted, right: Any/Converted, engine from Selected form: OperatorForm) -> natural(Bitwise) ; Allocates throws by Operator ; runtime = ValueRShift ; flow = TableProves
 operation URShift (left: Any/Converted, right: Any/Converted, engine from Selected form: OperatorForm) -> natural(uint32) ; ResolvesRopes by Operator ; runtime = ValueURShift ; flow = TableProves
 operation Negate (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(Numeric) ; Allocates throws by Operator ; runtime = ValueNegate ; flow = TableProves
-operation ToNumeric (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(Numeric) ; ResolvesRopes by Operator ; runtime = ToNumeric ; flow = TableProves
+operation ToNumeric (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(Numeric) ; ResolvesRopes by Operator ; runtime = ToNumeric ; flow = TableProves
 operation Increment (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(Numeric) ; Allocates throws by Operator ; runtime = Increment ; flow = TableProves
 operation Decrement (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(Numeric) ; Allocates throws by Operator ; runtime = Decrement ; flow = TableProves
 operation BitNot (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(BitwiseNot) ; Allocates throws by Operator ; runtime = ValueBitNot ; flow = TableProves
-operation ToNumber (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToNumber ; flow = TableProves
+operation ToNumber (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToNumber ; flow = TableProves
 operation Less (left: Any/Converted, right: Any/Converted, engine from Selected form: OperatorForm) -> natural(boolean) ; ResolvesRopes by Operator ; runtime = CompareLess ; proves = IntegerBound ; branches = May ; flow = TableProves
 operation LessEq (left: Any/Converted, right: Any/Converted, engine from Selected form: OperatorForm) -> natural(boolean) ; ResolvesRopes by Operator ; runtime = CompareLessEq ; proves = IntegerBound ; branches = May ; flow = TableProves
 operation Greater (left: Any/Converted, right: Any/Converted, engine from Selected form: OperatorForm) -> natural(boolean) ; ResolvesRopes by Operator ; runtime = CompareGreater ; proves = IntegerBound ; branches = May ; flow = TableProves
@@ -113,10 +113,10 @@ operation InstanceOf (value: Any/inspects+runs(PrototypeChain), constructor: Any
 operation ToBoolean (value: Any/inspects, engine from Selected form: OperatorForm) -> natural(boolean) ; none ; runtime = ToBoolean ; proves = Truthiness ; branches = May ; interpreted = Test ; flow = TableProves
 operation LogicalNot (value: Boolean/inspects) -> natural(boolean) ; none ; flow = TableProves
 operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves
-operation ToString (value: Any/Converted, engine from Selected form: OperatorForm) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves
+operation ToString (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves
 operation Strcat (parts...: Any/Converted) [| engine isLikelyKey] -> natural(string) ; CreatesString ; runtime = Concatenate ; flow = TableProves
-operation ToPropertyKey (value: Any/Converted) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; flow = TableProves
-operation ToObject (value: Any/returns, message?: String) -> natural(object) ; Allocates throws ; runtime = ToObject ; flow = Copies
+operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; flow = TableProves
+operation ToObject (value: Any/returns, message?: String, engine calledBuiltin?: Builtin) -> natural(object) ; Allocates throws ; runtime = ToObject ; flow = Copies
 operation ToThis (value: Any/returns) -> natural(object) ; Allocates ; runtime = ToThis ; flow = Copies
 
 family Cast AsRead..Placed

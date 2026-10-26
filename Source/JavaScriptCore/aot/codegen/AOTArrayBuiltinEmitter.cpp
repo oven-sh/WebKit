@@ -247,7 +247,7 @@ void ArrayBuiltinEmitter::generateArrayUnshift(const InlineCall& call)
     if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 1))
         return;
     Boxed item = boxedOperand(call.context(), call.argument(0));
-    Boxed newLength = callOperation<Boxed>(call.context(), RuntimeOperation::ArrayUnshift, { receiverOf(call), item });
+    Boxed newLength = callOperation<Boxed>(call.context(), RuntimeOperation::ArrayUnshift, { receiverOf(call), item }, { .calledBuiltin = functionOf(call.overload()) });
     missUnless(call, isNotEmpty(newLength));
     finish(call, newLength);
 }

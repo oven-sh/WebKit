@@ -386,7 +386,7 @@ ListThatStaysInPlace<T>::~ListThatStaysInPlace()
 {
     if (!m_elements)
         return;
-    releasePages(m_elements, mostElements * sizeof(T));
+    releasePages(m_elements, m_numberReserved * sizeof(T));
 }
 
 template<typename T>
@@ -396,8 +396,12 @@ void ListThatStaysInPlace<T>::takeMemoryFor(size_t size)
     static_assert(!(elementsPerStep * sizeof(T) % (64 * KB)) && !(mostElements % elementsPerStep));
     RELEASE_ASSERT(size <= mostElements);
     Locker locker { m_lock };
-    if (!m_elements)
-        m_elements = static_cast<T*>(reservePages(mostElements * sizeof(T)));
+    if (!m_elements) {
+        m_numberReserved = std::max(elementsPerStep, bytesToReserve(mostElements * sizeof(T)) / sizeof(T) / elementsPerStep * elementsPerStep);
+        m_elements = static_cast<T*>(reservePages(m_numberReserved * sizeof(T)));
+    }
+    if (size > m_numberReserved) [[unlikely]]
+        exitOutOfMemory();
     size_t withMemory = m_numberWithMemory.load(std::memory_order_relaxed);
     if (size <= withMemory)
         return;

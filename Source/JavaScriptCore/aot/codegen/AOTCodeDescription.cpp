@@ -305,8 +305,10 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
             flags.add(SiteFlag::Constructs);
         if (renumbered[i].isTailCall)
             flags.add(SiteFlag::IsTailCall);
-        if (!flags.isEmpty())
-            flaggedSites.append({ i + 1, flags });
+        if (renumbered[i].isInsideCallee)
+            flags.add(SiteFlag::IsInsideCallee);
+        if (!flags.isEmpty() || renumbered[i].calledBuiltin)
+            flaggedSites.append({ i + 1, flags, renumbered[i].calledBuiltin });
     }
     return flaggedSites;
 }

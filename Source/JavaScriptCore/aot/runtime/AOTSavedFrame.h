@@ -152,6 +152,7 @@ public:
     bool isOnStack() const { return !m_liveSlotMapOffsetPlusOne; }
     void setIsEnteredByJobLoop(bool isEnteredByJobLoop) { m_flags = isEnteredByJobLoop ? m_flags | isEnteredByJobLoopFlag : m_flags & ~isEnteredByJobLoopFlag; }
     SuspensionKind suspensionKind() const { return m_flags & isSuspendedAtYieldFlag ? SuspensionKind::Yield : SuspensionKind::Await; }
+    bool hasPassedAwaitOnStack() const { return m_flags & hasPassedAwaitOnStackFlag; }
     // What the site of a StepAsyncGenerator reads beside the value it is resumed with. Every suspension resets it to Result.
     void setStepStatus(AsyncGeneratorStepStatus status) { m_flags = (m_flags & ~stepStatusMask) | static_cast<uint8_t>(status) << stepStatusShift; }
     AsyncGeneratorStepStatus stepStatus() const { return static_cast<AsyncGeneratorStepStatus>((m_flags & stepStatusMask) >> stepStatusShift); }
@@ -183,6 +184,8 @@ public:
     static constexpr uint8_t isSuspendedAtYieldFlag = 2;
     static constexpr unsigned stepStatusShift = 2;
     static constexpr uint8_t stepStatusMask = 3 << stepStatusShift;
+    // The body of an async generator went on at an await without leaving the stack. While a frame is on the stack nobody reads the other flags, and every suspension stores all of them.
+    static constexpr uint8_t hasPassedAwaitOnStackFlag = 16;
     AOT_CLASS_THRESHOLD(uint32_t, minWordsForStringMove, 32);
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTID.h"
 #include "CodeType.h"
 #include "JSExportMacros.h"
@@ -28,6 +29,10 @@ enum class StackTraceBuiltinKind : uint8_t { None, JSBuiltin, JSBuiltinConstruct
 
 struct FunctionTraceData;
 struct SourcePosition;
+
+// Compiled code runs steps of a built-in function itself, and a stack trace lists the function there. It is none of the functions of the program, so in a frame it has a number behind theirs.
+JS_EXPORT_PRIVATE FunctionID functionInFramesOf(BuiltinID);
+JS_EXPORT_PRIVATE BuiltinID builtinOfFunctionInFrames(FunctionID);
 
 class FunctionDescription {
 public:

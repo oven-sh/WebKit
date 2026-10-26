@@ -590,7 +590,7 @@ static bool tryDescribeCandidate(uint32_t position, const FoldingInputs& inputs,
     }
     key.append(sites.flaggedSites.size());
     for (auto& flaggedSite : sites.flaggedSites)
-        appendWords(key, { flaggedSite.site, flaggedSite.flags.toRaw() });
+        appendWords(key, { flaggedSite.site, flaggedSite.flags.toRaw(), flaggedSite.calledBuiltin ? flaggedSite.calledBuiltin.index() + 1 : 0 });
 
     SiteCacheOrdinals siteCacheOrdinals;
     appendWords(key, { body.relocations.size(), body.entries.size(), body.returnSites.size(), body.firstReadSites.size() });

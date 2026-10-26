@@ -33,6 +33,8 @@ struct CallOptions {
     std::optional<Origin> origin { };
     std::optional<B3::PureFunction> pureFunction { };
     std::optional<ThrowSite> throwSite { };
+    // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.
+    BuiltinID calledBuiltin { };
     bool constructs { false };
     bool isTailCall { false };
     bool isOnRarePath { false };
@@ -99,6 +101,7 @@ protected:
     template<typename T> T callLeaf(RuntimeOperation, std::initializer_list<Operand> arguments);
     Operand callLeaf(RuntimeOperation, std::span<const Operand> arguments, Representation result);
 
+    BuiltinID functionOf(BuiltinOverloadID) const;
     StubCallResult callStub(const OperationContext&, StubKey, std::initializer_list<LValue> operands, const CallOptions& = { });
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
 

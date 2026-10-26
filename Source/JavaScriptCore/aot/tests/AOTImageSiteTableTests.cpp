@@ -93,12 +93,12 @@ static void checkCallSites(const TestImage& image, uint32_t function, const Vect
                 inFront = &site;
         }
         std::optional<CallSiteRecord> record = table.callSiteAt(index, offset);
-        if (!inFront || inFront->isConstruct || inFront->isTailCall) {
+        if (!inFront || inFront->isConstruct || inFront->isTailCall || inFront->calledBuiltin) {
             AOT_TEST_CHECK(!record);
             return;
         }
         AOT_TEST_CHECK(record && record->callSite.bits() == inFront->number && record->inlineFrame == inFront->inlineFrame);
-        AOT_TEST_CHECK(!record->isConstruct && !record->isTailCall && !record->firstReadSite);
+        AOT_TEST_CHECK(!record->isConstruct && !record->isTailCall && !record->isInsideCallee && !record->calledBuiltin && !record->firstReadSite);
     };
     for (const ExpectedSite& site : sites) {
         std::optional<CallSiteRecord> record = table.callSiteAt(index, site.returnOffset);
@@ -107,6 +107,8 @@ static void checkCallSites(const TestImage& image, uint32_t function, const Vect
         AOT_TEST_CHECK(record->inlineFrame == site.inlineFrame);
         AOT_TEST_CHECK(record->isConstruct == site.isConstruct);
         AOT_TEST_CHECK(record->isTailCall == site.isTailCall);
+        AOT_TEST_CHECK(record->isInsideCallee == site.isInsideCallee);
+        AOT_TEST_CHECK(record->calledBuiltin == site.calledBuiltin);
         std::optional<uint32_t> firstReadSite;
         if (record->firstReadSite)
             firstReadSite = record->firstReadSite->bits();
@@ -191,15 +193,24 @@ static void testCallSitesNoStream()
 
 static void testCallSitesFlags()
 {
-    SiteBody body = bodyWithCalls(1, 4);
+    SiteBody body = bodyWithCalls(1, 8);
     Vector<FlaggedSite>& flaggedSites = body.code.sites.flaggedSites;
     flaggedSites.append(FlaggedSite { 2, SiteFlag::Constructs });
     flaggedSites.append(FlaggedSite { 3, SiteFlag::IsTailCall });
     flaggedSites.append(FlaggedSite { 4, { SiteFlag::Constructs, SiteFlag::IsTailCall } });
+    flaggedSites.append(FlaggedSite { 5, { SiteFlag::IsTailCall, SiteFlag::IsInsideCallee } });
+    flaggedSites.append(FlaggedSite { 6, { }, BuiltinID(0) });
+    flaggedSites.append(FlaggedSite { 7, { SiteFlag::IsTailCall, SiteFlag::IsInsideCallee }, BuiltinID(300) });
     body.sites[1].isConstruct = true;
     body.sites[2].isTailCall = true;
     body.sites[3].isConstruct = true;
     body.sites[3].isTailCall = true;
+    body.sites[4].isTailCall = true;
+    body.sites[4].isInsideCallee = true;
+    body.sites[5].calledBuiltin = BuiltinID(0);
+    body.sites[6].isTailCall = true;
+    body.sites[6].isInsideCallee = true;
+    body.sites[6].calledBuiltin = BuiltinID(300);
     checkBodyCallSites(WTF::move(body));
 }
 

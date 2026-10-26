@@ -186,6 +186,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxThreadedTestCopyCost(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code duplicated by jump threading")
     MaxThreadedPathCost(GenerateCode, CodeSize, NotOptimized, 16, 16, 0, "code duplicated by jump threading")
     MaxBlocksOnThreadedPath(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code duplicated by jump threading")
+    MaxTailsCrossedByCopiedValues(GenerateCode, CodeSize, NotOptimized, 128, 128, 0, "copied blocks that the values of one copied block stay live across")
     MaxThreadedTestDepth(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code duplicated by jump threading")
     MaxPredecessorsForConditionQueries(GenerateCode, CompileTime, NotOptimized, 8, 8, 0, "branch condition analysis work")
     MaxConditionQueriesPerBlock(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "branch condition analysis work")

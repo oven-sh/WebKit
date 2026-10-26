@@ -1009,7 +1009,10 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
-                results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }, visitor.compiledFrames().recordedCallee()));
+                if (visitor->isOfBuiltinCalledByCompiledFrame())
+                    results.append(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
+                else
+                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }, visitor.compiledFrames().recordedCallee()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
@@ -1027,9 +1030,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     };
 #if ENABLE(AOT)
     if (start.compiledFrameExit)
-        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame);
+        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
     else
-        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame);
+        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame, false, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
 #else
     StackVisitor::visit(start.callFrame, vm, appendFrame);
 #endif

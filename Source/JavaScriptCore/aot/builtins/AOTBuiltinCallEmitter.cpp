@@ -148,13 +148,13 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         }
         BuiltinID builtin = m_builtins.canonicalID(overload.builtin);
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
-            defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }));
+            defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }, { .calledBuiltin = builtin }));
             return;
         }
         if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             Boxed operand = boxedOperand(value, arguments[0]);
             auto convert = [&] {
-                return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand });
+                return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand }, { .calledBuiltin = builtin });
             };
             if (value.shape() == CodeShape::Compact) {
                 defineResult(convert());

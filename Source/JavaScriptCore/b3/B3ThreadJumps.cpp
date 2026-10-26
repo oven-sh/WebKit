@@ -36,6 +36,7 @@
 #include "B3IntRange.h"
 #include "B3Limits.h"
 #include "B3LoopUtilities.h"
+#include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
@@ -74,6 +75,7 @@ public:
         findTailsCopiedWhole();
         findPaths();
         ASSERT(m_temporaryConstants.isEmpty());
+        withdrawTailsWhoseValuesCrossManyTails();
         if (m_cloner.isEmpty()) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
@@ -245,6 +247,63 @@ private:
                     }
                 }
             }
+        }
+    }
+
+    // A value used outside its tail gets a definition in each copy, and those can need a Phi at every later copied tail
+    // where the value is still live.
+    void withdrawTailsWhoseValuesCrossManyTails()
+    {
+        if (m_cloner.isEmpty())
+            return;
+
+        Vector<BasicBlock*> postOrder = m_proc.blocksInPostOrder();
+        unsigned numberOfBlocks = postOrder.size();
+        IndexMap<BasicBlock*, unsigned> position(m_proc.size(), 0);
+        for (unsigned index = 0; index < numberOfBlocks; ++index)
+            position[postOrder[index]] = numberOfBlocks - 1 - index;
+
+        NaturalLoops& loops = m_proc.naturalLoops();
+        Vector<unsigned> lastPositionInLoop(FillWith { }, loops.numLoops(), 0u);
+        for (BasicBlock* block : postOrder) {
+            for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
+                lastPositionInLoop[loop->index()] = std::max(lastPositionInLoop[loop->index()], position[block]);
+        }
+
+        IndexMap<Value*, unsigned> lastLivePosition(m_proc.values().size(), 0);
+        for (BasicBlock* block : postOrder) {
+            for (Value* value : *block) {
+                for (Value* child : value->children()) {
+                    BasicBlock* tail = child->owner;
+                    if (tail == block || !m_cloner.contains(tail))
+                        continue;
+                    unsigned last = position[block];
+                    for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop && !loops.belongsTo(tail, *loop); loop = loops.innerMostOuterLoop(*loop))
+                        last = lastPositionInLoop[loop->index()];
+                    lastLivePosition[child] = std::max(lastLivePosition[child], last);
+                }
+            }
+        }
+
+        uint64_t limit = m_proc.limit(Limit::MaxTailsCrossedByCopiedValues);
+        Vector<unsigned> numberOfTailsFrom(FillWith { }, numberOfBlocks + 1, 0u);
+        for (unsigned index = 0; index < numberOfBlocks; ++index) {
+            BasicBlock* tail = postOrder[index];
+            unsigned tailPosition = numberOfBlocks - 1 - index;
+            bool isCopied = m_cloner.contains(tail);
+            if (isCopied) {
+                uint64_t crossings = 0;
+                for (Value* value : *tail) {
+                    if (unsigned last = lastLivePosition[value])
+                        crossings += numberOfTailsFrom[tailPosition + 1] - numberOfTailsFrom[last + 1];
+                }
+                if (crossings > limit) {
+                    m_proc.didReachLimit(Limit::MaxTailsCrossedByCopiedValues, tail->last()->origin());
+                    m_cloner.withdrawBlock(tail);
+                    isCopied = false;
+                }
+            }
+            numberOfTailsFrom[tailPosition] = numberOfTailsFrom[tailPosition + 1] + isCopied;
         }
     }
 

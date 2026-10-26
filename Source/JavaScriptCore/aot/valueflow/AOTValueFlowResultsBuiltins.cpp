@@ -595,7 +595,8 @@ static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs,
     return isLockedAtStartUp ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown;
 }
 
-static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations, Vector<BuiltinLocationFlow>& writes)
+// Adds the locations that say where they are written, and keeps one record for each place.
+static Vector<BuiltinLocationFlow> mergeWrites(Vector<BuiltinLocationFlow> writes, std::span<const BuiltinLocationFlow> locations)
 {
     auto placeOfWrite = [](const BuiltinLocationFlow& write) {
         return std::tuple(write.holder, write.key, write.witness.function, write.witness.location.module, write.witness.location.position);
@@ -608,7 +609,11 @@ static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations, Vector
         return std::tuple(placeOfWrite(write), write.witness.value);
     });
     writes.shrink(writes.size() - std::ranges::unique(writes, { }, placeOfWrite).size());
+    return writes;
+}
 
+static void sortAndMergeLocations(Vector<BuiltinLocationFlow>& locations)
+{
     auto orderOf = [](const BuiltinLocationFlow& location) {
         return std::tuple(location.holder, location.key);
     };
@@ -866,7 +871,8 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
             tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Unknown, noWitness });
     });
     Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, tables.locations);
-    sortAndMergeLocations(tables.locations, tables.writesOfLocations);
+    tables.writesOfLocations = mergeWrites(WTF::move(tables.writesOfLocations), tables.locations.span());
+    sortAndMergeLocations(tables.locations);
     return underNewNames;
 }
 
@@ -879,7 +885,8 @@ void recordLockedWritesUnderNewNames(const Program& program, TypeTable& types, s
         if (isLockedLocation(program, write.holder, key))
             tables.builtins.locations.append(BuiltinLocationFlow { write.holder, key, BuiltinLocationState::Constant, write.witness });
     }
-    sortAndMergeLocations(tables.builtins.locations, tables.builtins.writesOfLocations);
+    tables.builtins.writesOfLocations = mergeWrites(WTF::move(tables.builtins.writesOfLocations), tables.builtins.locations.span());
+    sortAndMergeLocations(tables.builtins.locations);
 }
 
 static ProgramInstances countProgramInstances(const ValueFlowResultInputs& inputs)

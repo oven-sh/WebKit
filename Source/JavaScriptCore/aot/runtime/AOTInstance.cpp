@@ -56,6 +56,7 @@
 #include "AOTStubEntrypoints.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubsExceptions.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "AddressSpaceBudget.h"
@@ -921,7 +922,7 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
 {
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;
     static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
-    static constexpr unsigned maxDraws = 16;
+    AOT_THRESHOLD(unsigned, maxDraws, 16);
     if (bytes >= highestRandomAddress - lowestRandomAddress)
         return nullptr;
     if (WTF::isAddressRandomizationDisabled())
@@ -949,9 +950,9 @@ static std::atomic<unsigned> s_numberOfThreadsStarting;
 // The thread may run another image of the executable than the thread that starts it. What its tables need beyond these pages they get as they do without them.
 static size_t sizeOfPagesForNewThread(const Image& image)
 {
-    constexpr size_t sizeOfSmallTables = 512 * KB;
+    AOT_THRESHOLD(size_t, sizeOfSmallTables, 512 * KB);
     auto [below, above] = reservationSizes(image);
-    return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart() + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
+    return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart(image) + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
 }
 
 // Until a thread adopts them the pages begin with their size.

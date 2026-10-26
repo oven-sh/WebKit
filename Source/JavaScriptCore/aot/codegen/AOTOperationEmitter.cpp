@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
+#include "AOTBuiltinTable.h"
 #include "AOTControlEmitter.h"
 #include "AOTEdgeResults.h"
 #include "AOTIdentifierNumbering.h"
@@ -45,6 +46,11 @@ Integer OperationEmitter::integerOf(ValueID id)
     if (operand.is<Word32>())
         return signExtended(operand.as<Word32>());
     return operand.as<Integer>();
+}
+
+BuiltinID OperationEmitter::functionOf(BuiltinOverloadID overload) const
+{
+    return m_builtins.canonicalID(m_builtins.at(overload).builtin);
 }
 
 Operand OperationEmitter::callOperation(const OperationContext& context, RuntimeOperation operation, std::span<const Operand> arguments, Representation result, const CallOptions& options)

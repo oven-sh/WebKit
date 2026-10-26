@@ -157,11 +157,16 @@ struct SampledTop {
 JS_EXPORT_PRIVATE std::optional<SampledTop> findSampledTop(const Image&, const SampledRegisters&, CallFrame* topCallFrame, const StackBounds&);
 
 struct LogicalFrame {
+    bool hasCallerInMachineFrame() const { return inlineFrame || isOfCalledBuiltin; }
+
     FunctionID function;
     CallSiteIndex callSite;
     unsigned inlineFrame { 0 };
     bool isInlinedConstructCall { false };
     bool isTailDeleted { false };
+    // The site and the inline frame are those of the caller.
+    bool isOfCalledBuiltin { false };
+    bool callerIsTailDeleted { false };
 };
 
 struct LogicalFrameSite {
@@ -169,11 +174,14 @@ struct LogicalFrameSite {
     CallSiteIndex callSite;
     unsigned inlineFrame { 0 };
     bool isTailDeleted { false };
+    BuiltinID calledBuiltin { };
 };
 
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
+// The frame is that of the stub that stepped the body of an async generator. Behind an await of the body its callers wait for the step, though they are still on the stack.
+bool callersWaitForStep(CallFrame* frameOfStepStub);
 
 struct CompiledFrame {
     JS_EXPORT_PRIVATE JSGlobalObject* globalObject() const;
@@ -191,6 +199,7 @@ struct CompiledFrame {
     unsigned inlineFrame { 0 };
     TraceVisibility visibility { TraceVisibility::Visible };
     bool isTailDeleted { false };
+    BuiltinID calledBuiltin { };
 };
 
 class CompiledFrameIterator {
@@ -283,6 +292,7 @@ private:
         CallFrame* asyncGeneratorStubFrame { nullptr };
         CallFrame* asyncGeneratorBodyFrame { nullptr };
         CallFrame* engineCalleeStubFrame { nullptr };
+        bool isAmongFramesThatWait { false };
     };
 
 public:

@@ -170,6 +170,7 @@ private:
     void takeMemoryFor(size_t);
 
     T* m_elements { nullptr };
+    size_t m_numberReserved { 0 };
     std::atomic<size_t> m_numberWithMemory { 0 };
     Lock m_lock;
     alignas(64) std::atomic<size_t> m_size { 0 };

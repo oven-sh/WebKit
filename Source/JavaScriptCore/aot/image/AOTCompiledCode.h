@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTCodeUnits.h"
 #include "AOTImageFormat.h"
@@ -134,11 +135,13 @@ struct InlineFrame {
 enum class SiteFlag : uint8_t {
     Constructs = 1 << 0,
     IsTailCall = 1 << 1,
+    IsInsideCallee = 1 << 2,
 };
 
 struct FlaggedSite {
     uint32_t site;
     OptionSet<SiteFlag> flags;
+    BuiltinID calledBuiltin { };
 };
 
 struct SiteHandler {

@@ -120,8 +120,12 @@ uint64_t limitHitsOf(VM& vm, LimitID limit)
 
 uint64_t runtimeLimitValue(VM& vm, LimitID limit)
 {
+    return runtimeLimitValue(vm.aotState().image, limit);
+}
+
+uint64_t runtimeLimitValue(const Image* image, LimitID limit)
+{
     uint64_t usual = defaultLimitValue(limit, hostArchitecture());
-    const Image* image = vm.aotState().image;
     return image ? valueWhenLowered(limit, usual, image->header().options.loweredLimit, image->header().options.loweredLimitValue) : usual;
 }
 

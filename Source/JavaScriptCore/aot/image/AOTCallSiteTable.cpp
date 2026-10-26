@@ -65,15 +65,48 @@ struct InlineFrameWord {
     bool isTailCall;
 };
 
-// The frame applies until the next site with details. The three flags apply to this site only.
+// The frame applies until the next site with details. The flags apply to this site only.
+// Of a first read only the number is read, so its bit has another meaning together with either of the others.
+// With the bit of a tail call: the site lies inside the callee of the tail call. With the bit of a construction: the site lies inside a built-in function, whose number follows.
 struct SiteDetails {
-    uint64_t encode() const { return static_cast<uint64_t>(frame) << 3 | isFirstRead << 2 | isTailCall << 1 | isConstruct; }
-    static SiteDetails decode(uint64_t word) { return { static_cast<unsigned>(word >> 3), !!(word & 4), !!(word & 2), !!(word & 1) }; }
+    static constexpr uint64_t firstReadBit = 4;
+    static constexpr uint64_t tailCallBit = 2;
+    static constexpr uint64_t constructBit = 1;
+    static constexpr uint64_t insideCalleeBits = firstReadBit | tailCallBit;
+    static constexpr uint64_t insideBuiltinBits = firstReadBit | constructBit;
+
+    void append(Vector<uint8_t>& bytes) const
+    {
+        ASSERT(!isInsideCallee || (isTailCall && !isConstruct));
+        ASSERT(!calledBuiltin || (!isConstruct && !isFirstRead && isInsideCallee == isTailCall));
+        uint64_t flags = isTailCall * tailCallBit | isConstruct * constructBit;
+        if (isFirstRead)
+            flags = firstReadBit;
+        else if (isInsideCallee)
+            flags = insideCalleeBits;
+        if (calledBuiltin)
+            flags |= insideBuiltinBits;
+        appendVarint(bytes, static_cast<uint64_t>(frame) << 3 | flags);
+        if (calledBuiltin)
+            appendVarint(bytes, calledBuiltin.index());
+    }
+    static SiteDetails read(const uint8_t*& cursor)
+    {
+        uint64_t word = readVarint(cursor);
+        bool isInsideCallee = (word & insideCalleeBits) == insideCalleeBits;
+        bool isInsideBuiltin = (word & insideBuiltinBits) == insideBuiltinBits;
+        SiteDetails details { static_cast<unsigned>(word >> 3), (word & firstReadBit) && !isInsideCallee && !isInsideBuiltin, !!(word & tailCallBit), (word & constructBit) && !isInsideBuiltin, isInsideCallee, { } };
+        if (isInsideBuiltin)
+            details.calledBuiltin = BuiltinID(static_cast<uint32_t>(readVarint(cursor)));
+        return details;
+    }
 
     unsigned frame;
     bool isFirstRead;
     bool isTailCall;
     bool isConstruct;
+    bool isInsideCallee;
+    BuiltinID calledBuiltin;
 };
 
 struct SiteWithCode {
@@ -158,12 +191,15 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
         while (!flaggedSites.empty() && flaggedSites.front().site < number)
             flaggedSites = flaggedSites.subspan(1);
         OptionSet<SiteFlag> flags;
-        if (!flaggedSites.empty() && flaggedSites.front().site == number)
+        BuiltinID calledBuiltin;
+        if (!flaggedSites.empty() && flaggedSites.front().site == number) {
             flags = flaggedSites.front().flags;
-        bool hasDetails = frame != previousFrame || isFirstRead || !flags.isEmpty();
+            calledBuiltin = flaggedSites.front().calledBuiltin;
+        }
+        bool hasDetails = frame != previousFrame || isFirstRead || !flags.isEmpty() || calledBuiltin;
         appendVarint(siteBytes, static_cast<uint64_t>((offset - previousOffset) / codeOffsetUnit) << 1 | hasDetails);
         if (hasDetails)
-            appendVarint(siteBytes, SiteDetails { frame, isFirstRead, flags.contains(SiteFlag::IsTailCall), flags.contains(SiteFlag::Constructs) }.encode());
+            SiteDetails { frame, isFirstRead, flags.contains(SiteFlag::IsTailCall), flags.contains(SiteFlag::Constructs), flags.contains(SiteFlag::IsInsideCallee), calledBuiltin }.append(siteBytes);
         previousOffset = offset;
         previousFrame = frame;
         previousIsFirstRead = isFirstRead;
@@ -319,7 +355,7 @@ unsigned SiteFrames::next()
         return 0;
     --m_remainingSitesWithCode;
     if (readVarint(m_sites) & 1)
-        m_frame = SiteDetails::decode(readVarint(m_sites)).frame;
+        m_frame = SiteDetails::read(m_sites).frame;
     return m_frame;
 }
 
@@ -380,27 +416,27 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     while (count--) {
         uint64_t word = readVarint(cursor);
         offset += (word >> 1) * codeOffsetUnit;
-        SiteDetails details { frame, false, false, false };
+        SiteDetails details { frame, false, false, false, false, { } };
         if (word & 1)
-            details = SiteDetails::decode(readVarint(cursor));
+            details = SiteDetails::read(cursor);
         frame = details.frame;
         ++number;
         if (offset > returnOffset)
             break;
         if (offset < returnOffset) {
-            hasSiteInFront = !details.isFirstRead && !details.isConstruct && !details.isTailCall;
+            hasSiteInFront = !details.isFirstRead && !details.isConstruct && !details.isTailCall && !details.calledBuiltin;
             numberInFront = number;
             frameInFront = frame;
             continue;
         }
         CallSiteIndex callSite(static_cast<uint32_t>(number));
         if (!details.isFirstRead)
-            return CallSiteRecord { callSite, frame, details.isConstruct, details.isTailCall, firstReadSite };
+            return CallSiteRecord { callSite, frame, details.isConstruct, details.isTailCall, details.isInsideCallee, details.calledBuiltin, firstReadSite };
         firstReadSite = callSite;
     }
     if (!hasSiteInFront)
         return std::nullopt;
-    return CallSiteRecord { CallSiteIndex(static_cast<uint32_t>(numberInFront)), frameInFront, false, false, std::nullopt };
+    return CallSiteRecord { CallSiteIndex(static_cast<uint32_t>(numberInFront)), frameInFront };
 }
 
 std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t returnOffset) const

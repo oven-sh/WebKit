@@ -10,10 +10,13 @@
 
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledCallee.h"
+#include "AOTCoroutineWords.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
+#include "AOTGenerator.h"
 #include "AOTInstance.h"
 #include "AOTModules.h"
+#include "AOTSavedFrame.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTStackTrace.h"
 #include "CallFrameInlines.h"
@@ -218,6 +221,8 @@ Instance* CompiledFrameIterator::tryFindInstance() const
 
 LogicalFrame innermostLogicalFrame(const Image& image, InlineFrameReader& reader, const LogicalFrameSite& site)
 {
+    if (site.calledBuiltin)
+        return { functionInFramesOf(site.calledBuiltin), site.callSite, site.inlineFrame, false, false, true, site.isTailDeleted };
     if (!site.inlineFrame)
         return { image.rootFunctionOf(site.code.index()), site.callSite, 0, false, site.isTailDeleted };
     const InlineFrameRecord& record = reader.at(image, site.code.index(), site.inlineFrame);
@@ -226,9 +231,17 @@ LogicalFrame innermostLogicalFrame(const Image& image, InlineFrameReader& reader
 
 LogicalFrame callerOfInlinedFrame(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, const LogicalFrame& frame)
 {
+    if (frame.isOfCalledBuiltin)
+        return innermostLogicalFrame(image, reader, { code, frame.callSite, frame.inlineFrame, frame.callerIsTailDeleted });
     ASSERT(frame.inlineFrame);
     InlineFrameRecord record = reader.at(image, code.index(), frame.inlineFrame);
     return innermostLogicalFrame(image, reader, { code, record.callSite, record.parent, record.isTailCall });
+}
+
+bool callersWaitForStep(CallFrame* frameOfStepStub)
+{
+    SavedFrame* body = savedFrameOfGenerator(std::bit_cast<JSObject* const*>(frameOfStepStub)[asyncGeneratorSlotInStubFrame]);
+    return body && body->hasPassedAwaitOnStack();
 }
 
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction)
@@ -388,6 +401,7 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::AsyncGeneratorBody:
             cursor.asyncGeneratorStubFrame = cursor.callFrame;
             cursor.asyncGeneratorBodyFrame = cursor.calleeFrame;
+            cursor.isAmongFramesThatWait |= callersWaitForStep(cursor.callFrame);
             break;
         case StubFrameKind::EngineCallee:
             cursor.engineCalleeStubFrame = cursor.callFrame;
@@ -428,7 +442,12 @@ void CompiledFrameIterator::readFrame() const
 {
     const CallSiteCache::Entry& entry = m_callSite;
     CallSiteIndex site = m_cursor.isAtFirstReadSite && entry.site.firstReadSite ? *entry.site.firstReadSite : entry.site.callSite;
-    m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailCall && m_calleeWasEntered };
+    m_frame = { m_instance, m_cursor.callFrame, removeCodePtrTag(m_cursor.rawPC), entry.code, entry.innermostFunction, site, entry.site.inlineFrame, entry.innermostVisibility, entry.site.isTailDeleted(m_calleeWasEntered) };
+    m_frame.calledBuiltin = entry.site.calledBuiltin;
+    if (m_cursor.isAmongFramesThatWait) {
+        m_frame.visibility = TraceVisibility::Hidden;
+        m_frame.calledBuiltin = { };
+    }
     m_isInlinedConstructCall = entry.innermostIsInlinedConstructCall;
     m_hasReadFrame = true;
 }
@@ -447,7 +466,8 @@ void CompiledFrameIterator::advance()
     m_frame.callSite = caller.callSite;
     m_frame.inlineFrame = caller.inlineFrame;
     m_frame.isTailDeleted = caller.isTailDeleted;
-    m_frame.visibility = FunctionDescription(caller.function).visibility();
+    m_frame.calledBuiltin = { };
+    m_frame.visibility = m_cursor.isAmongFramesThatWait ? TraceVisibility::Hidden : FunctionDescription(caller.function).visibility();
     m_isInlinedConstructCall = caller.isInlinedConstructCall;
 }
 
@@ -656,11 +676,11 @@ CallSiteCache::CallSiteCache() = default;
 static uint16_t countShownFrames(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, const CallSiteRecord& site, ShownFrameFilter filter, bool innermostIsTailDeleted)
 {
     uint16_t count = 0;
-    LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, innermostIsTailDeleted });
+    LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, innermostIsTailDeleted, site.calledBuiltin });
     while (true) {
         if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted))
             ++count;
-        if (!frame.inlineFrame)
+        if (!frame.hasCallerInMachineFrame())
             return count;
         frame = callerOfInlinedFrame(image, reader, code, frame);
     }

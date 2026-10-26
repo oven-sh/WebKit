@@ -510,7 +510,7 @@ static void testThreadJumpsSkipsLoopHeader()
 
 static void checkThreadingLimitHits(Procedure& proc, std::optional<Limit> reachedLimit)
 {
-    for (Limit limit : { Limit::MaxThreadedTestCopyCost, Limit::MaxThreadedPathCost, Limit::MaxBlocksOnThreadedPath, Limit::MaxThreadedTestDepth, Limit::MaxPredecessorsForConditionQueries })
+    for (Limit limit : { Limit::MaxThreadedTestCopyCost, Limit::MaxThreadedPathCost, Limit::MaxBlocksOnThreadedPath, Limit::MaxTailsCrossedByCopiedValues, Limit::MaxThreadedTestDepth, Limit::MaxPredecessorsForConditionQueries })
         CHECK_EQ(!!limitHits(proc, limit), limit == reachedLimit);
 }
 
@@ -585,6 +585,81 @@ static void testThreadJumpsStopsAtPathCostLimit()
     constexpr unsigned numberOfAffordableTests = defaultValueOf(Limit::MaxThreadedPathCost) / storesPerTest;
     checkTestChainThreading({ .numberOfTests = numberOfAffordableTests, .storesPerTest = storesPerTest }, numberOfAffordableTests, std::nullopt);
     checkTestChainThreading({ .numberOfTests = numberOfAffordableTests + 1, .storesPerTest = storesPerTest }, numberOfAffordableTests, Limit::MaxThreadedPathCost);
+}
+
+// Every step tests `mode` again behind a join of a likely and a rare predecessor, and computes a value that is read at the end.
+static unsigned numberOfPhisAfterThreadingStepsThatTestOneValue(unsigned numberOfSteps, bool reachesLimit)
+{
+    Procedure proc(policyWithMaxTailSize(1));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* mode = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* bits = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    BasicBlock* tail = proc.addBlock();
+    Value* read = graph.phi(tail, Int64);
+    graph.upsilon(root, graph.int64(root, 1), read);
+    graph.jump(root, tail);
+
+    Vector<Value*> results;
+    for (unsigned step = 0; step < numberOfSteps; ++step) {
+        BasicBlock* inMode = proc.addBlock();
+        BasicBlock* outOfMode = proc.addBlock();
+        BasicBlock* likely = proc.addBlock();
+        BasicBlock* rare = proc.addBlock();
+        BasicBlock* rareJoin = proc.addBlock();
+        BasicBlock* nextTail = proc.addBlock();
+        Value* rareRead = graph.phi(rareJoin, Int64);
+        Value* nextRead = graph.phi(nextTail, Int64);
+
+        results.append(graph.make(tail, Add, read, graph.int64(tail, step)));
+        graph.branch(tail, mode, rarely(inMode), FrequentedBlock(outOfMode));
+        graph.branch(outOfMode, graph.make(outOfMode, BitAnd, bits, graph.int64(outOfMode, 1ll << (step % 8))), rarely(rare), FrequentedBlock(likely));
+        graph.upsilon(likely, graph.int64(likely, 2), nextRead);
+        graph.jump(likely, nextTail);
+        graph.upsilon(rare, graph.int64(rare, 3), rareRead);
+        graph.jump(rare, rareJoin);
+        graph.upsilon(inMode, graph.int64(inMode, 5), rareRead);
+        graph.jump(inMode, rareJoin);
+        graph.upsilon(rareJoin, rareRead, nextRead);
+        graph.jump(rareJoin, nextTail);
+        tail = nextTail;
+        read = nextRead;
+    }
+    Value* sum = read;
+    for (Value* result : results)
+        sum = graph.make(tail, Add, sum, result);
+    graph.ret(tail, sum);
+
+    proc.resetReachability();
+    threadJumps(proc);
+    fixSSA(proc);
+    validate(proc);
+    CHECK_EQ(!!limitHits(proc, Limit::MaxTailsCrossedByCopiedValues), reachesLimit);
+    unsigned numberOfPhis = numberOfValues(proc, Phi);
+
+    auto code = compileProc(proc);
+    auto expected = [&](int64_t mode, int64_t bits) {
+        int64_t read = 1;
+        int64_t sum = 0;
+        for (unsigned step = 0; step < numberOfSteps; ++step) {
+            sum += read + step;
+            read = mode ? 5 : (bits & (1ll << (step % 8))) ? 3 : 2;
+        }
+        return sum + read;
+    };
+    for (int64_t mode : { 0, 1 }) {
+        for (int64_t bits : { 0, 1, 36, 255 })
+            CHECK_EQ(invoke<int64_t>(*code, mode, bits), expected(mode, bits));
+    }
+    return numberOfPhis;
+}
+
+static void testThreadJumpsKeepsPhisLinearInStepsThatTestOneValue()
+{
+    numberOfPhisAfterThreadingStepsThatTestOneValue(8, false);
+    unsigned few = numberOfPhisAfterThreadingStepsThatTestOneValue(1000, true);
+    unsigned many = numberOfPhisAfterThreadingStepsThatTestOneValue(2000, true);
+    CHECK(many < few * 5 / 2);
 }
 
 static void testThreadJumpsStopsAtTestDepthLimit()
@@ -1185,6 +1260,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsStopsAtPathLimit());
     RUN(testThreadJumpsStopsAtTestCopyCostLimit());
     RUN(testThreadJumpsStopsAtPathCostLimit());
+    RUN(testThreadJumpsKeepsPhisLinearInStepsThatTestOneValue());
     RUN(testThreadJumpsStopsAtTestDepthLimit());
     RUN(testThreadJumpsStopsAtPredecessorLimit());
     RUN(testThreadJumpsCopiesOnlyIntoLikelyPredecessors());

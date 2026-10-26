@@ -492,7 +492,7 @@ static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
             return IterationStatus::Continue;
         });
     }
-    return definePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+    return storePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
 }
 
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)

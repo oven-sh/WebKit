@@ -654,9 +654,10 @@ bool isCompiledClassObject(JSFunction* candidate)
 
 bool isClosureOf(JSCell* cell, FunctionID function)
 {
+    BuiltinID calledBuiltin = builtinOfFunctionInFrames(function);
     if (std::optional<FunctionID> closureFunction = functionOf(cell))
-        return sourceFunctionOf(*closureFunction) == sourceFunctionOf(function);
-    std::optional<uint32_t> implemented = programTables().builtinImplementedBy(function.index());
+        return !calledBuiltin && sourceFunctionOf(*closureFunction) == sourceFunctionOf(function);
+    std::optional<uint32_t> implemented = calledBuiltin ? std::optional<uint32_t>(calledBuiltin.index()) : programTables().builtinImplementedBy(function.index());
     JSObject* object = cell->getObject();
     if (!implemented || !object)
         return false;

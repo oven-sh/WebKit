@@ -948,8 +948,7 @@ void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs& inputs, ValueFlo
     });
     ValueSetID held = parts.isEmpty() ? ValueSets::nothing : heap.maker().uniteAll(parts.span());
 
-    BitVector& neverHeld = tables.sites.layoutsNeverHeldWeakly;
-    neverHeld = BitVector(program.layouts.size());
+    tables.sites.layoutsNeverHeldWeakly = BitVector(program.layouts.size());
     if (ValueSets::isComplement(held))
         return;
     BitVector isHeldWeakly(program.layouts.size());
@@ -958,7 +957,7 @@ void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs& inputs, ValueFlo
     });
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         if (!isHeldWeakly.quickGet(index) && inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
-            neverHeld.quickSet(index);
+            tables.sites.layoutsNeverHeldWeakly.quickSet(index);
     }
 }
 

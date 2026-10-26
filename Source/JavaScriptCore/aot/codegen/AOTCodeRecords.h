@@ -48,6 +48,8 @@ struct RecordedSite {
     Origin origin;
     bool constructs { false };
     bool isTailCall { false };
+    bool isInsideCallee { false };
+    BuiltinID calledBuiltin { };
 };
 
 struct SiteRecords {

@@ -24,6 +24,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -351,7 +352,7 @@ private:
 // Remembers which functions return only new objects that hold no object. An answer depends on the function and on how many calls deep the search may go, so every thread finds the same one.
 class FreshDataFunctions {
 public:
-    static constexpr unsigned maxCallDepth = 2;
+    AOT_CLASS_THRESHOLD(unsigned, maxCallDepth, 2);
 
     explicit FreshDataFunctions(size_t numberOfFunctions)
     {

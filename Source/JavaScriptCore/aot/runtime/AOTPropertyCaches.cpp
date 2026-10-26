@@ -951,12 +951,11 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
     });
 }
 
-size_t VMPropertyCaches::maxSizeOfPagesAtStart()
+size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
 {
-    auto usual = [](LimitID limit) { return defaultLimitValue(limit, hostArchitecture()); };
-    return sizeOfRecords(safeCast<uint32_t>(usual(LimitID::CustomAccessorRecords)))
+    return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
         + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
-        + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(usual(LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
+        + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
 }
 
 void VMPropertyCaches::publishWords(Instance& instance) const

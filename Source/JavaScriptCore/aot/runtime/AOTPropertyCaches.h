@@ -31,6 +31,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 class CustomAccessorTable;
+class Image;
 struct Instance;
 struct State;
 
@@ -218,8 +219,8 @@ public:
     RowDisplacementTable& front() { return m_front; }
     HashedSlotTable& hashedTable() { return m_hashedTable; }
 
-    // No VM reserves more for its tables when it is created.
-    static size_t maxSizeOfPagesAtStart();
+    // No VM that runs the image reserves more for its tables when it is created.
+    static size_t maxSizeOfPagesAtStart(const Image&);
 
     bool isSharedByInstances() const { return m_isSharedByInstances; }
     void didCreateInstance(Instance&);

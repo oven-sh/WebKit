@@ -273,7 +273,7 @@ static Vector<uint32_t> sortFunctionsBySourcePosition(const Typed::Program& prog
     });
 }
 
-static void collectNamesInTables(const Typed::Program& program, const Typed::FlowResults& flow, const Typed::Placement& placement, KeyUses& keys)
+static void collectNamesInTables(const Typed::Program& program, const Typed::FlowResults& flow, const Typed::Placement& placement, const Typed::SiteCaches& siteCaches, KeyUses& keys)
 {
     keys.keysNamedByTables.ensureSize(program.types.numberOfPropertyKeys());
     keys.stringsNamedAsKeysByTables.ensureSize(program.strings.size());
@@ -318,10 +318,22 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
         nameKey(guardBit.key);
     for (PropertyKeyID key : placement.keyCells())
         nameKey(key);
+    for (const Typed::PlacedGlobalBinding& binding : placement.globalBindings().bindings)
+        nameKey(binding.key.key);
+    for (PropertyKeyID key : siteCaches.keys())
+        nameKey(key);
     for (const Typed::RequestRecord& record : placement.requests().records()) {
         Typed::DataID data = WTF::switchOn(record,
             [](const Typed::DataRecord& request) { return request.data; },
             [](const Typed::CollectionDataRecord& request) { return request.data; },
+            [&](const Typed::DirectEvalRecord& request) {
+                for (const Typed::EvalBinding& binding : program.at(request.scope).bindings) {
+                    Typed::EvalBindingNames names = namesInRowOf(program, binding);
+                    nameText(names.name);
+                    nameKey(names.privateKey);
+                }
+                return Typed::DataID();
+            },
             [](const auto&) { return Typed::DataID(); });
         if (!data)
             continue;
@@ -349,10 +361,6 @@ static void collectNamesInTables(const Typed::Program& program, const Typed::Flo
             nameText(syntheticExport.name);
         for (const Typed::RequiredName& requiredName : module.requiredNames)
             nameText(requiredName.name);
-    }
-    for (const Typed::EvalScope& scope : program.evalScopes) {
-        for (const Typed::EvalBinding& binding : scope.bindings)
-            nameText(binding.name);
     }
 }
 
@@ -399,7 +407,7 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitV
     strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 
     uses.keys.byKey = WTF::move(shared.keys);
-    collectNamesInTables(program, *pipeline.flow, *pipeline.placement, uses.keys);
+    collectNamesInTables(program, *pipeline.flow, *pipeline.placement, *pipeline.siteCaches, uses.keys);
     return uses;
 }
 
