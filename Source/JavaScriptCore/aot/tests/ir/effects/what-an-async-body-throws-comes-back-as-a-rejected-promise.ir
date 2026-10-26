@@ -1,0 +1,31 @@
+# What the body of an async function throws reaches the caller of the body as a rejected promise, which is allocated then. A body that cannot throw rejects nothing
+# FORM: Prepared
+# RUN: effects summaries f0 f2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} initialization=Undefined
+function f0 name="throws" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f1
+    Return v0
+}
+function f1 name="throws" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Throw v1
+}
+function f2 name="returns" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f3
+    Return v0
+}
+function f3 name="returns" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v1 = Undefined
+    Return v1
+}
+# CHECK: f1 return: {{*}}writes(ModuleVariables/1, PromiseState, {{*}}collects
+# CHECK: f3 return: none throw: none
+# CHECK-LABEL: function f0
+# CHECK: v1 CallDirect: {{*}}writes(ModuleVariables/1, PromiseState, {{*}}collects
+# CHECK-LABEL: function f2
+# CHECK: v1 CallDirect: none

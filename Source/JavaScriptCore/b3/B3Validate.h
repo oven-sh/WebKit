@@ -27,13 +27,29 @@
 
 #if ENABLE(B3_JIT)
 
+#include <optional>
 #include <wtf/text/UTF8CStringView.h>
 
 namespace JSC { namespace B3 {
 
 class Procedure;
 
+enum class ValidationRule : uint8_t {
+    Upstream,
+    LoopPoll,
+    PureFunction,
+    Relocatable,
+    KnownRange,
+    KnownDereferenceableBytes,
+    KnownInduction,
+    TerminalResult,
+    SuccessorClobbers,
+    OpcodeEverAdded,
+};
+
 JS_EXPORT_PRIVATE void validate(Procedure&, UTF8CStringView dumpBefore = { });
+
+JS_EXPORT_PRIVATE std::optional<ValidationRule> findViolatedRule(Procedure&);
 
 } } // namespace JSC::B3
 

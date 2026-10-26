@@ -1,0 +1,95 @@
+# Which built-in may be a closure of which function. None is a closure of a function of the application. A native one is a closure of no function. One that is written in JavaScript is a closure of the function the program registers for it and of no other. Where the table does not say what the function object is, as of `eval`, it is a closure of no function that a type names: it gets into such a type as a value, among the built-ins of the type. No type says that a built-in is a closure, so the subset relation answers no, and the intersection names the object as its second operand does
+# FORM: Prepared
+# RUN(SUBSET): subset
+# RUN(INTERSECT): intersect
+# RUN(CAST): cast
+# SUBSET: t0 <= t3: no overlaps: no
+# SUBSET-NEXT: t0 <= t4: no overlaps: no
+# SUBSET: t0 <= t10: yes overlaps: yes
+# SUBSET: t1 <= t2: no overlaps: no
+# SUBSET-NEXT: t1 <= t3: no overlaps: no
+# SUBSET-NEXT: t1 <= t4: no overlaps: yes
+# SUBSET-NEXT: t1 <= t5: no overlaps: no
+# SUBSET-NEXT: t1 <= t6: no overlaps: no
+# SUBSET-NEXT: t1 <= t7: yes overlaps: yes
+# SUBSET-NEXT: t1 <= t8: no overlaps: yes
+# SUBSET: t1 <= t10: yes overlaps: yes
+# SUBSET-NEXT: t1 <= t11: yes overlaps: yes
+# SUBSET: t3 <= t0: no overlaps: no
+# SUBSET-NEXT: t3 <= t1: no overlaps: no
+# SUBSET: t3 <= t7: yes overlaps: yes
+# SUBSET: t3 <= t9: no overlaps: no
+# SUBSET: t4 <= t0: no overlaps: no
+# SUBSET-NEXT: t4 <= t1: no overlaps: yes
+# SUBSET-NEXT: t4 <= t2: no overlaps: no
+# SUBSET: t4 <= t7: no overlaps: yes
+# SUBSET: t4 <= t9: no overlaps: no
+# SUBSET: t4 <= t11: yes overlaps: yes
+# SUBSET: t6 <= t1: no overlaps: no
+# SUBSET: t7 <= t3: no overlaps: yes
+# SUBSET: t9 <= t3: no overlaps: no
+# SUBSET-NEXT: t9 <= t4: no overlaps: no
+# SUBSET: t11 <= t1: no overlaps: yes
+# SUBSET: t11 <= t3: no overlaps: no
+# SUBSET-NEXT: t11 <= t4: no overlaps: yes
+# SUBSET: laws hold
+# INTERSECT: t0 & t3 = never
+# INTERSECT-NEXT: t0 - t3 = builtin(ArrayPrototypePush)
+# INTERSECT-NEXT: t0 & t4 = never
+# INTERSECT-NEXT: t0 - t4 = builtin(ArrayPrototypePush)
+# INTERSECT: t1 & t3 = never
+# INTERSECT-NEXT: t1 - t3 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t1 & t4 = f2
+# INTERSECT-NEXT: t1 - t4 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t1 & t5 = never
+# INTERSECT-NEXT: t1 - t5 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t1 & t6 = never
+# INTERSECT: t1 & t10 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t1 - t10 = never
+# INTERSECT-NEXT: t1 & t11 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t1 - t11 = never
+# INTERSECT: t3 & t1 = never
+# INTERSECT-NEXT: t3 - t1 = f1
+# INTERSECT: t3 & t9 = never
+# INTERSECT: t4 & t1 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t4 - t1 = f2
+# INTERSECT-NEXT: t4 & t2 = never
+# INTERSECT: t4 & t9 = never
+# INTERSECT: t7 & t1 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t7 - t1 = f1
+# INTERSECT: t7 & t3 = f1
+# INTERSECT-NEXT: t7 - t3 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t7 & t4 = f2
+# INTERSECT-NEXT: t7 - t4 = f1|builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t7 & t5 = never
+# INTERSECT: t7 & t10 = f1|builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t7 - t10 = never
+# INTERSECT: t8 & t1 = builtin(ArrayPrototypeMap)
+# INTERSECT: t8 & t4 = f2
+# INTERSECT-NEXT: t8 - t4 = builtin(ArrayPrototypePush)
+# INTERSECT: t9 & t3 = never
+# INTERSECT-NEXT: t9 - t3 = builtin(Eval)
+# INTERSECT-NEXT: t9 & t4 = never
+# INTERSECT: t10 & t7 = f1|builtin(ArrayPrototypeMap)
+# INTERSECT: t11 & t1 = builtin(ArrayPrototypeMap)
+# INTERSECT-NEXT: t11 - t1 = f2
+# INTERSECT: t11 & t3 = never
+# INTERSECT: t11 & t4 = f2
+# INTERSECT-NEXT: t11 - t4 = builtin(ArrayPrototypeMap)
+# INTERSECT: laws hold
+# CAST: t1 as t3 = never
+# CAST-NEXT: t1 as t4 = f2
+# CAST-NEXT: t1 as t5 = never
+# CAST: t4 as t1 = builtin(ArrayPrototypeMap)
+# CAST: t7 as t3 = f1
+# CAST-NEXT: t7 as t4 = f2
+# CAST: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=44 function=f3
+runtimefunction id=65 function=f2
+function f0 name="types" parameters=[{type=builtin(ArrayPrototypePush)}, {type=builtin(ArrayPrototypeMap)}, {type=builtin(ArrayPrototypeForEach)}, {type=f1}, {type=f2}, {type=f3}, {type=f4}, {type=f1|builtin(ArrayPrototypeMap)}, {type=f2|builtin(ArrayPrototypePush)}, {type=builtin(Eval)}, {type=function}, {type=f2|builtin(ArrayPrototypeMap)}] results=[{type=undefined}]
+function f1 name="ofTheApplication" results=[{type=anything}]
+function f2 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+function f3 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+function f4 name="insideMap" role=Library enclosingRuntimeFunction=65 results=[{type=anything}]

@@ -1,0 +1,49 @@
+# A text that nobody reads is not made: joins and conversions of primitives that are no symbols run no code and throw for lack of memory alone. A symbol has no text (a TypeError), and an object runs its conversion
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="numbers" parameters=[{type=number}] results=[{type=number}] {
+    v1 = String string="p"
+    v2 = Strcat v1, v0
+    Return v0
+}
+function f1 name="whole" parameters=[{type=int|whole}] results=[{type=int|whole}] {
+    v1 = String string="p"
+    v2 = String string=":"
+    v3 = Integer integer=1
+    v4 = Add v0, v3
+    v5 = Strcat v1, v0, v2, v4
+    Return v0
+}
+function f2 name="strings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = Strcat v0, v1
+    Return v0
+}
+function f3 name="added" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = Add v0, v1
+    v3 = ToString v1
+    v4 = Add v0, v0
+    Return v0
+}
+function f4 name="symbols" parameters=[{type=string}, {type=symbol}, {type=anything}, {type=object}] results=[{type=string}] {
+    v4 = Strcat v0, v1
+    v5 = Strcat v0, v2
+    v6 = Strcat v0, v3
+    Return v0
+}
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="numbers"
+# CHECK-NOT: Strcat
+# CHECK-LABEL: function f1 name="whole"
+# CHECK-NOT: Strcat
+# CHECK-NOT: Add
+# CHECK-LABEL: function f2 name="strings"
+# CHECK-NOT: Strcat
+# CHECK-LABEL: function f3 name="added"
+# CHECK-NOT: Add
+# CHECK-NOT: ToString
+# CHECK-LABEL: function f4 name="symbols"
+# CHECK: v4: string = Strcat v0, v1
+# CHECK-NEXT: v5: string = Strcat v0, v2
+# CHECK-NEXT: v6: string = Strcat v0, v3

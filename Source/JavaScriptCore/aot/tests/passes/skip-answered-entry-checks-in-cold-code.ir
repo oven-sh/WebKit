@@ -1,0 +1,10 @@
+# A shorter entrance is a function more, and pays where the call is expected to run: cold code enters as before.
+# The program of skip-answered-entry-checks.ir with every function cold.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass SkipAnsweredEntryChecks VerifyProgram
+# STATISTIC: ShorterEntrancesCreated = 0
+# CHECK: outcome: Unchanged
+
+# A shorter entrance has the parameters of the entrance, one for one, and says so: what flow knows of them is found through it
+# PROGRAM-OF: skip-answered-entry-checks.ir

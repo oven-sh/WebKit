@@ -1,0 +1,138 @@
+# No part of a fresh result has the type never: the read of such a part would end the block of the wrapper, and the other variants would have nothing to return in its place
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# RUN(SHAPE): fresh-results
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Impossible" fields=[{key="x" declared={type=never} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Other" fields=[{key="z" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="partIsNarrowed" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=L0}] {
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v3
+}
+# SHAPE-LABEL: function f0
+# SHAPE-NEXT: fresh variants=[L0{k0:p0 k1:p1}] parts=[anything, number]
+# CHECK-LABEL: function f0 name="partIsNarrowed" module=m0 role=ResultWrapper
+# CHECK: [[call0]]:{{*}}= CallDirect v0, v1, v2 function=[[worker0]]
+# CHECK-NEXT: [[x0]]: string = ResultAt [[call0]]
+# CHECK-NEXT: [[y0]]: number = ResultAt [[call0]] index=1
+# CHECK-NEXT: = NewObject -, [[x0]], [[y0]] layout=L0 fields=[0, 1]
+
+function f1 name="impossibleParameter" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=L0}] {
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v3
+}
+# SHAPE-LABEL: function f1
+# SHAPE-NEXT: fresh variants=[L0{k0:p0 k1:p1}] parts=[anything, number]
+# CHECK-LABEL: function f1 name="impossibleParameter" module=m0 role=ResultWrapper
+# CHECK: [[call1]]:{{*}}= CallDirect v0, v1, v2 function=[[worker1]]
+# CHECK-NEXT: [[x1]]: anything = ResultAt [[call1]]
+# CHECK-NEXT: [[y1]]: number = ResultAt [[call1]] index=1
+# CHECK-NEXT: [[point1]]:{{*}}= NewObject -, [[x1]], [[y1]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Return [[point1]]
+
+function f2 name="impossibleField" parameters=[{type=never}, {type=number}, {type=number}] results=[{type=L1}] {
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v3
+}
+# SHAPE-LABEL: function f2
+# SHAPE-NEXT: unknown
+# CHECK-LABEL: function f2 name="impossibleField"
+# CHECK-NOT: role=
+# CHECK: v3:{{*}}= NewObject -, v0, v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: Return v3
+
+function f3 name="impossibleOnlyPart" parameters=[{type=never}] results=[{type=Array<anything>}] {
+    v1 = NewArray v0 contents=anything
+    Return v1
+}
+# SHAPE-LABEL: function f3
+# SHAPE-NEXT: fresh variants=[Array[1]{{*}}] parts=[anything]
+# CHECK-LABEL: function f3 name="impossibleOnlyPart" module=m0 role=ResultWrapper
+# CHECK: [[element3]]: anything = CallDirect v0 function=[[worker3]]
+# CHECK-NEXT: [[array3]]:{{*}}= NewArray [[element3]] contents=anything
+# CHECK-NEXT: Return [[array3]]
+
+function f4 name="impossibleVariant" parameters=[{type=never}, {type=number}] results=[{type=object}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v3
+  b2():
+    v4 = NewObject -, v1 layout=L2 fields=[0]
+    Return v4
+}
+# SHAPE-LABEL: function f4
+# SHAPE-NEXT: fresh tag variants=[L0{k0:p0 k1:p1}, L2{k2:p2}] parts=[anything, number, number]
+# CHECK-LABEL: function f4 name="impossibleVariant" module=m0 role=ResultWrapper
+# CHECK: [[call4]]:{{*}}= CallDirect v0, v1 function=[[worker4]]
+# CHECK-NEXT: [[tag4]]: i32 = ResultAt [[call4]]
+# CHECK-NEXT: [[x4]]: anything = ResultAt [[call4]] index=1
+# CHECK-NEXT: [[y4]]: number = ResultAt [[call4]] index=2
+# CHECK-NEXT: [[z4]]: number = ResultAt [[call4]] index=3
+# CHECK-NEXT: Switch [[tag4]] cases=[1] -> case [[point4]](), otherwise [[other4]]()
+# CHECK: [[point4]]():
+# CHECK-NEXT: = NewObject -, [[x4]], [[y4]] layout=L0 fields=[0, 1]
+# CHECK: [[other4]]():
+# CHECK-NEXT: = NewObject -, [[z4]] layout=L2 fields=[0]
+
+function f5 name="impossibleCell" parameters=[{type=never}, {type=number}] results=[{type=object}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = NewObject -, v1 layout=L2 fields=[0]
+    Return v3
+}
+# SHAPE-LABEL: function f5
+# SHAPE-NEXT: fresh tag variants=[cell, L2{k2:p1}] parts=[object, number]
+# CHECK-LABEL: function f5 name="impossibleCell" module=m0 role=ResultWrapper
+# CHECK: [[call5]]:{{*}}= CallDirect v0, v1 function=[[worker5]]
+# CHECK-NEXT: [[tag5]]: i32 = ResultAt [[call5]]
+# CHECK-NEXT: [[cell5]]: object = ResultAt [[call5]] index=1
+# CHECK-NEXT: [[z5]]: number = ResultAt [[call5]] index=2
+
+function f6 name="impossibleFieldInOneVariant" parameters=[{type=never}, {type=number}] results=[{type=object}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v3
+  b2():
+    v4 = NewObject -, v1 layout=L2 fields=[0]
+    Return v4
+}
+# SHAPE-LABEL: function f6
+# SHAPE-NEXT: unknown
+# CHECK-LABEL: function f6 name="impossibleFieldInOneVariant"
+# CHECK-NOT: role=
+# CHECK: v3:{{*}}= NewObject -, v0, v1 layout=L1 fields=[0, 1]
+# CHECK: v4:{{*}}= NewObject -, v1 layout=L2 fields=[0]
+
+# CHECK: function [[worker1]] name="impossibleParameter"
+# CHECK: results=[{type=anything}, {type=number}]
+# CHECK: function [[worker4]] name="impossibleVariant"
+# CHECK: results=[{type=i32}, {type=anything}, {type=number}, {type=number}]
+# CHECK-NOT: valueType=never
+# CHECK: function [[worker5]] name="impossibleCell"
+# CHECK: results=[{type=i32}, {type=object}, {type=number}]
+# CHECK-NOT: valueType=never
+
+# Whoever calls them needs no object
+function f7 name="dropsTheResults" parameters=[{type=string}, {type=number}, {type=number}, {type=never}, {type=number}, {type=number}, {type=never}, {type=number}, {type=number}, {type=never}, {type=never}, {type=number}, {type=never}, {type=number}, {type=never}, {type=number}] results=[{type=undefined}] {
+    v16 = CallDirect v0, v1, v2 function=f0
+    v17 = CallDirect v3, v4, v5 function=f1
+    v18 = CallDirect v6, v7, v8 function=f2
+    v19 = CallDirect v9 function=f3
+    v20 = CallDirect v10, v11 function=f4
+    v21 = CallDirect v12, v13 function=f5
+    v22 = CallDirect v14, v15 function=f6
+    v23 = Undefined
+    Return v23
+}

@@ -1,0 +1,223 @@
+# A plain object that never leaves its activation, keeps the form of its layout and is held by no environment field is in the frame
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+# CHECK: L0 may be in a frame
+# CHECK-NEXT: L1 may be in a frame
+# CHECK-NEXT: L3 only in frames
+# CHECK-NEXT: L9 only in frames
+# CHECK-NEXT: L11 only in frames
+# CHECK-NEXT: f14 only in frames
+# CHECK-NEXT: f18 only in frames
+# CHECK-NEXT: f14 capture 0 holds frame pointers
+# CHECK-NEXT: layout L0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="OnlyRead" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="CapturedAndRead" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="ReadThroughEnvironment" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Environment name="holdsObjectThatIsRead" fields=[{key="object" declared={type=anything}}]
+layout L4 name="PassedToBuiltin" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L5 name="ExtendedByCallee" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L6 name="FilledLater" fields=[{key="x" declared={type=number}}]
+layout L7 name="ExtendedByClosure" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L8 name="ExtendedThroughEnvironment" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L9 kind=Environment name="holdsObjectThatIsExtended" fields=[{key="object" declared={type=anything}}]
+layout L10 name="CutThroughEnvironment" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L11 kind=Environment name="holdsObjectThatIsCut" fields=[{key="object" declared={type=anything}}]
+layout L12 name="HasPrototype" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L13 name="Prototype" fields=[]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+# REPEAT: i = 1..9
+    v%(i+2) = CallDirect v2 function=f%(i)
+# END REPEAT
+    v12 = NewObject layout=L13
+    v13 = CallDirect v2, v12 function=f10
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+
+function f1 name="passedToReader" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f12
+    Return v2
+}
+# CHECK-LABEL: function f1 name="passedToReader"
+# CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
+# PLAN-LABEL: function f1
+# PLAN-NEXT: v1: Frame
+
+function f2 name="capturedByFrameClosure" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f14
+    v3 = CallDirect v2 function=f11
+    Return v3
+}
+# CHECK-LABEL: function f2 name="capturedByFrameClosure"
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK: = NewClosure {{*}}function=f14 {{*}}storage=Frame
+# PLAN-LABEL: function f2
+# PLAN-NEXT: v1: Frame
+# PLAN-NEXT: v2: Frame
+
+function f3 name="heldByFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = NewObject -, v1 layout=L3 fields=[0]
+    v3 = CallDirect v2 function=f15
+    Return v3
+}
+# CHECK-LABEL: function f3 name="heldByFrameEnvironment"
+# CHECK: = NewObject {{*}}layout=L2
+# CHECK-NOT: storage=
+# CHECK: = NewObject {{*}}layout=L3 {{*}}storage=Frame
+# PLAN-LABEL: function f3
+# PLAN-NEXT: v1: Heap HeldByHeapCell by v2(1)
+# PLAN-NEXT: v2: Frame
+
+function f4 name="passedToBuiltin" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = Builtin builtin=ObjectIsFrozen
+    v3 = Call v2, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="passedToBuiltin"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f4
+# PLAN-NEXT: v1: Heap Escapes by v3(2)
+
+function f5 name="calleeAddsProperty" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L5 fields=[0]
+    v2 = CallDirect v1, v0 function=f16
+    Return v2
+}
+# CHECK-LABEL: function f5 name="calleeAddsProperty"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f5
+# PLAN-NEXT: v1: Heap FieldsCreatedLater
+
+function f6 name="fieldCreatedLater" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L6
+    PropSet v1, v0 key="x"
+    v3 = CallDirect v1 function=f17
+    Return v3
+}
+# CHECK-LABEL: function f6 name="fieldCreatedLater"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f6
+# PLAN-NEXT: v1: Heap FieldsCreatedLater
+
+function f7 name="frameClosureAddsProperty" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L7 fields=[0]
+    v2 = NewClosure v1 function=f18
+    v3 = CallDirect v2 function=f11
+    Return v3
+}
+# CHECK-LABEL: function f7 name="frameClosureAddsProperty"
+# CHECK: = NewObject {{*}}layout=L7
+# CHECK-NOT: storage=
+# CHECK: = NewClosure {{*}}function=f18 {{*}}storage=Frame
+# PLAN-LABEL: function f7
+# PLAN-NEXT: v1: Heap FieldsCreatedLater
+# PLAN-NEXT: v2: Frame
+
+function f8 name="propertyAddedThroughFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L8 fields=[0]
+    v2 = NewObject -, v1 layout=L9 fields=[0]
+    v3 = CallDirect v2 function=f19
+    Return v3
+}
+# CHECK-LABEL: function f8 name="propertyAddedThroughFrameEnvironment"
+# CHECK: = NewObject {{*}}layout=L8
+# CHECK-NOT: storage=
+# CHECK: = NewObject {{*}}layout=L9 {{*}}storage=Frame
+# PLAN-LABEL: function f8
+# PLAN-NEXT: v1: Heap FieldsCreatedLater
+# PLAN-NEXT: v2: Frame
+
+function f9 name="fieldDeletedThroughFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L10 fields=[0]
+    v2 = NewObject -, v1 layout=L11 fields=[0]
+    v3 = CallDirect v2 function=f20
+    Return v3
+}
+# CHECK-LABEL: function f9 name="fieldDeletedThroughFrameEnvironment"
+# CHECK: = NewObject {{*}}layout=L10
+# CHECK-NOT: storage=
+# CHECK: = NewObject {{*}}layout=L11 {{*}}storage=Frame
+# PLAN-LABEL: function f9
+# PLAN-NEXT: v1: Heap Escapes by v2(1)
+# PLAN-NEXT: v2: Frame
+
+function f10 name="prototypeOperand" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject v1, v0 layout=L12 fields=[0]
+    v3 = CallDirect v2 function=f13
+    Return v3
+}
+# CHECK-LABEL: function f10 name="prototypeOperand"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f10
+# PLAN-NEXT: v2: Heap ChangedByUse
+# PLAN-NOT: by
+
+function f11 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f11 name="callsParameter"
+# PLAN-LABEL: function f11
+
+function f12 name="addsFields" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    Return v3
+}
+function f13 name="testsWithPrototype" parameters=[{type=L12}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}
+function f14 name="testsCapture" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = ToBoolean v1
+    Return v2
+}
+function f15 name="testsField" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    v2 = PropGet v1 key="x"
+    v3 = ToBoolean v2
+    Return v3
+}
+function f16 name="addsProperty" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="extra"
+    Return
+}
+function f17 name="testsFilledLater" parameters=[{type=L6}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Return v1
+}
+function f18 name="addsPropertyToCapture" kind=Arrow captures=[{type=L7}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="extra"
+    Return
+}
+function f19 name="addsPropertyToField" kind=Arrow captures=[{type=env L9}] results=[{type=anything}] {
+  b0(v0: env L9):
+    v1 = GetEnvironmentField v0 layout=L9 field=0
+    v2 = Integer integer=1
+    PropSet v1, v2 key="extra"
+    Return
+}
+function f20 name="deletesFromField" kind=Arrow captures=[{type=env L11}] results=[{type=anything}] {
+  b0(v0: env L11):
+    v1 = GetEnvironmentField v0 layout=L11 field=0
+    v2 = PropDelete v1 key="x"
+    Return v2
+}

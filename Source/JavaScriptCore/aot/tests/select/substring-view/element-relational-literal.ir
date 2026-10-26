@@ -1,0 +1,89 @@
+# A character that may be undefined is ordered against a one-character literal by its code unit, with -1 for undefined: as it is where -1 fails the relation, as an unsigned number where it would hold
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 9
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="element-relational-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = Less v2, v3
+    Return v4
+# CHECK-NOT: = ElemGet
+# CHECK-NOT: = StringRange 
+# CHECK: [[unit0]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NEXT: [[codeUnit0]]: 97 = Integer integer=97
+# CHECK-NEXT: [[unsigned0]]: int[0, 4294967295] = ToUint32 [[unit0]]
+# CHECK-NEXT: [[result0]]: boolean = Less [[unsigned0]], [[codeUnit0]]
+# CHECK-NEXT: Return [[result0]]
+}
+
+function f1 name="literal-on-left" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string="z"
+    v4 = GreaterEq v3, v2
+    Return v4
+# CHECK-NOT: = ElemGet
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK-NEXT: [[codeUnit1]]: 122 = Integer integer=122
+# CHECK-NEXT: [[unsigned1]]: int[0, 4294967295] = ToUint32 [[unit1]]
+# CHECK-NEXT: [[result1]]: boolean = GreaterEq [[codeUnit1]], [[unsigned1]]
+# CHECK-NEXT: Return [[result1]]
+}
+
+function f2 name="character-range" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
+    v3 = String string="0"
+    v4 = GreaterEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = String string="9"
+    v6 = LessEq v2, v5
+    Return v6
+  b2():
+    Return v4
+# CHECK-NOT: StringPrototypeAt
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK-NOT: = StringRangeCodeUnitOr
+# CHECK: [[low2]]: 48 = Integer integer=48
+# CHECK-NEXT: v4: boolean = GreaterEq v2, [[low2]]
+# CHECK-NOT: = StringRangeCodeUnitOr
+# CHECK: [[high2]]: 57 = Integer integer=57
+# CHECK-NEXT: [[unsigned2]]: int[0, 4294967295] = ToUint32 v2
+# CHECK-NEXT: v6: boolean = LessEq [[unsigned2]], [[high2]]
+}
+
+function f3 name="longer-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string="ab"
+    v4 = Less v2, v3
+    Return v4
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK: v4: boolean = Less v2, v3
+# CHECK-NOT: StringRangeCodeUnitOr
+}
+
+function f4 name="slice-relational-literal" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = String string="a"
+    v9 = Greater v7, v8
+    Return v9
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NOT: StringRangeCodeUnitOr
+}
+
+function f5 name="element-greater-than-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = Greater v2, v3
+    Return v4
+# CHECK: [[unit5]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NOT: ToUint32
+# CHECK: : boolean = Greater [[unit5]],
+}

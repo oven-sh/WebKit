@@ -59,18 +59,26 @@ private:
 };
 
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
-JSValue JSONParseWithException(JSGlobalObject*, StringView);
+// No string is made of the bytes as a whole. An invalid sequence stands for U+FFFD. Empty without an exception also for values
+// nested so deeply that only JSONParse() of a string parses them.
+JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, std::span<const char8_t> utf8);
+enum class CompiledJSONParser : bool { Try, Skip };
+JSValue JSONParseWithException(JSGlobalObject*, StringView, CompiledJSONParser = CompiledJSONParser::Try);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, JSValue space);
 JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent);
 
 #if USE(BUN_JSC_ADDITIONS)
 struct StreamingJSONParseResult {
     size_t charactersConsumed;
-    enum class Status : uint8_t { Complete, NeedMoreData, Error } status;
+    // NeedsText: nothing was parsed, and the bytes are to be parsed as a string.
+    enum class Status : uint8_t { Complete, NeedMoreData, Error, NeedsText } status;
 };
 
 JS_EXPORT_PRIVATE StreamingJSONParseResult streamingJSONParse(
     JSGlobalObject*, StringView input, MarkedArgumentBuffer& results);
+// charactersConsumed counts bytes.
+JS_EXPORT_PRIVATE StreamingJSONParseResult streamingJSONParse(
+    JSGlobalObject*, std::span<const char8_t> utf8, MarkedArgumentBuffer& results);
 #endif
 
 } // namespace JSC

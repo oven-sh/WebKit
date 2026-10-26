@@ -1,0 +1,45 @@
+# a body that starts with a value or a terminator has the entry parameters of the function's line: captures, this, callee, new target, parameters
+# FORM: AsRead
+# RUN: print
+# RUN(TYPED): pass TypeValues
+# RUN(SAME): round-trip
+# CHECK-LABEL: function f0 name="nothing"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-LABEL: function f1 name="parameters"
+# CHECK-NEXT: b0(v0: number, v1: string):
+# CHECK-NEXT: v2 = Add v0, v1
+# CHECK-LABEL: function f2 name="everything"
+# CHECK-NEXT: b0(v0: boolean, v1: object, v2: function, v3: anything, v4: number):
+# CHECK-NEXT: Jump -> next b1(v4)
+# CHECK-NEXT: b1(v5):
+# CHECK-NEXT: Return v5
+# CHECK-LABEL: function f3 name="thisIsAnything"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-LABEL: function f4 name="written"
+# CHECK-NEXT: b0(v0: number):
+# TYPED-LABEL: function f1 name="parameters"
+# TYPED: v2: string = Add v0, v1
+# SAME-LABEL: function f2 name="everything"
+# SAME-NEXT: b0(v0: boolean, v1: object, v2: function, v3: anything, v4: number):
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nothing" results=[{type=anything}] {
+    Return
+}
+function f1 name="parameters" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="everything" flags=[HasThis, HasNewTarget, TakesCallee] captures=[{type=boolean}] thisType={type=object} parameters=[{type=number}] results=[{type=anything}] {
+    Jump -> next b1(v4)
+  b1(v5):
+    Return v5
+}
+function f3 name="thisIsAnything" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="written" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}

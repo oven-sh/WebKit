@@ -51,8 +51,13 @@ void WeakMapImpl<WeakMapBucket>::visitChildrenImpl(JSCell* cell, Visitor& visito
     WeakMapImpl* thisObject = uncheckedDowncast<WeakMapImpl>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    if (thisObject->hasOutOfLineBuffer())
-        visitor.reportExtraMemoryVisited(thisObject->m_capacity * sizeof(WeakMapBucket));
+    uint32_t capacity = thisObject->hasOutOfLineBuffer() ? thisObject->m_capacity : 0;
+    if (capacity)
+        visitor.reportExtraMemoryVisited(capacity * sizeof(WeakMapBucket));
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        if (visitor.isFirstVisit())
+            thisObject->m_capacityCountedByHeap = capacity;
+    }
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename WeakMapBucket>, WeakMapImpl<WeakMapBucket>);

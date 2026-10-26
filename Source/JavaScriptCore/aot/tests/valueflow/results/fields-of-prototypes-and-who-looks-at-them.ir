@@ -1,0 +1,53 @@
+# A field of an object that lies above another is read where a read, a test or a walk over keys that starts at the object below may come by it. A test of an own property of the object below does not.
+# Reflect.has goes on to what its operand inherits, under the key that it is handed: the field of that name counts as looked at, the one beside it does not.
+# A field that is read by name from its own object and only called is only called. Once the value goes anywhere else, nothing is said
+# RUN: valueflow-apply
+# CHECK: layout L0 name="CalledAndKept" fields=[{key="run"{{*}}initialization=SetAtCreation isUnchangedDuringActivation=true}
+# CHECK: layout L1 name="AboveOperandOfReflectHas" fields=[{key="x"{{*}}initialization=SetAtCreation isUnchangedDuringActivation=true}{{*}}{key="y"{{*}}initialization=SetAtCreation reads=NeverRead
+# CHECK: layout L2 name="AboveOperandOfHasOwn" fields=[{key="x"{{*}}initialization=SetAtCreation reads=NeverRead
+# CHECK: layout L3 name="AboveOperandOfIn" fields=[{key="x"{{*}}initialization=SetAtCreation isUnchangedDuringActivation=true}{{*}}{key="y"{{*}}initialization=SetAtCreation reads=NeverRead
+# CHECK: layout L4 name="OnlyCalled" fields=[{key="run"{{*}}initialization=SetAtCreation reads=OnlyCalled
+# CHECK: layout L5 name="CalledThroughAnHeir" fields=[{key="run"{{*}}initialization=SetAtCreation isUnchangedDuringActivation=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="CalledAndKept" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="AboveOperandOfReflectHas" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="AboveOperandOfHasOwn" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="AboveOperandOfIn" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="OnlyCalled" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="CalledThroughAnHeir" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = PropGet v2 key="run"
+    v4 = Call v3, v2
+    PutModuleVariable v3 variable=g0
+    v6 = Builtin builtin=ObjectCreate
+    v7 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v8 = Call v6, -, v7
+    v9 = Builtin builtin=ReflectHas
+    v10 = String string="x"
+    v11 = Call v9, -, v8, v10
+    v12 = NewObject -, v0 layout=L2 fields=[0]
+    v13 = Call v6, -, v12
+    v14 = Builtin builtin=ObjectHasOwn
+    v15 = Call v14, -, v13, v10
+    v16 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v17 = Call v6, -, v16
+    v18 = PropHas v17 key="x"
+    v19 = NewObject -, v1 layout=L4 fields=[0]
+    v20 = PropGet v19 key="run"
+    v21 = Call v20, v19
+    v22 = NewObject -, v1 layout=L5 fields=[0]
+    v23 = Call v6, -, v22
+    v24 = PropGet v23 key="run"
+    v25 = Call v24, v23
+    Return
+}
+function f1 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

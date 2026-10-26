@@ -1,0 +1,48 @@
+# inlineParameters of CallInline and TryCallInline must match what the schema declares for the inline built-in
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badWord" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = CallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[99] overload=ObjectKeys/0
+    Return v1
+}
+function f1 name="badNoWord" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = CallInline -, v0 inlineBuiltin=OwnPropertyKeys overload=ObjectKeys/0
+    Return v1
+}
+function f2 name="badOneWordTooMany" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallInline -, v0 inlineBuiltin=MathAbs inlineParameters=[0] overload=MathAbs/0
+    Return v1
+}
+function f3 name="badWordOfTwoWayCall" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[4] overload=ObjectKeys/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2() frequency=Rare:
+    v2 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b1(v2)
+}
+function f4 name="badSecondWord" parameters=[{type=Date}] results=[{type=anything}] {
+  b0(v0: Date):
+    v1 = CallInline v0 inlineBuiltin=DateGetField inlineParameters=[0, 2] overload=DatePrototypeGetFullYear/0
+    Return v1
+}
+function f5 name="badFormOfAnother" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallInline v0 inlineBuiltin=NumberToStringAppend overload=NumberPrototypeToString/0
+    Return v1
+}
+function f6 name="good" parameters=[{type=object}, {type=number}, {type=Date}] results=[{type=anything}] {
+  b0(v0: object, v1: number, v2: Date):
+    v3 = CallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[3] overload=ObjectKeys/0
+    v4 = CallInline -, v1 inlineBuiltin=MathAbs overload=MathAbs/0
+    v5 = CallInline -, v1 inlineBuiltin=MathFunction inlineParameters=[18] overload=MathSinh/0
+    v6 = CallInline v2 inlineBuiltin=DateGetField inlineParameters=[8, 1] overload=DatePrototypeGetFullYear/0
+    Return v3
+}

@@ -1,0 +1,146 @@
+# A field that is stored and never read loses its stores, the values computed for them and its slot
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="NeverRead" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="OnlyCalled" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="OnlyCalledReadRemains" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L4 kind=Environment name="lateScope" fields=[{key="x" declared={type=anything}}, {key="late" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L5 name="SameKeyOnUntypedValue" fields=[{key="runLoose" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="UnknownReads" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="UnknownWriters" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L8 name="FirstOfTwo" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L9 name="SecondOfTwo" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="PresenceObserved" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="StoredAfterCreation" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="NeverRead" fields=[{key="run"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L1 name="OnlyCalled" fields=[{key="run"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 name="OnlyCalledReadRemains" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+# CHECK: layout L3 kind=Environment name="scope"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}
+# CHECK: layout L4 kind=Environment name="lateScope"{{*}}{key="late"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}
+# CHECK: layout L5 name="SameKeyOnUntypedValue" fields=[{key="runLoose"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L6 name="UnknownReads" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n"
+# CHECK: layout L7 name="UnknownWriters" fields=[{key="run"{{*}}flow={location={reads=NeverRead}}}, {key="n"
+# CHECK: layout L8 name="FirstOfTwo" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L9 name="SecondOfTwo" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L10 name="PresenceObserved" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L11 name="StoredAfterCreation" fields=[{key="run"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+function f0 name="neverRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L0 fields=[1]
+}
+
+function f1 name="onlyCalledAndEveryCallIsDirect" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    v3 = CallDirect function=f13
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+}
+
+function f2 name="onlyCalledAndReadRemains" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+    v3 = GetSlot v2, v2 key="run" receivers=[L2] level=Proven
+    v4 = Call v3, v2
+    Return v2
+# CHECK: = NewClosure function=f13
+# CHECK: layout=L2 fields=[0, 1]
+}
+
+function f3 name="environmentField" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v2 = NewClosure v1 function=f11
+    Return v2
+# CHECK: = NewObject -, v0 layout=L3 fields=[0]
+}
+
+function f4 name="lateEnvironmentStore" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    PutEnvironmentField v1, v0 layout=L4 field=1
+    v3 = NewClosure v1 function=f12
+    Return v3
+# CHECK: layout=L4 fields=[0]
+# CHECK-NOT: PutEnvironmentField
+}
+
+function f5 name="sameKeyOnUntypedValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f13
+    v3 = NewObject -, v2, v0 layout=L5 fields=[0, 1]
+    v4 = PropGet v1 key="runLoose"
+    v5 = Call v4, v1
+    Return v3
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L5 fields=[1]
+# CHECK: = PropGet v1 key="runLoose"
+}
+
+function f6 name="unknownReads" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L6 fields=[0, 1]
+    Return v2
+# CHECK: layout=L6 fields=[0, 1]
+}
+
+function f7 name="unknownWriters" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L7 fields=[0, 1]
+    Return v2
+# CHECK: layout=L7 fields=[0, 1]
+}
+
+function f8 name="storeByNameThroughUnion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewClosure function=f13
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v2, v0 layout=L8 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v2, v0 layout=L9 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    PropSet v5, v2 key="run" mode=Strict receivers=[L8, L9]
+    Return v5
+# CHECK: layout=L8 fields=[0, 1]
+# CHECK: layout=L9 fields=[0, 1]
+# CHECK: PropSet
+}
+
+function f9 name="presenceObserved" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewObject -, v1, v0 layout=L10 fields=[0, 1]
+    v3 = PropHas v2 key="run" receivers=[L10]
+    Return v3
+# CHECK: layout=L10 fields=[0, 1]
+}
+
+function f10 name="storedAfterCreation" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L11 fields=[0, 1]
+    v2 = NewClosure function=f13
+    PutSlot v1, v1, v2 key="run" receivers=[L11] level=Proven
+    Return v1
+# CHECK: = NewObject -, v0 layout=L11 fields=[1]
+# CHECK-NOT: NewClosure
+# CHECK-NOT: PutSlot
+}
+
+function f11 name="readsScope" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}
+function f12 name="readsLateScope" kind=Arrow captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
+    Return v1
+}
+function f13 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

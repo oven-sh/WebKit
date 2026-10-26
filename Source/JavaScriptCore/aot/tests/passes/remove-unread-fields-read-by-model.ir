@@ -1,0 +1,35 @@
+# A method that only the model of a built-in calls stays stored: no code is emitted for the model, and the built-in looks the method up by name
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+# CHECK: layout L0 name="Label" fields=[{key="toString"{{*}}stores=AtMostOnce{{*}}{key="unused"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[toString]]:{{*}}= NewClosure function=f1
+# CHECK: [[label]]:{{*}}= NewObject -, [[toString]] layout=L0 fields=[0]
+# CHECK: = CallBuiltin [[label]] overload=ObjectPrototypeToLocaleString/0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
+    v5 = PropGet v4 key="toLocaleString"
+    v6 = Call v5, v4 calleeKey="toLocaleString"
+    v7 = Call v1, -, v6
+    Return
+}
+function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = String string="label"
+    Return v1
+}
+function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = Call v1, v0 calleeKey="toString"
+    ReturnCall v2
+}
+runtimefunction id=131085 function=f2

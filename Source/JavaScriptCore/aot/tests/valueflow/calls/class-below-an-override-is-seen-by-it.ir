@@ -1,0 +1,91 @@
+# class Shape { describe() { this.area() } }  class Circle extends Shape { area() { this.radius } }  class Dot extends Circle {}  class Square extends Shape { area() { this.side } }
+# new Circle().describe(); new Dot().describe(); new Square().describe()
+# A class that inherits a method hands its instances to that method: the read of `area` from an instance of Dot answers the method of Circle.
+# RUN: valueflow-why values=f0:v27 values=f0:v30 values=f4:v1 values=f7:v1
+# CHECK: values=f0:v27
+# CHECK: operand 1 {{*}} 1 members: [[circle]]
+# CHECK: values=f0:v30
+# CHECK: operand 1 {{*}} 1 members: [[dot]]
+# CHECK: values=f4:v1
+# CHECK: operand 0 {{*}} 2 members: [[circle]] [[dot]]
+# CHECK: values=f7:v1
+# CHECK: operand 0 {{*}} 1 members:
+# CHECK-NOT: [[circle]]
+# CHECK-NOT: [[dot]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shape" constructor=f1
+layout L1 kind=Instance name="Circle" base=L0 constructor=f3 flags=[HasHeritage]
+layout L2 kind=Instance name="Dot" base=L1 constructor=f5 flags=[HasHeritage]
+layout L3 kind=Instance name="Square" base=L0 constructor=f6 flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="describe"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="area"
+    v10 = FinishClass v7 layout=L1
+    v11 = ResolveHeritage v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12, v10, v11 layout=L2
+    v14 = FinishClass v13 layout=L2
+    v15 = ResolveHeritage v4
+    v16 = NewClosure function=f6
+    v17 = NewClass v16, v4, v15 layout=L3
+    v18 = NewClosure function=f7
+    DefineMethod v17, v18 layout=L3 key="area"
+    v20 = FinishClass v17 layout=L3
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Construct v10
+    v26 = PropGet v25 key="describe"
+    v27 = Call v26, v25 calleeKey="describe"
+    v28 = Construct v14
+    v29 = PropGet v28 key="describe"
+    v30 = Call v29, v28 calleeKey="describe"
+    v31 = Construct v20
+    v32 = PropGet v31 key="describe"
+    v33 = Call v32, v31 calleeKey="describe"
+    Return
+}
+function f1 name="Shape" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="describe" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="area"
+    v2 = Call v1, v0 calleeKey="area"
+    Return
+}
+function f3 name="Circle" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="radius"
+    Return
+}
+function f5 name="Dot" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f6 name="Square" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f7 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return
+}

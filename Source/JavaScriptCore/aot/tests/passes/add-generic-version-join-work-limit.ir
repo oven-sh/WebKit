@@ -1,0 +1,36 @@
+# A value of the copy that is live where the copy comes back gets a parameter at each join, and each such value costs a walk over the blocks. Where the blocks of the copy times the values in them
+# are over the limit, the function gets no generic version and its blocks stay as they were: what a check says is expected of the value, and each use is guarded. Under the limit it gets one
+# FORM: Prepared
+# OPTIONS: limit=MaxGenericVersionJoinWork:3 heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 1
+# STATISTIC: GenericVersionsNotCreated = 1
+# STATISTIC: ExitsToGenericVersion = 1
+# LOSS: MaxGenericVersionJoinWork x1 f0 v3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="overTheLimit" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    v3 = Check v0 castType=number
+    v4 = Add v3, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Mul v4, v3
+    Return v5
+  b2():
+    v6 = Sub v4, v3
+    Return v6
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: frequency=
+# CHECK: v4: number|string|bigint{{*}} = Add
+}
+
+function f1 name="underTheLimit" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Check v0 castType=number
+    v3 = Add v2, v1
+    Return v3
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: v3: number = Add v2, v1
+# CHECK: frequency=Unlikely:
+# CHECK: : number|string|bigint{{*}} = Add
+}

@@ -1,0 +1,24 @@
+# Error.prepareStackTrace = make; const error = new Error("x"); error.stack; error.message
+# Native code calls what the program has stored as Error.prepareStackTrace, with the error among the operands, and puts what it answers under `stack`: the error is in unknown hands and `stack` is any value.
+# what-native-code-puts-on-a-new-error-is-of-the-types-that-the-class-says.ir is the program that stores nothing there
+# LIBRARY: own
+# RUN: valueflow-why values=f0:v5 escaped=f1
+# CHECK: values=f0:v5
+# CHECK: result n{{*}} 11 members: {{*}} unknown
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Error
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="prepareStackTrace" mode=Strict
+    v3 = String string="x"
+    v4 = Construct v0, v0, v3
+    v5 = PropGet v4 key="stack"
+    Return v5
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}

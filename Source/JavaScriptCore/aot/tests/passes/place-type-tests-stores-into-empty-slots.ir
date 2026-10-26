@@ -1,0 +1,82 @@
+# A store outside a constructor to a field that the program declares expects its slot to be filled. Where that test fails the store creates the field under the tests that the object inherits nothing of the name, and only behind those does it go by name. A field that nothing declares and that flow gave room is often created by just such a store: there the creating store comes first, and the slot is not tested
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline ConvertCountersToIntegers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Request" constructor=f1 fields=[{key="url" declared={type=anything}}, {key="path" declared={type=anything}}]
+layout L1 name="Extended" fields=[{key="route" declared={type=anything}}, {key="path" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="handle"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="redirect"
+    v6 = NewClosure function=f4
+    DefineMethod v1, v6 layout=L0 index=2 key="rewrite"
+    v8 = FinishClass v1 layout=L0
+    v9 = Integer integer=1
+    v10 = Construct v8, v8, v9
+    v11 = PropGet v10 key="handle"
+    v12 = Call v11, v10, v9
+    v13 = PropGet v10 key="redirect"
+    v14 = Call v13, v10, v9
+    v15 = PropGet v10 key="rewrite"
+    v16 = Call v15, v10, v9
+    v17 = NewObject -, v9, v9 layout=L1 fields=[0, 1]
+    v18 = Builtin builtin=ObjectSetPrototypeOf
+    v19 = Call v18, -, v10, v17
+    v20 = PropGet v10 key="route"
+    Return v20
+}
+function f1 name="Request" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="url" mode=Strict
+    Return v3
+}
+function f2 name="handle" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="route" mode=Strict
+    Return
+# CHECK-NOT: IsSlotFilled
+# CHECK: [[inherits]]: boolean = HasLayoutPrototype v0
+# CHECK-NEXT: Branch [[inherits]] -> taken [[creates]](| 0), notTaken [[byName]]()
+# CHECK: [[creates]]([[guard]]: guard):
+# CHECK-NEXT: PutSlot v0, [[guard]], v1 key="route" receivers=[L0] level=Expected
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="route"
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: IsSlotFilled
+}
+
+# The constructor fills the slot of every object, so there is nothing to test.
+function f3 name="redirect" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="url" mode=Strict
+    Return
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: PutSlot v0, -, v1 key="url" receivers=[L0] level=Proven
+}
+
+# The class declares "path" and its constructor leaves it empty.
+function f4 name="rewrite" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="path" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f4 name="rewrite"
+# CHECK: [[isFilled]]: boolean = IsSlotFilled v0 key="path" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch [[isFilled]] -> taken [[filled]](| 0), notTaken [[empty]]()
+# CHECK: [[filled]]([[filledGuard]]: guard):
+# CHECK-NEXT: PutSlot v0, [[filledGuard]], v1 key="path" receivers=[L0] level=Expected
+# CHECK: [[empty]]() frequency=Unlikely:
+# CHECK-NEXT: [[inheritsPath]]: boolean = HasLayoutPrototype v0
+# CHECK-NEXT: Branch [[inheritsPath]] -> taken [[createsPath]](| 0), notTaken [[pathByName]]()
+# CHECK: [[createsPath]]([[pathGuard]]: guard) frequency=Unlikely:
+# CHECK-NEXT: PutSlot v0, [[pathGuard]], v1 key="path" receivers=[L0] level=Expected
+# CHECK: [[pathByName]]() frequency=Rare:
+# CHECK-NEXT: PropSet v0, v1 key="path"
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-LABEL: function f5 name="library"

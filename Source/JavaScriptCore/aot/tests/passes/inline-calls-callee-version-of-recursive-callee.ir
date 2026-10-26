@@ -1,0 +1,37 @@
+# A callee that calls itself needs nothing more than its copy: the copy passes the parameter on, and the next run sends that call to the same copy
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls InlineCalls
+# STATISTIC: CalleeVersions = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="repeat" parameters=[{type=function}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = Call v0, -, v1
+# REPEAT: i = 3..14
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v16 = CallDirect v0, v15, v2 function=f1
+    Return v16
+  b2():
+    Return v15
+}
+
+function f2 name="calleeCallsItself" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = CallDirect v2, v0, v1 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="calleeCallsItself"
+# CHECK: = CallDirect v2, v0, v1 function=[[copyOfRepeat]]
+# CHECK: function [[copyOfRepeat]] name="repeat" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: boolean):
+# CHECK: = CallDirect v0, v15, v2 function=[[copyOfRepeat]]
+# CHECK-NOT: role=CalleeVersion

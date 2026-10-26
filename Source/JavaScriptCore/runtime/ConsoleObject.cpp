@@ -226,6 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncAssert, (JSGlobalObject* globalObject, 
     if (condition)
         return JSValue::encode(jsUndefined());
 
+    scope.release();
     client->assertion(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 1));
     return JSValue::encode(jsUndefined());
 }

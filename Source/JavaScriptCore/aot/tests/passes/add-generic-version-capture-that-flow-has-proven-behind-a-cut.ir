@@ -1,0 +1,33 @@
+# The generic version stores into a capture what flow has proven of the capture, so it assumes that type in front of the closure. It does so in every generic block:
+# also in the one that is cut off behind a value that is live where the generic version comes back, as a block with a handler is
+# FORM: Prepared
+# RUN: pass AddGenericVersion VerifyProgram
+# CHECK: number|string|bigint = Add [[turnedAway]], [[turnedAway]]
+# CHECK-NEXT: Jump -> next [[rest]]()
+# CHECK: [[rest]]() frequency=Unlikely handler=b2():
+# CHECK-NEXT: [[proven]]: Set<anything, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=Set<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: = NewClosure [[proven]] function=f1
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="outer" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Check v0 castType=number
+    v3 = Builtin builtin=Set
+    v4 = Construct v3, -, v2
+    v5 = AssumeType v4 castType=Set<anything, proven, pristine[Storage, Names]>
+    v6 = Add v2, v2
+    v7 = NewClosure v5 function=f1
+    v8 = Call v1, -, v7
+    v9 = Check v8 castType=number
+    v10 = Add v9, v6
+    Return v10
+  b2() role=CatchHandler:
+    v11 = CatchValue
+    v12 = Integer integer=-1
+    Return v12
+}
+function f1 name="inner" kind=Arrow captures=[{type=Set<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    Return v0
+}

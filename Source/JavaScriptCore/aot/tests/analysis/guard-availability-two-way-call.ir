@@ -1,0 +1,78 @@
+# Unknown code ends no guard on the fresh result of a two-way inline call while nothing else holds the result, and ends it once the result is stored. The call itself ends the guards of what its operands reach and of nothing else that is local
+# FORM: Selected
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b4()
+  b1(v2):
+    v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    PropSet v1, v0 key="source"
+    Return
+  b3():
+    Return
+  b4() frequency=Rare:
+    v6 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b1(v6)
+}
+# CHECK-LABEL: function f0
+# CHECK: b2:0 available: [v4]
+# CHECK-NEXT: b2:1 available: [v4]
+
+function f1 name="resultIsStored" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b4()
+  b1(v2):
+    v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    PropSet v1, v2 key="keys"
+    Return
+  b3():
+    Return
+  b4() frequency=Rare:
+    v6 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b1(v6)
+}
+# CHECK-LABEL: function f1
+# CHECK: b2:0 available: [v4]
+# CHECK-NEXT: b2:1 available: []
+
+function f2 name="callTakesAnotherArray" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything
+    v3 = NewArray v0 contents=anything
+    v4 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5):
+    TryCallInline v3, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b2(), miss b3()
+  b2(v6):
+    Return v6
+  b3() frequency=Rare:
+    v7 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+    Jump -> next b2(v7)
+  b4():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b1:0 available: [v2 v3 v5]
+# CHECK: b2:0 available: [v2 v5]
+
+function f3 name="callTakesGuardedArray" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything
+    v3 = NewArray v0 contents=anything
+    v4 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5):
+    TryCallInline v2, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b2(), miss b3()
+  b2(v6):
+    Return v6
+  b3() frequency=Rare:
+    v7 = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
+    Jump -> next b2(v7)
+  b4():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: b1:0 available: [v2 v3 v5]
+# CHECK: b2:0 available: [v3]

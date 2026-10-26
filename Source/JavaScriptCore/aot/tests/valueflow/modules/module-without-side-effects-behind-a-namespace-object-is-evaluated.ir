@@ -1,0 +1,31 @@
+# Whoever holds the namespace object of a barrel can read every export, so every module that has a variable behind it is evaluated, though their package declares them free of side effects
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f
+
+variable g0 name="first" module=m2 declared={type=anything} initialization=Uninitialized
+variable g1 name="second" module=m3 declared={type=anything} initialization=Uninitialized
+variable g2 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/package/index.js" displayPath="package/index.js" flags=[HasNoSideEffects] body=f1 requests=[{target=m2 completes=true}, {target=m3 completes=true}] exports=[{name="first" variable=g0}, {name="second" variable=g1}]
+module m2 path="/package/first.js" displayPath="package/first.js" flags=[HasNoSideEffects] body=f2 exports=[{name="first" variable=g0}]
+module m3 path="/package/second.js" displayPath="package/second.js" flags=[HasNoSideEffects] body=f3 exports=[{name="second" variable=g1}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = ModuleNamespace module=m1
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f1 name="index" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+function f2 name="first" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="second" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    Return
+}

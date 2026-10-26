@@ -1,0 +1,92 @@
+# Where some read of the field hands the closure on as a value, the field starts empty and that read makes the closure, once for the environment. The reads that only lead to GetCapture still ask the environment. A closure that the function that makes it also uses is made as before
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="handedOn" fields=[{key="inner" declared={type=f1}}]
+layout L1 kind=Environment name="meetsAnother" fields=[{key="inner" declared={type=f3}}]
+layout L2 kind=Environment name="usedWhereItIsMade" fields=[{key="inner" declared={type=f5}}]
+# CHECK: layout L0 kind=Environment name="handedOn" fields=[{key="inner" declared={type=absent|f1}}, {declared={type=number} flags=[IsHidden, IsAddedLate]{{*}}}]
+# CHECK: layout L1 kind=Environment name="meetsAnother" fields=[{key="inner" declared={type=absent|f3}}]
+# CHECK: layout L2 kind=Environment name="usedWhereItIsMade" fields=[{key="inner" declared={type=f5}}]
+
+function f0 name="handedOn" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1, v0 function=f1
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v4 = CallDirect v1, v0 function=f1
+    Return v4
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L0 = NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L0 field=1
+# CHECK-NEXT: = CallDirect [[scope]], v0 function=f1
+}
+
+function f1 name="inner" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = Integer integer=0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = GetCapture v4 function=f1
+    v6 = GetCapture v4 function=f1 index=1
+    v7 = CallDirect v5, v6 function=f1
+    Return v7
+  b2():
+    v8 = GetEnvironmentField v0 layout=L0 field=0
+    Return v8
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v0, v1 function=f1
+# CHECK: [[held]]: absent|f1 = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: [[isEmpty]]: boolean = TypeTest [[held]] testedType=absent
+# CHECK-NEXT: Branch [[isEmpty]] -> taken
+# CHECK: frequency=Rare:
+# CHECK: [[made]]: f1 = NewClosure v0, v1 function=f1
+# CHECK-NEXT: PutEnvironmentField v0, [[made]] layout=L0
+}
+
+function f2 name="meetsAnother" parameters=[{type=f3}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L1
+    v3 = NewClosure v2 function=f3
+    PutEnvironmentField v2, v3 layout=L1 field=0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = GetEnvironmentField v2 layout=L1 field=0
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v0)
+  b3(v6: f3):
+    v7 = GetCapture v6 function=f3
+    v8 = CallDirect v7 function=f3
+    Return v8
+# CHECK: = NewObject layout=L1
+# CHECK-NEXT: Branch v1
+# CHECK: = GetCapture
+# CHECK: = NewClosure {{*}} function=f3
+}
+
+function f3 name="inner" captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    Return
+}
+
+function f4 name="usedWhereItIsMade" results=[{type=anything}] {
+    v0 = NewObject layout=L2
+    v1 = NewClosure v0 function=f5
+    PutEnvironmentField v0, v1 layout=L2 field=0
+    v3 = CallDirect v0 function=f5
+    v4 = StrictEq v3, v1
+    Return v4
+# CHECK: [[closure]]: f5 = NewClosure {{*}} function=f5
+# CHECK-NEXT: PutEnvironmentField {{*}}, [[closure]] layout=L2
+}
+
+function f5 name="inner" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+# CHECK: [[closure]]: f5 = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: Return [[closure]]
+}

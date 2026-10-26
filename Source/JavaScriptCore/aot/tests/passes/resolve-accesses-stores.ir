@@ -1,0 +1,176 @@
+# A store or a definition that needs no test becomes PutSlot or PutSlotOrAdd in place, and every store that relies on a test stays by name
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 14
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="movable" declared={type=number} flow={prototypeName=AbsentOnPrototypes}}, {key="constant" declared={type=number} flags=[IsImmutable] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Freezable" fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L2 name="NeverEnumerated" fields=[{key="filled" declared={type=number|string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L3 kind=Instance name="Gauge" constructor=f0 fields=[{key="level" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="reset" function=f1 mutability=Fixed}, {key="peak" kind=Setter function=f2 mutability=Fixed}]}
+
+function f0 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] constructedClass=L3 {
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    Jump -> next b1()
+  b1():
+    PropDefine v3, v1 key="level"
+    Return v3
+# The allocation lists what is stored behind it in its own block, so the definition stands in another.
+# CHECK: v3: L3 = NewObject v2 layout=L3
+# CHECK: PutSlotOrAdd v3, -, v1 key="level" receivers=[L3] level=Proven
+}
+function f1 name="reset" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="peak" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+
+function f3 name="filled-slot" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    PropSet v0, v1 key="filled" mode=Sloppy
+    Return
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PutSlot v0, -, v1 key="filled" receivers=[L0] level=Proven
+# CHECK-NEXT: PutSlot v0, -, v1 key="filled" receivers=[L0] level=Proven
+# CHECK-NEXT: Return
+}
+function f4 name="object-may-be-frozen" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    PropSet v0, v1 key="optional"
+    PropDefine v0, v1 key="filled"
+    Return
+# CHECK-NEXT: b0(v0: L1, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="filled"
+# CHECK-NEXT: PropSet v0, v1 key="optional"
+# CHECK-NEXT: PropDefine v0, v1 key="filled"
+# CHECK-NEXT: Return
+}
+function f5 name="value-may-not-fit" parameters=[{type=L0}, {type=anything}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    PropSet v0, v2 key="filled"
+    PropDefine v0, v1 key="filled"
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v1 key="filled"
+# CHECK-NEXT: PropSet v0, v2 key="filled"
+# CHECK-NEXT: PropDefine v0, v1 key="filled"
+# CHECK-NEXT: Return
+}
+function f6 name="narrower-value-fits" parameters=[{type=L0}, {type=int[0, 9]}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+# CHECK: PutSlot v0, -, v1 key="filled" receivers=[L0] level=Proven
+}
+function f7 name="value-fits-every-member" parameters=[{type=L0|L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+# CHECK: PutSlot v0, -, v1 key="filled" receivers=[L0, L2] level=Proven
+}
+function f8 name="value-fits-one-member" parameters=[{type=L0|L2}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v1 key="filled"
+# CHECK-NEXT: Return
+}
+function f9 name="store-may-create-the-property" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+# CHECK: PutSlotOrAdd v0, -, v1 key="optional" receivers=[L0] level=Proven
+}
+function f10 name="store-may-create-a-property-nobody-enumerates" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+# CHECK: PutSlot v0, -, v1 key="optional" receivers=[L2] level=Proven
+}
+function f11 name="one-member-may-be-enumerated" parameters=[{type=L0|L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+# CHECK: PutSlotOrAdd v0, -, v1 key="optional" receivers=[L0, L2] level=Proven
+}
+function f12 name="empty-slot-of-a-field-that-may-move-out-says-nothing" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="inheritable"
+    PropSet v0, v1 key="movable"
+    PropDefine v0, v1 key="movable"
+    Return
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="inheritable" receivers=[L0] level=Proven
+# CHECK-NEXT: PropSet v0, v1 key="movable"
+# CHECK-NEXT: PropDefine v0, v1 key="movable"
+# CHECK-NEXT: Return
+}
+function f13 name="definition-does-not-look-at-prototypes" parameters=[{type=L0}, {type=L2}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v2 key="inheritable"
+    PropDefine v1, v2 key="inheritable"
+    PropDefine v0, v2 key="filled"
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutSlotOrAdd v0, -, v2 key="inheritable" receivers=[L0] level=Proven
+# CHECK-NEXT: PutSlot v1, -, v2 key="inheritable" receivers=[L2] level=Proven
+# CHECK-NEXT: PutSlot v0, -, v2 key="filled" receivers=[L0] level=Proven
+}
+function f14 name="immutable-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="constant"
+    PropDefine v0, v1 key="constant"
+    Return
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="constant"
+# CHECK-NEXT: PutSlot v0, -, v1 key="constant" receivers=[L0] level=Proven
+}
+function f15 name="no-slot-under-the-name" parameters=[{type=L0}, {type=L3}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v2 key="missing"
+    PropDefine v0, v2 key="missing"
+    PropSet v1, v2 key="reset"
+    PropSet v1, v2 key="peak"
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v2 key="missing"
+# CHECK-NEXT: PropDefine v0, v2 key="missing"
+# CHECK-NEXT: PropSet v1, v2 key="reset"
+# CHECK-NEXT: PropSet v1, v2 key="peak"
+# CHECK-NEXT: Return
+}
+function f16 name="access-site-is-kept" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled" accessSite=7
+    PropSet v0, v1 key="optional" accessSite=8
+    Return
+# CHECK: PutSlot v0, -, v1 key="filled" receivers=[L0] level=Proven accessSite=7
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="optional" receivers=[L0] level=Proven accessSite=8
+}
+function f17 name="checked-receiver" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Check v0 castType=L0
+    PropSet v2, v1 key="filled"
+    Return
+# CHECK: PutSlot v2, -, v1 key="filled" receivers=[L0] level=Proven
+}
+function f18 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="filled"
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v1 key="filled"
+# CHECK-NEXT: Return
+}
+function f19 name="rare-block-under-a-handler" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare handler=b3():
+    PropSet v0, v1 key="optional"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: frequency=Rare handler=b3():
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="optional" receivers=[L0] level=Proven
+}
+function f20 name="fresh-object" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1():
+    PropSet v1, v0 key="optional"
+    v3 = PropGet v1 key="filled"
+    Return v3
+# CHECK: v1: L0 = NewObject
+# CHECK: PutSlotOrAdd v1, -, v0 key="optional" receivers=[L0] level=Proven
+# CHECK-NEXT: v3: number = GetSlot v1 key="filled" receivers=[L0] level=Proven
+}

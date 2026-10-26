@@ -1,0 +1,368 @@
+# Each operand kind rejects a value of another type, and so does each operation that asks more of an operand than its kind
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 40
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
+layout L1 kind=Environment fields=[{key="c" declared={type=number}}]
+layout L2 fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L3 kind=Instance fields=[{key=#"p"@L3 declared={type=anything} flags=[IsPrivate]}]
+evalscope e0
+function f0 name="badAny" parameters=[{type=enumerator}] results=[{type=undefined}] {
+    v1 = Add v0, v0
+    Return
+}
+function f1 name="goodAny" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Add v0, v0
+    Return
+}
+function f2 name="badBoolean" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = LogicalNot v0
+    Return
+}
+function f3 name="goodBoolean" parameters=[{type=boolean}] results=[{type=undefined}] {
+    v1 = LogicalNot v0
+    Return
+}
+function f4 name="badInteger" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewArray contents=anything capacity=v0
+    Return
+}
+function f5 name="goodInteger" parameters=[{type=int}] results=[{type=undefined}] {
+    v1 = NewArray contents=anything capacity=v0
+    Return
+}
+function f6 name="badNumber" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = ArraySpeciesCreate v0, v1
+    Return
+}
+function f7 name="goodNumber" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+    v2 = ArraySpeciesCreate v0, v1
+    Return
+}
+function f8 name="badString" parameters=[{type=string|number}] results=[{type=undefined}] {
+  b0(v0: number|string):
+    v1 = GetStringLength v0
+    Return
+}
+function f9 name="goodString" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = GetStringLength v0
+    v2 = String string="a"
+    v3 = GetStringLength v2
+    v4 = FlattenString v0
+    v5 = GetStringLength v4
+    Return
+}
+function f10 name="badPropertyKey" parameters=[{type=function}, {type=number}] results=[{type=undefined}] {
+    SetFunctionName v0, v1
+    Return
+}
+function f11 name="goodPropertyKey" parameters=[{type=function}, {type=string|symbol}] results=[{type=undefined}] {
+    SetFunctionName v0, v1
+    Return
+}
+function f12 name="badObject" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Return
+}
+function f13 name="badNullableObject" parameters=[{type=null|object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Return
+}
+function f14 name="goodObject" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Return
+}
+function f15 name="badCallable" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="x"
+    Return
+}
+function f16 name="goodCallable" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="x"
+    Return
+}
+function f17 name="badArray" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    AppendElement v0, v1
+    Return
+}
+function f18 name="goodArray" parameters=[{type=Array}, {type=anything}] results=[{type=undefined}] {
+    AppendElement v0, v1
+    Return
+}
+function f19 name="badEnvironmentLayout" captures=[{type=env L1}] results=[{type=undefined}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return
+}
+function f20 name="badAbsentEnvironmentLayout" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = Unspecified valueType=absent|env L0
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = GetEnvironmentField v3 layout=L0 field=0
+    Return
+}
+function f21 name="goodEnvironmentLayout" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return
+}
+function f22 name="badObjectLayout" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    v3 = HasKeyOrder v0, v2 layout=L2 fields=[0]
+    Return
+}
+function f23 name="goodObjectLayout" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = HasKeyOrder v1, v1 layout=L2 fields=[0]
+    Return
+}
+function f24 name="badEnvironment" parameters=[{type=object}] results=[{type=undefined}] {
+    MarkEnvironmentEscaped v0
+    Return
+}
+function f25 name="badAbsentEnvironment" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v2 = Unspecified valueType=absent|env L0
+    Jump -> next b3(v2)
+  b3(v3):
+    MarkEnvironmentEscaped v3
+    Return
+}
+function f26 name="goodEnvironment" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    MarkEnvironmentEscaped v0
+    Return
+}
+function f27 name="badEvalOperand" parameters=[{type=anything}, {type=enumerator}] results=[{type=undefined}] {
+    v2 = DirectEval v0, v0, -, v1 evalScope=e0
+    Return
+}
+function f28 name="badAbsentEvalOperand" captures=[{type=env L0}] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v3 = Unspecified valueType=absent|env L0
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = DirectEval v1, v1, -, v4 evalScope=e0
+    Return
+}
+function f29 name="goodEvalOperands" captures=[{type=env L0}] parameters=[{type=anything}, {type=classtoken}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything, v2: classtoken):
+    v3 = DirectEval v1, v1, -, v0, v1, v2 evalScope=e0
+    Return
+}
+function f30 name="badResults" results=[{type=undefined}] {
+    v0 = Undefined
+    v1 = ResultAt v0 index=0
+    Return
+}
+function f31 name="goodResults" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Results v0
+    v2 = ResultAt v1 index=0
+    v3 = Strcat v2
+    Return
+}
+function f32 name="badGuard" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = ShapeTest v0 layouts=[L2]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetSlot v0, v1 key="x" receivers=[L2] level=Proven
+    Return
+  b2():
+    Return
+}
+function f33 name="goodGuard" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = ShapeTest v0 layouts=[L2]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L2] level=Proven
+    Return
+  b2():
+    Return
+}
+function f34 name="goodAllocationAsGuard" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L2] level=Proven
+    Return
+}
+function f35 name="badEnumerator" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = ForInStep v0, v0
+    Return
+}
+function f36 name="goodEnumerator" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = ForInOpen v0
+    v2 = ForInStep v1, v0
+    Return
+}
+function f37 name="badException" parameters=[{type=anything}] results=[{type=undefined}] {
+    Rethrow v0
+}
+function f38 name="goodException" parameters=[{type=exception}] results=[{type=undefined}] {
+    Rethrow v0
+}
+function f39 name="badClassToken" parameters=[{type=anything}, {type=symbol}] results=[{type=undefined}] {
+    v2 = PrivateGet v0, v1 layout=L3 field=0
+    Return
+}
+function f40 name="goodClassToken" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewClassToken layout=L3
+    v2 = PrivateGet v0, v1 layout=L3 field=0
+    Return
+}
+function f41 name="badStringBuilder" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = StringBuilderLength v0
+    Return
+}
+function f42 name="goodStringBuilder" results=[{type=undefined}] {
+    v0 = StringBuilderBegin
+    v1 = StringBuilderLength v0
+    v2 = StringBuilderFinish v0
+    Return
+}
+function f43 name="badCursor" parameters=[{type=int}] results=[{type=undefined}] {
+    v1 = JSONGetByte v0
+    Return
+}
+function f44 name="goodCursor" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = JSONSourceOpen v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = JSONSourceStart v2
+    v4 = JSONGetByte v3
+    v5 = JSONSourceClose v2, v3
+    Return
+  b2():
+    Return
+}
+function f45 name="badKeyOrder" parameters=[{type=int}] results=[{type=undefined}] {
+    v1 = JSONObjectKey v0 layout=L2 field=0
+    Return
+}
+function f46 name="goodKeyOrder" results=[{type=undefined}] {
+    v0 = JSONObjectBegin layout=L2
+    v1 = JSONObjectKey v0 layout=L2 field=0
+    Return
+}
+function f47 name="badBuilderCursor" parameters=[{type=int}] results=[{type=undefined}] {
+    v1 = StringBuilderBegin
+    StringBuilderCommit v1, v0
+    v3 = StringBuilderFinish v1
+    Return
+}
+function f48 name="goodBuilderCursor" results=[{type=undefined}] {
+    v0 = StringBuilderBegin
+    v1 = StringBuilderReserve v0 size=8
+    StringBuilderCommit v0, v1
+    v3 = StringBuilderFinish v0
+    Return
+}
+function f49 name="badBranchCondition" parameters=[{type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f50 name="badThrownEnumerator" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = ForInOpen v0
+    Throw v1
+}
+function f51 name="badResultsUsedAsValue" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Results v0
+    v2 = Strcat v1
+    Return
+}
+function f52 name="badResultsOnEdge" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Results v0
+    Jump -> next b1(v1)
+  b1(v2):
+    Return
+}
+function f53 name="badResultsOnHandlerEdge" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+    v2 = Results v0
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = Call v1
+    Return
+  b2(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f54 name="badResultsThrown" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Results v0
+    Throw v1
+}
+function f55 name="badStepUsedAsValue" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = ForInOpen v0
+    v2 = ForInStep v1, v0
+    v3 = Strcat v2
+    Return
+}
+function f56 name="badIntegralKey" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    v2 = ElemGet v0, v1 [keyIsIntegral]
+    Return
+}
+function f57 name="badIntegralKeyIsString" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
+    v2 = ElemGet v0, v1 [keyIsIntegral]
+    Return
+}
+function f58 name="goodIntegralKey" parameters=[{type=anything}, {type=i32}, {type=number}] results=[{type=undefined}] {
+    v3 = ElemGet v0, v1 [keyIsIntegral]
+    v4 = Mul v1, v1
+    v5 = ElemGet v0, v4 [keyIsIntegral]
+    v6 = ElemGet v0, v2
+    Return
+}
+function f59 name="badIntegralPosition" parameters=[{type=Float64Array}, {type=number}] results=[{type=undefined}] {
+    v2 = GetTypedArrayElement v0, v1 typedArrayType=10 [keyIsIntegral]
+    Return
+}
+function f60 name="goodIntegralPosition" parameters=[{type=Float64Array}, {type=i32}] results=[{type=undefined}] {
+    v2 = GetTypedArrayElement v0, v1 typedArrayType=10 [keyIsIntegral]
+    Return
+}
+function f61 name="badCaptureOfAnyFunction" parameters=[{type=function}] results=[{type=undefined}] {
+    v1 = GetCapture v0 function=f67 index=0
+    Return
+}
+function f62 name="badCaptureOfOtherFunction" parameters=[{type=f68}] results=[{type=undefined}] {
+    v1 = GetCapture v0 function=f67 index=0
+    Return
+}
+function f63 name="goodCapture" parameters=[{type=f67}] results=[{type=undefined}] {
+    v1 = GetCapture v0 function=f67 index=0
+    Return
+}
+function f64 name="badAppendedObject" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = StringBuilderBegin
+    StringBuilderAppend v1, v0
+    v3 = StringBuilderFinish v1
+    Return
+}
+function f65 name="badAppendedSymbol" parameters=[{type=string|symbol}] results=[{type=undefined}] {
+    v1 = StringBuilderBegin
+    StringBuilderAppend v1, v0
+    v3 = StringBuilderFinish v1
+    Return
+}
+function f66 name="goodAppendedPrimitives" parameters=[{type=string}, {type=undefined|null|boolean|number|bigint}] results=[{type=undefined}] {
+    v2 = StringBuilderBegin
+    StringBuilderAppend v2, v0, v1
+    v4 = StringBuilderFinish v2
+    Return
+}
+function f67 name="closure" captures=[{type=number}] results=[{type=undefined}]
+function f68 name="otherClosure" captures=[{type=number}] results=[{type=undefined}]

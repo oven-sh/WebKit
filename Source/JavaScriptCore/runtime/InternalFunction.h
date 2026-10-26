@@ -97,6 +97,13 @@ protected:
     JS_EXPORT_PRIVATE void finishCreation(VM&, unsigned length, const String& name, PropertyAdditionMode = PropertyAdditionMode::WithStructureTransition);
     DECLARE_DEFAULT_FINISH_CREATION;
 
+#if ENABLE(AOT)
+    // They refuse only in a realm whose built-ins are locked. OverridesPut is not among the flags above: the constructor sets it on the Structure in such a realm alone,
+    // so that elsewhere a store to a native constructor, or to a class that extends one, is cached like any other.
+    JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
+#endif
     JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
     JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
 

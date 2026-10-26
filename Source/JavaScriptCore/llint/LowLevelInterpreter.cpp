@@ -95,6 +95,7 @@ using WebConfig::g_config;
 // These are for building a C Loop interpreter:
 #define OFFLINE_ASM_BEGIN
 #define OFFLINE_ASM_END
+#define OFFLINE_ASM_SECTION(name)
 
 #if ENABLE(OPCODE_TRACING)
 #define TRACE_OPCODE(opcode) dataLogF("   op %s\n", #opcode)
@@ -482,6 +483,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // start and end of the llint instruction range quickly.
 
 #define OFFLINE_ASM_BEGIN   __asm__( \
+    OFFLINE_ASM_TEXT_SECTION \
     OFFLINE_ASM_GLOBAL_LABEL_IMPL(jsc_llint_begin, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGN4B, HIDE_SYMBOL) \
     OFFLINE_ASM_BEGIN_SPACER
 
@@ -520,9 +522,40 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #define OFFLINE_ASM_TEXT_SECTION ".text\n"
 #endif
 
+#if OS(DARWIN)
+#define OFFLINE_ASM_SECTION_BEGINNING_WITH(section, label) \
+    ".section __TEXT," section ",regular,pure_instructions\n" \
+    ".ifndef " SYMBOL_STRING(label) "\n" \
+    OFFLINE_ASM_GLOBAL_LABEL_IMPL(label, OFFLINE_ASM_NO_ALT_ENTRY_DIRECTIVE, OFFLINE_ASM_ALIGN4B, HIDE_SYMBOL) \
+    OFFLINE_ASM_BEGIN_SPACER \
+    ".endif\n"
+#define OFFLINE_ASM_SECTION_trampolines OFFLINE_ASM_TEXT_SECTION
+#define OFFLINE_ASM_SECTION_bytecode OFFLINE_ASM_SECTION_BEGINNING_WITH("__jsc_bytecode", jsc_llint_bytecode_begin)
+#define OFFLINE_ASM_SECTION_webassembly OFFLINE_ASM_SECTION_BEGINNING_WITH("__jsc_wasm", jsc_llint_webassembly_begin)
+#elif (CPU(X86_64) || CPU(ARM64)) && (OS(LINUX) || OS(FREEBSD))
+#if CPU(ARM64) && COMPILER(CLANG)
+#define OFFLINE_ASM_SWITCH_TO(section) \
+    ".cfi_endproc\n" \
+    section \
+    ".cfi_startproc\n" \
+    ".cfi_def_cfa fp, 16\n" \
+    ".cfi_offset lr, -8\n" \
+    ".cfi_offset fp, -16\n"
+#else
+#define OFFLINE_ASM_SWITCH_TO(section) section
+#endif
+#define OFFLINE_ASM_SECTION_trampolines OFFLINE_ASM_SWITCH_TO(OFFLINE_ASM_TEXT_SECTION)
+#define OFFLINE_ASM_SECTION_bytecode OFFLINE_ASM_SWITCH_TO(".section .text.jsc_llint_bytecode,\"ax\",@progbits\n")
+#define OFFLINE_ASM_SECTION_webassembly OFFLINE_ASM_SWITCH_TO(".section .text.jsc_llint_webassembly,\"ax\",@progbits\n")
+#else
+#define OFFLINE_ASM_SECTION_trampolines OFFLINE_ASM_TEXT_SECTION
+#define OFFLINE_ASM_SECTION_bytecode OFFLINE_ASM_TEXT_SECTION
+#define OFFLINE_ASM_SECTION_webassembly OFFLINE_ASM_TEXT_SECTION
+#endif
+#define OFFLINE_ASM_SECTION(name) OFFLINE_ASM_SECTION_##name
+
 #if CPU(RISCV64)
 #define OFFLINE_ASM_GLOBAL_LABEL_IMPL(label, ALT_ENTRY, ALIGNMENT, VISIBILITY) \
-    OFFLINE_ASM_TEXT_SECTION                    \
     ALIGNMENT                                   \
     ALT_ENTRY(label)                            \
     ".globl " SYMBOL_STRING(label) "\n"         \
@@ -531,7 +564,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     SYMBOL_STRING(label) ":\n"
 #else
 #define OFFLINE_ASM_GLOBAL_LABEL_IMPL(label, ALT_ENTRY, ALIGNMENT, VISIBILITY) \
-    OFFLINE_ASM_TEXT_SECTION                    \
     ALIGNMENT                                   \
     ALT_ENTRY(label)                            \
     ".globl " SYMBOL_STRING(label) "\n"         \

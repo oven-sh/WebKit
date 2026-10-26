@@ -27,12 +27,13 @@
 #include "JSToWasm.h"
 #include "WasmCallee.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "JSCJSValueInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "MaxFrameExtentForSlowPathCall.h"
+#include "ThunkGenerator.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include "WasmOperations.h"
@@ -468,12 +469,48 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
 
     ASSERT(!m_jsToWasmICCallee);
     Ref<JSToWasmICCallee> jsToWasmICCallee = JSToWasmICCallee::create(usedCalleeSaveRegisters(*this));
-    const RegisterAtOffsetList& registersToSpill = *jsToWasmICCallee->calleeSaveRegistersImpl();
+    if (!emitJSToWasmICEntrypoint(jit, *jsToWasmICCallee->calleeSaveRegistersImpl(), CalleeBits::boxNativeCallee(jsToWasmICCallee.ptr()), std::nullopt))
+        return nullptr;
 
+    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::WasmThunk, JITCompilationCanFail);
+    if (linkBuffer.didFailToAllocate()) [[unlikely]]
+        return nullptr;
+
+    auto code = FINALIZE_WASM_CODE(linkBuffer, JSEntryPtrTag, nullptr, "JS->Wasm IC %s", WTF::toUTF8CString(*this));
+    jsToWasmICCallee->setEntrypoint(WTF::move(code));
+    WTF::storeStoreFence();
+    m_jsToWasmICCallee = WTF::move(jsToWasmICCallee);
+
+    return m_jsToWasmICCallee->jsToWasm();
+}
+
+bool RTT::mayHaveICEntrypointInImage() const
+{
+    auto isNumber = [](Type type) {
+        return type.isI32() || type.isI64() || type.isF32() || type.isF64();
+    };
+    if (kind() != RTTKind::Function || returnCount() > 1)
+        return false;
+    if (returnCount() && (!isNumber(returnType(0)) || returnType(0).isI64()))
+        return false;
+    for (unsigned i = 0; i < argumentCount(); ++i) {
+        if (!isNumber(argumentType(i)))
+            return false;
+    }
+    return true;
+}
+
+RegisterAtOffsetList RTT::icEntrypointSavedRegisters() const
+{
+    return usedCalleeSaveRegisters(*this);
+}
+
+bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<ICEntrypointImagePointers> pointersInImage) const
+{
     const Wasm::WasmCallingConvention& wasmCC = Wasm::wasmCallingConvention();
     Wasm::CallInformation wasmCallInfo = wasmCC.callInformationFor(*this);
     if (argumentsOrResultsIncludeV128() || argumentsOrResultsIncludeExnref()) [[unlikely]]
-        return nullptr;
+        return false;
     Wasm::CallInformation jsCallInfo = Wasm::jsCallingConvention().callInformationFor(*this, Wasm::CallRole::Callee);
     RegisterAtOffsetList savedResultRegisters = wasmCallInfo.computeResultsOffsetList();
 
@@ -547,6 +584,7 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
             break;
         }
         case Wasm::TypeKind::I64: {
+            materializeTagRegistersIfNeeded();
             jit.loadValue(jsParam, scratchGPR);
             slowPath.append(jit.branchIfNotCell(scratchGPR));
             slowPath.append(jit.branchIfNotHeapBigInt(scratchGPR));
@@ -668,7 +706,11 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
     jit.loadPtr(MacroAssembler::Address(stackLimitGPR, WebAssemblyFunction::offsetOfEntrypointLoadLocation()), stackLimitGPR);
     jit.loadPtr(MacroAssembler::Address(stackLimitGPR), stackLimitGPR);
 
-    jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(jsToWasmICCallee.ptr())), scratchGPR);
+    if (pointersInImage) {
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->callee * sizeof(void*))), scratchGPR);
+    } else
+        jit.move(CCallHelpers::TrustedImmPtr(boxedCallee), scratchGPR);
     static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
     jit.storePairPtr(GPRInfo::wasmContextInstancePointer, scratchGPR, GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
 
@@ -696,6 +738,15 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
 
     slowPath.link(&jit);
     JIT_COMMENT(jit, "Slow path start");
+    if (pointersInImage) {
+        RELEASE_ASSERT(exceptionChecks.empty());
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->genericEntrypoint * sizeof(void*))), scratchGPR);
+        jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
+        jit.emitFunctionEpilogue();
+        jit.farJump(scratchGPR, JSEntryPtrTag);
+        return true;
+    }
     jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT0);
     jit.emitFunctionEpilogue();
@@ -720,19 +771,9 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
     jit.callOperation<OperationPtrTag>(Wasm::operationWasmUnwind);
     JIT_COMMENT(jit, "Exception handle jump");
     jit.farJump(GPRInfo::returnValueGPR, ExceptionHandlerPtrTag);
-
-    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::WasmThunk, JITCompilationCanFail);
-    if (linkBuffer.didFailToAllocate()) [[unlikely]]
-        return nullptr;
-
-    auto code = FINALIZE_WASM_CODE(linkBuffer, JSEntryPtrTag, nullptr, "JS->Wasm IC %s", WTF::toUTF8CString(*this));
-    jsToWasmICCallee->setEntrypoint(WTF::move(code));
-    WTF::storeStoreFence();
-    m_jsToWasmICCallee = WTF::move(jsToWasmICCallee);
-
-    return m_jsToWasmICCallee->jsToWasm();
+    return true;
 }
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

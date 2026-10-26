@@ -1,0 +1,136 @@
+# A private name is a field like any other of a virtual instance
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 4
+# STATISTIC: AllocationsSunk = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Secret" fields=[{key=#"#a"@L0 declared={type=anything} flags=[IsPrivate]}, {key=#"#b"@L0 declared={type=anything} flags=[IsPrivate]}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Other" fields=[{key=#"#a"@L1 declared={type=anything} flags=[IsPrivate]}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L2 kind=Instance name="Repeated" fields=[{key=#"#a"@L2 declared={type=anything} flags=[IsPrivate]}] flow={baseState=None}
+
+function f0 name="definedThenRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v2, v0 layout=L0 field=0 receivers=[L0]
+    PrivateDefine v3, v2, v1 layout=L0 field=1 receivers=[L0]
+    v6 = PrivateGet v3, v2 layout=L0 field=1 receivers=[L0]
+    Return v6
+# CHECK-NOT: NewObject
+# CHECK-NOT: PrivateDefine
+# CHECK-NOT: PrivateGet
+# CHECK: v6: anything = Upcast v1 castType=anything
+}
+
+function f1 name="readBeforeDefinition" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v2, v0 layout=L0 field=0 receivers=[L0]
+    v5 = PrivateGet v3, v2 layout=L0 field=1 receivers=[L0]
+    Return v5
+# CHECK-NOT: PrivateDefine
+# CHECK: [[cell1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: v5:{{*}}= PrivateGet [[cell1]], v2 layout=L0 field=1
+}
+
+function f2 name="setAfterDefinition" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v2, v0 layout=L0 field=0 receivers=[L0]
+    PrivateSet v3, v2, v1 layout=L0 field=0 receivers=[L0]
+    v6 = PrivateGet v3, v2 layout=L0 field=0 receivers=[L0]
+    Return v6
+# CHECK-NOT: NewObject
+# CHECK-NOT: PrivateSet
+# CHECK: v6: anything = Upcast v1 castType=anything
+}
+
+function f3 name="setBeforeDefinition" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v2, v0 layout=L0 field=0 receivers=[L0]
+    PrivateSet v3, v2, v1 layout=L0 field=1 receivers=[L0]
+    Return v0
+# CHECK: [[cell3]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PrivateSet [[cell3]], v2, v1 layout=L0 field=1
+}
+
+function f4 name="definedTwice" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v2, v0 layout=L0 field=0 receivers=[L0]
+    PrivateDefine v3, v2, v1 layout=L0 field=0 receivers=[L0]
+    Return v0
+# CHECK: [[cell4]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PrivateDefine [[cell4]], v2, v1 layout=L0
+# CHECK-NOT: PrivateDefine
+}
+
+function f5 name="hasIsAnswered" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L0
+    v2 = NewClassToken layout=L1
+    v3 = NewObject layout=L0
+    PrivateDefine v3, v1, v0 layout=L0 field=0 receivers=[L0]
+    v5 = PrivateHas v3, v1 layout=L0 field=0 receivers=[L0]
+    v6 = PrivateHas v3, v1 layout=L0 field=1 receivers=[L0]
+    v7 = PrivateHas v3, v2 layout=L1 field=0 receivers=[L0]
+    v8 = Call v0, -, v5, v6, v7
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: PrivateHas
+# CHECK: [[has5]]: true = Boolean boolean=true
+# CHECK-NEXT: v5: boolean = Upcast [[has5]] castType=boolean
+# CHECK-NEXT: [[lacks5]]: false = Boolean
+# CHECK-NEXT: v6: boolean = Upcast [[lacks5]] castType=boolean
+# CHECK-NEXT: [[foreign5]]: false = Boolean
+# CHECK-NEXT: v7: boolean = Upcast [[foreign5]] castType=boolean
+# CHECK-NEXT: = Call v0, -, v5, v6, v7
+}
+
+function f6 name="builtWithPrivateFieldsInOrder" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewClassToken layout=L0
+    v4 = NewObject layout=L0
+    PrivateDefine v4, v3, v0 layout=L0 field=1 receivers=[L0]
+    PrivateDefine v4, v3, v1 layout=L0 field=0 receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v0, -, v4
+    Return v7
+  b2():
+    Return v1
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[cell6]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[1, 0]
+# CHECK-NEXT: = Call v0, -, [[cell6]]
+}
+
+function f7 name="slotForms" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v2, v2, v1 key=#"#a"@L0 receivers=[L0] level=Proven
+    v4 = GetSlot v2, v2 key=#"#a"@L0 receivers=[L0] level=Proven
+    v5 = IsSlotFilled v2, v2 key=#"#b"@L0 receivers=[L0] level=Proven
+    PutSlotOrAdd v2, v2, v0 key=#"#b"@L0 receivers=[L0] level=Proven
+    v7 = IsSlotFilled v2, v2 key=#"#b"@L0 receivers=[L0] level=Proven
+    v8 = Call v0, -, v4, v5, v7
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: Slot
+# CHECK: v4: anything = Upcast v1 castType=anything
+# CHECK-NEXT: [[lacks7]]: false = Boolean
+# CHECK-NEXT: v5: boolean = Upcast [[lacks7]] castType=boolean
+# CHECK-NEXT: [[has7]]: true = Boolean boolean=true
+# CHECK-NEXT: v7: boolean = Upcast [[has7]] castType=boolean
+# CHECK-NEXT: = Call v0, -, v4, v5, v7
+}
+
+function f8 name="classEvaluatedRepeatedly" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L2
+    v2 = NewClassToken layout=L2
+    v3 = NewObject layout=L2
+    PrivateDefine v3, v1, v0 layout=L2 field=0 receivers=[L2]
+    v5 = PrivateGet v3, v2 layout=L2 field=0 receivers=[L2]
+    Return v5
+# CHECK: v3:{{*}}= NewObject layout=L2
+# CHECK-NEXT: PrivateDefine v3, v1, v0 layout=L2
+# CHECK-NEXT: v5:{{*}}= PrivateGet v3, v2 layout=L2
+}

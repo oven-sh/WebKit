@@ -1,0 +1,11 @@
+# function mark(o: Markable) { o.marked = 2 }   function isMarked0(o: Made0) { return o.marked }   and the same for Made1 and Made2
+# Three literals of three layouts are Markable, and unknown code has them all, with the functions.
+# As many layouts in the type of the receiver as get room for a name that is stored through it: each of them gets the field. The pair with one layout more than the limit is
+# name-stored-through-a-declared-receiver-of-one-layout-too-many-gets-a-field-in-all-but-one.ir.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:3
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made0" {{*}}{key="marked" {{*}} flags=[IsAddedLate
+# CHECK: layout L1 name="Made1" {{*}}{key="marked" {{*}} flags=[IsAddedLate
+# CHECK: layout L2 name="Made2" {{*}}{key="marked" {{*}} flags=[IsAddedLate
+# CHECK: function f0
+# PROGRAM-OF: name-stored-through-a-declared-receiver-of-one-layout-too-many-gets-a-field-in-all-but-one.ir

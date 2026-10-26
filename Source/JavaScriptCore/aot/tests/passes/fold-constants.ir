@@ -1,0 +1,216 @@
+# Values decided by their operands or types fold to constants, and keyed accesses with constant keys become named accesses
+# FORM: Prepared
+# RUN: pass FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="three" declared={type=3}}]
+layout L1 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="written" module=m0 declared={type=anything} initialization=Undefined
+runtimefunction id=0 function=f11
+
+function f0 name="knownOperands" results=[{type=number}] {
+    v0 = Integer integer=2
+    v1 = Integer integer=3
+    v2 = Add v0, v1
+    v3 = Less v0, v1
+    v4 = StrictEq v0, v1
+    v5 = LogicalNot v3
+    v6 = ToBoolean v0
+    Return v2
+# CHECK: v2:{{*}}= Integer integer=5
+# CHECK-NEXT: v3:{{*}}= Boolean boolean=true
+# CHECK-NEXT: v4: false = Boolean
+# CHECK-NEXT: v5: false = Boolean
+# CHECK-NEXT: v6:{{*}}= Boolean boolean=true
+}
+
+function f1 name="singleValueType" captures=[{type=env L0}] results=[{type=number}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+# CHECK: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: 3 = Integer integer=3
+}
+
+function f2 name="testsDecidedByTypes" parameters=[{type=L2}, {type=object}, {type=boolean}, {type=string}] results=[{type=boolean}] {
+    v4 = TypeTest v0 testedType=undefined|null
+    v5 = Undefined
+    v6 = StrictEq v1, v5
+    v7 = ToBoolean v2
+    v8 = TypeTest v3 testedType=string
+    v9 = ToBoolean v0
+    Return v4
+# CHECK: v4: false = Boolean
+# CHECK: v6: false = Boolean
+# CHECK-NEXT: v7:{{*}}= Upcast v2 castType={{*}}
+# CHECK-NEXT: v8:{{*}}= Boolean boolean=true
+# CHECK-NEXT: v9:{{*}}= Boolean boolean=true
+}
+
+function f3 name="typeofComparisons" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeOf v0
+    v2 = String string="number"
+    v3 = StrictEq v1, v2
+    v4 = String string="nope"
+    v5 = Eq v1, v4
+    Return v3
+# CHECK: v3: boolean = TypeTest v0 testedType=number
+# CHECK: v5: false = Boolean
+}
+
+function f4 name="closures" results=[{type=boolean}] {
+    v0 = NewClosure function=f0
+    v1 = IsClosureOf v0 function=f0
+    v2 = IsClosureOf v0 function=f3
+    v3 = TypeTest v0 testedType=function
+    v4 = ToBoolean v0
+    Return v1
+# CHECK: v1:{{*}}= Boolean boolean=true
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3:{{*}}= Boolean boolean=true
+# CHECK-NEXT: v4:{{*}}= Boolean boolean=true
+}
+
+function f5 name="constantKeys" parameters=[{type=anything}, {type=anything}, {type="name"}] results=[{type=anything}] {
+    v3 = String string="a"
+    v4 = ElemGet v0, v3
+    ElemSet v0, v3, v1 mode=Sloppy
+    v6 = ElemHas v0, v3
+    v7 = ElemDelete v0, v3 mode=Sloppy
+    v8 = ElemGet v0, v2
+    Return v4
+# CHECK: v4:{{*}}= PropGet v0 key="a"
+# CHECK-NEXT: PropSet v0, v1 key="a" mode=Sloppy
+# CHECK-NEXT: v6:{{*}}= PropHas v0 key="a"
+# CHECK-NEXT: v7:{{*}}= PropDelete v0 key="a" mode=Sloppy
+# CHECK-NEXT: v8:{{*}}= PropGet v0 key="name"
+}
+
+function f6 name="wellKnownSymbolKey" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = KeyConstant key=@@iterator
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: v2:{{*}}= PropGet v0 key=@@iterator
+}
+
+function f7 name="possibleElementKeys" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="0"
+    v2 = String string="-1"
+    v3 = String string="NaN"
+    v4 = ElemGet v0, v1
+    v5 = ElemGet v0, v2
+    v6 = ElemGet v0, v3
+    Return v4
+# CHECK-NOT: PropGet
+# CHECK-COUNT-3: = ElemGet v0,
+}
+
+function f8 name="undecided" parameters=[{type=0}, {type=number}, {type=undefined|object}, {type=anything}, {type=object}] results=[{type=boolean}] {
+  b0(v0: 0, v1: number, v2: undefined|object, v3: anything, v4: object ~ L1):
+    v5 = StrictEq v0, v1
+    v6 = ToBoolean v2
+    v7 = BitAnd v0, v3
+    v8 = TypeTest v4 testedType=L1
+    v9 = PropGet v4 key="y"
+    Return v5
+# CHECK: v5:{{*}}= StrictEq v0, v1
+# CHECK-NEXT: v6:{{*}}= ToBoolean v2
+# CHECK-NEXT: v7:{{*}}= BitAnd v0, v3
+# CHECK-NEXT: v8:{{*}}= TypeTest v4
+# CHECK-NEXT: v9:{{*}}= PropGet v4
+}
+
+function f9 name="copiedProperties" parameters=[{type=object}, {type=number}, {type=string}] results=[{type=anything}] {
+    CopyDataProperties v0, v1
+    CopyDataProperties v0, v2
+    Return v0
+# CHECK: v3:{{*}}= Undefined
+# CHECK-NEXT: CopyDataProperties v0, v2
+}
+
+function f10 name="valueUnderHandler" results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = Add v0, v0
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+# CHECK: b1() handler=b3():
+# CHECK: v1: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b2()
+}
+
+function f11 name="storageKinds" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array<string, proven>}, {type=Array<number, proven>}, {type=Array<string>}] results=[{type=anything}] {
+    v3 = ArrayStorageKind v0
+    v4 = Integer integer=2
+    v5 = StrictEq v3, v4
+    v6 = Integer integer=1
+    v7 = StrictEq v3, v6
+    v8 = ArrayStorageKind v1
+    v9 = StrictEq v8, v4
+    v10 = ArrayStorageKind v2
+    v11 = StrictEq v10, v4
+    Return v5
+# CHECK: v5: false = Boolean
+# CHECK: v7:{{*}}= StrictEq v3, v6
+# CHECK: v9:{{*}}= StrictEq v8, v4
+# CHECK: v11:{{*}}= StrictEq v10, v4
+}
+
+function f12 name="directCalls" results=[{type=number}] {
+    v0 = CallDirect function=f13
+    v1 = CallDirect function=f14
+    Return v0
+# CHECK: v0:{{*}}= Integer integer=3
+# CHECK-NEXT: v1:{{*}}= CallDirect
+}
+
+function f13 name="returnsThree" results=[{type=3}] {
+    v0 = Integer integer=3
+    Return v0
+}
+# CHECK-LABEL: function f13 name="returnsThree"
+
+function f14 name="writesAndReturnsThree" results=[{type=3}] {
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+# CHECK-LABEL: function f14 name="writesAndReturnsThree"
+
+function f15 name="castOfConstant" results=[{type=anything}] {
+    v0 = Integer integer=5
+    v1 = Upcast v0 castType=number|string
+    Return v1
+# CHECK: v1:{{*}}= Upcast v0 castType=number|string
+}
+
+function f16 name="decidedTestPassesItsOperand" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+# CHECK: v1:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+}
+
+function f17 name="oneFunctionUnderTwoNames" results=[{type=boolean}] {
+    v0 = Builtin builtin=StringPrototypeTrimLeft
+    v1 = Builtin builtin=StringPrototypeTrimStart
+    v2 = Builtin builtin=StringPrototypeTrimEnd
+    v3 = StrictEq v0, v1
+    v4 = StrictEq v1, v2
+    Return v3
+# CHECK: v3: true = Boolean boolean=true
+# CHECK-NEXT: v4: false = Boolean
+}

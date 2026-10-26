@@ -1,0 +1,54 @@
+# function low(x: number) { return x & 31 }  function flipped(x: number) { return ~x }  function shifted(x: number) { return x << 2 }  function half(x: number) { return x / 2 }  use(low(0.5), flipped(0.5), shifted(0.5), half(0.5))
+# Behind a check the type of a value keeps nothing out, so the rule alone says what an operator answers. An operator on bits makes an integer of 32 bits of whatever number it is given, a fraction too.
+# A quotient is any number.
+# RUN: valueflow-why values=f0:v13
+# CHECK: operand 2 {{*}} 1 members: primitive4
+# CHECK: operand 3 {{*}} 1 members: primitive4
+# CHECK: operand 4 {{*}} 1 members: primitive4
+# CHECK: operand 5 {{*}} 3 members: primitive4 primitive5 primitive6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Double number=0.5
+    v6 = Call v0, -, v5
+    v7 = Call v1, -, v5
+    v8 = Call v2, -, v5
+    v9 = Call v3, -, v5
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Call v4, -, v6, v7, v8, v9
+    Return
+}
+function f1 name="low" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=number
+    v2 = Integer integer=31
+    v3 = BitAnd v1, v2
+    Return v3
+}
+function f2 name="flipped" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=number
+    v2 = BitNot v1
+    Return v2
+}
+function f3 name="shifted" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=number
+    v2 = Integer integer=2
+    v3 = LShift v1, v2
+    Return v3
+}
+function f4 name="half" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=number
+    v2 = Integer integer=2
+    v3 = Div v1, v2
+    Return v3
+}
+function f5 name="use" module=m0 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}

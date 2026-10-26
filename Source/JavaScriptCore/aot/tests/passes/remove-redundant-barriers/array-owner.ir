@@ -1,0 +1,26 @@
+# NewContiguousArray is not declared to allocate after its last safepoint, so a store to the array it made keeps its barrier. NewPromise is.
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 0
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="array-owner" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything @JSValue):
+    v1 @Int32 = Integer integer=2
+    v2 @Int32 = Integer integer=0
+    v3 @Cell = NewContiguousArray v1
+    PutContiguousIndex v3, v2, v0
+    v5 @JSValue = Undefined
+    Return v5
+# CHECK: PutContiguousIndex v3, v2, v0
+# CHECK-NOT: ownerCannotBeMarked
+}
+function f1 name="promise-owner" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string @JSValue):
+    v1 @Cell = NewPromise
+    FulfillFreshPromise v1, v0
+    v3 @JSValue = Undefined
+    Return v3
+# CHECK: FulfillFreshPromise v1, v0 [ownerCannotBeMarked]
+}

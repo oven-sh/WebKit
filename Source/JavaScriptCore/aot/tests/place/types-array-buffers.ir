@@ -1,0 +1,38 @@
+# The run-time type record of a class of buffers names the sharing mode, and the record of both classes names the cell type alone
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables types
+# CHECK: type ArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[SharingModeIs(ArrayBuffer)]
+# CHECK: type SharedArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[SharingModeIs(SharedArrayBuffer)]
+# CHECK: type ArrayBuffer{{*}}|SharedArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[CellTypeIs({{*}})]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+# The tables name the type of a variable only where it is a static field of a class.
+layout L0 kind=Instance name="Buffers" constructor=f1 staticFields=[{key="unshared" variable=g0}, {key="shared" variable=g1}, {key="either" variable=g2}]
+variable g0 name="unshared" module=m0 declared={type=anything} owner=L0
+variable g1 name="shared" module=m0 declared={type=anything} owner=L0
+variable g2 name="either" module=m0 declared={type=anything} owner=L0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=8
+    v1 = Builtin builtin=ArrayBuffer
+    v2 = Construct v1, -, v0
+    v3 = Builtin builtin=SharedArrayBuffer
+    v4 = Construct v3, -, v0
+    v5 = NewClosure function=f1
+    v6 = NewClass v5 layout=L0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v4 variable=g2
+    v11 = FinishClass v6 layout=L0
+    v12 = GetModuleVariable variable=g0
+    v13 = GetModuleVariable variable=g1
+    v14 = GetModuleVariable variable=g2
+    Return
+}
+function f1 name="Buffers" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

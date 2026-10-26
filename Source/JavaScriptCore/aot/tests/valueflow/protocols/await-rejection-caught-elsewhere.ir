@@ -1,0 +1,35 @@
+# async function fails() { throw { describe } }  const promise = fails(); try { await promise } catch (error) { error.describe() }
+# What the body of an async function throws is what its promise is rejected with, and an await of that promise throws it, wherever the call was.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Failure" fields=[{key="describe" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Await v1
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="describe"
+    v5 = Call v4, v3
+    Return
+}
+function f2 name="fails" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Throw v1
+}
+function f3 name="describe" results=[{type=anything}] {
+    Return
+}

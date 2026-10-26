@@ -25,6 +25,9 @@
 #include "JSCInlines.h"
 #include <wtf/text/MakeString.h>
 
+#include "AOTMembersLeftOut.h"
+#include "AOTRuntimeHooks.h"
+
 namespace JSC {
 
 void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName)
@@ -71,20 +74,52 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // EXCEPTION_ASSERT(!scope.exception() || !result) holds. No ThrowScope
         // here: a ThrowScope would simulate a throw on every first static-table
         // lookup, and callers of getOwnPropertySlot don't check for one.
-        if (vm.exceptionForInspection()) [[unlikely]]
+        if (vm.exceptionForInspection()) [[unlikely]] {
+#if ENABLE(AOT)
+            JSValue standIn = vm.hasCompiledCode() && !isAccessor ? AOT::takeStandInForMemberLeftOut(thisObject->realm(), String(propertyName.uid())) : JSValue();
+            if (!standIn)
+                return false;
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            thisObject->putDirect(vm, propertyName, standIn, attributesForStructure(entry->attributes()));
+#else
             return false;
+#endif
+        }
 
         offset = thisObject->getDirectOffset(vm, propertyName, attributes);
         if (!isValidOffset(offset)) {
             dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
             RELEASE_ASSERT_NOT_REACHED();
         }
+
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && !isAccessor) [[unlikely]]
+            AOT::RuntimeHooks::didCreateStaticProperty(thisObject, propertyName.uid(), thisObject->getDirect(offset));
+#endif
     }
 
     if (isAccessor)
         slot.setCacheableGetterSlot(thisObject, attributes, uncheckedDowncast<GetterSetter>(thisObject->getDirect(offset)), offset);
     else
         slot.setValue(thisObject, attributes, thisObject->getDirect(offset), offset);
+    return true;
+}
+
+bool setUpCustomSlotWithoutRemovedFunctions(const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertySlot& slot)
+{
+    unsigned attributes = attributesForStructure(entry->attributes());
+    if (entry->attributes() & PropertyAttribute::DOMJITAttribute) {
+        const DOMJIT::GetterSetter* domJIT = entry->domJIT();
+        slot.setCacheableCustom(thisObject, attributes, functionUnlessRemoved(GetValueFunc(domJIT->getter())), functionUnlessRemoved(entry->domJITSetter()), DOMAttributeAnnotation { classInfo, domJIT });
+        return true;
+    }
+
+    GetValueFunc getter = functionUnlessRemoved(entry->propertyGetter());
+    PutValueFunc setter = functionUnlessRemoved(entry->propertyPutter());
+    if (entry->attributes() & PropertyAttribute::DOMAttribute)
+        slot.setCacheableCustom(thisObject, attributes, getter, setter, DOMAttributeAnnotation { classInfo, nullptr });
+    else
+        slot.setCacheableCustom(thisObject, attributes, getter, setter);
     return true;
 }
 

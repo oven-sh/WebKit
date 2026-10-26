@@ -1,0 +1,21 @@
+# a data tree: a hole is an element of an array, the digits of a BigInt are a decimal integer, an object has an object layout and each key once, and only a record takes keys that are not fields
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidData 10
+
+module m0 path="main" displayPath="main"
+entry module=m0
+layout L0 name="record" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="class" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment name="environment" fields=[{key="x" declared={type=anything}}]
+data d0 root=Object{layout=L0 members=[{key="x" value=Array{contents=anything elements=[Hole, Undefined, Null, Boolean{value=true}, Number{value=1.5}, String{value="s"}, BigInt{digits="-12"}]}}, {key="goodKeyOutsideFields" value=Object{layout=L1 members=[{key="x" value=Null}]}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="badHoleAsMember" value=Hole}]}
+data d2 root=Object{layout=L0 members=[{key="badDigits" value=BigInt{digits="12x"}}]}
+data d3 root=Object{layout=L0 members=[{key="badDigitsAreEmpty" value=BigInt{digits=""}}]}
+data d4 root=Object{layout=L0 members=[{key="badDigitsAreOnlySign" value=BigInt{digits="-"}}]}
+data d5 root=Object{layout=L0 members=[{key="badDigitsAreFraction" value=BigInt{digits="1.5"}}]}
+data d6 root=Object{layout=L0 members=[{key="badLayoutIsEnvironment" value=Object{layout=L2}}]}
+data d7 root=Object{layout=L1 members=[{key="badKeyOutsideFieldsOfClass" value=Null}]}
+data d8 root=Object{layout=L0 members=[{key="badKeyTwice" value=Null}, {key="badKeyTwice" value=Null}]}
+data d9 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="badHoleBelowArray" value=Hole}]}]}
+data d10 root=Hole

@@ -575,7 +575,7 @@ Ref<const RTT> TypeInformation::typeDefinitionForStruct(const Vector<FieldType>&
 {
     bool hasRefFieldTypes = false;
     bool hasRecursiveReference = false;
-    unsigned currentFieldOffset = 0;
+    unsigned currentFieldOffset = offsetOfFirstStructFieldInPayload();
     unsigned gapPosition = 0;
     unsigned gapSize = 0;
     auto entries = FixedVector<StructFieldEntry>::createWithSizeFromGenerator(fields.size(), [&](size_t i) -> StructFieldEntry {

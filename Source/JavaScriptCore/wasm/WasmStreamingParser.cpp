@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "WasmCodeInImage.h"
 #include "WasmModuleInformation.h"
 #include "WasmOps.h"
 #include "WasmParser.h"
@@ -290,6 +291,15 @@ auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& o
     return result;
 }
 
+static bool needsSourceDigest()
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    return CodeInImage::needsSourceDigests();
+#else
+    return false;
+#endif
+}
+
 auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isEndOfStream) -> State
 {
 #if ASSERT_ENABLED
@@ -311,7 +321,7 @@ auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isE
         return m_state;
     }
 
-    if (Options::useEagerWasmModuleHashing()) [[unlikely]]
+    if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]]
         m_hasher.addBytes(bytes);
 
     size_t offsetInBytes = 0;
@@ -453,8 +463,13 @@ auto StreamingParser::finalize() -> State
         }
 
         if (m_remaining.isEmpty()) {
-            if (Options::useEagerWasmModuleHashing()) [[unlikely]]
-                m_info->nameSection().setHash(m_hasher.computeHexDigest());
+            if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]] {
+                m_hasher.computeHash(m_info->sourceDigest);
+                m_info->sourceSize = m_totalSize.value();
+                m_info->hasSourceDigest = true;
+                if (Options::useEagerWasmModuleHashing())
+                    m_info->nameSection().setHash(SHA1::hexDigest(m_info->sourceDigest));
+            }
 
             m_info->importShouldBeHidden = FixedBitVector(m_info->imports.size());
 

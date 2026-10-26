@@ -22,15 +22,19 @@
 
 #pragma once
 
+#include <atomic>
 #include <wtf/CompactPtr.h>
 #include <wtf/HashSet.h>
 #include <wtf/Packed.h>
+#include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/StringImpl.h>
 
 namespace WTF {
 
+class AtomStringImpl;
 class StringImpl;
+class StringView;
 
 class AtomStringTable {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(AtomStringTable);
@@ -43,9 +47,24 @@ public:
     WTF_EXPORT_PRIVATE ~AtomStringTable();
 
     StringTableImpl& table() LIFETIME_BOUND { return m_table; }
+    void holdAtomOfStaticString(StringImpl& atom) { m_atomsOfStaticStrings.append(atom); }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Static atoms in read-only memory are in no table, and every thread has the same ones. A table that has no atom with the characters
+    // asks this function for one before it makes its own. Null in a process without such atoms.
+    using ReadOnlyAtomLookup = AtomStringImpl* (*)(StringView, unsigned hash);
+    static ReadOnlyAtomLookup readOnlyAtomLookup() { return s_readOnlyAtomLookup.load(std::memory_order_relaxed); }
+    // What the table of the calling thread made earlier with the characters of a read-only atom stops being an atom, as it does when its table dies.
+    WTF_EXPORT_PRIVATE static void setReadOnlyAtomLookup(ReadOnlyAtomLookup);
+#endif
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static std::atomic<ReadOnlyAtomLookup> s_readOnlyAtomLookup;
+#endif
+
     StringTableImpl m_table;
+    Vector<Ref<StringImpl>> m_atomsOfStaticStrings;
 };
 
 }

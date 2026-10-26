@@ -1,0 +1,34 @@
+# in a program as read: the handler of a block is a handler block, and only handler edges enter a handler block
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidHandler 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badOrdinaryBlockAsHandler" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return
+  b1():
+    Return
+}
+function f1 name="badJumpIntoHandlerBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b2():
+    v2 = Call v0
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return
+}
+function f2 name="good" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    v2 = Call v0
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Jump -> next b3()
+  b3():
+    Return
+}

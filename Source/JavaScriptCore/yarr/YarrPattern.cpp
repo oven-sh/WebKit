@@ -30,12 +30,17 @@
 
 #include "Options.h"
 #include "Yarr.h"
+#include "YarrBacktrackingAnalysis.h"
 #include "YarrCanonicalize.h"
+#include "YarrCharacterSetBits.h"
+#include "YarrFirstFollowSets.h"
 #include "YarrParser.h"
 #include <array>
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/Hasher.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StackCheck.h>
@@ -703,7 +708,6 @@ private:
         mergeRangesFrom(ranges, iter - ranges.begin());
     }
 
-
     void addSortedRange(char32_t lo, char32_t hi)
     {
         if (lo == hi) {
@@ -1256,6 +1260,30 @@ private:
     Vector<CharacterRange> m_ranges32;
 };
 
+struct CharacterClassContentsHash {
+    static unsigned hash(const CharacterClass* characterClass)
+    {
+        Hasher hasher;
+        for (char32_t ch : characterClass->m_matches8)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges8)
+            add(hasher, range.begin, range.end);
+        for (char32_t ch : characterClass->m_matches32)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges32)
+            add(hasher, range.begin, range.end);
+        return hasher.hash();
+    }
+
+    static bool equal(const CharacterClass* a, const CharacterClass* b)
+    {
+        return a->m_matches8 == b->m_matches8 && a->m_ranges8 == b->m_ranges8 && a->m_matches32 == b->m_matches32 && a->m_ranges32 == b->m_ranges32
+            && a->m_characterWidths == b->m_characterWidths && a->m_anyCharacter == b->m_anyCharacter;
+    }
+
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+};
+
 class YarrPatternConstructor {
     class UnresolvedForwardReference {
     public:
@@ -1326,6 +1354,10 @@ public:
         m_parenthesisContext.reset();
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
+        m_sharedCharacterClasses.clear();
+        m_lastCharacterClassTerm = std::nullopt;
+        m_rememberedCharacterClassTerms.clear();
+        m_shortCharacterClassTerm = std::nullopt;
 
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1478,9 +1510,8 @@ public:
         }
 
         m_currentCharacterClassConstructor->putUnicodeIgnoreCase(ch, info);
-        auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
-        m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), false, m_flags, parenthesisMatchDirection()));
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+        auto* characterClass = addUserCharacterClass(m_currentCharacterClassConstructor->charClass());
+        m_alternative->m_terms.append(PatternTerm(characterClass, false, m_flags, parenthesisMatchDirection()));
     }
 
     // Case-insensitive Unicode property escapes.
@@ -1747,6 +1778,7 @@ public:
         auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
         m_currentCharacterClassConstructor->reset();
         auto hasStrings = newCharacterClass->hasStrings();
+        m_lastCharacterClassTerm = std::nullopt;
 
         auto addCharacterClassTerm = [&] () {
             if (!m_invertCharacterClass && newCharacterClass.get()->m_anyCharacter) {
@@ -1754,12 +1786,15 @@ public:
                 return;
             }
 
-            m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), m_invertCharacterClass, m_flags));
+            m_alternative->m_terms.append(PatternTerm(addUserCharacterClass(WTF::move(newCharacterClass)), m_invertCharacterClass, m_flags));
         };
 
-        if (!hasStrings)
+        if (!hasStrings) {
             addCharacterClassTerm();
-        else {
+            // Only where classes with the same contents are one class anyway.
+            if (m_pattern.m_analysis != PatternAnalysis::Skipped)
+                m_lastCharacterClassTerm = m_alternative->m_terms.last();
+        } else {
             if (m_invertCharacterClass) {
                 m_error = ErrorCode::NegatedClassSetMayContainStrings;
                 return;
@@ -1767,10 +1802,33 @@ public:
 
             m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
+        }
+    }
+
+    // The parser gives the last slot to the short classes, of which it keeps one. Most patterns have no other.
+    static constexpr unsigned slotOfShortCharacterClass = 16;
+
+    void atomCharacterClassRemembered(unsigned slot)
+    {
+        if (slot == slotOfShortCharacterClass) {
+            m_shortCharacterClassTerm = m_lastCharacterClassTerm;
             return;
         }
+        if (m_rememberedCharacterClassTerms.size() <= slot)
+            m_rememberedCharacterClassTerms.grow(slot + 1);
+        m_rememberedCharacterClassTerms[slot] = m_lastCharacterClassTerm;
+    }
 
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+    // The text of a class that was added before follows once more. What a class holds depends on its text and on the flags in force.
+    bool atomCharacterClassRepeated(unsigned slot)
+    {
+        if (slot != slotOfShortCharacterClass && slot >= m_rememberedCharacterClassTerms.size())
+            return false;
+        auto& term = slot == slotOfShortCharacterClass ? m_shortCharacterClassTerm : m_rememberedCharacterClassTerms[slot];
+        if (!term || term->m_currentFlags != m_flags)
+            return false;
+        m_alternative->m_terms.append(*term);
+        return true;
     }
 
     // A class that contains strings matches, at each position, its longest member that matches there
@@ -3711,6 +3769,70 @@ public:
         m_pattern.m_endAnchoredFixedSize = maximumSize;
     }
 
+private:
+    bool tryExtractCharacterClass()
+    {
+        auto& alternatives = m_pattern.m_body->m_alternatives;
+        if (alternatives.size() != 1)
+            return false;
+
+        auto& terms = alternatives[0]->m_terms;
+        if (terms.isEmpty() || terms.size() > 2)
+            return false;
+
+        for (auto& term : terms) {
+            if (term.matchDirection() != Forward)
+                return false;
+            if (term.type == PatternTerm::Type::CharacterClass) {
+                if (term.characterClass->hasStrings())
+                    return false;
+            } else if (term.type != PatternTerm::Type::PatternCharacter || term.ignoreCase() || term.patternCharacter > 0xffff)
+                return false;
+        }
+
+        auto& first = terms[0];
+        if (first.quantityType != QuantifierType::FixedCount)
+            return false;
+        if (first.quantityMaxCount != 1)
+            return false;
+
+        bool isCharacterClass = first.type == PatternTerm::Type::CharacterClass;
+        auto specificPattern = SpecificPattern::CharacterClass;
+        if (terms.size() == 1) {
+            if (!isCharacterClass)
+                return false;
+        } else {
+            // X+ is X followed by X*.
+            auto& second = terms[1];
+            if (second.quantityType != QuantifierType::Greedy)
+                return false;
+            if (second.quantityMinCount)
+                return false;
+            if (second.quantityMaxCount != quantifyInfinite)
+                return false;
+            if (second.type != first.type)
+                return false;
+            if (isCharacterClass) {
+                if (second.characterClass != first.characterClass || second.invert() != first.invert())
+                    return false;
+            } else if (second.patternCharacter != first.patternCharacter)
+                return false;
+            specificPattern = SpecificPattern::CharacterClassPlus;
+        }
+
+        auto set = makeUnique<CharacterSetWithRanges>();
+        if (isCharacterClass)
+            set->bits = buildCharacterSetBits(*first.characterClass, first.invert(), set->wideRanges);
+        else {
+            auto character = static_cast<char16_t>(first.patternCharacter);
+            set->bits = buildCharacterSetBits(character, character, set->wideRanges);
+        }
+        m_pattern.m_specificCharacterClass = WTF::move(set);
+        m_pattern.m_specificPattern = specificPattern;
+        return true;
+    }
+
+public:
     void extractSpecificPattern()
     {
         if (m_pattern.m_containsBackreferences)
@@ -3728,6 +3850,8 @@ public:
         if (m_pattern.m_saveInitialStartValue)
             return;
         if (m_pattern.m_numSubpatterns)
+            return;
+        if (m_pattern.m_analysis != PatternAnalysis::Skipped && !m_pattern.sticky() && !m_pattern.eitherUnicode() && tryExtractCharacterClass())
             return;
         if (m_pattern.multiline())
             return;
@@ -4015,6 +4139,7 @@ public:
     }
 
     ErrorCode LEGACY_NODELETE error() { return m_error; }
+    StackCheck& stackCheck() { return m_stackCheck; }
 
 private:
     class ParenthesisContext {
@@ -4208,11 +4333,36 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
+    {
+        ASSERT(!characterClass->hasStrings());
+        auto& userCharacterClasses = m_pattern.m_userCharacterClasses;
+        if (m_pattern.m_analysis != PatternAnalysis::Skipped && userCharacterClasses.size() >= minimumUserCharacterClassesToShare) {
+            if (m_sharedCharacterClasses.isEmpty()) {
+                for (auto& existing : userCharacterClasses) {
+                    if (!existing->hasStrings())
+                        m_sharedCharacterClasses.add(existing.get());
+                }
+            }
+            auto result = m_sharedCharacterClasses.add(characterClass.get());
+            if (!result.isNewEntry)
+                return *result.iterator;
+        }
+        userCharacterClasses.append(WTF::move(characterClass));
+        return userCharacterClasses.last().get();
+    }
+
+    static constexpr unsigned minimumUserCharacterClassesToShare = 16;
+
     YarrPattern& m_pattern;
     PatternAlternative* m_alternative;
     CharacterClassConstructor m_baseCharacterClassConstructor;
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
+    HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
+    std::optional<PatternTerm> m_lastCharacterClassTerm;
+    Vector<std::optional<PatternTerm>> m_rememberedCharacterClassTerms;
+    std::optional<PatternTerm> m_shortCharacterClassTerm;
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };
@@ -4250,6 +4400,11 @@ ErrorCode YarrPattern::compile(StringView patternString)
     if (hasError(constructor.error()))
         return constructor.error();
 
+    if (m_analysis == PatternAnalysis::Performed) {
+        computeFirstFollowSets(*this, constructor.stackCheck());
+        analyzeBacktracking(*this, constructor.stackCheck());
+    }
+
     {
         ErrorCode error = constructor.setupOffsets();
         if (hasError(error))
@@ -4267,7 +4422,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     return ErrorCode::NoError;
 }
 
-YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode)
+YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, PatternAnalysis analysis)
     : m_containsBackreferences(false)
     , m_containsBOL(false)
     , m_containsLookbehinds(false)
@@ -4277,11 +4432,14 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
     , m_hasNamedCaptureGroups(false)
     , m_saveInitialStartValue(false)
     , m_executionMode(executionMode)
+    , m_analysis(analysis)
     , m_flags(flags)
 {
     ASSERT(m_flags != Flags::DeletedValue);
     error = compile(pattern);
 }
+
+YarrPattern::~YarrPattern() = default;
 
 void indentForNestingLevel(PrintStream& out, unsigned nestingDepth)
 {
@@ -4298,7 +4456,7 @@ void dumpChar32(PrintStream& out, char32_t c)
         out.printf("0x%04x", c);
 }
 
-void dumpCharacterClass(PrintStream& out, YarrPattern* pattern, CharacterClass* characterClass)
+void dumpCharacterClass(PrintStream& out, const YarrPattern* pattern, CharacterClass* characterClass)
 {
     if (pattern) {
         if (characterClass == pattern->anyCharacterClass()) {
@@ -4574,7 +4732,7 @@ void PatternDisjunction::dump(PrintStream& out, YarrPattern* thisPattern, unsign
     }
 }
 
-void YarrPattern::dumpPatternString(PrintStream& out, StringView patternString)
+void YarrPattern::dumpPatternString(PrintStream& out, StringView patternString) const
 {
     out.print("/", patternString, "/");
 

@@ -1,0 +1,9 @@
+# Thirty-eight small functions that share batches and a large one with a batch of its own are all compiled and counted on eight threads
+# FORM: AsRead
+# RUN: compile
+# REQUIRES: unsanitized-code
+# OPTIONS: heat=everything-is-hot threads=8 check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# STATISTIC: LoopsRotated >= 38
+# STATISTIC: NullChecksFoldedIntoAccesses >= 38
+# CHECK: image not empty
+# PROGRAM-OF: batch-with-one-thread.ir

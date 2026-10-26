@@ -1,0 +1,5 @@
+# Objects, arrays, regular expressions, template objects, errors and arguments objects pass the back-end checks in balanced code
+# RUN: compile
+# OPTIONS: check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+# PROGRAM-OF: allocation-fast.ir

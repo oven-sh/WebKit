@@ -1,0 +1,60 @@
+# The late fields of a layout with more fields than a cell holds in line are created by a store that may allocate, also where nobody enumerates the keys, so that they can lie in the Extension
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN(SLOTS): plan-slots layouts
+# RUN(CODE): pipeline PlanSlots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Wide" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=undefined|L0}}, {key="late1" declared={type=undefined|L0}}, {key="late2" declared={type=undefined|L0}}, {key="late3" declared={type=undefined|L0}}, {key="late4" declared={type=undefined|L0}}, {key="late5" declared={type=undefined|L0}}, {key="late6" declared={type=undefined|L0}}, {key="late7" declared={type=undefined|L0}}, {key="late8" declared={type=undefined|L0}}, {key="late9" declared={type=undefined|L0}}, {key="late10" declared={type=undefined|L0}}, {key="late11" declared={type=undefined|L0}}, {key="late12" declared={type=undefined|L0}}, {key="late13" declared={type=undefined|L0}}, {key="late14" declared={type=undefined|L0}}, {key="late15" declared={type=undefined|L0}}, {key="late16" declared={type=undefined|L0}}, {key="late17" declared={type=undefined|L0}}, {key="late18" declared={type=undefined|L0}}, {key="late19" declared={type=undefined|L0}}, {key="late20" declared={type=undefined|L0}}, {key="late21" declared={type=undefined|L0}}, {key="late22" declared={type=undefined|L0}}, {key="late23" declared={type=undefined|L0}}]
+layout L1 name="Small" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=undefined|L1}}, {key="late1" declared={type=undefined|L1}}, {key="late2" declared={type=undefined|L1}}, {key="late3" declared={type=undefined|L1}}, {key="late4" declared={type=undefined|L1}}, {key="late5" declared={type=undefined|L1}}]
+variable g0 name="wide" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="small" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v2 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v8 variable=g1
+    v10 = Call v0
+    v11 = ToBoolean v10
+    Branch v11 -> taken b1(), notTaken b2()
+  b2():
+    v12 = CallDirect function=f1
+    v13 = CallDirect function=f1
+    Return
+}
+function f1 name="fill" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+# REPEAT: i = 0..29; a = 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1; b = 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 0 1 2 3 4 5
+    PropSet v%(a), v%(a) key="late%(b)"
+# END REPEAT
+# REPEAT: i = 32..61; a = 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1; b = 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 0 1 2 3 4 5
+    v%(i) = PropGet v%(a) key="late%(b)"
+# END REPEAT
+    Return
+}
+
+# SLOTS: L0 CompiledObject size=48 extension=84 unordered
+# SLOTS-NEXT: .0 "flags" Double @24
+# SLOTS: .5 "late4" OptionalCell32 @44
+# SLOTS-NEXT: .6 "late5" OptionalCell32 out@8
+# SLOTS: .24 "late23" OptionalCell32 out@80
+# SLOTS-NEXT: extension Cell32 @16
+# The fields of a small layout all fit into the cell, and the store that creates one allocates nothing.
+# SLOTS-NEXT: L1 CompiledObject size=48 extension=0 unordered
+# SLOTS-NOT: out@
+# CODE-LABEL: function f1 name="fill"
+# CODE: PutSlotOrAdd v0, -, v0 key="late0" receivers=[L0] level=Proven
+# CODE: PutSlotOrAdd v0, -, v0 key="late23" receivers=[L0] level=Proven
+# CODE-NEXT: PutSlot v1, -, v1 key="late0" receivers=[L1] level=Proven
+# CODE: PutSlot v1, -, v1 key="late5" receivers=[L1] level=Proven
+# CODE-NOT: PutSlotOrAdd

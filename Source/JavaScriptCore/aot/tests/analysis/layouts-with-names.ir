@@ -1,0 +1,56 @@
+# Which allocated layouts have every one of some names: as a field of their own, of a proven base or appended by flow, or as a member of a class above them
+# FORM: Prepared
+# RUN(LANES): layouts-with-names names=["lanes"]
+# RUN(TAG): layouts-with-names names=["tag"]
+# RUN(BOTH): layouts-with-names names=["tag","lanes"]
+# RUN(ORDER): layouts-with-names names=["lanes","tag"]
+# RUN(THREE): layouts-with-names names=["tag","lanes","alternate"]
+# RUN(DISJOINT): layouts-with-names names=["alternate","text"]
+# RUN(NOBODY): layouts-with-names names=["nowhere"]
+# RUN(ONEUNKNOWN): layouts-with-names names=["tag","nowhere"]
+# RUN(INHERITED): layouts-with-names names=["pos"]
+# RUN(METHOD): layouts-with-names names=["scan"]
+# RUN(METHODANDFIELD): layouts-with-names names=["scan","depth"]
+# RUN(STATIC): layouts-with-names names=["create"]
+# RUN(PREDICTEDBASE): layouts-with-names names=["scan","loose"]
+# RUN(FIELDOFPREDICTEDBASE): layouts-with-names names=["pos","loose"]
+# RUN(PRIVATE): layouts-with-names names=[#"#mark"@L5]
+# RUN(BUILTINBASE): layouts-with-names names=["code"]
+# RUN(ENVIRONMENT): layouts-with-names names=["captured"]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Fiber" fields=[{key="tag" declared={type=number}}, {key="lanes" declared={type=number}}, {key="alternate" declared={type=anything}}]
+layout L1 name="Update" fields=[{key="tag" declared={type=number}}, {key="lanes" declared={type=number}}]
+layout L2 name="Token" fields=[{key="tag" declared={type=number}}, {key="text" declared={type=string}}]
+layout L3 name="NeverMade" fields=[{key="tag" declared={type=number}}, {key="lanes" declared={type=number}}, {key="alternate" declared={type=anything}}, {key="nowhere" declared={type=anything}}] flow={allocation=NeverAllocated}
+layout L4 name="Grown" fields=[{key="lanes" declared={type=number} flags=[IsAddedLate]}]
+layout L5 kind=Instance name="Scanner" constructor=f0 fields=[{key="pos" declared={type=number}}, {key=#"#mark"@L5 declared={type=number} flags=[IsPrivate]}] flow={baseState=None} classFlow={members=[{key="scan" function=f3}, {key="create" side=Static function=f4}]}
+layout L6 kind=Instance name="DeepScanner" base=L5 constructor=f1 fields=[{key="depth" declared={type=number}}] flags=[HasHeritage] flow={baseState=Layout base=L5}
+layout L7 kind=Instance name="LooseScanner" base=L5 constructor=f2 fields=[{key="loose" declared={type=number}}] flags=[HasHeritage]
+layout L8 kind=Instance name="Failure" constructor=f5 fields=[{key="code" declared={type=number}}] flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error}
+layout L9 kind=Environment name="Scope" fields=[{key="captured" declared={type=number}}]
+
+function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f1 name="DeepScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f2 name="LooseScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f3 name="scan" kind=Method flags=[HasThis] results=[{type=anything}]
+function f4 name="create" kind=Method flags=[HasThis] results=[{type=anything}]
+function f5 name="Failure" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
+
+# LANES: [L0, L1, L4]
+# TAG: [L0, L1, L2]
+# BOTH: [L0, L1]
+# ORDER: [L0, L1]
+# THREE: [L0]
+# DISJOINT: []
+# NOBODY: []
+# ONEUNKNOWN: []
+# INHERITED: [L5, L6]
+# METHOD: [L5, L6, L7]
+# METHODANDFIELD: [L6]
+# STATIC: []
+# PREDICTEDBASE: [L7]
+# FIELDOFPREDICTEDBASE: []
+# PRIVATE: [L5, L6]
+# BUILTINBASE: []
+# ENVIRONMENT: []

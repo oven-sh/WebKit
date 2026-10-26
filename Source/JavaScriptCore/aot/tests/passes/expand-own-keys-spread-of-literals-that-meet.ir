@@ -1,0 +1,217 @@
+# `...(condition && { c })`, `...(condition ? { a } : { b, c })`: the source of the spread is a parameter of a merge, and each edge hands in a literal that is made for the spread alone or a value that has nothing to copy.
+# The values of the fields come through the merge in place of the literal, with the number of the literal, and the spread defines them by name: in cold code too, for it is less code than the copy.
+# A literal may get its names by definitions in the block where it is made. Where the condition was decided the literal goes to the spread itself, and its fields are defined in place.
+# What another edge hands in is copied as before, unless it turns out to be a value without properties. A block that nothing reaches any more and that still names the merge hands in nothing.
+# A literal that somebody else sees and one with an accessor or a prototype of its own leave the spread as it is
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
+layout L1 name="WithGetter" fields=[{key="g" declared={type=anything} form=[IsAccessor]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="literalOrFalse" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v1 layout=L0 fields=[2]
+    v3 = FinishObject v2
+    Jump -> next b3(v3)
+  b2():
+    v4 = Boolean boolean=false
+    Jump -> next b3(v4)
+  b3(v5: false|L0):
+    v6 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v6, v5
+    v8 = FinishObject v6
+    Return v8
+# CHECK: b1():
+# CHECK: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3([[one0]], v1)
+# CHECK: b2():
+# CHECK: [[zero0]]: 0 = Integer
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next b3([[zero0]], [[nothing0]])
+# CHECK: b3([[which0]]: i32, [[c0]]: undefined|number):
+# CHECK-NEXT: v6:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: Switch [[which0]] cases=[1] -> case [[defines0]](), otherwise [[skips0]]()
+# CHECK-NOT: CopyDataProperties
+# CHECK: [[defines0]]():
+# CHECK-NEXT: [[held0]]: number = AssumeType [[c0]] castType=number
+# CHECK-NEXT: PropDefine v6, [[held0]] key="c"
+}
+
+function f1 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewObject -, v1, v1 layout=L0 fields=[2, 1]
+    v6 = FinishObject v5
+    Jump -> next b3(v6)
+  b3(v7: L0):
+    CopyDataProperties v2, v7
+    v9 = FinishObject v2
+    Return v9
+# CHECK: Switch {{*}} cases=[1, 2] -> case [[first1]](), case [[second1]](), otherwise
+# CHECK-NOT: CopyDataProperties
+# CHECK: [[first1]]():
+# CHECK: PropDefine v2, {{*}} key="a"
+# CHECK: [[second1]]():
+# CHECK: PropDefine v2, {{*}} key="c"
+# CHECK: PropDefine v2, {{*}} key="b"
+}
+
+function f2 name="literalIsKept" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[2]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    Jump -> next b3(v4)
+  b2():
+    v6 = Boolean boolean=false
+    Jump -> next b3(v6)
+  b3(v7: false|L0):
+    CopyDataProperties v2, v7
+    Return v2
+# CHECK: CopyDataProperties v2, v7
+}
+
+function f3 name="mergedValueIsReadAgain" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[2]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=false
+    Jump -> next b3(v5)
+  b3(v6: false|L0):
+    CopyDataProperties v2, v6
+    Return v6
+# CHECK: CopyDataProperties v2, v6
+}
+
+function f4 name="accessor" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+    v2 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=false
+    Jump -> next b3(v5)
+  b3(v6: false|L1):
+    CopyDataProperties v2, v6
+    Return v2
+# CHECK: CopyDataProperties v2, v6
+}
+
+function f5 name="textOnAnEdge" parameters=[{type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {
+    v3 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject -, v1 layout=L0 fields=[2]
+    v5 = FinishObject v4
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v2)
+  b3(v6: string|L0):
+    CopyDataProperties v3, v6
+    Return v3
+# CHECK: Jump -> next b3({{*}}, v1, {{*}})
+# CHECK: Jump -> next b3({{*}}, {{*}}, v2)
+# CHECK: b3([[which5]]: i32, [[c5]]: undefined|number, [[other5]]: undefined|string):
+# CHECK-NEXT: Switch [[which5]] cases=[1, 2] -> case [[literal5]](), case [[copies5]](), otherwise {{*}}()
+# CHECK: [[literal5]]():
+# CHECK: PropDefine v3, {{*}} key="c"
+# CHECK: [[copies5]]():
+# CHECK-NEXT: [[nothing5]]: boolean = TypeTest [[other5]] testedType=undefined|null|boolean|number|symbol|bigint
+# CHECK-NEXT: Branch [[nothing5]] -> taken {{*}}(), notTaken [[text5]]()
+# CHECK: [[text5]]():
+# CHECK-NEXT: CopyDataProperties v3, [[other5]]
+}
+
+function f6 name="prototypeOfItsOwn" parameters=[{type=boolean}, {type=number}, {type=object}] results=[{type=anything}] {
+    v3 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject v2, v1 layout=L0 fields=[2]
+    v5 = FinishObject v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7: undefined|L0):
+    CopyDataProperties v3, v7
+    Return v3
+# CHECK: CopyDataProperties v3, v7
+}
+
+function f7 name="namedByAnUnreachableBlock" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject layout=L0 fields=[]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[2]
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = Boolean boolean=false
+    Jump -> next b3(v5)
+  b3(v6: false|L0):
+    CopyDataProperties v2, v6
+    Return v2
+  b4():
+    v8 = Boolean boolean=false
+    Jump -> next b3(v8)
+# CHECK-NOT: CopyDataProperties
+# CHECK: b3([[which7]]: i32, [[c7]]: undefined|number):
+# CHECK: b4():
+# CHECK: Jump -> next b3({{*}}, {{*}})
+# CHECK: PropDefine v2, {{*}} key="c"
+}
+
+function f8 name="namesByDefinitions" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    v2 = NewDictionary
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    PropDefine v3, v1 key="not.a.field"
+    PropDefine v3, v0 key="another"
+    v6 = FinishObject v3
+    Jump -> next b3(v6)
+  b2():
+    v7 = Undefined
+    Jump -> next b3(v7)
+  b3(v8: undefined|L0):
+    CopyDataProperties v2, v8
+    Return v2
+# CHECK-NOT: PropDefine v3
+# CHECK-NOT: CopyDataProperties
+# CHECK: PropDefine v2, {{*}} key="b"
+# CHECK: PropDefine v2, {{*}} key="not.a.field"
+# CHECK: PropDefine v2, {{*}} key="another"
+}
+
+function f9 name="noConditionLeft" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[2]
+    PropDefine v2, v0 key="not.a.field"
+    v4 = FinishObject v2
+    CopyDataProperties v1, v4
+    v6 = FinishObject v1
+    Return v6
+# CHECK-NOT: PropDefine v2
+# CHECK-NOT: CopyDataProperties
+# CHECK: PropDefine v1, v0 key="c"
+# CHECK-NEXT: PropDefine v1, v0 key="not.a.field"
+}

@@ -1,0 +1,49 @@
+# The body of a module runs at most once, and so does a function whose callers are all known and that one operation enters, outside every cycle of a function that runs at most once.
+# A call in a loop, a second call, and a call from a function that runs many times prove nothing
+# RUN: valueflow-results
+# CHECK: function f0 executions=AtMostOnce cause=ReachesNativeCode
+# CHECK-NEXT: function f1 callers=AllKnown executions=AtMostOnce
+# CHECK-NEXT: function f2 callers=AllKnown
+# CHECK-NEXT: function f3 callers=AllKnown
+# CHECK-NEXT: function f4 callers=AllKnown
+# CHECK-NEXT: function f5 callers=AllKnown executions=AtMostOnce
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f3
+    v3 = Call v2
+    v4 = Call v2
+    v5 = Boolean boolean=true
+    Jump -> next b1()
+  b1():
+    v6 = NewClosure function=f2
+    v7 = Call v6
+    LoopHint
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="calledOnce" results=[{type=anything}] {
+    v0 = CallDirect function=f5
+    Return v0
+}
+function f2 name="calledInLoop" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f3 name="calledTwice" results=[{type=anything}] {
+    v0 = Integer integer=3
+    Return v0
+}
+function f4 name="calledByFunctionInLoop" results=[{type=anything}] {
+    v0 = Integer integer=4
+    Return v0
+}
+function f5 name="calledDirectlyOnce" results=[{type=anything}] {
+    v0 = Integer integer=5
+    Return v0
+}

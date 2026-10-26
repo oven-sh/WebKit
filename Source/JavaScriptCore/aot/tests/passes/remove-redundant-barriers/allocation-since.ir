@@ -1,0 +1,24 @@
+# An allocation between the owner's allocation and the store can collect, so the store keeps its barrier.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1
+function f0 name="allocation-since" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L1 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+}
+function f1 name="allocation-before" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v2, v0 layout=L0 field=0
+    Return
+# CHECK: PutEnvironmentField v2, v0 layout=L0 [ownerCannotBeMarked]
+}

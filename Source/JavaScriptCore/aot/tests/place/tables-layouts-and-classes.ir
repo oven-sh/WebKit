@@ -1,0 +1,132 @@
+# A record, classes and an environment each get a record. A class that is never allocated keeps its class record and has no shape
+# RUN: tables
+# RUN(RECORD): tables layouts
+# RUN(BASE): tables layouts functions
+# RUN(DERIVED): tables layouts
+# RUN(NEVER): tables layouts
+# RUN(SCOPE): tables layouts
+# RUN(SHAPES): place shapes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="value" declared={type=number} flags=[IsRequired]}] staticFields=[{key="count" variable=g0}]
+layout L2 kind=Instance name="Derived" module=m0 base=L1 constructor=f5 supertypes=[L1] flags=[HasHeritage]
+layout L3 kind=Instance name="NeverAllocated" module=m0 base=L1 constructor=f6 supertypes=[L1] flags=[HasHeritage]
+layout L4 kind=Environment name="scope" fields=[{key="captured" declared={type=string}}]
+variable g0 name="count" module=m0 declared={type=number} owner=L1
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L1
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L1 key="first"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L1 index=1 key="second"
+    v8 = NewClosure function=f4
+    DefineMethod v3, v8 layout=L1 methodKind=Getter index=2 key="size"
+    v10 = FinishClass v3 layout=L1
+    v11 = CallDirect v10 function=f7
+    v12 = ResolveHeritage v10
+    v13 = NewClosure function=f5
+    v14 = NewClass v13, v10, v12 layout=L2
+    v15 = FinishClass v14 layout=L2
+    v16 = NewClosure function=f6
+    v17 = NewClass v16, v10, v12 layout=L3
+    v18 = FinishClass v17 layout=L3
+    v19 = PropGet v0 key="input" [isFreeName]
+    v20 = ToNumber v19
+    v21 = Construct v10, -, v20
+    v22 = Construct v15, -, v20
+    v23 = NewObject -, v20 layout=L0 fields=[0]
+    v24 = FinishObject v23
+    v25 = NewArray v21, v22, v24 contents=anything holes=[]
+    PutModuleVariable v25 variable=g1
+    v27 = ToString v19
+    v28 = CallDirect v27 function=f9
+    v29 = CallDirect v27 function=f9
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="value"
+    Return v3
+}
+function f2 name="first" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f3 name="second" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f4 name="size" kind=Getter flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L2
+    Return v4
+}
+function f6 name="NeverAllocated" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L3
+    Return v4
+}
+function f7 name="initializer" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = Integer integer=0
+    PropDefine v0, v1 key="count"
+    Return
+}
+function f8 name="later" captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
+    v2 = GetModuleVariable variable=g1
+    v3 = NewArray v1, v2 contents=anything holes=[]
+    Return v3
+}
+function f9 name="createsScope" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = NewClosure v1 function=f8
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v4, v4, v2
+    Return
+}
+
+# CHECK: magic ok
+# CHECK: classes 5 20
+# CHECK: constructors 3 24
+# CHECK-NEXT: boundFunctions 0 0
+
+# RECORD: layout shape={{*}} index=L0 kind=Record name="Point"
+# RECORD-NEXT: field 0 name="x" {{*}}slot=OptionalDouble@16
+
+# BASE: layout shape=[[shape]] index=L1 kind=Instance name="Base"
+# BASE-NEXT: field 0 name="value" {{*}}slot=[[representation]]@16
+# BASE: class index=L1 shape=[[shape]] base=- expectedBase=- constructor=[[constructor]] environment=- evaluation=ProvenOnce
+# BASE-NEXT: method name="first" kind=Method {{*}}function=[[first]]
+# BASE-NEXT: method name="second" kind=Method {{*}}function=[[second]]
+# BASE-NEXT: method name="size" kind=Getter {{*}}function=[[size]]
+# BASE-NEXT: staticField 0 name="count"
+# BASE: function [[constructor]] name="Base" {{*}} constructor {{*}}length=
+# BASE: function [[first]] name="first" callable=Method accessor=Method
+# BASE: function [[second]] name="second" callable=Method accessor=Method
+# BASE: function [[size]] name="size" callable=Method accessor=Getter
+# BASE: constructor function=[[constructor]] layout=L1
+
+# DERIVED: layout shape=[[shape]] index=L2 kind=Instance name="Derived"
+# DERIVED-NEXT: field 0 name="value" {{*}}slot=[[representation]]@16
+# DERIVED: class index=L2 shape=[[shape]] base=L1
+
+# NEVER-NOT: layout shape={{*}} index=L3
+# NEVER: class index=L3 shape=0 base=L1
+
+# SCOPE: environment shape={{*}} index=L4 kind=Environment name="scope" size=16
+# SCOPE-NEXT: variable name={{*}} slot=Cell@8
+# SCOPE-NEXT: references values=[] cells=[8] narrow=[]
+
+# SHAPES: L1 shapes
+# SHAPES: L2 shapes
+# SHAPES-NOT: L3 shapes

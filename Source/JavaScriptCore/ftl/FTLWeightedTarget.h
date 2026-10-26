@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3FrequentedBlock.h"
 #include "FTLAbbreviatedTypes.h"
@@ -87,4 +87,4 @@ inline WeightedTarget unsure(LBasicBlock block)
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

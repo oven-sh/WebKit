@@ -28,6 +28,7 @@
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 
+#include "AOTRemovableFeature.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BytecodeCacheError.h"
@@ -3397,7 +3398,7 @@ struct CachedMetadataSteps {
 
     static Ref<UnlinkedMetadataTable> build(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps), numValueProfiles);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps) || metadataTablesAlwaysHave32BitOffsets(), numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = true;
@@ -5548,8 +5549,9 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return executable;
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
+NEVER_INLINE RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, static_cast<RefPtr<CachedBytecode> (*)(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable*, BytecodeCacheUpdatable)>(encodeCodeBlock));
     const ClassInfo* classInfo = codeBlock->classInfo();
 
     Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
@@ -5846,8 +5848,9 @@ std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& 
 }
 #endif
 
-RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
+NEVER_INLINE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, encodeFunctionCodeBlock);
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No);
     ptrdiff_t rootOffset = encoder.offsetOf(CachedFunctionCodeBlock::create(encoder, *codeBlock));

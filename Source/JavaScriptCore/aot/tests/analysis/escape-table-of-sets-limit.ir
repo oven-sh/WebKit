@@ -1,0 +1,64 @@
+# Past 64 objects the set of a value has more than one word, and the words of all sets count against the work limit
+# FORM: Prepared
+# OPTIONS: limit=MaxEscapeAnalysisWork:140
+# RUN: analyses escape
+# LOSS: MaxEscapeAnalysisWork x2 f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="setsOfObjectsAlonePassLimit" results=[{type=boolean}] {
+# REPEAT: i = 0..70
+    v%(i) = NewObject layout=L0 fields=[]
+# END REPEAT
+    v71 = TypeTest v0 testedType=object
+    Return v71
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: gave up: true
+# CHECK-NEXT: objects: 0
+function f1 name="setsOfObjectsAloneFit" results=[{type=boolean}] {
+# REPEAT: i = 0..69
+    v%(i) = NewObject layout=L0 fields=[]
+# END REPEAT
+    v70 = TypeTest v0 testedType=object
+    Return v70
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 70
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o69 state: DoesNotEscape
+function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
+# REPEAT: i = 0..64
+    v%(i) = NewObject layout=L0 fields=[]
+# END REPEAT
+    Jump -> next b1(v0, v1, v2, v3, v4, v5)
+  b1(v65, v66, v67, v68, v69, v70):
+    v71 = TypeTest v0 testedType=object
+    Return v71
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: gave up: true
+# CHECK-NEXT: objects: 65
+# CHECK: o0 state: Unknown
+# CHECK-NEXT: o0 reasons: [LimitReached]
+# CHECK: o0 aliases: [v0]
+# CHECK: o64 state: Unknown
+# CHECK-NEXT: o64 reasons: [LimitReached]
+function f3 name="fiveCopiesFit" results=[{type=boolean}] {
+# REPEAT: i = 0..64
+    v%(i) = NewObject layout=L0 fields=[]
+# END REPEAT
+    Jump -> next b1(v0, v1, v2, v3, v4)
+  b1(v65, v66, v67, v68, v69):
+    v70 = TypeTest v0 testedType=object
+    Return v70
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 65
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 aliases: [v0 v65]
+# CHECK: o64 state: DoesNotEscape

@@ -1,0 +1,29 @@
+# A counter that is tested for int32 in every turn is an integer already, one step beyond int32. A bound that is an int32 narrows it all the same: the step then stays within int32, and so does the counter.
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# STATISTIC: CountersConverted = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tested" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v2 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = Less v5, v0
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Increment v5
+    Jump -> next b1(v7)
+  b4():
+    Return
+  b5() frequency=Unlikely:
+    Return
+# CHECK: b1(v2: int[0, 2147483647]):
+# CHECK: Branch v6 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3([[narrowed]]: int[0, 2147483646]):
+# CHECK-NEXT: v7: int[1, 2147483647] = Increment [[narrowed]]
+}

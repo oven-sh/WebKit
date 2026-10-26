@@ -1,0 +1,117 @@
+# What a layout's own constructor stores on `this` at every activation counts as filled whatever the weights of its callers say. So does what a function stores into nearly every object that it allocates itself,
+# right behind the allocation or behind the block where its allocations meet, if those allocations make at least half of the layout's objects.
+# So does the definition of a private name by the constructor of a class without a parent: it is a store that fills the slot. A store of undefined, a store in a branch and a store by other code do not.
+# An allocation lists what is stored behind it in its own block, so the stores that are looked at stand in the next block, which runs as often.
+# Every function is as hot as can be here, so the site weights top out: what tells a store in a branch from a store at every activation is how often the blocks of the function run
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,EstimateHeat heat=EverythingIsHot
+# RUN: plan-slots fill
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Entry" constructor=f1 fields=[{key="name" declared={type=anything}}, {key="cleared" declared={type=anything}}, {key="inBranch" declared={type=anything}}, {key="later" declared={type=anything}}, {key=#"hidden"@L0 declared={type=anything} flags=[IsPrivate]}] flags=[IsConstructorFunction]
+layout L1 name="Fresh" fields=[{key="id" declared={type=anything}}, {key="cleared" declared={type=anything}}, {key="inBranch" declared={type=anything}}]
+layout L2 name="FirstKind" fields=[{key="id" declared={type=anything}}]
+layout L3 name="SecondKind" fields=[{key="id" declared={type=anything}}]
+layout L4 name="MostlyBare" fields=[{key="late" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Construct v2, -, v1
+    PutModuleVariable v3 variable=g0
+    v5 = Construct v2, -, v1
+    v6 = CallDirect v5, v1 function=f2
+    v7 = CallDirect v1 function=f3
+    PutModuleVariable v7 variable=g0
+    v9 = CallDirect v1 function=f4
+    PutModuleVariable v9 variable=g0
+    v11 = CallDirect v1 function=f5
+    PutModuleVariable v11 variable=g0
+    Return
+}
+function f1 name="Entry" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="name"
+    v3 = Undefined
+    PropSet v0, v3 key="cleared"
+    v5 = NewClassToken layout=L0
+    PrivateDefine v0, v5, v1 layout=L0 field=4
+    v7 = ToBoolean v1
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="inBranch"
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f2 name="storesLater" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="later"
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f3 name="makesFresh" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L1
+    v2 = FinishObject v1
+    Jump -> next b1()
+  b1():
+    PropSet v2, v0 key="id"
+    v4 = Undefined
+    PropSet v2, v4 key="cleared"
+    v6 = ToBoolean v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    PropSet v2, v0 key="inBranch"
+    Jump -> next b3()
+  b3():
+    Return v2
+}
+function f4 name="makesEitherKind" parameters=[{type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v1 = NewObject layout=L2
+    v2 = FinishObject v1
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewObject layout=L3
+    v4 = FinishObject v3
+    Jump -> next b3(v4)
+  b3(v5):
+    PropSet v5, v0 key="id"
+    Return v5
+}
+function f5 name="fillsOneOfThree" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L4
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject layout=L4
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject layout=L4
+    v8 = FinishObject v7
+    PropSet v8, v0 key="late"
+    Return v8
+}
+
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "name" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "cleared" filled=0
+# CHECK-NOT: byConstructor
+# CHECK: .4 #"hidden"@L0 filled={{*}} byConstructor likely
+# CHECK-LABEL: L1 allocated=
+# CHECK-NEXT: .0 "id" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "cleared" filled=0
+# CHECK-NOT: byConstructor
+# Each object that reaches the store behind the two arms comes from one of their allocations.
+# CHECK-LABEL: L2 allocated=
+# CHECK-NEXT: .0 "id" filled={{*}} byConstructor likely
+# CHECK-LABEL: L3 allocated=
+# CHECK-NEXT: .0 "id" filled={{*}} byConstructor likely
+# One allocation of three is followed by the store.
+# CHECK-LABEL: L4 allocated=
+# CHECK-NEXT: .0 "late" filled=
+# CHECK-NOT: byConstructor

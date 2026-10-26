@@ -1,0 +1,87 @@
+# A ramp makes the promise of an async function and enters its body. Where the body of an async function awaits the call at once, ResolveAwaitedCalls enters the callee without a promise, so the ramp is not taken into the caller in front of that pass: also where the tests at the head of the callee have just been taken in, and a ramp stands in each of their arms. A promise with another use is made in the caller.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# RUN(RESOLVED): pass InlineCalls ResolveAwaitedCalls
+# STATISTIC: InlineDecisionBarrier = 8
+# STATISTIC: InlineDecisionInline = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitBySavingFrame v0, v1
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+
+function f2 name="awaitedAtOnce" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f3 name="awaitedAtOnce" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v2 = CallDirect v0 function=f0
+    v3 = Upcast v2 castType=anything
+    v4 = AwaitBySavingFrame v3, v1
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+# CHECK-NOT: NewPromise
+# CHECK: = CallDirect v0 function=f0
+# CHECK-NOT: NewPromise
+# CHECK: Return
+# RESOLVED-NOT: NewPromise
+# RESOLVED: = AwaitCallBySavingFrame v1, v0 function=f1
+# RESOLVED-NOT: NewPromise
+# RESOLVED: Return
+}
+
+function f4 name="oneRampInEachArm" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f5
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f5 name="oneRampInEachArm" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CallDirect v3 function=f0
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0 function=f0
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = AwaitBySavingFrame v6, v1
+    v8 = ReturnAsyncResult v1, v7
+    Return v8
+# CHECK-NOT: NewPromise
+# CHECK-COUNT-2: function=f0
+# CHECK-NOT: NewPromise
+# CHECK: Return
+# RESOLVED-NOT: NewPromise
+# RESOLVED-COUNT-2: = AwaitCallBySavingFrame
+# RESOLVED-NOT: = AwaitBySavingFrame
+# RESOLVED: Return
+}
+
+function f6 name="promiseIsAlsoReturned" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f7
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f7 name="promiseIsAlsoReturned" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v2 = CallDirect v0 function=f0
+    v3 = AwaitBySavingFrame v2, v1
+    v4 = NewArray v2, v3
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+# CHECK: = NewPromise
+# CHECK: = CallDirect v0, {{*}} function=f1
+}

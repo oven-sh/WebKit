@@ -1,0 +1,61 @@
+# The live range copied for the edge on which an object is a cell has at most as many values as the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxDuplicatedTailValues:1
+# RUN: pass SinkAllocations
+# LOSS: MaxDuplicatedTailValues f0
+# STATISTIC: TailsDuplicatedForSinking = 0
+# STATISTIC: AllocationsSunk = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0]}
+layout L1 name="Rectangle" fields=[{key="size" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L1]}
+
+function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="name" receivers=[L1]
+    v7 = ToBoolean v6
+    Return v7
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[outer0]]:{{*}}= NewObject -, v3, v1 layout=L1 fields=[0, 1]
+# CHECK: = Call v0, -, [[outer0]]
+# CHECK-NOT: NewObject
+# CHECK: Return
+# CHECK-NOT: Return
+}
+
+function f1 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = Call v0, -, v3
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v5 = PropGet v3 key="name" receivers=[L1]
+    v6 = ToBoolean v5
+    Return v6
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[outer1]]:{{*}}= NewObject -, v0, v1 layout=L1 fields=[0, 1]
+# CHECK: = Call v0, -, [[outer1]]
+# CHECK: = GetSlot [[outer1]]{{*}}key="name"
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK: b3(
+# CHECK-NOT: PropGet
+# CHECK: Return
+# CHECK-NOT: Return
+}

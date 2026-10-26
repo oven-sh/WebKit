@@ -48,6 +48,8 @@ public:
     void LEGACY_NODELETE atomCharacterClassPushNested(bool) { }
     void LEGACY_NODELETE atomCharacterClassPopNested(bool) { }
     void LEGACY_NODELETE atomCharacterClassEnd() { }
+    void LEGACY_NODELETE atomCharacterClassRemembered(unsigned) { }
+    bool LEGACY_NODELETE atomCharacterClassRepeated(unsigned) { return true; }
     void LEGACY_NODELETE atomParenthesesSubpatternBegin(bool capture, std::optional<String> groupName = std::nullopt)
     {
         parenthesesBegin();
@@ -63,11 +65,18 @@ public:
     void LEGACY_NODELETE atomBackReference(unsigned) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedBackReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE quantifyAtom(unsigned, unsigned, bool) { m_summary.isOnlyPatternCharacters = false; }
+    void LEGACY_NODELETE quantifyAtom(unsigned min, unsigned max, bool)
+    {
+        m_summary.isOnlyPatternCharacters = false;
+        m_summary.hasCountedQuantifier |= min > 1 || (max > 1 && max != quantifyInfinite);
+    }
     void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
+    void LEGACY_NODELETE willLookUpUnicodeProperty() { m_summary.hasUnicodePropertyLookup = true; }
     void LEGACY_NODELETE resetForReparsing()
     {
+        bool hasUnicodePropertyLookup = m_summary.hasUnicodePropertyLookup;
         m_summary = { };
+        m_summary.hasUnicodePropertyLookup = hasUnicodePropertyLookup;
         m_parenthesesDepth = 0;
     }
 

@@ -1,0 +1,272 @@
+# A counted loop without effects whose values nothing outside uses is skipped
+# FORM: Prepared
+# RUN: pass RemoveDeadCountedLoops
+# STATISTIC: RemoveDeadCountedLoopsChanges = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="emptyLoop" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Jump -> next b1
+# CHECK: Jump -> next b3()
+}
+
+function f1 name="unusedArithmeticInside" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Mul v5, v5
+    v7 = Integer integer=1
+    v8 = Add v5, v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Jump -> next b1
+# CHECK: Jump -> next b3()
+}
+
+function f2 name="nestOfTwo" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Jump -> next b3(v1)
+  b3(v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = Add v10, v2
+    Jump -> next b3(v11)
+  b5():
+    v12 = Add v6, v2
+    Jump -> next b1(v12)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Jump -> next b1
+# CHECK: Jump -> next b6()
+}
+
+function f3 name="stepOfZero" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=0
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v1)
+}
+
+function f4 name="counterUsedAfterLoop" parameters=[{type=int[0, 100]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK: Jump -> next b1(v1)
+}
+
+function f5 name="callInside" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Call v1
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+}
+
+function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Integer integer=1
+    v8 = Add v6, v7
+    Branch v1 -> taken b4(), notTaken b5()
+  b3():
+    Return
+  b4():
+    Jump -> next b1(v8)
+  b5():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+}
+
+function f7 name="irreducibleCycleInside" parameters=[{type=int[0, 100]}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7):
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    LoopHint
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    LoopHint
+    Branch v2 -> taken b3(), notTaken b5()
+  b5():
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v3)
+}
+
+function f8 name="uncountedInnerLoop" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Branch v1 -> taken b3(), notTaken b4()
+  b4():
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b5():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v2)
+}
+
+function f9 name="exitWithArgument" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3(v1)
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3(v8):
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v1)
+}
+
+function f10 name="numberBound" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    v7 = AssumeType v6 castType=int[0, 100]
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: Jump -> next b1(v1)
+}
+
+function f11 name="consecutiveLoops" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v6, v2
+    Jump -> next b1(v7)
+  b3():
+    Jump -> next b4(v1)
+  b4(v8):
+    LoopHint
+    v10 = Less v8, v0
+    Branch v10 -> taken b5(| 0), notTaken b6()
+  b5(v11):
+    v12 = Add v11, v2
+    Jump -> next b4(v12)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Jump -> next b1
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b6()
+}
+
+function f12 name="integerBoundAndAssumedCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    v6 = Add v2, v5
+    v7 = AssumeType v6 castType=int[0, 100]
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Jump -> next b1
+# CHECK: Jump -> next b3()
+}

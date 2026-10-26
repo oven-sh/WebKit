@@ -1,0 +1,42 @@
+# What is entered where one of several tests fails lies on a side of a condition that the argument folds. Its bytes go once, with that side
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="testsOnOneSide" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v1 testedType=object
+    Branch v2 -> taken b1(), notTaken b7()
+  b1():
+    v3 = TypeTest v1 testedType=number|object
+    Branch v3 -> taken b2(), notTaken b4()
+  b2():
+    v4 = TypeTest v1 testedType=number|string|object
+    Branch v4 -> taken b3(), notTaken b5()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    Jump -> next b6()
+  b6() frequency=Unlikely:
+# REPEAT: i = 5..39; a = 0 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38
+    v%(i) = Mul v%(a), v0
+# END REPEAT
+    Return v39
+  b7():
+# REPEAT: i = 40..74; a = 0 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73
+    v%(i) = Mul v%(a), v0
+# END REPEAT
+    Return v74
+}
+
+function f1 name="passesANumber" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0, v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="passesANumber"
+# CHECK: CallDirect

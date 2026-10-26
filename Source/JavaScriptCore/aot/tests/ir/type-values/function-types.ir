@@ -1,0 +1,126 @@
+# A function type is a function record without a body, with the role Signature. Every function whose signature fits satisfies it, and no test at run time knows a signature:
+# a type that names one reads as any function, and lists beside it the functions whose closures the program converts into it, directly or through another function type.
+# They are what a call through the type expects. So a function needs no test on its way into a function type, with an edge or without, and any other value is tested for being a function.
+# A value keeps what its own type lists; one whose type lists nothing takes the list of the type that it is converted to
+# FORM: AsRead
+# RUN: pass TypeValues VerifyProgram
+# STATISTIC: FunctionTypesWithoutMembers = 1
+# STATISTIC: FunctionTypesWithOneMember = 1
+# STATISTIC: FunctionTypesWithFewMembers = 1
+# STATISTIC: FunctionTypesWithManyMembers = 0
+# STATISTIC: RequestsResolvedToNothing = 5
+# STATISTIC: RequestsResolvedToUpcast = 1
+# STATISTIC: RequestsResolvedToCheck = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Variable
+typesite w2 module=m0 position=30 kind=Assertion
+layout L0 name="Handler" fields=[{key="run" declared={type=f1}}, {key="next" declared={type=undefined|f2}}]
+variable g0 name="current" module=m0 declared={type=undefined|f2} initialization=Undefined
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK: layout L0 name="Handler" fields=[{key="run" declared={type=function|f4}
+# CHECK: {key="next" declared={type=undefined|function|f4|f5}
+# CHECK: variable g0 name="current" module=m0 declared={type=undefined|function|f4|f5}
+function f0 name="readsPositions" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect function=f9
+    Return v0
+# CHECK: v0: undefined|function|f4|f5 = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: function|f4 = CallDirect function=f9
+}
+function f1 name="one" role=Signature results=[{type=anything}] functionTypes=[f2]
+function f2 name="two" role=Signature results=[{type=anything}]
+function f3 name="none" role=Signature results=[{type=anything}]
+# CHECK-LABEL: function f1 name="one" {{*}}role=Signature {{*}}functionTypes=[f2]
+# CHECK-LABEL: function f2 name="two" {{*}}role=Signature
+# CHECK-LABEL: function f3 name="none" {{*}}role=Signature
+function f4 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f1] {
+    Return v0
+}
+function f5 name="negate" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f2] {
+    Return v0
+}
+function f6 name="callsOne" parameters=[{type=f1 site=w0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="callsOne" {{*}}parameters=[{type=function|f4 site=w0}, {type=anything}]
+# CHECK-NEXT: b0(v0: function|f4, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+function f7 name="callsTwo" parameters=[{type=f2 site=w0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="callsTwo" {{*}}parameters=[{type=function|f4|f5 site=w0}, {type=anything}]
+# CHECK-NEXT: b0(v0: function|f4|f5, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+function f8 name="callsNone" parameters=[{type=f3 site=w0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f8 name="callsNone" {{*}}parameters=[{type=function site=w0}, {type=anything}]
+# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+function f9 name="returnsOne" results=[{type=f1}]
+# CHECK-LABEL: function f9 name="returnsOne" {{*}}results=[{type=function|f4}]
+# A function type stands beside the other parts of a type, and beside a function that the type names itself. Beside a function type without members nothing is listed
+function f10 name="besideOtherParts" parameters=[{type=undefined|null|f1}, {type=f1|f5}, {type=string|f1|f3}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f10 name="besideOtherParts" {{*}}parameters=[{type=undefined|null|function|f4}, {type=function|f4|f5}, {type=string|function}]
+# CHECK-NEXT: b0(v0: undefined|null|function|f4, v1: function|f4|f5, v2: string|function):
+# Nothing checks what enters an expected position, so the members are only what is expected of its value
+function f11 name="expectsTwo" parameters=[{type=f2 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="expectsTwo" {{*}}parameters=[{type=function|f4|f5 flags=[IsExpected]}, {type=anything}]
+# CHECK-NEXT: b0(v0: anything ~ function|f4|f5, v1: anything):
+function f12 name="closureIntoItsType" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f1 site=w1}
+    Return v1
+# CHECK: v0: f4 = NewClosure function=f4
+# CHECK-NEXT: Return v0
+}
+function f13 name="alongAnEdgeBetweenTypes" parameters=[{type=f1 site=w0}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=f2 site=w1}
+    Return v1
+# CHECK: b0(v0: function|f4):
+# CHECK-NEXT: Return v0
+}
+function f14 name="intoTypeWithoutMembers" parameters=[{type=f2 site=w0}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=f3 site=w1}
+    Return v1
+# CHECK: b0(v0: function|f4|f5):
+# CHECK-NEXT: Return v0
+}
+function f15 name="againstTheEdge" parameters=[{type=f2 site=w0}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=f1 site=w2} illTypedCause=Assertion
+    Return v1
+# CHECK: b0(v0: function|f4|f5):
+# CHECK-NEXT: Return v0
+}
+function f16 name="closureWithoutAnEdge" results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Convert v0 declared={type=f1 site=w2} illTypedCause=Assertion
+    Return v1
+# CHECK: v0: f5 = NewClosure function=f5
+# CHECK-NEXT: Return v0
+}
+function f17 name="fromAnything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=f2 site=w1} illTypedCause=FromLooseType
+    Return v1
+# CHECK: v1: function|f4|f5 = Check v0 castType=function|f4|f5 site=w1
+# CHECK-NEXT: Return v1
+}
+function f18 name="fromTypeWithoutMembers" parameters=[{type=f3 site=w0}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=f2 site=w2} illTypedCause=Assertion
+    Return v1
+# CHECK: b0(v0: function):
+# CHECK-NEXT: v1: function|f4|f5 = Upcast v0 castType=function|f4|f5
+# CHECK-NEXT: Return v1
+}

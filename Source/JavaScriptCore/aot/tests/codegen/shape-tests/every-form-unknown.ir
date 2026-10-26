@@ -1,0 +1,84 @@
+# A shape test of a value of unknown type generates code for one shape, the lowest shapes, a range, immediate bits and a bit set, as a value and as the condition of a branch. Tests of neighbors in a loop fix the order of the shapes
+# FORM: Selected
+# RUN: generate-code
+# RUN(SHAPES): pass PlanSlots NumberAndEncode
+# OPTIONS: check=validate-back-end validate
+# SHAPES: set {L5} one 6
+# SHAPES: set {L0 L1 L2} upto 3
+# SHAPES: set {L5 L6 L7} range 6..8
+# SHAPES: set {L5 L7 L9} bits 6..10 0x15
+# SHAPES: set {L0 L69} bitset 1..70
+# Only code tests the set, so code holds the words as constant data and the table of shape sets has none.
+# SHAPES-NOT: bitset 1..70 @
+# CHECK: f2: size=
+# CHECK: f3: size=
+# CHECK: f4: size=
+# CHECK: f5: size=
+# CHECK: f6: size=
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..69
+layout L%(i) name="T%(i)" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+# END REPEAT
+function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
+# REPEAT: i = 0..69
+    v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
+# END REPEAT
+    Return
+}
+function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 0..68
+    v%(i+2) = ShapeTest v0 layouts=[L%(i), L%(i+1)]
+# END REPEAT
+    TestAndBranch v70 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="oneShape" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L5]
+    v2 = ShapeTest v0 layouts=[L5]
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}
+function f3 name="upTo" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0, L1, L2]
+    v2 = ShapeTest v0 layouts=[L0, L1, L2]
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}
+function f4 name="range" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L5, L6, L7]
+    v2 = ShapeTest v0 layouts=[L5, L6, L7]
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}
+function f5 name="immediateBits" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L5, L7, L9]
+    v2 = ShapeTest v0 layouts=[L5, L7, L9]
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}
+function f6 name="bitSet" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0, L69]
+    v2 = ShapeTest v0 layouts=[L0, L69]
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}

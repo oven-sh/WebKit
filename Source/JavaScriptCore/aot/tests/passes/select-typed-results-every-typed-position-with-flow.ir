@@ -1,0 +1,104 @@
+# JSON.parse(text) as lowering writes it in front of each typed position: a variable, an argument of a call by value, where only the expected type stands behind the call, a tail call, whose cast names the type, and a field. Flow models the objects at each, so each record type gets its parser.
+# A function with a typed result that reaches the call under no name of its own is not modeled, and its result stays plain
+# FORM: AsRead
+# OPTIONS: report=Declines
+# RUN: pipeline SeparateUnlikelyLoopPaths
+# STATISTIC: ParsersCreated = 4
+# CHECK: decline TypedResultNotSelected f6 {{*}} reason=TargetIsNotModeledByFlow
+# CHECK-NOT: decline TypedResultNotSelected
+# CHECK: function {{*}}role=Parser {{*}}{type=undefined|null|L3}
+# CHECK: function {{*}}role=Parser {{*}}{type=undefined|null|L5}
+# CHECK: function {{*}}role=Parser {{*}}{type=undefined|null|L1}
+# CHECK: function {{*}}role=Parser {{*}}{type=undefined|null|L2}
+# CHECK-NOT: role=Parser
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ThroughVariable" module=m0 position=5 fields=[{key="otherId" declared={type=number}}]
+layout L1 name="Argument" module=m0 position=10 fields=[{key="argumentId" declared={type=number}}, {key="argumentName" declared={type=string}}]
+layout L2 name="Returned" module=m0 position=20 fields=[{key="returnedId" declared={type=number}}, {key="returnedName" declared={type=string}}]
+layout L3 name="InField" module=m0 position=30 fields=[{key="fieldId" declared={type=number}}, {key="fieldName" declared={type=string}}]
+layout L4 name="Holder" module=m0 position=40 fields=[{key="field" declared={type=undefined|null|L3}}]
+layout L5 name="InVariable" module=m0 position=50 fields=[{key="variableId" declared={type=number}}, {key="variableName" declared={type=string}}]
+variable g0 name="takeArgument" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="parse" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = NewClosure function=f5
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = CallDirect v2 function=f1
+    v7 = Call v5, -, v6
+    v8 = CallDirect v2 function=f2
+    v9 = Call v5, -, v8
+    v10 = CallDirect v2 function=f3
+    v11 = PropGet v10 key="returnedId"
+    v12 = Call v5, -, v11
+    v13 = CallDirect v2 function=f4
+    v14 = Call v5, -, v13
+    v15 = Builtin builtin=JSONParse
+    PutModuleVariable v15 variable=g1
+    v17 = CallDirect v2 function=f6 [isNeverInlined]
+    v18 = Call v5, -, v17
+    Return
+}
+
+function f1 name="intoVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="parse"
+    v5 = Convert v4 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|L5} illTypedCause=FromLooseType
+    v7 = PropGet v6 key="variableId"
+    Return v7
+}
+
+function f2 name="intoArgument" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = Builtin builtin=JSON
+    v3 = PropGet v2 key="parse"
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v5 = Call v4, v2, v0 calleeKey="parse" calleeName="parse"
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v7 = Call v1, -, v6 calleeName="takeArgument"
+    ReturnCall v7 casts=[{declared={type=undefined|null|number}}]
+}
+
+function f3 name="returned" parameters=[{type=undefined|null|string}] results=[{type=undefined|null|L2}] {
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L2}}]
+}
+
+function f4 name="intoField" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    v1 = Null
+    v2 = NewObject -, v1 layout=L4 fields=[0]
+    v3 = Builtin builtin=JSON
+    v4 = PropGet v3 key="parse"
+    v5 = Convert v4 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v6 = Call v5, v3, v0 calleeKey="parse" calleeName="parse"
+    v7 = Convert v6 declared={type=undefined|null|L3} illTypedCause=FromLooseType
+    PropSet v2, v7 key="field"
+    v9 = PropGet v2 key="field"
+    v10 = PropGet v9 key="fieldId"
+    Return v10
+}
+
+function f5 name="takeArgument" parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="argumentId"
+    Return v1
+}
+
+function f6 name="calleeOutOfAVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="parse"
+    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v4 = PropGet v3 key="otherId"
+    Return v4
+}

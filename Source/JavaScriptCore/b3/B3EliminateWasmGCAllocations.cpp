@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3EliminateWasmGCAllocations.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3PhaseScope.h"
 #include "B3Procedure.h"
@@ -101,4 +101,4 @@ bool eliminateWasmGCAllocations(Procedure& proc)
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

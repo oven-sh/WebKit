@@ -1,0 +1,34 @@
+# The descriptor Object.getOwnPropertyDescriptor returns is never built when only its fields are read: the call delivers them as results
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: AllocationsSunk = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="descriptorReadByFields" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = PropGet v4 key="value"
+    Return v5
+  b2():
+    Return v1
+# CHECK: v2:{{*}}= CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
+# CHECK-NEXT: [[flag0]]: boolean = ResultAt v2
+# CHECK: [[shift0]]: int[0, 1] = ToNumber [[flag0]]
+# CHECK-NEXT: [[tag0]]: i32 = LShift {{*}}, [[shift0]]
+# CHECK: = ResultAt v2 index=
+# CHECK: = BitAnd [[tag0]],
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: v5:{{*}}= Upcast
+}
+
+function f1 name="descriptorReturned" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0
+    Return v2
+# CHECK-NOT: builtinCallForm=
+# CHECK: Return v2
+}

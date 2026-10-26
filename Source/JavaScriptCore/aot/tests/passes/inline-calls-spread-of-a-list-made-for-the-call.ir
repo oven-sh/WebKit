@@ -1,0 +1,31 @@
+# function log(...list) { return write(prefix, ...list); }: what it takes to make a list and to spread the list of a parameter into it is not charged where the site makes that list for the call:
+# the copy passes the elements one by one. A list that comes from elsewhere is spread in the copy as it is in the callee
+# FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+# STATISTIC: InlineBenefitFoldedCode = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="handsOn" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+    v2 = PropGet v0 key="first"
+    v3 = NewArray v2 contents=anything
+    AppendSpread v3, v1
+    v5 = CallList v0, -, v3
+    Return v5
+}
+
+function f1 name="makesTheList" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0, v0 contents=anything
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+# CHECK-NOT: CallDirect
+}
+
+function f2 name="passesSomeList" parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+# CHECK: = CallDirect v0, v1 function=f0
+}

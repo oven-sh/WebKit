@@ -1,0 +1,31 @@
+# A validating build photographs each operand that may be an object in front of a call that runs no other code, and compares it behind the call: the callee does to the operands no more than the operation lists.
+# A number is no object, and a call that may run any code is not judged
+# FORM: Placed
+# RUN: generate-code calls
+# OPTIONS: validate
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTCompareOperandWithPhotograph x2
+# CHECK: operation operationAOTPhotographOperand x2
+# CHECK: stub ArrayPush x1
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTCompareOperandWithPhotograph x1
+# CHECK: operation operationAOTPhotographOperand x1
+# CHECK: operation operationAOTReserveArrayCapacity x1
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: Photograph
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="an-array-and-any-value" parameters=[{type=Array}, {type=anything}] results=[{type=undefined}] {
+    AppendElement v0, v1
+    v3 = Undefined
+    Return v3
+}
+function f1 name="an-array-and-a-number" parameters=[{type=Array}, {type=i32}] results=[{type=undefined}] {
+    ReserveArrayCapacity v0, v1
+    v3 = Undefined
+    Return v3
+}
+function f2 name="any-code" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    Return v1
+}

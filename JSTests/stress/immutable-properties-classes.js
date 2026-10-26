@@ -71,6 +71,7 @@ function snapshot(object) {
         shouldBe(Reflect.defineProperty(fn, "name", { value: "x" }), false);
         shouldBe(Reflect.defineProperty(fn, "name", { value: fn.name }), true);
         shouldBe(Reflect.deleteProperty(fn, "name"), false);
+        shouldBe(Object.hasOwn(fn, "name"), true);
         shouldBe(Reflect.deleteProperty(fn, "missing"), true);
         shouldBe(Reflect.setPrototypeOf(fn, null), false);
     }

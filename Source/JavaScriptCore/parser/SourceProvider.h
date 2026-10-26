@@ -163,6 +163,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+    // The id of the built-in function whose text holds the offset, in a provider that holds the text of built-in functions one after the other.
+    virtual std::optional<uint32_t> builtinFunctionAt(unsigned) const { return std::nullopt; }
 
     SourceProvenance provenance() const { return m_provenance; }
 
@@ -375,26 +377,31 @@ private:
 // counts from where it starts. That takes no table: a builtin is short, and few of them are ever asked about.
 class BuiltinsSourceProvider final : public StringSourceProvider {
 public:
-    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider.
-    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts)
+    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider. The builtins have consecutive ids.
+    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts, uint32_t firstID)
     {
-        return adoptRef(*new BuiltinsSourceProvider(source, starts));
+        return adoptRef(*new BuiltinsSourceProvider(source, starts, firstID));
     }
 
     JS_EXPORT_PRIVATE LineColumn lineColumnInTextForOffset(unsigned offset) final;
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE std::optional<uint32_t> builtinFunctionAt(unsigned offset) const final;
+#endif
 
 private:
-    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts, uint32_t firstID)
 #if USE(BUN_JSC_ADDITIONS)
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static)
 #else
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
 #endif
         , m_starts(starts)
+        , m_firstID(firstID)
     {
     }
 
     std::span<const unsigned> m_starts;
+    uint32_t m_firstID;
 };
 
     class SyntheticSourceProvider final : public SourceProvider {

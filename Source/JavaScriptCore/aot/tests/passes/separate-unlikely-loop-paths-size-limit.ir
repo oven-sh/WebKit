@@ -1,0 +1,8 @@
+# A loop over the limit keeps its unlikely paths, and the loss is recorded
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxBytesOfSeparatedLoop:16
+# LOSS: MaxBytesOfSeparatedLoop x1 f0
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 0
+# CHECK: outcome: Unchanged
+# PROGRAM-OF: separate-unlikely-loop-paths-cold-loop.ir

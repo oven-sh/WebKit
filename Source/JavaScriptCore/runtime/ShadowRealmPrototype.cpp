@@ -36,6 +36,8 @@
 #include "JSPromise.h"
 #include "ShadowRealmObject.h"
 
+#if ENABLE(SHADOW_REALM)
+
 #include "ShadowRealmPrototype.lut.h"
 
 namespace JSC {
@@ -152,3 +154,5 @@ JSC_DEFINE_HOST_FUNCTION(moveFunctionToRealm, (JSGlobalObject* globalObject, Cal
 }
 
 } // namespace JSC
+
+#endif // ENABLE(SHADOW_REALM)

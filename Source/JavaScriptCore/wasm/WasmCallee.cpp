@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "CalleeBits.h"
 #include "InPlaceInterpreter.h"
 #include "JSCJSValueInlines.h"
@@ -61,7 +62,7 @@ WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(RestoreFrameCallee);
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(IPIntCallee);
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(WasmBuiltinCallee);
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 WTF_MAKE_COMPACT_TZONE_ALLOCATED_IMPL(JSToWasmICCallee);
 #endif
 
@@ -146,7 +147,7 @@ inline void Callee::runWithDowncast(NOESCAPE const Func& func)
         break;
 #endif
     case CompilationMode::JSToWasmICMode:
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         func(uncheckedDowncast<JSToWasmICCallee>(this));
 #endif
         break;
@@ -203,8 +204,10 @@ CodePtr<WasmEntryPtrTag> Callee::entrypoint() const
     return codePtr;
 }
 
-std::tuple<void*, void*> Callee::range() const
+NEVER_INLINE std::tuple<void*, void*> Callee::range() const
 {
+    using Range = std::tuple<void*, void*>;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &Callee::range);
     std::tuple<void*, void*> result;
     runWithDowncast([&](auto* derived) {
         result = derived->rangeImpl();
@@ -212,7 +215,7 @@ std::tuple<void*, void*> Callee::range() const
     return result;
 }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 Box<PCToCodeOriginMap> Callee::pcToCodeOriginMap() const
 {
     Box<PCToCodeOriginMap> result;
@@ -256,7 +259,7 @@ JITCallee::JITCallee(Wasm::CompilationMode compilationMode, FunctionSpaceIndex i
 {
 }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 void JITCallee::setEntrypoint(Wasm::Entrypoint&& entrypoint)
 {
     m_entrypoint = WTF::move(entrypoint);
@@ -309,21 +312,29 @@ RestoreFrameCallee& RestoreFrameCallee::singleton()
 IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpaceIndex index, const RTT& signatureRTT, std::pair<const Name*, RefPtr<NameSection>>&& name)
     : Callee(Wasm::CompilationMode::IPIntMode, index, WTF::move(name))
     , m_functionIndex(generator.m_functionIndex)
-    , m_bytecode(generator.m_bytecode.data() + generator.m_bytecodeOffset)
-    , m_bytecodeEnd(m_bytecode + (generator.m_bytecode.size() - generator.m_bytecodeOffset - 1))
-    , m_metadata(WTF::move(generator.m_metadata))
-    , m_localInitBytecode(WTF::move(generator.m_localInitBytecode))
     , m_signatureRTT(&signatureRTT)
-    , m_callTargets(WTF::move(generator.m_callTargets))
-    , m_hotLocals(generator.hotLocals())
-    , m_localSizeToAlloc(roundUpToMultipleOf<2>(generator.m_numLocals))
-    , m_numRethrowSlotsToAlloc(generator.m_numAlignedRethrowSlots)
-    , m_numLocals(generator.m_numLocals)
-    , m_numArgumentsOnStack(generator.m_numArgumentsOnStack)
-    , m_maxFrameSizeInV128(generator.m_maxFrameSizeInV128)
-    , m_maxCalleeStackSize(generator.m_maxCalleeStackSize)
-    , m_tierUpCounter(WTF::move(generator.m_tierUpCounter))
+    , m_tierUpCounter(UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> { })
 {
+    takeMetadata(generator);
+}
+
+void IPIntCallee::takeMetadata(FunctionIPIntMetadataGenerator& generator)
+{
+    m_bytecode = generator.m_bytecode.data() + generator.m_bytecodeOffset;
+    m_bytecodeEnd = m_bytecode + (generator.m_bytecode.size() - generator.m_bytecodeOffset - 1);
+    m_metadata = Vector<uint8_t>(WTF::move(generator.m_metadata));
+    m_localInitBytecode = Vector<uint8_t>(WTF::move(generator.m_localInitBytecode));
+    m_callTargets = WTF::move(generator.m_callTargets);
+    m_hotLocals = generator.hotLocals();
+    m_localSizeToAlloc = roundUpToMultipleOf<2>(generator.m_numLocals);
+    m_numRethrowSlotsToAlloc = generator.m_numAlignedRethrowSlots;
+    m_numLocals = generator.m_numLocals;
+    m_numArgumentsOnStack = generator.m_numArgumentsOnStack;
+    m_maxFrameSizeInV128 = generator.m_maxFrameSizeInV128;
+    m_maxCalleeStackSize = generator.m_maxCalleeStackSize;
+    std::destroy_at(&m_tierUpCounter);
+    std::construct_at(&m_tierUpCounter, WTF::move(generator.m_tierUpCounter));
+    m_exceptionHandlers = { };
     if (size_t count = generator.m_exceptionHandlers.size()) {
         m_exceptionHandlers = FixedVector<HandlerInfo>(count);
         for (size_t i = 0; i < count; i++) {
@@ -574,7 +585,7 @@ const RegisterAtOffsetList* JSToWasmCallee::calleeSaveRegistersImpl()
     return &RegisterAtOffsetList::wasmPinnedRegisters();
 }
 
-#if ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
 
 void OptimizingJITCallee::linkExceptionHandlers(Vector<UnlinkedHandlerInfo> unlinkedExceptionHandlers, Vector<CodeLocationLabel<ExceptionHandlerPtrTag>> exceptionHandlerLocations)
 {
@@ -592,6 +603,10 @@ unsigned OptimizingJITCallee::computeCodeHashImpl() const
 {
     return m_profiledCallee->computeCodeHashImpl();
 }
+
+#endif
+
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 
 BBQCallee::~BBQCallee()
 {

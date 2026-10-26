@@ -269,9 +269,26 @@ public:
         return joinImpl<indexingShape>(globalObject, data, length);
     }
 
+#if ENABLE(AOT)
+    // Compiled code chooses an array's storage by the type of its elements: an array of numbers holds doubles, whatever their values.
+    JSString* tryJoin(JSGlobalObject* globalObject, const double* data, unsigned length)
+    {
+        for (size_t i = 0; i < length; ++i) {
+            auto int32Value = tryConvertToStrictInt32(data[i]);
+            if (!int32Value)
+                return nullptr;
+            m_accumulatedStringsLength += WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
+        }
+        return joinImpl(globalObject, data, length);
+    }
+#endif
+
 private:
     template<IndexingType indexingShape>
     JSString* joinImpl(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
+#if ENABLE(AOT)
+    JSString* joinImpl(JSGlobalObject*, const double*, unsigned);
+#endif
 
     StringView m_separator;
     CheckedUint32 m_accumulatedStringsLength;

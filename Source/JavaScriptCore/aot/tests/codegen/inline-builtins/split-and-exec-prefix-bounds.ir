@@ -1,0 +1,57 @@
+# The prefix forms of split and exec deliver bounds, so they create no string. A string is created by the operation that makes one of the bounds, and only where the bounds are not negative
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="splitAtAnyString" parameters=[{type=string}, {type=string}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+    v3 = ResultAt v2 index=3
+    v4 = ResultAt v2 index=4
+    v5 = Sub v4, v3 form=Integers
+    Return v5
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: Substring
+# CHECK: operation operationAOTStringSplitPrefix x1
+# CHECK-NOT: Substring
+
+function f1 name="execGroups" parameters=[{type=RegExp}, {type=string}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
+    v3 = ResultAt v2 index=2
+    v4 = ResultAt v2 index=6
+    v5 = ResultAt v2 index=7
+    v6 = Sub v5, v4 form=Integers
+    v7 = Add v6, v3 form=Integers
+    Return v7
+}
+# S: f1 b0 Balanced
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: Substring
+# CHECK-NOT: operationAOTRegExpExecPrefix
+# CHECK: stub RegExpMatch
+# CHECK-NOT: Substring
+
+function f2 name="execInCompactCode" parameters=[{type=RegExp}, {type=string}, {type=boolean}] results=[{type=number}] {
+    v3 = Integer integer=0
+    Branch v2 -> taken b1(), notTaken b2(v3)
+  b1() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0
+    v5 = ResultAt v4 index=2
+    Jump -> next b2(v5)
+  b2(v6: int[0, 2147483647]):
+    Return v6
+}
+# S: f2 b1 Compact
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: Substring
+# CHECK: operation operationAOTRegExpExecPrefix x1
+# CHECK-NOT: Substring
+
+function f3 name="stringOfBounds" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=anything}] {
+    v3 = SubstringOrUndefined v0, v1, v2
+    Return v3
+}
+# CHECK-LABEL: f3: size=
+# CHECK: stub Substring

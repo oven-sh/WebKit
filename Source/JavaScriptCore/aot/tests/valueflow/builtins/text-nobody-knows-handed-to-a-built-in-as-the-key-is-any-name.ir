@@ -1,0 +1,24 @@
+# Object.defineProperty(globalThis, "someNameOfMine" + text, { value: 1 }); Date.now()
+# The text is made at run time and may be "Date"
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Unknown
+
+layout L0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=GlobalThis
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = String string="someNameOfMine"
+    v6 = PropGet v2 key="text" [isFreeName]
+    v7 = Add v5, v6
+    v8 = ToString v7
+    v9 = Call v1, v0, v2, v8, v4
+    v10 = PropGet v2 key="Date" [isFreeName]
+    v11 = PropGet v10 key="now"
+    v12 = Call v11, v10
+    Return
+}

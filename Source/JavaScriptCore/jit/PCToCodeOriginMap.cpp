@@ -26,7 +26,7 @@
 #include "config.h"
 #include "PCToCodeOriginMap.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "B3PCToOriginMap.h"
 #include "DFGNode.h"
@@ -320,4 +320,4 @@ std::optional<CodeOrigin> PCToCodeOriginMap::findPC(void* pc) const
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

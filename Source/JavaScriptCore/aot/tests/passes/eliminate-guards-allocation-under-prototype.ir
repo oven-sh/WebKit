@@ -1,0 +1,54 @@
+# new C() on the arm where the callee is tested to be the constructor of C, a class that is evaluated more than once, so that the prototype is read from the closure at hand. The allocation has a prototype operand and the
+# program has another class, so the allocation proves nothing, although new.target is narrowed to the constructor here: a later pass drops that narrowing. The tests of the object stay, and nothing names the allocation as a guard.
+# An allocation without a prototype operand has its own layout, and stands for the tests.
+# FORM: Prepared
+# RUN: pass EliminateGuards
+# CHECK-LABEL: name="tested-callee"
+# CHECK: [[object]]: object ~ L0 = NewObject {{*}} layout=L0
+# CHECK-NOT: AllGuards [[object]]
+# CHECK: = ShapeTest [[object]] layouts=[L0]
+# CHECK-NOT: AllGuards [[object]]
+# CHECK: = IsNotFrozen [[object]]
+# CHECK-NOT: AllGuards [[object]]
+# CHECK: PutSlotOrAdd
+# CHECK-LABEL: name="own-layout"
+# CHECK: [[proven]]: L0 = NewObject layout=L0
+# CHECK-NOT: IsNotFrozen
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Made" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="Other" constructor=f1 flow={baseState=None}
+function f0 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="tested-callee" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = IsClosureOf v0 function=f0
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3: f0):
+    v4 = GetConstructPrototype v3 layout=L0
+    v5 = NewObject v4 layout=L0
+    v6 = ShapeTest v5 layouts=[L0]
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = IsNotFrozen v5, v7
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = AllGuards v7, v9
+    PutSlotOrAdd v5, v10, v1 key="x" receivers=[L0] level=Expected
+    Return v5
+  b4():
+    PropSet v5, v1 key="x"
+    Return v5
+  b5():
+    Return
+}
+function f3 name="own-layout" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = IsNotFrozen v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlotOrAdd v1, v3, v0 key="x" receivers=[L0] level=Proven
+    Return v1
+  b2():
+    PropSet v1, v0 key="x"
+    Return v1
+}

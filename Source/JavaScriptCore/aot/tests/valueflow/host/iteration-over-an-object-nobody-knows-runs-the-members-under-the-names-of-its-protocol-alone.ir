@@ -1,0 +1,20 @@
+# member = handedIn[someName]; for (const each of handedIn) { }
+# An iteration finds what it calls under the names of its protocol. Of the built-ins that have escaped it runs the functions that the table has under such names, as Array.prototype.values,
+# which lies under Symbol.iterator, and the `next` of the iterator of arrays. Every other member stays held.
+# RUN: valueflow-solve used
+# CHECK-NOT: run ArrayPrototypeSort
+# CHECK: run ArrayIteratorPrototypeNext
+# CHECK: used ArrayPrototypeSort
+# CHECK: run ArrayPrototypeValues
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = IteratorOpen v1
+    v5 = IteratorResume v4
+    Return
+}

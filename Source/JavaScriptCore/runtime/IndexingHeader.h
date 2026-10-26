@@ -114,6 +114,11 @@ public:
         return reinterpret_cast<Butterfly*>(this + 1);
     }
     
+    uint64_t& elementsStartOffset(size_t propertyCapacity)
+    {
+        return *(reinterpret_cast<uint64_t*>(this) - propertyCapacity - 1);
+    }
+
 private:
     friend class LLIntOffsetsExtractor;
 

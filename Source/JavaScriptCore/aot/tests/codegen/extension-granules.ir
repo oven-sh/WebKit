@@ -1,0 +1,149 @@
+# A field in the Extension is found by counting the granules before its own: none for the first granule, a mask for the second, a population count from the third on. Reads of one object in a row load the bits once.
+# A store that finds no granule asks for its own and for those of the stores that follow it on the same object, and a store of undefined asks for none
+# FORM: Selected
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN(SLOTS): pass PlanSlots
+# RUN: generate-code
+# REQUIRES: x86_64 unsanitized-code
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Wide" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}, {key="late5" declared={type=anything}}, {key="late6" declared={type=anything}}, {key="late7" declared={type=anything}}, {key="late8" declared={type=anything}}, {key="late9" declared={type=anything}}, {key="late10" declared={type=anything}}, {key="late11" declared={type=anything}}, {key="late12" declared={type=anything}}, {key="late13" declared={type=anything}}, {key="late14" declared={type=anything}}, {key="late15" declared={type=anything}}]
+layout L1 name="Pair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Late" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="near0" declared={type=anything}}, {key="near1" declared={type=anything}}, {key="empty" declared={type=anything}}, {key="chain0" declared={type=anything}}, {key="chain1" declared={type=anything}}, {key="chain2" declared={type=anything}}, {key="often" declared={type=anything}}, {key="seldom" declared={type=anything}}]
+function f0 name="make" parameters=[{type=number}, {type=boolean}] results=[{type=L0}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f1 name="fill" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+# REPEAT: i = 0..15
+    PutSlotOrAdd v0, -, v1 key="late%(i)" receivers=[L0] level=Proven
+# END REPEAT
+    Return
+}
+function f2 name="readGranule0" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="late2" receivers=[L0] level=Proven
+    Return v1
+}
+function f3 name="readGranule1" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="late3" receivers=[L0] level=Proven
+    Return v1
+}
+function f4 name="readGranule2" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="late4" receivers=[L0] level=Proven
+    Return v1
+}
+function f5 name="readGranule9" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="late11" receivers=[L0] level=Proven
+    Return v1
+}
+function f6 name="readTwoGranules" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="late5" receivers=[L0] level=Proven
+    v2 = GetSlotOrUndefined v0 key="late6" receivers=[L0] level=Proven
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    Return v3
+}
+function f7 name="readTwoObjects" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    v2 = GetSlotOrUndefined v0 key="late7" receivers=[L0] level=Proven
+    v3 = GetSlotOrUndefined v1 key="late8" receivers=[L0] level=Proven
+    v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    Return v4
+}
+function f8 name="readTheOthers" parameters=[{type=L0}] results=[{type=anything}] {
+# REPEAT: i = 1..12; a = 0 0 0 1 1 1 9 10 12 13 14 15
+    v%(i) = GetSlotOrUndefined v0 key="late%(a)" receivers=[L0] level=Proven
+# END REPEAT
+    Return v12
+}
+function f9 name="makeLate" parameters=[{type=number}, {type=boolean}] results=[{type=L2}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f10 name="useNear" parameters=[{type=L2}, {type=anything}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="near0" receivers=[L2] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near1" receivers=[L2] level=Proven
+    v4 = GetSlotOrUndefined v0 key="near0" receivers=[L2] level=Proven
+    v5 = GetSlotOrUndefined v0 key="near0" receivers=[L2] level=Proven
+    v6 = GetSlotOrUndefined v0 key="near0" receivers=[L2] level=Proven
+    v7 = GetSlotOrUndefined v0 key="near1" receivers=[L2] level=Proven
+    v8 = GetSlotOrUndefined v0 key="near1" receivers=[L2] level=Proven
+    v9 = GetSlotOrUndefined v0 key="near1" receivers=[L2] level=Proven
+    Return v9
+}
+function f11 name="storesUndefined" parameters=[{type=L2}] results=[{type=undefined}] {
+    v1 = Undefined
+    PutSlotOrAdd v0, -, v1 key="empty" receivers=[L2] level=Proven
+    Return
+}
+function f12 name="storesValue" parameters=[{type=L2}, {type=anything}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="empty" receivers=[L2] level=Proven
+    Return
+}
+function f13 name="storesThreeInARow" parameters=[{type=L2}, {type=anything}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="chain0" receivers=[L2] level=Proven
+    PutSlotOrAdd v0, -, v1 key="chain1" receivers=[L2] level=Proven
+    PutSlotOrAdd v0, -, v1 key="chain2" receivers=[L2] level=Proven
+    Return
+}
+function f14 name="laterStoreIsUnlikely" parameters=[{type=L2}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="often" receivers=[L2] level=Proven
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    PutSlotOrAdd v0, -, v1 key="seldom" receivers=[L2] level=Proven
+    Jump -> next b2()
+  b2():
+    Return
+}
+
+# The two names that are read most lie in the cell. The others are used alike and get their granules in the order of the rows.
+# SLOTS: L0 CompiledObject size=48 extension=120
+# SLOTS: .2 "late1" JSValue @40
+# SLOTS-NEXT: .3 "late2" JSValue out@8
+# SLOTS-NEXT: .4 "late3" JSValue out@16
+# SLOTS-NEXT: .5 "late4" JSValue out@24
+# SLOTS: .12 "late11" JSValue out@80
+# SLOTS: extension Cell32 @16
+# A field that a store of undefined creates may be listed without a granule.
+# SLOTS: L2 CompiledObject size=48 extension=56
+# SLOTS: .2 "near1" JSValue @40
+# SLOTS-NEXT: .3 "empty" JSValue out@8 unlisted
+# SLOTS-NEXT: .4 "chain0" JSValue out@16
+# SLOTS: .8 "seldom" JSValue out@48
+# SLOTS-NEXT: extension Cell32 @16
+
+# No read calls anything or tests whether there is an Extension: an object without one reads bits that are zero.
+# The first granule has a fixed address, the second adds one masked bit, and from the third on the code is the same whatever the number of the granule.
+# CHECK: f2: size=43 frame=none entries=1 sites=0
+# CHECK-NEXT: f3: size=49 frame=none entries=1 sites=0
+# CHECK-NEXT: f4: size=52 frame=none entries=1 sites=0
+# CHECK-NEXT: f5: size=52 frame=none entries=1 sites=0
+# Two fields of one object share the hidden word and the bits. Two objects have nothing to share.
+# CHECK-NEXT: f6: size=106
+# CHECK-NEXT: f7: size=118
+
+# The key of the field is listed, and undefined is stored only where the granule is there already. The same store of a value makes an Extension for one granule: 16 bytes.
+# CALLS-LABEL: f11: size=
+# CALLS-NOT: AllocateExtension
+# CALLS-LABEL: f12: size=
+# CALLS: stub AllocateExtension.n1{{*}} x1
+# CALLS-NOT: AllocateExtension
+# The first store reserves three granules and the second two, which is 32 bytes both times. The last has nothing behind it.
+# CALLS-LABEL: f13: size=
+# CALLS: stub AllocateExtension.n1{{*}} x1
+# CALLS-NEXT: stub AllocateExtension.n2{{*}} x2
+# CALLS-NOT: AllocateExtension
+# Nothing is reserved for a store that seldom runs.
+# CALLS-LABEL: f14: size=
+# CALLS: stub AllocateExtension.n1{{*}} x2
+# CALLS-NOT: AllocateExtension

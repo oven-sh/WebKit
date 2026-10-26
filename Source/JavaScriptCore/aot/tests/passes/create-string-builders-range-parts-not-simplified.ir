@@ -1,0 +1,72 @@
+# `out += text.slice(i, i + 2)` creates no substring, also in a build without the pass that turns calls of slice and substring into ranges
+# FORM: AsRead
+# Hot, so that the entrypoint takes the body in: the budget for warm code (InlineBudgetWarmBytes) leaves a body of this size where it is, and the entrypoint calls it
+# OPTIONS: heat=EverythingIsHot disable=pass:SimplifyBuiltinCalls
+# RUN: pipeline Select
+# Nothing but its generic entrypoint enters either function, so each body has moved there
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="appendsSlices" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="slice"
+    v9 = Integer integer=2
+    v10 = Add v5, v9
+    v11 = Call v8, v0, v5, v10 calleeKey="slice"
+    v12 = Add v4, v11
+    v13 = Integer integer=1
+    v14 = Add v5, v13
+    Jump -> next b1(v12, v14)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: name="appendsSlices" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Substring
+# CHECK-NOT: StringPrototypeSlice
+# CHECK: StringBuilderAppendStringRange
+# CHECK-NOT: = Substring
+# CHECK-NOT: StringPrototypeSlice
+
+function f2 name="keepsSlices" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = PropGet v0 key="slice"
+    v10 = Integer integer=2
+    v11 = Add v6, v10
+    v12 = Call v9, v0, v6, v11 calleeKey="slice"
+    v13 = Add v5, v12
+    v14 = Call v2, -, v12
+    v15 = Integer integer=1
+    v16 = Add v6, v15
+    Jump -> next b1(v13, v16)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: name="keepsSlices" module=m0 role=GenericEntrypoint
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: StringPrototypeSlice
+# CHECK: StringBuilderAppendString
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK-LABEL: entry module=m0

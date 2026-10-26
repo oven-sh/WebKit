@@ -30,6 +30,10 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTVMState.h>
+#endif
+#include <JavaScriptCore/ArrayConventions.h>
 #include <JavaScriptCore/ConcurrentJSLock.h>
 #include <JavaScriptCore/DFGDoesGCCheck.h>
 #include <JavaScriptCore/ExceptionEventLocation.h>
@@ -43,6 +47,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/KeyAtomStringCache.h>
 #include <JavaScriptCore/NativeFunction.h>
 #include <JavaScriptCore/NumericStrings.h>
+#include <JavaScriptCore/PropertyRun.h>
 #include <JavaScriptCore/SmallStrings.h>
 #include <JavaScriptCore/StringReplaceCache.h>
 #include <JavaScriptCore/StrongForward.h>
@@ -312,6 +317,7 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
+    JS_EXPORT_PRIVATE JSGlobalObject* topFrameGlobalObject();
 
     // Global object in which execution began.
     JS_EXPORT_PRIVATE JSGlobalObject* LEGACY_NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
@@ -328,6 +334,10 @@ public:
     {
         m_hasTerminationRequest = false;
         clearEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
+#if ENABLE(AOT)
+        if (hasCompiledCode())
+            traps().didClearTerminationRequest();
+#endif
     }
     void LEGACY_NODELETE setHasTerminationRequest();
 
@@ -497,7 +507,27 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfJITSizeStatistics { nullptr };
 #endif
+#if ENABLE(AOT)
+    using AOTState = AOT::VMState;
+    AOTState& aotState() LIFETIME_BOUND { return m_aotState; }
+    bool hasCompiledCode() const { return m_aotState.hasCompiledCode; }
+    static constexpr ptrdiff_t offsetOfAOTState() { return OBJECT_OFFSETOF(VM, m_aotState); }
+    AOTState m_aotState;
+#else
+    static constexpr bool hasCompiledCode() { return false; }
+#endif
+    ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }
+    PropertyRunTable propertyRuns;
+#if ENABLE(AOT)
+    bool mayHaveUncacheableTransitions() const { return m_mayHaveUncacheableTransitions; }
+#else
+    static constexpr bool mayHaveUncacheableTransitions() { return false; }
+#endif
+    void setMayHaveUncacheableTransitions() { m_mayHaveUncacheableTransitions = true; }
+    bool m_mayHaveUncacheableTransitions { false };
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
     ALWAYS_INLINE CompleteSubspace& auxiliarySpace() { return heap.auxiliarySpace; }
@@ -640,6 +670,8 @@ public:
 
     Weak<NativeExecutable> m_fastRemoteFunctionExecutable;
     Weak<NativeExecutable> m_slowRemoteFunctionExecutable;
+    // getHostFunction() without the JIT. With it JITThunks remembers them.
+    UncheckedKeyHashMap<std::tuple<uintptr_t, uintptr_t, unsigned>, Weak<NativeExecutable>> m_executablesOfNamelessHostFunctions;
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
 
@@ -705,6 +737,7 @@ public:
     {
         return m_orderedHashTableSentinel.get();
     }
+    static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
 
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }
@@ -778,7 +811,11 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return !Options::useJIT() || Options::forceMiniVMMode();
+#if ENABLE(JIT) || !ENABLE(AOT)
+        return (!Options::useJIT() && !Options::runsCompiledImage()) || Options::forceMiniVMMode();
+#else
+        return Options::forceMiniVMMode();
+#endif
     }
 
     static bool useUnlinkedCodeBlockJettisoning()
@@ -798,9 +835,13 @@ public:
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(ThunkGenerator);
     MacroAssemblerCodeRef<JITThunkPtrTag> getCTIStub(CommonJITThunkID);
     std::unique_ptr<SharedJITStubSet> m_sharedJITStubs;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfJITStubs[2] { };
 #endif
 #if ENABLE(FTL_JIT)
     std::unique_ptr<FTL::Thunks> ftlThunks;
+#elif ENABLE(AOT)
+    void* m_inPlaceOfFTLThunks { nullptr };
 #endif
 
     NativeExecutable* getHostFunction(NativeFunction, ImplementationVisibility, NativeFunction constructor, unsigned length, const String& name);
@@ -911,6 +952,7 @@ public:
     }
 
     void* lastStackTop() { return m_lastStackTop; }
+    void lowerLastStackTop(void* lowestAddress) { m_lastStackTop = std::min(m_lastStackTop, lowestAddress); }
     void LEGACY_NODELETE setLastStackTop(const Thread&);
     
 #if ENABLE(C_LOOP)
@@ -1009,7 +1051,8 @@ public:
         Change,
         Prototype,
     };
-    JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
+    JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* uid = nullptr);
+    void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, std::span<UniquedStringImpl* const> uids);
 
 #if ENABLE(REGEXP_TRACING)
     using RTTraceList = ListHashSet<RegExp*>;
@@ -1167,7 +1210,17 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 #endif
-    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
+    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func)
+    {
+        m_onEachMicrotaskTick = WTF::move(func);
+#if USE(BUN_JSC_ADDITIONS)
+        updateHostObservesMicrotaskBoundaries();
+#endif
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void updateHostObservesMicrotaskBoundaries();
+    bool hostObservesMicrotaskBoundaries() const { return m_hostObservesMicrotaskBoundaries; }
+#endif
     void callOnEachMicrotaskTick()
     {
         if (m_onEachMicrotaskTick)
@@ -1451,6 +1504,7 @@ private:
 #endif
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
+    void createBytecodeIntrinsicRegistry();
     std::unique_ptr<BytecodeIntrinsicRegistry> m_bytecodeIntrinsicRegistry;
     uint64_t m_drainMicrotaskDelayScopeCount { 0 };
 
@@ -1459,6 +1513,7 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
+    bool m_hostObservesMicrotaskBoundaries { false };
     ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
@@ -1568,6 +1623,8 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
+// sanitizeStackForVM() clears from where its last call stood. What ran since then may have gone deeper.
+JS_EXPORT_PRIVATE void sanitizeStackForVMFrom(VM&, void* lowestAddress);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes

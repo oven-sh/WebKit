@@ -1,0 +1,77 @@
+# A use is a contents store when the operation itself stores, not when only the code it may run could
+# FORM: Prepared
+# RUN: analyses escape object-uses
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="elementReadByKey" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    v2 = ElemGet v1, v0
+    Return v2
+}
+function f1 name="elementRead" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    v2 = GetArrayElement v1, v0, v1 level=Proven
+    Return v2
+}
+function f2 name="elementStore" results=[{type=undefined}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    PutArrayElement v1, v0, v0, v1 mode=Strict level=Proven
+    Return
+}
+function f3 name="passedToCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = NewArray v1, v1 contents=anything
+    v3 = Call v0, -, v2
+    Return v3
+}
+function f4 name="elementsAppended" results=[{type=undefined}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    v2 = NewArray v0 contents=anything
+    AppendElements v1, v2, v2
+    Return
+}
+function f5 name="returned" results=[{type=Array<anything>}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    Return v1
+}
+# CHECK: function f0
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v2(0) uses: [Inspects PassesToUserCode]
+# CHECK-NEXT: o0 v2(0) is escape: yes
+# CHECK-NEXT: o0 v2(0) is contents store: no
+# CHECK: function f1
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v2(0) uses: [Inspects ReadsContents]
+# CHECK-NEXT: o0 v2(0) is escape: no
+# CHECK-NEXT: o0 v2(0) is contents store: no
+# CHECK: function f2
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v2(0) uses: [Inspects WritesContents]
+# CHECK-NEXT: o0 v2(0) is escape: no
+# CHECK-NEXT: o0 v2(0) is contents store: yes
+# CHECK-NEXT: o0 v2(3) uses: [Inspects]
+# CHECK-NEXT: o0 v2(3) is escape: no
+# CHECK-NEXT: o0 v2(3) is contents store: no
+# CHECK: function f3
+# CHECK: object-uses:
+# CHECK: v3(2) uses: all
+# CHECK-NEXT: v3(2) is escape: yes
+# CHECK-NEXT: v3(2) is contents store: no
+# CHECK: function f4
+# CHECK: object-uses:
+# CHECK-NEXT: o0 v3(0) uses: [Inspects WritesContents]
+# CHECK-NEXT: o0 v3(0) is escape: no
+# CHECK-NEXT: o0 v3(0) is contents store: yes
+# CHECK-NEXT: o1 v3(1) uses: [Inspects ReadsContents RetainsContents]
+# CHECK-NEXT: o1 v3(1) is escape: no
+# CHECK-NEXT: o1 v3(1) is contents store: no
+# CHECK: function f5
+# CHECK: object-uses:
+# CHECK-NEXT: o0 b0.terminator(0) uses: [Returns]
+# CHECK-NEXT: o0 b0.terminator(0) is escape: yes
+# CHECK-NEXT: o0 b0.terminator(0) is contents store: no

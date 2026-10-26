@@ -1,0 +1,77 @@
+# function read(o) { return o.z }  class Base { constructor() { this.seen = read(this) } }  class Sub extends Base { }  Sub.prototype.z = "proto";  print(new Sub().seen)
+# The allocation of a base constructor takes its prototype from new.target, so its object may be of a subclass. Once read is inlined the object could be virtual, and a lookup on the layout the allocation names
+# would find the name absent on the chain of Base. Such an allocation is an opaque virtual object: the read stays a read by name.
+# RUN: pipeline SinkAllocations
+# CHECK-LABEL: function f2 name="Base"
+# CHECK: key="z"
+
+layout L0 kind=Instance name="Base" module=m0 position=39 constructor=f2 fields=[{key="seen" declared={type=anything}}]
+layout L1 kind=Instance name="Sub" module=m0 position=96 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+variable g0 name="read" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="/$bunfs/root/main" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @33
+    v1 = NewClass v0 layout=L0 @33
+    PutModuleVariable v1 variable=g1 @33
+    v3 = FinishClass v1 layout=L0 @33
+    v4 = Convert v3 declared={type=function flags=[IsExpected]} @33
+    v5 = Convert v3 declared={type=function flags=[IsExpected]} @33
+    v6 = ResolveHeritage v5 @90
+    v7 = NewClosure function=f3 @90
+    v8 = NewClass v7, v5, v6 layout=L1 @90
+    PutModuleVariable v8 variable=g2 @90
+    v10 = FinishClass v8 layout=L1 @90
+    v11 = Convert v10 declared={type=function flags=[IsExpected]} @90
+    v12 = Convert v10 declared={type=function flags=[IsExpected]} @90
+    v13 = PropGet v12 key="prototype" @117
+    v14 = Convert v13 declared={type=L1 flags=[IsExpected]} @117
+    v15 = String string="proto" @135
+    PropSet v14, v15 key="z" @117
+    v17 = Builtin builtin=GlobalThis @144
+    v18 = PropGet v17 key="print" [isFreeName] @144
+    v19 = Construct v12 calleeName="Sub" @154
+    v20 = Convert v19 declared={type=L1 flags=[IsExpected]} @150
+    v21 = PropGet v20 key="seen" @150
+    v22 = Call v18, -, v21 calleeName="print" @144
+    v23 = Undefined @144
+    Return v23 @144
+}
+function f1 name="read" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1() @0
+  b1():
+    v1 = PropGet v0 key="z" @26
+    Return v1 @26
+}
+function f2 name="Base" module=m0 position=46 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+    Jump -> next b1() @46
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @33
+    v2 = NewObject v1 layout=L0 @33
+    v3 = Convert v2 declared={type=L0 flags=[IsExpected]} @62
+    v4 = GetModuleVariable variable=g0 @74
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @74
+    v6 = Convert v2 declared={type=L0 flags=[IsExpected]} @79
+    v7 = Call v5, -, v6 calleeName="read" @74
+    PropSet v3, v7 key="seen" @62
+    v9 = Undefined @62
+    v10 = TypeTest v9 testedType=object @62
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0) @62
+  b2(v11):
+    Jump -> next b4(v11) @62
+  b3(v12):
+    Jump -> next b4(v2) @62
+  b4(v13):
+    Return v13 @62
+}
+function f3 name="Sub" module=m0 position=96 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+    Jump -> next b1() @96
+  b1():
+    v3 = GetSuperBase v0 @96
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @96
+    Return v4 @96
+}
+entry module=m0

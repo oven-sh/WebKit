@@ -1,0 +1,56 @@
+# a = [first]; a.pos = 1;    a.slice()[0]()    a.filter(yes)[0]()    a.map(other)[0]()    a.concat(a)[0]()
+# The array has a name of its own, as a NodeArray of TypeScript has, so it is not as it was made and the row for whatever is no such array applies. ArraySpeciesCreate makes a new array: `constructor` answers Array,
+# and Object above it, which finds nothing under @@species. The method defines what it keeps on that array and keeps it nowhere else: the element and what the callback answers do not escape, and a read finds them.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f1
+# CHECK: f0 v13 -> f1
+# CHECK: f0 v18 -> f4
+# CHECK: f0 v22 -> f1
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f4
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED-NEXT: escaped=f4
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = Integer integer=1
+    PropSet v1, v2 key="pos"
+    v4 = PropGet v1 key="slice"
+    v5 = Call v4, v1 calleeKey="slice"
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    v8 = Call v7
+    v9 = PropGet v1 key="filter"
+    v10 = NewClosure function=f2
+    v11 = Call v9, v1, v10 calleeKey="filter"
+    v12 = ElemGet v11, v6
+    v13 = Call v12
+    v14 = PropGet v1 key="map"
+    v15 = NewClosure function=f3
+    v16 = Call v14, v1, v15 calleeKey="map"
+    v17 = ElemGet v16, v6
+    v18 = Call v17
+    v19 = PropGet v1 key="concat"
+    v20 = Call v19, v1, v1 calleeKey="concat"
+    v21 = ElemGet v20, v6
+    v22 = Call v21
+    Return
+}
+function f1 name="first" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="yes" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    Return v1
+}
+function f3 name="other" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    Return v1
+}
+function f4 name="second" module=m0 results=[{type=anything}] {
+    Return
+}

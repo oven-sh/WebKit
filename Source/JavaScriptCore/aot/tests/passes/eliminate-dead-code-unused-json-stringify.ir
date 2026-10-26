@@ -1,0 +1,44 @@
+# JSON.stringify without a replacer has two errors of its own: for a BigInt and for an object that holds itself. An unused call goes away where the types of all that the operand reaches, through ordinary objects of the program, show neither.
+# The same object reached twice side by side is no cycle. An object that may hold one of its own type, at once or through another, may be one, and the call stays
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type=string} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L1 name="Line" fields=[{key="from" declared={type=L0} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="to" declared={type=L0} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L2 name="Node" fields=[{key="value" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="next" declared={type=null|L2} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L3 name="Parent" fields=[{key="child" declared={type=L4} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L4 name="Child" fields=[{key="parent" declared={type=null|L3} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L5 name="HoldsBigInt" fields=[{key="count" declared={type=bigint} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="trees" parameters=[{type=L0}, {type=L1}, {type=number}, {type=string}, {type=undefined|null|boolean}] results=[{type=undefined}] {
+    v5 = Undefined
+    v6 = CallBuiltin -, v0, v5, v5 overload=JSONStringify/0
+    v7 = CallBuiltin -, v1, v5, v5 overload=JSONStringify/0
+    v8 = CallBuiltin -, v2, v5, v5 overload=JSONStringify/0
+    v9 = CallBuiltin -, v3, v5, v5 overload=JSONStringify/0
+    v10 = CallBuiltin -, v4, v5, v5 overload=JSONStringify/0
+    v11 = CallBuiltin -, v0, v5, v2 overload=JSONStringify/0
+    Return
+# CHECK-NOT: CallBuiltin
+# CHECK: Return
+}
+
+function f1 name="whatMayThrow" parameters=[{type=L2}, {type=L3}, {type=L5}, {type=bigint}, {type=number|bigint}, {type=object}, {type=L0}] results=[{type=undefined}] {
+    v7 = Undefined
+    v8 = CallBuiltin -, v0, v7, v7 overload=JSONStringify/0
+    v9 = CallBuiltin -, v1, v7, v7 overload=JSONStringify/0
+    v10 = CallBuiltin -, v2, v7, v7 overload=JSONStringify/0
+    v11 = CallBuiltin -, v3, v7, v7 overload=JSONStringify/0
+    v12 = CallBuiltin -, v4, v7, v7 overload=JSONStringify/0
+    v13 = CallBuiltin -, v5, v7, v7 overload=JSONStringify/0
+    v14 = CallBuiltin -, v6, v7, v5 overload=JSONStringify/0
+    Return
+# CHECK: = CallBuiltin -, v0, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v1, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v2, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v3, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v4, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v5, v7, v7 overload=JSONStringify/0
+# CHECK-NEXT: = CallBuiltin -, v6, v7, v5 overload=JSONStringify/0
+}

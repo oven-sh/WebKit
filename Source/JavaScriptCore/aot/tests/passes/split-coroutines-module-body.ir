@@ -1,0 +1,44 @@
+# The body of a module with top-level await is split like any async function: a ramp that returns the promise and a body that saves its frame
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 1
+# CHECK: outcome: Changed
+# CHECK: module m0 {{*}} flags=[HasTopLevelAwait] body=f0
+# CHECK: module m1 {{*}} body=f1
+
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
+module m1 path="plain.js" displayPath="plain.js" body=f1
+function f0 name="awaitsAtTopLevel" kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="ready" [isFreeName]
+    v2 = Await v1 @10
+    Return
+# CHECK: kind=Module role=CoroutineRamp flags=[IsAsync]
+# CHECK: results=[{type=Promise}]
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0}
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[promise]]: Promise = NewPromise
+# CHECK-NEXT: [[started]]: anything = CallDirect [[promise]] function=f2
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
+# CHECK-NEXT: Return [[returned]]
+}
+function f1 name="awaitsNothing" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="ready" [isFreeName]
+    Return
+# CHECK-NOT: role=
+# CHECK: b0():
+# CHECK-NEXT: = Builtin builtin=GlobalThis
+# CHECK-NEXT: = PropGet
+# CHECK-NEXT: Return
+}
+
+# CHECK-LABEL: function f2 name="awaitsAtTopLevel"
+# CHECK: kind=Module role=CoroutineBody flags=[IsAsync]
+# CHECK: parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}]}
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0}
+# CHECK-NEXT: b0([[driver]]: undefined|Promise):
+# CHECK: v2: anything = AwaitBySavingFrame v1, [[driver]] @10
+# CHECK-NEXT: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: [[result]]: anything = ReturnAsyncResult [[driver]], [[nothing]]
+# CHECK-NEXT: Return [[result]]

@@ -28,7 +28,7 @@
 
 #include "CallFrame.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
@@ -40,12 +40,8 @@ namespace JSC { namespace Wasm {
 
 using JIT = CCallHelpers;
 
-std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation& info, unsigned importIndex)
+void emitWasmToWasm(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsigned importIndex)
 {
-    // FIXME: Consider uniquify the stubs based on signature + index to see if this saves memory.
-    // https://bugs.webkit.org/show_bug.cgi?id=184157
-    JIT jit;
-
     GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
     ASSERT(scratch != GPRReg::InvalidGPRReg);
     ASSERT(noOverlap(scratch, GPRInfo::wasmContextInstancePointer));
@@ -70,6 +66,14 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
     // Tail call into the callee WebAssembly function.
     jit.loadPtr(JIT::Address(scratch), scratch);
     jit.farJump(scratch, WasmEntryPtrTag);
+}
+
+std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation& info, unsigned importIndex)
+{
+    // FIXME: Consider uniquify the stubs based on signature + index to see if this saves memory.
+    // https://bugs.webkit.org/show_bug.cgi?id=184157
+    JIT jit;
+    emitWasmToWasm(jit, info, importIndex);
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk, JITCompilationMustSucceed);
     if (patchBuffer.didFailToAllocate()) [[unlikely]]
@@ -80,4 +84,4 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

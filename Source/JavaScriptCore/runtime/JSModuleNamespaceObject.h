@@ -93,6 +93,9 @@ private:
     struct ExportEntry {
         Identifier localName;
         WriteBarrier<AbstractModuleRecord> moduleRecord;
+#if ENABLE(AOT)
+        std::optional<unsigned> compiledExportIndex { };
+#endif
     };
 
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;

@@ -1,0 +1,35 @@
+# The code unit of a character that is compared several times is read once, where the character was read
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="three-comparisons" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = String string=" "
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b3(), notTaken b1()
+  b1():
+    v5 = String string=","
+    v6 = StrictEq v2, v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = String string=";"
+    v8 = StrictEq v2, v7
+    Return v8
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+}
+# CHECK-NOT: = ElemGet
+# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NOT: = StringRangeCodeUnitOr
+# CHECK: [[space]]: 32 = Integer integer=32
+# CHECK-NEXT: v4: boolean = StrictEq v2, [[space]]
+# CHECK-NOT: = StringRangeCodeUnitOr
+# CHECK: [[comma]]: 44 = Integer integer=44
+# CHECK-NEXT: v6: boolean = StrictEq v2, [[comma]]
+# CHECK-NOT: = StringRangeCodeUnitOr
+# CHECK: [[semicolon]]: 59 = Integer integer=59
+# CHECK-NEXT: v8: boolean = StrictEq v2, [[semicolon]]
+# CHECK-NOT: = StringRangeCodeUnitOr

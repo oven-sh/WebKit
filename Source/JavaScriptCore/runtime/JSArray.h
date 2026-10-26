@@ -120,6 +120,8 @@ public:
     // This function returns NonArray if the indexing types are not compatable for copying.
     IndexingType mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion);
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, JSArray* otherArray);
+    JS_EXPORT_PRIVATE void validatePristine(VM&) const;
+    using JSObject::ensureLength;
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, IndexingType, std::span<const EncodedJSValue>);
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);
@@ -197,7 +199,7 @@ private:
     {
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
-            return true;
+            return !(isCopyOnWrite(indexingMode()) && structure()->hasFrozenElementsInPlace());
         SparseArrayValueMap* map = storage->m_sparseMap.get();
         return !map || !map->lengthIsReadOnly();
     }

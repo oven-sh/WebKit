@@ -42,6 +42,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
 #include "ArrayBuffer.h"
+#include "CCallHelpers.h"
 #include "CallData.h"
 #include "CallFrameInlines.h"
 #include "CodeBlock.h"
@@ -53,6 +54,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FFIConversions.h"
 #include "FFIInvokeThunk.h"
 #include "FFISignature.h"
+#include "FFIStubEmitters.h"
+#include "FFIStubs.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
 #include "FunctionCodeBlock.h"
@@ -72,12 +75,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSLock.h"
 #include "JSString.h"
 #include "JSTypedArrays.h"
+#include "LinkBuffer.h"
 #include "MacroAssemblerCodeRef.h"
 #include "ObjectConstructor.h"
 #include "Protect.h"
 #include "PureNaN.h"
 #include "SourceCode.h"
 #include "Symbol.h"
+#include "ThunkGenerator.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayInlines.h"
 #include "VM.h"
@@ -86,6 +91,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <iterator>
 #include <limits>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 #include <wtf/text/CString.h>
@@ -1515,6 +1521,35 @@ static void dumpSlots(std::span<const uint64_t> slots)
     dataLogLn();
 }
 
+static FFI::InvokeStubFunction invokeStub()
+{
+    static NeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
+    if (!code.get()) {
+        CCallHelpers jit;
+        FFI::emitInvokeStub(jit);
+        LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
+        code.get() = FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "FFI invoke stub"_s, "FFI invoke stub");
+    }
+    return reinterpret_cast<FFI::InvokeStubFunction>(code->code().taggedPtr());
+}
+
+static MacroAssemblerCodeRef<JITThunkPtrTag> invokeThunkIfJITIsEnabled(FFI::Signature& signature)
+{
+    if (!Options::useJIT())
+        return { };
+    MacroAssemblerCodeRef<JITThunkPtrTag> code = FFI::generateInvokeThunk(signature);
+    FFI_CHECK(!!code);
+    return code;
+}
+
+static void invoke(FFI::Signature& signature, const MacroAssemblerCodeRef<JITThunkPtrTag>& code, bool usesThunk, void* target, uint64_t* slots)
+{
+    if (usesThunk && code)
+        reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr())(target, slots);
+    else
+        FFI::invokeThroughStub(invokeStub(), signature, target, slots);
+}
+
 template<typename R, typename... Arguments>
 static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vector<FFI::Type>&& argumentTypes, FFI::Type returnType, unsigned iterations, WeakRandom& random)
 {
@@ -1527,15 +1562,20 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
     if (signature->argumentCount() != nativeArgumentCount)
         return;
 
-    MacroAssemblerCodeRef<JITThunkPtrTag> code = FFI::generateInvokeThunk(*signature);
-    FFI_CHECK(!!code);
-    if (!code)
-        return;
-    CodePtr<JITThunkPtrTag> cached = signature->invokeThunk();
-    FFI_CHECK(!!cached);
+    MacroAssemblerCodeRef<JITThunkPtrTag> code;
+    FFI::InvokeThunkFunction freshThunk = nullptr;
+    FFI::InvokeThunkFunction cachedThunk = nullptr;
+    if (Options::useJIT()) {
+        code = FFI::generateInvokeThunk(*signature);
+        FFI_CHECK(!!code);
+        if (!code)
+            return;
+        CodePtr<JITThunkPtrTag> cached = signature->invokeThunk();
+        FFI_CHECK(!!cached);
 
-    auto freshThunk = reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr());
-    auto cachedThunk = cached ? reinterpret_cast<FFI::InvokeThunkFunction>(cached.taggedPtr()) : freshThunk;
+        freshThunk = reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr());
+        cachedThunk = cached ? reinterpret_cast<FFI::InvokeThunkFunction>(cached.taggedPtr()) : freshThunk;
+    }
 
     unsigned argumentCount = signature->argumentCount();
     constexpr uint64_t frontGuard = 0xFEEDFACEFEEDFACEull;
@@ -1555,8 +1595,17 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
         Vector<uint64_t> nativeSlots(FillWith { }, argumentCount + 1, 0);
         memcpy(nativeSlots.mutableSpan().data(), slots, sizeof(uint64_t) * argumentCount);
 
-        auto thunk = (iteration & 1) ? cachedThunk : freshThunk;
-        thunk(reinterpret_cast<void*>(function), slots);
+        switch (Options::useJIT() ? iteration % 3 : 0) {
+        case 0:
+            FFI::invokeThroughStub(invokeStub(), *signature, reinterpret_cast<void*>(function), slots);
+            break;
+        case 1:
+            cachedThunk(reinterpret_cast<void*>(function), slots);
+            break;
+        case 2:
+            freshThunk(reinterpret_cast<void*>(function), slots);
+            break;
+        }
 
         s_checkCount++;
         bool ok = buffer[0] == frontGuard && buffer[argumentCount + 2] == backGuard;
@@ -1716,11 +1765,7 @@ static void testInvokeThunkDifferential()
             FFI_CHECK(!!signature);
             if (!signature)
                 return;
-            MacroAssemblerCodeRef<JITThunkPtrTag> code = FFI::generateInvokeThunk(*signature);
-            FFI_CHECK(!!code);
-            if (!code)
-                return;
-            auto thunk = reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr());
+            MacroAssemblerCodeRef<JITThunkPtrTag> code = invokeThunkIfJITIsEnabled(*signature);
             unsigned argumentCount = signature->argumentCount();
             for (unsigned iteration = 0; iteration < iterations; ++iteration) {
                 Vector<uint64_t> buffer(FillWith { }, argumentCount + 3, 0);
@@ -1734,7 +1779,7 @@ static void testInvokeThunkDifferential()
                 Vector<uint64_t> nativeSlots(FillWith { }, argumentCount + 1, 0);
                 memcpy(nativeSlots.mutableSpan().data(), slots, sizeof(uint64_t) * argumentCount);
 
-                thunk(reinterpret_cast<void*>(fixture), slots);
+                invoke(*signature, code, iteration & 1, reinterpret_cast<void*>(fixture), slots);
                 auto nativeResult = callNativeFromSlots(fixture, nativeSlots.span().data());
                 uint64_t expected = canonicalizeSlot(returnType, nativeReturnRawBits(nativeResult));
                 s_checkCount++;
@@ -1775,17 +1820,13 @@ static void testInvokeThunkDifferential()
         RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), T::Void);
         FFI_CHECK(!!signature);
         if (signature) {
-            MacroAssemblerCodeRef<JITThunkPtrTag> code = FFI::generateInvokeThunk(*signature);
-            FFI_CHECK(!!code);
-            if (code) {
-                auto thunk = reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr());
-                s_staticCbVoidCount = 0;
-                uint64_t slots[2] = { static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&staticCbVoid)), 0 };
-                thunk(reinterpret_cast<void*>(ffi_call_cb_void), slots);
-                thunk(reinterpret_cast<void*>(ffi_call_cb_void), slots);
-                ffi_call_cb_void(staticCbVoid);
-                FFI_CHECK_EQ(s_staticCbVoidCount, 3u);
-            }
+            MacroAssemblerCodeRef<JITThunkPtrTag> code = invokeThunkIfJITIsEnabled(*signature);
+            s_staticCbVoidCount = 0;
+            uint64_t slots[2] = { static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&staticCbVoid)), 0 };
+            invoke(*signature, code, false, reinterpret_cast<void*>(ffi_call_cb_void), slots);
+            invoke(*signature, code, true, reinterpret_cast<void*>(ffi_call_cb_void), slots);
+            ffi_call_cb_void(staticCbVoid);
+            FFI_CHECK_EQ(s_staticCbVoidCount, 3u);
         }
     }
 
@@ -1800,33 +1841,27 @@ static void testInvokeThunkDifferential()
         FFI_CHECK(!!readSignature);
         FFI_CHECK(!!strlenSignature);
         if (writeSignature && readSignature && strlenSignature) {
-            MacroAssemblerCodeRef<JITThunkPtrTag> writeCode = FFI::generateInvokeThunk(*writeSignature);
-            MacroAssemblerCodeRef<JITThunkPtrTag> readCode = FFI::generateInvokeThunk(*readSignature);
-            MacroAssemblerCodeRef<JITThunkPtrTag> strlenCode = FFI::generateInvokeThunk(*strlenSignature);
-            FFI_CHECK(!!writeCode);
-            FFI_CHECK(!!readCode);
-            FFI_CHECK(!!strlenCode);
-            if (writeCode && readCode && strlenCode) {
-                auto writeThunk = reinterpret_cast<FFI::InvokeThunkFunction>(writeCode.code().taggedPtr());
-                auto readThunk = reinterpret_cast<FFI::InvokeThunkFunction>(readCode.code().taggedPtr());
-                auto strlenThunk = reinterpret_cast<FFI::InvokeThunkFunction>(strlenCode.code().taggedPtr());
+            MacroAssemblerCodeRef<JITThunkPtrTag> writeCode = invokeThunkIfJITIsEnabled(*writeSignature);
+            MacroAssemblerCodeRef<JITThunkPtrTag> readCode = invokeThunkIfJITIsEnabled(*readSignature);
+            MacroAssemblerCodeRef<JITThunkPtrTag> strlenCode = invokeThunkIfJITIsEnabled(*strlenSignature);
+            for (bool usesThunk : { false, true }) {
                 static uint32_t words[8];
                 static const uint32_t patterns[] = { 0, 0xdeadbeefu, 0xffffffffu, 1, 0x80000000u, 0x12345678u };
                 for (unsigned i = 0; i < std::size(words); ++i) {
                     for (uint32_t pattern : patterns) {
                         words[i] = ~pattern;
                         uint64_t writeSlots[3] = { static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&words[i])), pattern, 0xdead };
-                        writeThunk(reinterpret_cast<void*>(ffi_ptr_write_u32), writeSlots);
+                        invoke(*writeSignature, writeCode, usesThunk, reinterpret_cast<void*>(ffi_ptr_write_u32), writeSlots);
                         FFI_CHECK_EQ(words[i], pattern);
                         uint64_t readSlots[2] = { static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&words[i])), 0xF00DF00DF00DF00Dull };
-                        readThunk(reinterpret_cast<void*>(ffi_ptr_read_u32), readSlots);
+                        invoke(*readSignature, readCode, usesThunk, reinterpret_cast<void*>(ffi_ptr_read_u32), readSlots);
                         FFI_CHECK_EQ_HEX(readSlots[1], static_cast<uint64_t>(pattern)); // u32 return zero-extended
                     }
                 }
                 static const char* strings[] = { "", "a", "hello, world", "0123456789012345678901234567890123456789012345678901234567890123456789" };
                 for (const char* string : strings) {
                     uint64_t strlenSlots[2] = { static_cast<uint64_t>(reinterpret_cast<uintptr_t>(string)), 0xF00DF00DF00DF00Dull };
-                    strlenThunk(reinterpret_cast<void*>(ffi_strlen), strlenSlots);
+                    invoke(*strlenSignature, strlenCode, usesThunk, reinterpret_cast<void*>(ffi_strlen), strlenSlots);
                     FFI_CHECK_EQ(strlenSlots[1], static_cast<uint64_t>(strlen(string)));
                 }
             }
@@ -1836,13 +1871,17 @@ static void testInvokeThunkDifferential()
 
 static struct {
     FFI::InvokeThunkFunction thunk { nullptr };
+    FFI::Signature* signature { nullptr };
     void* target { nullptr };
     uint64_t slots[4];
 } s_canaryInvokeState;
 
 static void canaryInvokeBody()
 {
-    s_canaryInvokeState.thunk(s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
+    if (s_canaryInvokeState.thunk)
+        s_canaryInvokeState.thunk(s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
+    else
+        FFI::invokeThroughStub(invokeStub(), *s_canaryInvokeState.signature, s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
 }
 
 static unsigned s_hostCanaryHits;
@@ -1878,10 +1917,9 @@ static void testCanaries()
         RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(argumentTypes.span(), FFI::Type::Int64);
         FFI_CHECK(!!signature);
         if (signature) {
-            CodePtr<JITThunkPtrTag> thunk = signature->invokeThunk();
-            FFI_CHECK(!!thunk);
-            if (thunk) {
-                s_canaryInvokeState.thunk = reinterpret_cast<FFI::InvokeThunkFunction>(thunk.taggedPtr());
+            auto check = [&](FFI::InvokeThunkFunction thunk) {
+                s_canaryInvokeState.thunk = thunk;
+                s_canaryInvokeState.signature = signature.get();
                 s_canaryInvokeState.target = reinterpret_cast<void*>(ffi_add_i64);
                 s_canaryInvokeState.slots[0] = 40;
                 s_canaryInvokeState.slots[1] = 2;
@@ -1889,11 +1927,18 @@ static void testCanaries()
                 int32_t mask = ffi_canary_call(canaryInvokeBody);
                 FFI_CHECK_EQ(mask, 0);
                 FFI_CHECK_EQ_HEX(s_canaryInvokeState.slots[2], 42);
+            };
+            check(nullptr);
+            if (Options::useJIT()) {
+                CodePtr<JITThunkPtrTag> thunk = signature->invokeThunk();
+                FFI_CHECK(!!thunk);
+                if (thunk)
+                    check(reinterpret_cast<FFI::InvokeThunkFunction>(thunk.taggedPtr()));
             }
         }
     }
 
-    {
+    if (Options::useJIT()) {
         JSFunction* trivialTarget = JSFunction::create(vm, globalObject, 0, "canaryTarget"_s, functionCanaryTarget, ImplementationVisibility::Public);
         JSFunction* allocatingTarget = JSFunction::create(vm, globalObject, 0, "canaryTargetAllocating"_s, functionCanaryTargetAllocating, ImplementationVisibility::Public);
         RefPtr<FFI::Signature> voidSignature = FFI::Signature::tryCreate({ }, FFI::Type::Void);
@@ -1939,6 +1984,14 @@ static void testCanaries()
         FFI_CHECK(!!nineSignature);
         FFI_CHECK(!!zeroSignature);
         if (nineSignature && zeroSignature) {
+            uint64_t nineSlotsWithoutJIT[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 0 };
+            FFI::invokeThroughStub(invokeStub(), *nineSignature, reinterpret_cast<void*>(ffi_align_probe_9), nineSlotsWithoutJIT);
+            FFI_CHECK_EQ(std::bit_cast<double>(nineSlotsWithoutJIT[9]), 1.0);
+            uint64_t zeroSlotsWithoutJIT[1] = { 0 };
+            FFI::invokeThroughStub(invokeStub(), *zeroSignature, reinterpret_cast<void*>(ffi_align_probe_0), zeroSlotsWithoutJIT);
+            FFI_CHECK_EQ(std::bit_cast<double>(zeroSlotsWithoutJIT[0]), 1.0);
+        }
+        if (nineSignature && zeroSignature && Options::useJIT()) {
             CodePtr<JITThunkPtrTag> nineThunk = nineSignature->invokeThunk();
             CodePtr<JITThunkPtrTag> zeroThunk = zeroSignature->invokeThunk();
             FFI_CHECK(!!nineThunk);
@@ -2184,7 +2237,7 @@ static void testJSFFIFunctionEndToEnd()
             FFI_CHECK_EQ(JSBigInt::toBigUInt64(utf8Result), 6u);
     }
 
-    if (Options::useFFIICStub())
+    if (Options::useJIT() && Options::useFFIICStub())
         FFI_CHECK(FFI::g_ffiCompileCounts.icStub.load() > icStubsBefore);
 
     if (JSFFIFunction* addI32 = makeFunction({ T::Int32, T::Int32 }, T::Int32, reinterpret_cast<void*>(ffi_add_i32), "ffi_add_i32"_s)) {
@@ -2436,7 +2489,6 @@ static void testFixtureTable()
 static int runAll()
 {
     JSC::initialize();
-
     if (!Options::useJIT()) {
         dataLogLn("testFFI: JIT is disabled; skipping.");
         return 0;
@@ -2458,8 +2510,11 @@ static int runAll()
         RUN(testInvokeThunkDifferential());
         RUN(testCanaries());
         RUN(testJSFFIFunctionEndToEnd());
-        RUN(testCallbackThunkEndToEnd());
-        RUN(testOptimizingTierPointerArgumentWithNonViewCells());
+        if (Options::useJIT()) {
+            RUN(testCallbackThunkEndToEnd());
+            RUN(testOptimizingTierPointerArgumentWithNonViewCells());
+        } else
+            dataLogLn("testFFI: the JIT is disabled, so callbacks are skipped.");
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");

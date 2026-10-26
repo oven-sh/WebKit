@@ -1,0 +1,89 @@
+# When only undefined and null are left beside a proven class, the failing edge of the one test throws and there is no protocol
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 2
+# STATISTIC: IterationsExpandedGenerically = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="arrayOrNullish" parameters=[{type=undefined|null|Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: b0(v0: undefined|null|Array<number, pristine[Names]>, v1: anything):
+# CHECK-NEXT: [[isArray0]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[nullish0]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK-NOT: LoopHint
+# CHECK: b1(
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: TypeTest
+# CHECK-NOT: LoopHint
+# CHECK-NOT: = Call v1,
+# CHECK: = Call v1, -, v6
+# CHECK-NOT: TypeTest
+# CHECK-NOT: LoopHint
+# CHECK-NOT: = Call v1,
+# CHECK: [[array0]]([[subject0]]: Array<number, pristine[Names]>):
+# CHECK: [[nullish0]]([[rest0]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: never = RequireObjectCoercible [[rest0]] nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: TypeTest
+# CHECK-NOT: LoopHint
+# CHECK-NOT: = Call v1,
+# CHECK: = ElemGet [[subject0]],
+# CHECK-NOT: TypeTest
+# CHECK-NOT: LoopHint
+# CHECK-NOT: = Call v1,
+# ABSENT-NOT: Switch
+# ABSENT-NOT: Unspecified
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: [isNeverInlined]
+}
+
+function f1 name="arrayOrNumber" parameters=[{type=number|Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="arrayOrNumber"
+# CHECK: [[isArray1]]: boolean = TypeTest v0 testedType=Array<number>
+# CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](| 0), notTaken [[number1]](| 0)
+# CHECK: [[protocol1]]([[iterable1]]: number|Array<number, pristine[Names]>) frequency=Unlikely:
+# CHECK-NEXT: [[open1]]: undefined = CallDirect [[iterable1]] function=f2 [isNeverInlined]
+# CHECK: = ResultAt [[open1]] index=1
+# CHECK: [[number1]]([[rest1]]: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol1]]([[rest1]])
+# ABSENT-LABEL: function f1 name="arrayOrNumber"
+# ABSENT-NOT: RequireObjectCoercible
+# ABSENT-NOT: IsPristine
+# ABSENT-LABEL: function f2 name="openIterator"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

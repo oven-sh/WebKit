@@ -1,0 +1,150 @@
+# The steps of an iteration that is not expanded are unknown code, to the function and through its summary to every caller. A for..of over a proven pristine array is expanded before the summaries are computed that the optimizations read: with the read of the length resolved it has the summary of the counted loop, and a caller keeps what it read in front of the call. An iteration that needs a test stays unknown code
+# TODO: nobody: a caller reads a field again behind a call of a function whose for..of over a proven pristine array was expanded: the summary of that function still says that unknown code runs
+# FORM: Prepared optimizing
+# RUN: pass ExpandProvenIterations ResolveBuiltins ResolveAccesses EliminateRedundantReads
+# RUN(UNEXPANDED): pass ResolveBuiltins ResolveAccesses EliminateRedundantReads
+# RUN(SUMMARIES): pass ExpandProvenIterations ResolveBuiltins ComputeEffectSummaries
+# RUN(BEFORE): pass ResolveBuiltins ComputeEffectSummaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="k" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="forOf" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number}] {
+    v1 = Integer
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: number):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Check v7 castType=number
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+# CHECK-NOT: IteratorOpen
+# CHECK-NOT: IteratorResume
+# CHECK: = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NOT: IteratorResume
+# CHECK: = GetArrayElement v0, {{*}} level=Proven
+# CHECK-NOT: IteratorResume
+# UNEXPANDED: = IteratorOpen v0
+# UNEXPANDED: = IteratorResume v2
+}
+
+function f1 name="indexed" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number}] {
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2: number, v3: int[0, 4294967295]):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = ElemGet v0, v3
+    v8 = Check v7 castType=number
+    v9 = Add v2, v8
+    v10 = Increment v3
+    v11 = Check v10 castType=int[0, 4294967295]
+    Jump -> next b1(v9, v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="indexed"
+# CHECK: = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: = GetArrayElement v0, v3{{*}} level=Proven
+# UNEXPANDED-LABEL: function f1 name="indexed"
+
+function f2 name="forOfExpectedArray" parameters=[{type=Array<number> flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ Array<number>):
+    v1 = Integer
+    v2 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v3: number):
+    LoopHint
+    v5 = IteratorResume v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Check v7 castType=number
+    v9 = Add v3, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="forOfExpectedArray"
+# CHECK: = IteratorOpen v0
+# CHECK: = IteratorResume v2
+# UNEXPANDED-LABEL: function f2 name="forOfExpectedArray"
+
+function f3 name="aroundForOf" parameters=[{type=L0}, {type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] {
+    v2 = PropGet v0 key="k"
+    v3 = CallDirect v1 function=f0 [isNeverInlined]
+    v4 = PropGet v0 key="k"
+    v5 = StrictEq v2, v4
+    Return v5
+# CHECK: [[first3]]: {{*}} = GetSlot v0{{*}} key="k"
+# CHECK: = CallDirect v1 function=f0 [isNeverInlined]
+# CHECK-NOT: GetSlot
+# CHECK: = Upcast [[first3]]
+# CHECK-NOT: GetSlot
+# UNEXPANDED: = GetSlot v0{{*}} key="k"
+# UNEXPANDED: = CallDirect v1 function=f0 [isNeverInlined]
+# UNEXPANDED: = GetSlot v0{{*}} key="k"
+}
+
+function f4 name="aroundIndexed" parameters=[{type=L0}, {type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] {
+    v2 = PropGet v0 key="k"
+    v3 = CallDirect v1 function=f1 [isNeverInlined]
+    v4 = PropGet v0 key="k"
+    v5 = StrictEq v2, v4
+    Return v5
+# CHECK: [[first4]]: {{*}} = GetSlot v0{{*}} key="k"
+# CHECK: = CallDirect v1 function=f1 [isNeverInlined]
+# CHECK-NOT: GetSlot
+# CHECK: = Upcast [[first4]]
+# CHECK-NOT: GetSlot
+# UNEXPANDED: [[unexpandedFirst4]]: {{*}} = GetSlot v0{{*}} key="k"
+# UNEXPANDED: = CallDirect v1 function=f1 [isNeverInlined]
+# UNEXPANDED-NOT: GetSlot
+# UNEXPANDED: = Upcast [[unexpandedFirst4]]
+# UNEXPANDED-NOT: GetSlot
+}
+
+function f5 name="aroundForOfExpectedArray" parameters=[{type=L0}, {type=anything}] results=[{type=boolean}] {
+    v2 = PropGet v0 key="k"
+    v3 = CallDirect v1 function=f2 [isNeverInlined]
+    v4 = PropGet v0 key="k"
+    v5 = StrictEq v2, v4
+    Return v5
+# CHECK: = GetSlot v0{{*}} key="k"
+# CHECK: = CallDirect v1 function=f2 [isNeverInlined]
+# CHECK: = GetSlot v0{{*}} key="k"
+# UNEXPANDED: = GetSlot v0{{*}} key="k"
+# UNEXPANDED: = CallDirect v1 function=f2 [isNeverInlined]
+# UNEXPANDED: = GetSlot v0{{*}} key="k"
+}
+
+# A summary that has unknown code names where it comes from at the end of its line.
+# SUMMARIES: f0 return:
+# SUMMARIES-NOT: unknown code from
+# SUMMARIES: f1 return:
+# SUMMARIES-NOT: unknown code from
+# SUMMARIES: f2 return:{{*}} unknown code from f2
+# SUMMARIES-NEXT: f3 return:
+# SUMMARIES-NOT: unknown code from
+# SUMMARIES: f4 return:
+# SUMMARIES-NOT: unknown code from
+# SUMMARIES: f5 return:{{*}} unknown code from f2
+# BEFORE: f0 return:{{*}} unknown code from f0
+# BEFORE-NEXT: f1 return:
+# BEFORE-NOT: unknown code from
+# BEFORE: f2 return:{{*}} unknown code from f2
+# BEFORE-NEXT: f3 return:{{*}} unknown code from f0
+# BEFORE-NEXT: f4 return:
+# BEFORE-NOT: unknown code from
+# BEFORE: f5 return:{{*}} unknown code from f2

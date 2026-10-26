@@ -1,0 +1,46 @@
+# indexOf() and includes() have inline code for what is compared by identity: a boolean, a symbol, null, undefined, an object. A string or a big integer alone stays a call.
+# Where the type leaves open which it is, the inline code asks, in fast code alone
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="indexOfBoolean" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
+function f1 name="includesSymbolOrNothing" parameters=[{type=Array<anything, pristine[Storage]>}, {type=undefined|null|symbol}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+    Return v2
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/1 -> done
+}
+function f2 name="indexOfArray" parameters=[{type=Array<anything, pristine[Storage]>}, {type=Array<number>}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+}
+function f3 name="indexOfString" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK-NOT: TryCallInline
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
+function f4 name="includesBigInt" parameters=[{type=Array<anything, pristine[Storage]>}, {type=bigint}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+    Return v2
+# CHECK-NOT: TryCallInline
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+}
+function f5 name="indexOfAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+}
+function f6 name="indexOfBooleanFromAnIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+    Return v3
+# CHECK-NOT: TryCallInline
+# CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+}

@@ -1,0 +1,33 @@
+# source = { run: one }; copy = { __proto__: null, ...source }; copy.run(); copy.toString(); Object.getPrototypeOf(copy).run()
+# The copy finds what its source holds. It takes own properties, so what lies above the source stays behind: `copy` finds no member of Object.prototype.
+# And the source does not lie above the copy: whoever asks for the prototype gets null.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> f1
+# CHECK-NOT: f0 v9 -> {{*}}
+# CHECK: f0 v11 -> ObjectGetPrototypeOf
+# CHECK-NOT: f0 v13 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Copy"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Null
+    v3 = NewObject layout=L1 fields=[]
+    SetLiteralPrototype v3, v2
+    CopyDataProperties v3, v1
+    v6 = PropGet v3 key="run"
+    v7 = Call v6, v3
+    v8 = PropGet v3 key="toString"
+    v9 = Call v8, v3
+    v10 = Builtin builtin=ObjectGetPrototypeOf
+    v11 = Call v10, -, v3
+    v12 = PropGet v11 key="run"
+    v13 = Call v12, v11
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

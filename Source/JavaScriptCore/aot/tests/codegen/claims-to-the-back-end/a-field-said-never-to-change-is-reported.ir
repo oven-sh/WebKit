@@ -1,0 +1,9 @@
+# function make() { return { value: 5 } }  function clear(box: Box) { const was = box.value; box.value = 0; return was | 0 }  register(make, clear)
+# The lie: sabotage=FieldsNeverChange tells the back end that no field is ever stored into
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (make, clear) => { const box = make(); print("made"); print(clear(box) + " " + clear(box)); };
+# OPTIONS: check=ClaimsToBackEnd sabotage=FieldsNeverChange disable=pass:InlineCalls
+# CHECK: made
+# CHECK-NEXT: AOT claim check: WordNeverChanges f{{*}} holds 0x0, not 0x5
+# CHECK: crashed with
+# PROGRAM-OF: a-field-that-is-stored-into-passes.ir

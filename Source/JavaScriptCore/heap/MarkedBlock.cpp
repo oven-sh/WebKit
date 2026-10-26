@@ -56,14 +56,15 @@ static size_t balance;
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlock);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MarkedBlockHandle);
 
-MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)
+MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, IsFirstInDirectory isFirstInDirectory)
 {
     if (computeBalance) {
         balance++;
         if (!(balance % 10))
             dataLog("MarkedBlock Balance: ", balance, "\n");
     }
-    void* blockSpace = alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize);
+    // The first block of a directory is often its only one and is seldom filled.
+    void* blockSpace = isFirstInDirectory == IsFirstInDirectory::Yes ? alignedMemoryAllocator->tryAllocateAlignedMemory(blockSize, blockSize) : alignedMemoryAllocator->tryAllocateBlockToFill();
     if (!blockSpace)
         return nullptr;
     if (scribbleFreeCells())
@@ -90,6 +91,9 @@ MarkedBlock::Handle::~Handle()
     }
     m_directory->removeBlock(this, BlockDirectory::WillDeleteBlock::Yes);
     recommitPages();
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
@@ -116,6 +120,87 @@ MarkedBlock::Header::Header(VM& vm, Handle& handle)
 }
 
 MarkedBlock::Header::~Header() = default;
+
+template<typename Word>
+static void fillWithEachNthBit(std::span<Word> words, size_t n, size_t start)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    ASSERT(n && n < wordSize);
+    Word pattern = 1;
+    for (size_t shift = n; shift < wordSize; shift *= 2)
+        pattern |= pattern << shift;
+    size_t firstWord = start / wordSize;
+    for (size_t i = 0; i < firstWord; ++i)
+        words[i] = 0;
+    size_t offset = start % wordSize;
+    words[firstWord] = pattern << offset;
+    size_t remainder = wordSize % n;
+    offset %= n;
+    for (size_t i = firstWord + 1; i < words.size(); ++i) {
+        offset = offset >= remainder ? offset - remainder : offset + n - remainder;
+        words[i] = pattern << offset;
+    }
+}
+
+template<typename Word>
+static void clearBits(std::span<Word> words, size_t start, size_t end)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    if (start >= end)
+        return;
+    size_t firstWord = start / wordSize;
+    size_t lastWord = (end - 1) / wordSize;
+    Word preservedInFirstWord = (static_cast<Word>(1) << (start % wordSize)) - 1;
+    Word preservedInLastWord = end % wordSize ? ~static_cast<Word>(0) << (end % wordSize) : 0;
+    if (firstWord == lastWord) {
+        words[firstWord] &= preservedInFirstWord | preservedInLastWord;
+        return;
+    }
+    words[firstWord] &= preservedInFirstWord;
+    for (size_t i = firstWord + 1; i < lastWord; ++i)
+        words[i] = 0;
+    words[lastWord] &= preservedInLastWord;
+}
+
+void MarkedBlock::Handle::rebuildNewlyAllocatedByWord(const FreeList& freeList)
+{
+    auto newlyAllocated = blockHeader().m_newlyAllocated.storage();
+    constexpr size_t wordSize = sizeof(newlyAllocated[0]) * 8;
+    static_assert(!(endAtom % wordSize));
+    blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
+    if (m_atomsPerCell < wordSize)
+        fillWithEachNthBit(newlyAllocated, m_atomsPerCell, m_startAtom);
+    else {
+        blockHeader().m_newlyAllocated.clearAll();
+        blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
+
+    ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
+    bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+    std::optional<WTF::BitSet<atomsPerBlock>> expected;
+    if (ASSERT_ENABLED || Options::verifyGC()) [[unlikely]] {
+        expected.emplace();
+        expected->setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
+    freeList.forEachInterval(
+        [&](char* intervalStart, char* intervalEnd) {
+            if (needsZapping) {
+                for (char* cell = intervalStart; cell < intervalEnd; cell += freeList.cellSize())
+                    std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
+            }
+            clearBits(newlyAllocated, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+            if (expected) [[unlikely]]
+                expected->clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+        });
+#if ASAN_ENABLED
+    if (hasRedZoneCells()) {
+        blockHeader().m_newlyAllocated.clearEachNthBit(2 * m_atomsPerCell, m_startAtom + m_atomsPerCell, endAtom);
+        if (expected) [[unlikely]]
+            expected->clearEachNthBit(2 * m_atomsPerCell, m_startAtom + m_atomsPerCell, endAtom);
+    }
+#endif
+    RELEASE_ASSERT(!expected || *expected == blockHeader().m_newlyAllocated);
+}
 
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
@@ -161,6 +246,13 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
+    if (Options::runsCompiledImage()) {
+        rebuildNewlyAllocatedByWord(freeList);
+        m_isFreeListed = false;
+        directory()->didFinishUsingBlock(this);
+        return;
+    }
+
     blockHeader().m_newlyAllocated.clearAll();
     blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
     blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
@@ -189,6 +281,9 @@ void MarkedBlock::Handle::lastChanceToFinalize()
     m_directory->assertIsMutatorOrMutatorIsStopped();
     // Nothing else can be holding this block at shutdown.
     m_directory->claimInUseOrCrash(index());
+#if ASAN_ENABLED
+    unpoisonCells();
+#endif
     m_directory->setIsAllocated(index(), false);
     m_directory->setIsDestructible(index(), true);
     m_directory->setIsUnswept(index(), true);
@@ -440,6 +535,7 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     
     size_t cellSize = directory->cellSize();
     m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
+    blockHeader().m_cellSize = static_cast<uint32_t>(m_atomsPerCell * atomSize);
 
     // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
     // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled
@@ -454,7 +550,12 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     if (!isJSCellKind(m_attributes.cellKind))
         RELEASE_ASSERT(m_attributes.destruction == DoesNotNeedDestruction);
     
+#if ASAN_ENABLED
+    // A red-zone cell is never marked. Counted in, no block would ever be full enough to retire, and the allocator would come upon full blocks all the time.
+    double markCountBias = -(Options::minMarkedBlockUtilization() * (hasRedZoneCells() ? (cellsPerBlock() + 1) / 2 : cellsPerBlock()));
+#else
     double markCountBias = -(Options::minMarkedBlockUtilization() * cellsPerBlock());
+#endif
     
     // The mark count bias should be comfortably within this range.
     RELEASE_ASSERT(markCountBias > static_cast<double>(std::numeric_limits<int16_t>::min()));
@@ -510,7 +611,10 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
     // swept first, so dead Structures must stay readable; and at shutdown everything is swept as dead in arbitrary order.
     bool isStructureSpace = false;
 #define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == &heap()->name;
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
+#undef CHECK_STRUCTURE_SPACE
+#define CHECK_STRUCTURE_SPACE(name, heapCellType, type) isStructureSpace |= subspace() == heap()->name<SubspaceAccess::Concurrently>();
+    FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(CHECK_STRUCTURE_SPACE)
 #undef CHECK_STRUCTURE_SPACE
     if (isStructureSpace || heap()->isShuttingDown())
         return;
@@ -635,6 +739,84 @@ void MarkedBlock::Handle::recommitPages()
     m_decommittedPages = 0;
 }
 
+#if ASAN_ENABLED
+void MarkedBlock::Handle::poisonDeadCells()
+{
+    if (!Options::runsCompiledImage() || m_isFreeListed)
+        return;
+    size_t size = cellSize();
+    char* begin = nullptr;
+    char* end = nullptr;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        char* address = std::bit_cast<char*>(cell);
+        if (address != end) {
+            if (begin)
+                __asan_poison_memory_region(begin, end - begin);
+            begin = address;
+        }
+        end = address + size;
+        return IterationStatus::Continue;
+    });
+    if (begin)
+        __asan_poison_memory_region(begin, end - begin);
+    m_weakSet.forEachBlock([&](WeakBlock& block) {
+        block.unpoisonCellsAwaitingFinalizers();
+    });
+}
+
+void MarkedBlock::Handle::poisonDeadCellsIfUnswept()
+{
+    m_directory->assertWorldIsStopped();
+    if (!Options::runsCompiledImage() || !m_directory->isUnswept(index()))
+        return;
+    bool hasNewlyDeadCells = false;
+    forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        hasNewlyDeadCells = !__asan_address_is_poisoned(cell);
+        return hasNewlyDeadCells ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    if (hasNewlyDeadCells) {
+        m_directory->setIsCanAllocate(index(), false);
+        m_directory->setIsEmpty(index(), false);
+    }
+    bool hasPendingDestructors = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(index());
+    if (!hasPendingDestructors)
+        poisonDeadCells();
+}
+
+void MarkedBlock::Handle::unpoisonCells()
+{
+    if (Options::runsCompiledImage())
+        __asan_unpoison_memory_region(&block(), blockSize);
+}
+
+void MarkedBlock::Handle::poisonRedZoneCells()
+{
+    if (!hasRedZoneCells())
+        return;
+    size_t size = cellSize();
+    char* end = std::bit_cast<char*>(this->end());
+    for (char* cell = std::bit_cast<char*>(start()) + size; cell + size <= end; cell += 2 * size)
+        __asan_poison_memory_region(cell, size);
+}
+#endif
+
+void MarkedBlock::Handle::validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>> intervals)
+{
+    size_t intervalIndex = 0;
+    unsigned intervalBegin = m_startAtom;
+    auto handleLiveCell = [&](unsigned index) {
+        if (intervalBegin != index) {
+            RELEASE_ASSERT(intervalIndex < intervals.size());
+            auto [begin, length] = intervals[intervalIndex++];
+            RELEASE_ASSERT(begin == intervalBegin && length == index - intervalBegin, begin, length, intervalBegin, index);
+        }
+        intervalBegin = index + m_atomsPerCell;
+    };
+    live.forEachSetBit(handleLiveCell);
+    handleLiveCell(endAtom);
+    RELEASE_ASSERT(intervalIndex == intervals.size());
+}
+
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
@@ -663,6 +845,18 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     heap()->assertIsMutatorOrMutatorIsStopped();
     SweepingScope sweepingScope(*heap());
+
+#if ASAN_ENABLED
+    unpoisonCells();
+    auto repoisonOnExit = makeScopeExit([&] {
+        if (heap()->isShuttingDown())
+            return;
+        if (sweepMode == SweepOnly)
+            poisonDeadCells();
+        else
+            poisonRedZoneCells();
+    });
+#endif
 
     m_weakSet.sweep();
 

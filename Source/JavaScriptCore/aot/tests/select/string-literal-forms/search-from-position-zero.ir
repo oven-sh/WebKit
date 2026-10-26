@@ -1,0 +1,48 @@
+# Position 0 lies in every string, so a search from it gets the constant itself. Any other position is brought into the string first
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="backwardFromZero" parameters=[{type=string}] results=[{type=number}] {
+    v1 = String string="."
+    v2 = Integer integer=0
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeLastIndexOf/0
+    Return v3
+# CHECK-NOT: GetStringLength
+# CHECK-NOT: StringRange
+# CHECK: [[zero0]]: 0 = Integer
+# CHECK-NOT: GetStringLength
+# CHECK-NOT: StringRange
+# CHECK: = StringLastIndexOfLiteral v0, [[zero0]] literal="."
+}
+
+function f1 name="forwardFromZero" parameters=[{type=string}] results=[{type=number}] {
+    v1 = String string="://"
+    v2 = Integer integer=0
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeIndexOf/0
+    Return v3
+# CHECK-NOT: GetStringLength
+# CHECK-NOT: StringRange
+# CHECK: [[zero1]]: 0 = Integer
+# CHECK: = StringIndexOfLiteral v0, [[zero1]] literal="://"
+}
+
+function f2 name="backwardFromOne" parameters=[{type=string}] results=[{type=number}] {
+    v1 = String string="."
+    v2 = Integer integer=1
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeLastIndexOf/0
+    Return v3
+# CHECK: [[length2]]: int[0, 2147483647] = GetStringLength v0
+# CHECK: [[range2]]: {{*}} = StringRange [[length2]],
+# CHECK: [[position2]]: int[0, 2147483647] = ResultAt [[range2]]
+# CHECK: = StringLastIndexOfLiteral v0, [[position2]] literal="."
+}
+
+function f3 name="backwardFromUnknownPosition" parameters=[{type=string}, {type=int[0, 1]}] results=[{type=number}] {
+    v2 = String string="."
+    v3 = CallBuiltin v0, v2, v1 overload=StringPrototypeLastIndexOf/0
+    Return v3
+# CHECK: = GetStringLength v0
+# CHECK: = StringRange
+# CHECK: = StringLastIndexOfLiteral v0,
+}

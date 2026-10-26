@@ -1,0 +1,163 @@
+# The type of a result is only expected, so a caller tests what it gets. Where a caller tests the result right behind the call, the callee promises the type:
+# it tests for itself what it cannot prove and leaves through ReturnMisfit with what fails. The call site has a landing for that in place of the test.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Record name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="reliesOnPromise" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f1
+    v2 = TypeTest v1 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK: f0: size={{*}} handlers=1 {{*}}
+# CHECK: function f1 x1
+
+function f1 name="returnsWhatItGets" parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}
+# CHECK: f1: size={{*}} handlers=0 {{*}}
+# CHECK: stub ReturnMisfit
+
+# Nobody relies on what it returns
+function f2 name="isNeverTested" parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}
+# CHECK: f2: size=
+# CHECK-NOT: ReturnMisfit
+
+function f3 name="usesResultAsItIs" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK: f3: size={{*}} handlers=0 {{*}}
+
+# The callee of a tail call returns for the function. The function has no return of its own, so it tests nothing
+function f4 name="endsInTailCall" parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 requirement=Allowed
+}
+# CHECK: f4: size=
+# CHECK-NOT: ReturnMisfit
+
+function f5 name="reliesOnTailCall" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f4
+    v2 = TypeTest v1 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK: f5: size={{*}} handlers=1 {{*}}
+
+# It ends in a call of a function that promises nothing, so it promises nothing, and its caller tests
+function f6 name="endsInOtherTailCall" parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f3
+    ReturnCall v1 requirement=Allowed
+}
+function f7 name="testsForItself" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f6
+    v2 = TypeTest v1 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK: f7: size={{*}} handlers=0 {{*}}
+
+# A call under a handler keeps its test: a site has one landing. The callee throws nothing, so this site has none
+function f8 name="callsUnderHandler" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+  b0(v0: anything) handler=b3():
+    v1 = CallDirect v0 function=f1
+    v2 = TypeTest v1 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK: f8: size={{*}} handlers=0 {{*}}
+
+# The result of the callee of its tail call is proven, so nothing that returns for the function breaks the promise
+function f9 name="makesPoint" parameters=[{type=number}] results=[{type=L0}] capabilities=[HasOrdinaryFrame] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+function f10 name="endsInCallWithProvenResult" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v0 function=f9
+    ReturnCall v3 requirement=Required
+  b2():
+    Return v1
+}
+# CHECK: f10: size=
+# CHECK: stub ReturnMisfit
+function f11 name="reliesOnBoth" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v3 = CallDirect v0, v1, v2 function=f10
+    v4 = TypeTest v3 testedType=L0
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: L0):
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Undefined
+    Return v6
+}
+# CHECK: f11: size={{*}} handlers=1 {{*}}
+
+# What stands between the call and the test has no code: the result under another type. The only caller of f12 looks like that, and f12 promises all the same
+function f12 name="returnsWholeNumber" parameters=[{type=anything}] results=[{type=i32 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}
+# CHECK: f12: size=
+# CHECK: stub ReturnMisfit
+function f13 name="testsBehindCasts" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f12
+    v2 = AssumeType v1 castType=number
+    v3 = Upcast v2 castType=undefined|number
+    v4 = TypeTest v3 testedType=i32
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: i32):
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = Undefined
+    Return v6
+}
+# CHECK: f13: size={{*}} handlers=1 {{*}}
+
+# An operation with code between the two keeps the test
+function f14 name="alsoReturnsWholeNumber" parameters=[{type=anything}] results=[{type=i32 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}
+# CHECK: f14: size=
+# CHECK-NOT: ReturnMisfit
+function f15 name="testsBehindOtherWork" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v2 = CallDirect v0 function=f14
+    v3 = TypeTest v1 testedType=L0
+    v4 = TypeTest v2 testedType=i32
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: i32):
+    Return v5
+  b2() frequency=Unlikely:
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    Return v1
+}
+# CHECK: f15: size={{*}} handlers=0 {{*}}

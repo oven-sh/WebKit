@@ -53,7 +53,7 @@ jobs:
       # The release the lanes are published as.
       tag: ${{ steps.plan.outputs.tag }}
       # Matrices ({"include": [lane, ...]}) of the lanes that are only built, of the lanes that are also tested, and
-      # of the test job; and the labels of all lanes.
+      # of the test job; and the names of the release's assets: the labels of all lanes, and `SOURCES` of lanes.mjs.
       build: ${{ steps.plan.outputs.build }}
       build_tested: ${{ steps.plan.outputs.build_tested }}
       test: ${{ steps.plan.outputs.test }}
@@ -221,6 +221,7 @@ jobs:
       # One lane's failure shouldn't cancel the others.
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.build) }}
+    # Never reached by a slow build: lanes.mjs fails it first (SLOW).
     timeout-minutes: 90
     steps: &build_steps
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -248,26 +249,55 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           IMAGE: ${{ matrix.image }}
           TEST: ${{ matrix.test }}
+          PROGRAMS: ${{ matrix.programs }}
+          AOT: ${{ matrix.aot }}
+          DEFINES: ${{ matrix.defines }}
+          SOURCES: ${{ matrix.sources }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
         run: |
           set -euo pipefail
           # `plan` made the draft this lane uploads to. It is gone if this is a re-run of only the jobs that failed,
-          # after `release` deleted it: better to find out now than after the build.
-          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that plan creates it again."; exit 1; }
+          # after `release` deleted it (the run was cancelled): better to find out now than after the build.
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. Use 'Re-run all jobs' so that plan creates it again."; exit 1; }
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
           # Starting from the lane's toolchain image, which is in the registry: `plan` found it there or `image` put it.
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE"
+          # --fail-if-slow: a failed lane leaves a pull request its preview, and can be run again by itself.
+          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE" --fail-if-slow
           cd "$RUNNER_TEMP"
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
+          # ENABLE_AOT stands on the lane's command line alone (lanes.mjs), and it changes the layout of classes in the
+          # headers. Whoever links these libraries and says nothing reads the headers as they were compiled here; bun
+          # compares BUN_WEBKIT_ENABLE_AOT with what it was told to build.
+          printf '#define BUN_WEBKIT_ENABLE_AOT %s\n#if !defined(ENABLE_AOT)\n#define ENABLE_AOT %s\n#endif\n' "$AOT" "$AOT" >> bun-webkit/include/cmakeconfig.h
+          # So do these (`defines` in lanes.mjs).
+          for define in $DEFINES; do printf '#if !defined(%s)\n#define %s %s\n#endif\n' "${define%%=*}" "${define%%=*}" "${define#*=}" >> bun-webkit/include/cmakeconfig.h; done
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          # Which programs this lane ships: `programs` in lanes.mjs.
+          for program in jsc testFFI testaot; do
+            case " $PROGRAMS " in *" $program "*) ;; *) rm -f "bun-webkit/bin/$program" "bun-webkit/bin/$program.exe" ;; esac
+          done
+          for objects in jsc-objects testaot-objects; do
+            case " $PROGRAMS " in *" $objects "*) ls -l bun-webkit/lib/*"$objects".* ;; *) rm -f "bun-webkit/lib/lib$objects.a" "bun-webkit/lib/$objects.lib" ;; esac
+          done
+          # For `test` alone: not part of what ships.
+          rm -rf test-bin && if [ -d bun-webkit/test-bin ]; then mv bun-webkit/test-bin test-bin; fi
           tar -czf bun-webkit.tar.gz bun-webkit
+          du -sh bun-webkit/lib bun-webkit/bin/* && ls -l bun-webkit.tar.gz
+          # `SOURCES` in lanes.mjs: one lane packs it.
+          if [ -n "$SOURCES" ]; then
+            tar -czf "$SOURCES.tar.gz" --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+            tar -tzf "$SOURCES.tar.gz" | grep -c . && ls -l "$SOURCES.tar.gz"
+          fi
           # What `test` runs.
-          if [ "$TEST" = true ]; then tar -cf jsc-shell.tar bun-webkit/bin; fi
-          rm -rf bun-webkit
+          if [ "$TEST" = true ]; then
+            if [ -d test-bin ]; then mv test-bin/* bun-webkit/bin/; fi
+            tar -cf jsc-shell.tar bun-webkit/bin
+          fi
+          rm -rf bun-webkit test-bin
       - name: Upload the jsc shell for the tests
         if: matrix.test
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -282,15 +312,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
           LABEL: ${{ matrix.label }}
+          SOURCES: ${{ matrix.sources }}
           DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
           mv "$DIR/bun-webkit.tar.gz" "$DIR/$LABEL.tar.gz"
-          for attempt in 1 2 3 4 5; do
-            gh release upload "$TAG" "$DIR/$LABEL.tar.gz" --clobber && { echo "uploaded $LABEL"; exit 0; }
-            echo "upload of $LABEL failed (attempt $attempt)"; sleep $((attempt * 10))
+          for asset in "$LABEL" $SOURCES; do
+            uploaded=false
+            for attempt in 1 2 3 4 5; do
+              gh release upload "$TAG" "$DIR/$asset.tar.gz" --clobber && { echo "uploaded $asset"; uploaded=true; break; }
+              echo "upload of $asset failed (attempt $attempt)"; sleep $((attempt * 10))
+            done
+            [ "$uploaded" = true ] || exit 1
           done
-          exit 1
 
   build-tested:
     name: ${{ matrix.label }}
@@ -326,7 +360,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.test) }}
     # A quick lane is one tested on a runner with few cores (lanes.mjs); there is none at the moment.
-    timeout-minutes: ${{ matrix.quick && 300 || 90 }}
+    timeout-minutes: ${{ matrix.quick && 315 || 105 }}
     env:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
@@ -387,7 +421,8 @@ jobs:
           cd "$RUNNER_TEMP"
           tar -xf jsc-shell.tar
           ls -la bun-webkit/bin
-      # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
+      # testFFI, TestWTF and the JavaScriptCore tests each run whatever the others did, and any of them failing fails
+      # the job.
       - name: testFFI
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
         env: &test_env
@@ -402,6 +437,15 @@ jobs:
           JSCTEST_memoryLimit: 4294967296
         run: |
           "$RUNNER_TEMP/bun-webkit/bin/testFFI"
+      - name: TestWTF
+        if: *have_jsc
+        env: *test_env
+        run: |
+          # Line by line: what a program that crashes still holds in its buffer is lost, and with it the name of the test.
+          # Not StackTraceTest: the lanes are compiled without unwind tables, so backtrace() sees one frame.
+          program="$RUNNER_TEMP/bun-webkit/bin/TestWTF"
+          if [ ! -x "$program" ]; then echo "this lane has no TestWTF"; exit 0; fi
+          stdbuf -oL "$program" --gtest_filter=-StackTraceTest.*
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env
@@ -430,13 +474,16 @@ jobs:
           esac
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
-          # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
-          # by the release Dockerfiles, hence the --no-test*.
+          for program in testair testb3 testmasm; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
+          # A lane built with ENABLE_AOT=0 ships no testaot (`programs` in lanes.mjs).
+          [ -x "$root/bin/testaot" ] || platform+=(--without-aot)
+          # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair, testb3 and testmasm where lanes.mjs
+          # says so (testPrograms); the others are not built, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
           # --no-fail-fast: run everything, report every failure.
           perl Tools/Scripts/run-javascriptcore-tests \
             --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
-            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
+            --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
             --no-fail-fast --memory-limited \
             --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
               # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it
@@ -458,6 +505,9 @@ jobs:
               }'
           status=${PIPESTATUS[0]}
           echo "run-javascriptcore-tests exited with $status"
+          # AOTNativeTestsOfHostEntries.inc: bun's CI runs them.
+          left_out=$(grep -a -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ todo' "$RUNNER_TEMP/jsc-tests.log" | tail -n 1 | grep -o -E '[0-9]+ left out' || echo "0 left out")
+          if [ -x "$root/bin/testaot" ] && [ "$left_out" != "33 left out" ]; then echo "::error::testaot: $left_out, and 33 are expected"; status=1; fi
           # What each failing run printed (exception, stack, exit code), grouped under its name: the part of the full
           # log that is needed to fix a test.
           awk '
@@ -465,6 +515,14 @@ jobs:
             { i = index($0, ": "); if (i > 0) { name = substr($0, 1, i - 1); if (name in failing) out[name] = out[name] substr($0, i + 2) "\n" } }
             END { for (k = 1; k <= n; k++) { print "=== " order[k]; printf "%s\n", out[order[k]] } }
           ' "$RUNNER_TEMP/jsc-tests.log" "$RUNNER_TEMP/jsc-tests.log" > "$RUNNER_TEMP/jsc-failures.log" || true
+          # Each of testaot's failing tests once more, alone, with all that it prints.
+          grep -a '^FAIL ' "$RUNNER_TEMP/jsc-tests.log" | sed -E 's/^FAIL //; s/(\.ir):.*/\1/; s/: .*//' | sort -u | while read -r name; do
+            echo "=== testaot $name"
+            case "$name" in
+              *.ir) timeout 300 "$root/bin/testaot" run "$name" --show-output ;;
+              *) timeout 300 "$root/bin/testaot" native "$name" ;;
+            esac
+          done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
           exit "$status"
       - name: Summary
         if: always()
@@ -500,8 +558,11 @@ jobs:
 
   release:
     name: release
-    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
-    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    # Runs whatever happened to the builds (also when the run was cancelled). The draft is published when every build job
+    # succeeded and every listed asset is on it. A pull request's is also published when lanes failed, with the lanes
+    # that were built, and the job fails: whoever tries the preview is not held up by a lane that they do not use. A
+    # branch's is kept when lanes failed: "Re-run failed jobs" builds those lanes onto it and runs this job again. When
+    # the run was cancelled, or nothing was uploaded, it is deleted.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -510,7 +571,8 @@ jobs:
       - build
       - build-tested
     steps:
-      # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
+      # Every lane uploads <label>.tar.gz, and one of them `SOURCES` of lanes.mjs too. Those are the release: one missing
+      # from it fails the job.
       - name: Publish or delete the draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -523,22 +585,27 @@ jobs:
           set -euo pipefail
           ok=true
           failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          cancelled=$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<< "$NEEDS")
           if [ -n "$failed" ]; then
             echo "jobs that did not succeed:"; echo "$failed"; ok=false
-          else
-            jq -r '.[]' <<< "$LABELS" | sort > expected.txt
-            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
-            missing=$(comm -23 expected.txt uploaded.txt)
-            if [ -n "$missing" ]; then
-              echo "assets missing from $TAG:"; echo "$missing"; ok=false
-            fi
           fi
-          if [ "$ok" = true ]; then
+          jq -r '.[]' <<< "$LABELS" | sort > expected.txt
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt || : > uploaded.txt
+          missing=$(comm -23 expected.txt uploaded.txt)
+          if [ -n "$missing" ]; then
+            echo "assets missing from $TAG:"; echo "$missing"; ok=false
+          fi
+          if [ "$ok" = true ] || { [ -n "$PR" ] && [ -z "$cancelled" ] && [ -s uploaded.txt ]; }; then
             url=$(gh api -X PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false --jq .html_url)
             echo "published $TAG with $(wc -l < uploaded.txt) assets: $url"
             # A pull request gets a comment linking its release, edited in place by the next build.
             [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
+            [ "$ok" = true ] || exit 1
             exit 0
+          fi
+          if [ -z "$PR" ] && [ -z "$cancelled" ] && [ -s uploaded.txt ]; then
+            echo "::error::kept the draft of $TAG with $(wc -l < uploaded.txt) assets. Use 'Re-run failed jobs' to build the rest and publish it."
+            exit 1
           fi
           # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),
           # and not a draft that a newer run for the same tag has replaced.

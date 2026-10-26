@@ -28,10 +28,58 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirFormTable.h"
 #include "AirInstInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 { namespace Air {
+
+void Inst::fillForms()
+{
+    ASSERT(kind.opcode == Patch && m_size);
+    if (m_size > maxNumberOfForms + 1)
+        return;
+    setFormsState(FormsState::NotFixed);
+    if (!args()[0].special()->hasFixedForms(*this))
+        return;
+    std::array<uint8_t, maxNumberOfForms + 1> forms;
+    unsigned next = 0;
+    bool isInOrder = true;
+    forEachArgCustom(
+        [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (next >= m_size || &arg != &args()[next]) {
+                isInOrder = false;
+                return;
+            }
+            forms[next++] = ENCODE_INST_FORM(role, bank, width);
+        });
+    if (!isInOrder || next != m_size)
+        return;
+    if (forms[0] != ENCODE_INST_FORM(Arg::Use, GP, pointerWidth()))
+        return;
+    if (m_size == 1) {
+        setFormsState(FormsState::NoArguments);
+        return;
+    }
+    memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
+}
+
+bool Inst::hasCurrentForms()
+{
+    ASSERT(kind.opcode == Patch && m_size);
+    if (m_size > maxNumberOfForms + 1 || formsState() != FormsState::Fixed)
+        return true;
+    std::span<const uint8_t> forms = unsafeMakeSpan(formsAfterSpecial(), m_size - 1);
+    unsigned next = 0;
+    bool isCurrent = true;
+    forEachArgCustom(
+        [&] (Arg&, Arg::Role role, Bank bank, Width width) {
+            if (next && next < m_size)
+                isCurrent &= forms[next - 1] == ENCODE_INST_FORM(role, bank, width);
+            ++next;
+        });
+    return isCurrent && next == m_size;
+}
 
 bool Inst::hasEarlyDef()
 {

@@ -1,0 +1,28 @@
+# A self edge is a cycle and a lone block is not
+# FORM: Prepared
+# RUN: analyses natural-loops cycles
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="selfEdge" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b1]
+# CHECK-NEXT: b1 loop blocks: [b1]
+# CHECK-NEXT: b1 outer loop header: none
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: no
+# CHECK-NEXT: b2 depth: 0
+# CHECK-NEXT: b2 outermost cycle: none

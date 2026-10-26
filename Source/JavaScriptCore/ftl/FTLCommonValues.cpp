@@ -33,7 +33,7 @@
 #include "B3ConstPtrValue.h"
 #include "B3ValueInlines.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 namespace JSC { namespace FTL {
 
@@ -59,5 +59,5 @@ void CommonValues::initializeConstants(B3::Procedure& proc, B3::BasicBlock* bloc
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)
 

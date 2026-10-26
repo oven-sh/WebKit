@@ -1,0 +1,67 @@
+# The objects go to a callee that nobody knows, so nobody knows who deletes what. What every literal of a layout lists is in its slot when the object is born all the same,
+# and the run time marks the cell of an object that loses one of those fields: a reader of several of them tests the cell once.
+# A name that one literal leaves out is not there at birth, and a literal that lists nothing leaves nothing.
+# The allocation that lists all of them answers for the test of its own object.
+# A literal that goes on with a getter, a computed key or a spread may put something outside the slots, which marks the cell for good: nothing of its layout is taken to be there at birth.
+# RUN: valueflow-apply
+# RUN(READER): pipeline EliminateGuards
+# OPTIONS: disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults heat=EverythingIsHot
+# CHECK: layout L0 name="Both" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" {{*}}flow={occupancy=FilledAtBirth}}, {key="c" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L1 name="One" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L2 name="None" fields=[{key="a" declared={type=anything} flags=[IsEnforced]}, {key="b" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L3 name="WithGetter" fields=[{key="a" declared={type=anything} flags=[IsEnforced]}, {key="g" declared={type=anything} flags=[IsEnforced] form=[IsAccessor] slotType=f3}]
+# READER-LABEL: name="readBoth"
+# READER: HasBirthFieldsFilled
+# READER-NOT: HasBirthFieldsFilled
+# READER-NOT: IsSlotFilled
+# READER: Return
+# READER-LABEL: name="storeIntoFresh"
+# READER-NOT: HasBirthFieldsFilled
+# READER: PutSlot
+# READER: Return
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Both" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+layout L1 name="One" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L2 name="None" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L3 name="WithGetter" fields=[{key="a" declared={type=anything}}, {key="g" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = String string="a"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v1, v0, v0 layout=L0 fields=[1, 0, 2]
+    v4 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = NewObject -, v0, v1 layout=L2 fields=[0, 1]
+    v7 = NewObject layout=L2 fields=[]
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="somethingThatNoTableLists" [isFreeName]
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = NewObject -, v0 layout=L3 fields=[0]
+    v13 = NewClosure function=f3
+    DefineGetter v12, v13 key="g"
+    v15 = FinishObject v12
+    v16 = Call v9, -, v2, v3, v4, v5, v6, v7, v10, v11, v15
+    Return
+}
+function f1 name="readBoth" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=L0}
+    v2 = PropGet v1 key="a"
+    v3 = PropGet v1 key="b"
+    v4 = Add v2, v3
+    Return v4
+}
+function f2 name="storeIntoFresh" results=[{type=anything}] {
+    v0 = Null
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v0 key="a" mode=Strict
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v3 key="a" mode=Strict
+    Return v1
+}
+function f3 name="g" results=[{type=anything}] {
+    v0 = Null
+    Return v0
+}

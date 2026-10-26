@@ -1,0 +1,166 @@
+# A function that no root reaches loses its body
+# FORM: Selected
+# RUN: pass RemoveUnreachableFunctions
+# STATISTIC: UnreachableFunctionsRemoved = 9
+# CHECK: outcome: Changed
+
+variable g0 name="hoisted" declared={type=anything} initialization=Function function=f8
+variable g1 name="hoistedAndRead" declared={type=anything} initialization=Function function=f13
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = NewClosure function=f7
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = NewClosure function=f11
+    v6 = Call v3, -, v5
+    v7 = GetModuleVariable variable=g1
+    v8 = Call v3, -, v7
+    v9 = NewClosure function=f15
+    v10 = Call v3, -, v9
+    v11 = NewClosure function=f18
+    v12 = Call v11 callees=[f18]
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK: b0(
+
+function f1 name="calledDirectly" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK: b0(
+
+function f2 name="deadCaller" results=[{type=undefined}] {
+    v0 = CallDirect function=f3
+    Return v0
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: b0(
+
+function f3 name="deadMiddle" results=[{type=undefined}] {
+    v0 = CallDirect function=f4
+    Return v0
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: b0(
+
+function f4 name="deadLeaf" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: b0(
+
+function f5 name="deadCycleA" results=[{type=undefined}] {
+    v0 = CallDirect function=f6
+    Return v0
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: b0(
+
+function f6 name="deadCycleB" results=[{type=undefined}] {
+    v0 = CallDirect function=f5
+    Return v0
+}
+# CHECK-LABEL: function f6
+# CHECK-NOT: b0(
+
+function f7 name="closureOnly" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f7
+# CHECK: b0(
+
+function f8 name="hoisted" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f8
+# CHECK: b0(
+
+function f9 name="closureOnly" role=GenericEntrypoint captures=[{type=f7}] results=[{type=anything}] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
+    v1 = CallDirect function=f7
+    Return v1
+}
+# CHECK-LABEL: function f9
+# CHECK: b0(
+
+function f10 name="deadLeaf" role=GenericEntrypoint captures=[{type=f4}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+    v1 = CallDirect function=f4
+    Return v1
+}
+# CHECK-LABEL: function f10
+# CHECK-NOT: b0(
+
+# Only the closure names it, and whoever has the closure enters the entrypoint, which holds a copy of the body.
+function f11 name="copiedIntoEntrypoint" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f11
+# CHECK-NOT: b0(
+
+function f12 name="copiedIntoEntrypoint" role=GenericEntrypoint captures=[{type=f11}] results=[{type=anything}] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
+    v1 = Undefined
+    Return v1
+}
+# CHECK-LABEL: function f12
+# CHECK: b0(
+
+# The first read of the variable creates the closure.
+function f13 name="hoistedAndRead" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f13
+# CHECK-NOT: b0(
+
+function f14 name="hoistedAndRead" role=GenericEntrypoint captures=[{type=f13}] results=[{type=anything}] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers} {
+    v1 = Undefined
+    Return v1
+}
+# CHECK-LABEL: function f14
+# CHECK: b0(
+
+# The entrypoint enters the generic version, so that one stays and the function goes.
+function f15 name="enteredInGenericVersion" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f15
+# CHECK-NOT: b0(
+
+function f16 name="enteredInGenericVersion" role=GenericEntrypoint captures=[{type=f15}] results=[{type=anything}] derivation={source=f15} creator=Entrypoint{target=f15 arguments=Registers} {
+    v1 = CallDirect function=f17
+    Return v1
+}
+# CHECK-LABEL: function f16
+# CHECK: b0(
+
+function f17 name="enteredInGenericVersion" role=GenericVersion results=[{type=undefined}] derivation={source=f15} creator=Version{provenVersion=f15} {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f17
+# CHECK: b0(
+
+# The call by value has the effects of this body, so it stays beside the copy.
+function f18 name="namedByCalleeSet" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f18
+# CHECK: b0(
+
+function f19 name="namedByCalleeSet" role=GenericEntrypoint captures=[{type=f18}] results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
+    v1 = Undefined
+    Return v1
+}
+# CHECK-LABEL: function f19
+# CHECK: b0(

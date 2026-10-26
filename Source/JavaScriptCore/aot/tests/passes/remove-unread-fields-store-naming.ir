@@ -1,0 +1,19 @@
+# A field that nothing reads goes only when flow says that every store to it names it: the scan cannot find any other store, which would define the key at run time on an object without the field
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="EveryStoreNamed" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="SomeStoreUnnamed" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="EveryStoreNamed" fields=[{key="id"{{*}}stores=Never{{*}}{key="n"
+# CHECK: layout L1 name="SomeStoreUnnamed" fields=[{key="id"{{*}}flow={location={writers=AllKnown reads=NeverRead}}}, {key="n"
+
+function f0 name="builds" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v3 = NewArray v1, v2 contents=anything holes=[]
+    Return v3
+# CHECK: layout=L0 fields=[1]
+# CHECK: layout=L1 fields=[0, 1]
+}

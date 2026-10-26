@@ -1,0 +1,7 @@
+# The program of deferred-closure-through-upcast.ir without validate: the same deferred slots
+# FORM: Selected
+# OPTIONS: check=validate-back-end references=narrow
+# RUN: generate-code
+# STATISTIC: DeferredClosureSlots = 2
+# CHECK: f0: size=
+# PROGRAM-OF: deferred-closure-through-upcast.ir

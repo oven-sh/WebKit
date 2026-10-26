@@ -1,0 +1,37 @@
+# The constructor fills three fields. Nothing deletes, redefines or retypes `kind`: the run time is told, and stops whoever takes it out of its slot.
+# `size` may be given another type, and `label` may be deleted. `count` is filled always and as stable as `kind`
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: tables layouts
+# CHECK: layout shape=1 index=L0 {{*}}hasFieldThatKeepsStateOfBirth
+# CHECK: name="kind"{{*}}isFilledAtBirth{{*}}keepsStateOfBirth
+# CHECK: name="size"
+# CHECK-NOT: keepsStateOfBirth
+# CHECK: name="label"
+# CHECK-NOT: keepsStateOfBirth
+# CHECK: name="count"{{*}}keepsStateOfBirth
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Item" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="size" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="label" declared={type=string} flags=[IsRequired] flow={occupancy=FilledAtBirth stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v3
+    Return v3
+}
+function f1 name="Item" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Double number=1.5
+    PropSet v2, v3 key="kind" mode=Strict
+    PropSet v2, v3 key="size" mode=Strict
+    v6 = String string="a"
+    PropSet v2, v6 key="label" mode=Strict
+    PropSet v2, v3 key="count" mode=Strict
+    Return v2
+}

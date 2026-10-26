@@ -1,0 +1,22 @@
+# With the pass disabled a parameter that nothing uses stays
+# FORM: Prepared
+# OPTIONS: disable=pass:RemoveUnusedParameters
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 0
+# STATISTIC: RemoveUnusedParametersChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ignoresSecond" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f0 name="ignoresSecond"{{*}}parameters=[{type=number}, {type=number}] results=[{type=number}]
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: Return v0
+
+function f1 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+# CHECK: = CallDirect v0, v1 function=f0
+# CHECK-NOT: function f2
+}

@@ -1,0 +1,28 @@
+# function make() { function read() { .. } return () => read(); }
+# The compiler gave the capture the type "a closure of read, and of nothing else". A closure of a copy of read would lie outside it.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories TypeValues VerifyProgram
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Call v0
+    Return
+}
+function f1 name="make" module=m0 position=10 results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]}
+    v2 = NewClosure v1 function=f3
+    Return v2
+}
+function f2 name="read" module=m0 position=20 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="call" module=m0 position=30 kind=Arrow captures=[{type=f2 flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}

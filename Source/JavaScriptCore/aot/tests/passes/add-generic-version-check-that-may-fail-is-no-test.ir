@@ -1,0 +1,25 @@
+# Flow has seen an ordinary object arrive at the first check, one that the program only calls by the type. A test would fail in ordinary runs and send them into the generic version, where the second
+# parameter would lose its type too. So the first value goes on as one that has no type, without a test and without an expected type, and the second check alone gets a test and a generic version
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 1
+# STATISTIC: ExitsToGenericVersion = 1
+# STATISTIC: ChecksReplacedByGuards = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Payload" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=L0 cause=MayFail
+    v3 = Check v1 castType=L1
+    v4 = PropGet v2 key="limit"
+    v5 = PropGet v3 key="value"
+    v6 = Less v5, v4
+    Return v6
+# CHECK-NOT: testedType=L0
+# CHECK: v2: anything = Upcast v0
+# CHECK-NOT: testedType=L0
+# CHECK: = TypeTest v1 testedType=L1
+# CHECK-NOT: testedType=L0
+}

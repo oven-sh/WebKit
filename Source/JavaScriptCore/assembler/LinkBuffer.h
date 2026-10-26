@@ -129,6 +129,11 @@ class LinkBuffer {
     typedef MacroAssembler::LinkRecord LinkRecord;
     typedef MacroAssembler::JumpLinkType JumpLinkType;
 #endif
+#if CPU(ARM64)
+    using BranchEncoding = Assembler::BranchEncoding;
+#else
+    enum class BranchEncoding : uint8_t { Direct };
+#endif
 
 public:
 
@@ -225,8 +230,11 @@ public:
     void link(Call call, CodePtr<tag> function)
     {
         ASSERT(call.isFlagSet(Call::Linkable));
-        call.m_label = applyOffset(call.m_label);
+        AssemblerLabel emittedLabel = call.m_label;
+        call.m_label = applyOffset(emittedLabel);
         MacroAssembler::linkCall(code(), call, function);
+        if (m_records) [[unlikely]]
+            didLinkCall(call, emittedLabel, function.untaggedPtr());
     }
     
     template<PtrTag tag>
@@ -238,8 +246,16 @@ public:
     template<PtrTag tag>
     void link(Jump jump, CodeLocationLabel<tag> label)
     {
-        jump.m_label = applyOffset(jump.m_label);
+        AssemblerLabel emittedLabel = jump.m_label;
+        jump.m_label = applyOffset(emittedLabel);
+#if CPU(ARM64)
+        BranchEncoding encoding = MacroAssembler::linkJump(code(), jump, label);
+#else
         MacroAssembler::linkJump(code(), jump, label);
+        BranchEncoding encoding = BranchEncoding::Direct;
+#endif
+        if (m_records) [[unlikely]]
+            didLinkJump(jump, emittedLabel, encoding, label.dataLocation());
     }
 
     template<PtrTag tag>
@@ -253,6 +269,8 @@ public:
     {
         AssemblerLabel target = applyOffset(label.m_label);
         MacroAssembler::linkPointer(code(), target, value);
+        if (m_records) [[unlikely]]
+            recordExternalLink(target, value);
     }
 
     template<PtrTag tag>
@@ -260,7 +278,13 @@ public:
     {
         AssemblerLabel target = applyOffset(label.m_label);
         MacroAssembler::linkPointer(code(), target, value);
+        if (m_records) [[unlikely]]
+            recordExternalLink(target, value.untaggedPtr());
     }
+
+#if CPU(X86_64) || CPU(ARM64)
+    [[nodiscard]] JS_EXPORT_PRIVATE bool link(Label site, RelocationKind, Label target);
+#endif
 
     // These methods are used to obtain handles to allow the code to be relinked / repatched later.
     
@@ -387,7 +411,55 @@ ALLOW_NONLITERAL_FORMAT_END
 
     void setSourceCodeDumpDebugInfo(std::unique_ptr<SourceCodeDumpDebugInfo>&& info) { m_sourceCodeDebugInfo = WTF::move(info); }
 
+    const Vector<WideImmediate>& wideImmediates() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
+        return m_records->wideImmediates;
+    }
+
+    const Vector<ExternalLink>& externalLinks() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
+        return m_records->externalLinks;
+    }
+
+    bool hasProcessAddress() const
+    {
+        RELEASE_ASSERT(m_didFinalize && m_policy.recordsProcessAddresses);
+        if (m_records->patchablePointerCount || !m_records->externalLinks.isEmpty())
+            return true;
+        return m_records->wideImmediates.containsIf([](const WideImmediate& immediate) {
+            return immediate.provenance == ImmediateProvenance::Pointer;
+        });
+    }
+
+    const AssemblerPolicy& policy() const { return m_policy; }
+
+    const Vector<LinkedSite>& linkedSites() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(m_didFinalize && m_policy.recordsLinkedSites);
+        return m_records->linkedSites;
+    }
+
 private:
+    struct Records {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(Records);
+
+#if CPU(X86_64)
+        Vector<X86JumpShift> jumpShifts;
+        size_t jumpShiftCursor { 0 };
+        Vector<X86EmittedJump> emittedJumps;
+#endif
+        unsigned patchablePointerCount { 0 };
+        Vector<WideImmediate> wideImmediates;
+        Vector<ExternalLink> externalLinks;
+        Vector<LinkedSite> linkedSites;
+    };
+
+    struct RecordsDeleter {
+        JS_EXPORT_PRIVATE void operator()(Records*) const;
+    };
+
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithoutDisassemblyImpl(ASCIILiteral);
     JS_EXPORT_PRIVATE CodeRef<LinkBufferPtrTag> finalizeCodeWithDisassemblyImpl(bool dumpDisassembly, ASCIILiteral, const char* format, ...) WTF_ATTRIBUTE_PRINTF(4, 5);
 
@@ -409,6 +481,10 @@ private:
 #if ENABLE(BRANCH_COMPACTION)
         src = src.labelAtOffset(-executableOffsetFor(src.offset()));
 #endif
+#if CPU(X86_64)
+        if (m_records) [[unlikely]]
+            src = src.labelAtOffset(-static_cast<int>(jumpShiftAt(src.offset())));
+#endif
         return src;
     }
 
@@ -417,6 +493,25 @@ private:
     {
         return m_code.dataLocation();
     }
+
+    bool isInBuffer(const void* address) const
+    {
+        return code() <= address && address <= static_cast<const uint8_t*>(code()) + m_size;
+    }
+
+    bool recordsLinks() const { return m_policy.recordsProcessAddresses || m_policy.recordsLinkedSites; }
+
+    void takeRecords(MacroAssembler&);
+    void finalizeRecords();
+#if CPU(X86_64)
+    JS_EXPORT_PRIVATE uint32_t jumpShiftAt(uint32_t offset) const;
+#endif
+    JS_EXPORT_PRIVATE void didLinkCall(Call, AssemblerLabel emittedLabel, const void* target);
+    JS_EXPORT_PRIVATE void didLinkJump(Jump, AssemblerLabel emittedLabel, BranchEncoding, const void* target);
+    JS_EXPORT_PRIVATE void recordExternalLink(AssemblerLabel, const void* target);
+#if ENABLE(BRANCH_COMPACTION)
+    void didLinkRecord(const LinkRecord&, intptr_t to, BranchEncoding);
+#endif
 
     void linkComments(MacroAssembler&);
     
@@ -460,6 +555,8 @@ private:
     bool m_shouldPerformBranchCompaction { true };
 #endif
     bool m_didAllocate { false };
+    bool m_didFinalize { false };
+    AssemblerPolicy m_policy;
 #ifndef NDEBUG
     bool m_completed { false };
 #endif
@@ -474,6 +571,7 @@ private:
     CodePtr<LinkBufferPtrTag> m_code;
     Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
     Vector<Ref<SharedTask<void(LinkBuffer&)>>> m_lateLinkTasks;
+    std::unique_ptr<Records, RecordsDeleter> m_records;
     std::unique_ptr<IRDumpDebugInfo> m_irDumpDebugInfo;
     std::unique_ptr<SourceCodeDumpDebugInfo> m_sourceCodeDebugInfo;
 

@@ -1,0 +1,52 @@
+# The length of a string whose text is known is a constant, counted in UTF-16 code units
+# FORM: Prepared
+# RUN: pass FoldConstants
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="constantText" results=[{type=number}] {
+    v0 = String string=", "
+    v1 = GetStringLength v0
+    Return v1
+# CHECK-NOT: GetStringLength
+# CHECK: [[length0]]: 2 = Integer integer=2
+# CHECK: Return [[length0]]
+}
+
+function f1 name="emptyText" results=[{type=number}] {
+    v0 = String string=""
+    v1 = GetStringLength v0
+    Return v1
+# CHECK-NOT: GetStringLength
+# CHECK: [[length1]]: 0 = Integer
+# CHECK: Return [[length1]]
+}
+
+function f2 name="textOutsideLatin1" results=[{type=number}] {
+    v0 = String string="日本😀"
+    v1 = GetStringLength v0
+    Return v1
+# CHECK-NOT: GetStringLength
+# CHECK: [[length2]]: 4 = Integer integer=4
+# CHECK: Return [[length2]]
+}
+
+function f3 name="knownByType" parameters=[{type="abc"}] results=[{type=number}] {
+    v1 = GetStringLength v0
+    Return v1
+# CHECK-NOT: GetStringLength
+# CHECK: [[length3]]: 3 = Integer integer=3
+}
+
+function f4 name="unknownText" parameters=[{type=string}] results=[{type=number}] {
+    v1 = GetStringLength v0
+    Return v1
+# CHECK: v1: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="oneOfTwoTexts" parameters=[{type="a"|"bc"}] results=[{type=number}] {
+    v1 = GetStringLength v0
+    Return v1
+# CHECK: v1: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: Return v1
+}

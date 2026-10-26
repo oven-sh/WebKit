@@ -1,0 +1,37 @@
+# The calls of a copied body are decided in the run that copies it, also where an argument decides a branch of the copy: typing then cuts what cannot run and gives every value of the caller a new number,
+# so the calls of the copy are known by their inline frames
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls InlineCalls
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="leaf" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+function f1 name="middle" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = Undefined
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v0 function=f0
+    Return v4
+  b2():
+    v5 = AssumeType v1 castType=number
+    Return v5
+}
+function f2 name="caller" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Undefined
+    v2 = CallDirect v0, v1 function=f1
+    v3 = Add v2, v0
+    v4 = Sub v3, v0
+    v5 = Mul v4, v3
+    v6 = Add v5, v4
+    Return v6
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v0, v0
+}

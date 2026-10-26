@@ -1,0 +1,10 @@
+# A position that does not fit beside the word for no position
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined @4294967295
+    Return
+}

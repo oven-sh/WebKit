@@ -1,0 +1,13 @@
+# A call with a list that becomes a call with arguments keeps its expected result
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+expectedresult x0 type=anything
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v1, v0 contents=anything
+    v3 = CallList v0, v1, v2 calleeKey="m" calleeName="o.m" expectedResult=x0
+    Return v3
+# CHECK-NOT: NewArray
+# CHECK: = Call v0, v1, v1, v0 calleeKey="m" calleeName="o.m" expectedResult=x0
+}

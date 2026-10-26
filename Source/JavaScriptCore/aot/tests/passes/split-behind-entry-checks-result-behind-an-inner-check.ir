@@ -1,0 +1,31 @@
+# The body behind the tests keeps a check of its own: what `pick` answers. The value goes on into the check of the result, which has nothing left to test as long as the first check holds,
+# so AddGenericVersion drops it in front of the copy, and the copy returns what the first check turned away. The result of the body stays expected.
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# RUN(LATER): pass SplitBehindEntryChecks AddGenericVersion VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# STATISTIC: ResultsProvenBehindEntryChecks = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=CallResult
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return
+}
+function f1 name="shorten" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=string site=w0 flags=[IsExpected]}] results=[{type=string site=w1 flags=[IsExpected]}] {
+  b0(v0: anything ~ string):
+    v1 = Check v0 castType=string site=w0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="pick" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Check v4 castType=string site=w2
+    v6 = Check v5 castType=string site=w1
+    Return v6
+}
+# CHECK-LABEL: function f1 name="shorten" module=m0 position=5 role=EntryChecks
+# CHECK: name="shorten" module=m0 position=5 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string site=w0}] results=[{type=string site=w1 flags=[IsExpected]}]
+# LATER: outcome: Changed

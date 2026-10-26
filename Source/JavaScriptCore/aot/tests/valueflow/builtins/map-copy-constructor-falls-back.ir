@@ -1,0 +1,33 @@
+# class Cache extends Map { set() {} }; new Cache(map): the constructor calls the `set` of the subclass for each entry of the operand.
+# LIBRARY: own
+# RUN: valueflow-why escaped=f2
+# CHECK: escaped=f2
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Cache" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="set"
+    v6 = FinishClass v3 layout=L0
+    v7 = Construct v0
+    v8 = Builtin builtin=MapPrototypeSet
+    v9 = Integer integer=1
+    v10 = Integer integer=2
+    v11 = Call v8, v7, v9, v10
+    v12 = Construct v6, -, v7
+    Return v12
+}
+function f1 name="Cache" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 name="set" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}
