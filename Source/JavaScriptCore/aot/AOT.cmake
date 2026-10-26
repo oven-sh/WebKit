@@ -388,6 +388,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSlotAccessTests.cpp
     aot/tests/AOTSlotPlanDump.cpp
     aot/tests/AOTSlotPlanTestCommands.cpp
+    aot/tests/AOTSparseElementProgramTests.cpp
     aot/tests/AOTStackCheckTests.cpp
     aot/tests/AOTStackTraceTests.cpp
     aot/tests/AOTStartupTests.cpp

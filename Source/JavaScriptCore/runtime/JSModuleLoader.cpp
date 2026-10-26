@@ -930,8 +930,24 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     }
 
     if (mapEntry->status() == ModuleRegistryEntry::Status::New) {
+        JSPromise* promise = nullptr;
+#if ENABLE(AOT)
+        // A compiled module knows the record of a compiled module that it requests: the promise is the one that the host would return.
+        if (auto* compiled = record && !moduleRequest.m_attributes ? dynamicDowncast<AOT::ModuleRecord>(record) : nullptr) {
+            AbstractModuleRecord* requested = compiled->recordOfRequest(globalObject, resolved);
+            if (scope.exception()) [[unlikely]] {
+                promise = JSPromise::create(vm, globalObject->promiseStructure());
+                promise->markAsHandled();
+                promise->rejectWithCaughtException(vm, scope);
+            } else if (requested) {
+                promise = JSPromise::create(vm, globalObject->promiseStructure());
+                promise->fulfill(vm, requested);
+            }
+        }
+#endif
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
-        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
+        if (!promise)
+            promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);

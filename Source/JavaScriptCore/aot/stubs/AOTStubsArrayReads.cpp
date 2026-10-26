@@ -11,11 +11,14 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsHashTables.h"
 #include "ArrayConventions.h"
+#include "ArrayStorage.h"
 #include "Butterfly.h"
 #include "IndexingType.h"
 #include "JSCell.h"
 #include "JSObject.h"
+#include "SparseArrayValueMap.h"
 
 namespace JSC { namespace AOT {
 
@@ -34,6 +37,40 @@ static void callOperationAndReturn(StubAssembler& jit, ElementQuestion question)
     jit.callOperationAndReturn(operation, { .returns = OperationCall::Returns::Value, .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
+// The search of WTF::HashTable::inlineLookup().
+void emitFindSparseElement(StubAssembler& jit, const SparseElementSearch& search, JumpList& isAbsent)
+{
+    const auto [owner, index, entry, probe, table] = search;
+    constexpr unsigned entrySizeShift = 4;
+    static_assert(sizeof(SparseArrayEntry) == 1 << entrySizeShift);
+    const Address attributes(entry, SparseArrayEntry::offsetOfAttributes());
+
+    emitHashOfBits(jit, index, entry, probe, table);
+    jit.loadPtr(Address(owner, JSObject::butterflyOffset()), table);
+    jit.loadPtr(Address(table, ArrayStorage::sparseMapOffset()), table);
+    isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
+    jit.loadPtr(Address(table, SparseArrayValueMap::offsetOfTable()), table);
+    isAbsent.append(jit.branchTestPtr(CCallHelpers::Zero, table));
+    jit.move(TrustedImm32(0), probe);
+
+    Label hasBucketNumber = jit.label();
+    jit.and32(Address(table, SparseArrayValueMap::offsetOfTableSizeMask()), entry);
+    jit.lshift64(TrustedImm32(entrySizeShift), entry);
+    jit.add64(table, entry);
+    isAbsent.append(jit.branchTest32(CCallHelpers::NonZero, attributes, TrustedImm32(static_cast<int32_t>(SparseArrayEntry::isEmptyBucketFlag))));
+    Jump hasOtherIndex = jit.branch32(CCallHelpers::NotEqual, Address(entry, SparseArrayEntry::offsetOfIndex()), index);
+    Jump isFound = jit.branchTest32(CCallHelpers::Zero, attributes, TrustedImm32(SparseArrayEntry::isDeletedBucketFlag));
+
+    hasOtherIndex.link(&jit);
+    jit.sub64(table, entry);
+    jit.urshift64(TrustedImm32(entrySizeShift), entry);
+    jit.add32(TrustedImm32(1), probe);
+    jit.add32(probe, entry);
+    jit.jump().linkTo(hasBucketNumber, &jit);
+
+    isFound.link(&jit);
+}
+
 // Nothing stands under an index on the prototypes of the array, so an element that is not there reads as undefined and is in nothing. A position that is no index is a name.
 static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
 {
@@ -45,6 +82,7 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
     JumpList isAbsent;
+    JumpList isAbsentAtIndex;
     JumpList callsOperation;
     auto returnTrue = [&] {
         jit.move(TrustedImm32(1), result);
@@ -58,7 +96,36 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     Jump isInt32Shape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(Int32Shape));
     Jump isDoubleShape = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
     isAbsent.append(jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(UndecidedShape)));
-    callsOperation.append(jit.jump());
+    static_assert(SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask - 2);
+    callsOperation.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));
+    callsOperation.append(jit.branch32(CCallHelpers::Above, shape, TrustedImm32(SlowPutArrayStorageShape)));
+    jit.move(TrustedImm64(MAX_ARRAY_INDEX), result);
+    callsOperation.append(jit.branch64(CCallHelpers::Above, position, result));
+    Jump isOutsideVector = jit.branch32(CCallHelpers::AboveOrEqual, position, Address(butterfly, ArrayStorage::vectorLengthOffset()));
+    jit.load64(BaseIndex(butterfly, position, CCallHelpers::TimesEight, ArrayStorage::vectorOffset()), result);
+    Jump isHoleInVector = jit.branchTest64(CCallHelpers::Zero, result);
+    if (question == ElementQuestion::Has)
+        returnTrue();
+    else
+        jit.returnToCaller();
+
+    isOutsideVector.link(&jit);
+    isHoleInVector.link(&jit);
+    const GPRReg index = shape;
+    const GPRReg entry = result;
+    jit.move(position, index);
+    emitFindSparseElement(jit, { array, index, entry, position, butterfly }, isAbsentAtIndex);
+    if (question == ElementQuestion::Has)
+        returnTrue();
+    else {
+        Jump isAccessor = jit.branchTest32(CCallHelpers::NonZero, Address(entry, SparseArrayEntry::offsetOfAttributes()), TrustedImm32(static_cast<int32_t>(PropertyAttribute::Accessor)));
+        jit.load64(Address(entry, SparseArrayEntry::offsetOfValue()), result);
+        jit.returnToCaller();
+
+        isAccessor.link(&jit);
+        jit.move(index, position);
+        callsOperation.append(jit.jump());
+    }
 
     isContiguousShape.link(&jit);
     isInt32Shape.link(&jit);
@@ -91,6 +158,7 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
     isAbsent.link(&jit);
     jit.move(TrustedImm64(MAX_ARRAY_INDEX), shape);
     callsOperation.append(jit.branch64(CCallHelpers::Above, position, shape));
+    isAbsentAtIndex.link(&jit);
     jit.move(question == ElementQuestion::Get ? TrustedImm64(JSValue::ValueUndefined) : TrustedImm64(0), result);
     jit.returnToCaller();
 

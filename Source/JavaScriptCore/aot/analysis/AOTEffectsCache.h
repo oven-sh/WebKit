@@ -16,7 +16,11 @@
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+class Diagnostics;
+
+namespace Typed {
 
 enum class EffectInputs : uint8_t {
     Row,
@@ -40,7 +44,8 @@ class EffectsCache {
     WTF_MAKE_NONCOPYABLE(EffectsCache);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EffectsCache);
 public:
-    EffectsCache(const EffectContext&, const Function&, bool verifiesAnswers);
+    // With diagnostics, every answer that is given a second time in a round is computed again, and one that has changed is an error.
+    EffectsCache(const EffectContext&, const Function&, Diagnostics* diagnosticsForOutdatedAnswers);
 
     const EffectsOnEdges& of(ValueID) LIFETIME_BOUND;
     const EffectsOnEdges& ofTerminator(BlockID) LIFETIME_BOUND;
@@ -52,6 +57,7 @@ public:
     void resizeToFunction();
 
     unsigned numberOfBlocks() const { return m_terminators.size(); }
+    bool didReportOutdatedAnswer() const { return m_didReportOutdatedAnswer; }
 
     const EffectsOnEdges* findKept(ValueID) const LIFETIME_BOUND;
     const EffectsOnEdges* findKeptOfTerminator(BlockID) const LIFETIME_BOUND;
@@ -77,6 +83,7 @@ private:
     uint64_t stampInThisRoundOf(ValueID, const Value&);
     template<typename Carrier> const EffectsOnEdges* findKept(const Vector<Answer>&, size_t index, EntryID entryOfRow, const Carrier&) const LIFETIME_BOUND;
     template<typename Carrier> EntryID compute(const Carrier&);
+    template<typename Carrier> void reportIfOutdated(const Answer&, const Carrier&, BlockID, ValueID);
     EntryID entryOf(ValueID);
     EntryID entryOfTerminator(BlockID);
 
@@ -92,7 +99,8 @@ private:
     Vector<StampInRound> m_stampsOfUsers;
     UncheckedKeyHashMap<uint64_t, OperandSummary, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_operandSummaryOfStamp;
     uint32_t m_round { 1 };
-    const bool m_verifiesAnswers;
+    Diagnostics* const m_diagnosticsForOutdatedAnswers;
+    bool m_didReportOutdatedAnswer { false };
     uint64_t m_numberOfComputedAnswers { 0 };
     uint64_t m_numberOfKeptAnswers { 0 };
 };

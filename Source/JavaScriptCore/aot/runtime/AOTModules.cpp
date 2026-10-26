@@ -287,10 +287,10 @@ Identifier Modules::moduleKey(ModuleID module)
     return Identifier::fromString(*m_instance.vm, m_table.pathText(module));
 }
 
-// The loader hands the key to the host, which asks for the module under it.
+// The loader hands the key to the host, which asks for the module under it. Every importer of the module asks for the key, and the record that the host will ask for keeps it.
 Identifier Modules::keyOfRequest(ModuleID target)
 {
-    Identifier key = moduleKey(target);
+    Identifier key = ensureRecordWithoutStatus(target)->moduleKey();
     m_table.willBeAskedForPath(target, key.impl()->hash());
     return key;
 }
@@ -791,7 +791,7 @@ std::unique_ptr<ModuleLinkWalk> Modules::takeLinkWalk(ModuleID root)
         walk = WTF::move(m_linkWalksOfLoads[index]);
         m_linkWalksOfLoads.removeAt(index);
     }
-    if (!walk || !walk->stillHolds(*this))
+    if (!walk || !walk->bringUpToDate(*this))
         walk = makeUnique<ModuleLinkWalk>(*this, root);
     return walk;
 }
@@ -1006,10 +1006,13 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         std::unique_ptr<LevelOfLoad> level = m_levelsOfLoads.take(module);
         if (!level)
             return false;
-        if (level->next)
-            record->appendRequestedModule(keyOfRequest(*level->next), nullptr, ModulePhase::Evaluation);
-        if (level->firstFileBehindNext)
-            record->appendRequestedModule(keyOfRequest(*level->firstFileBehindNext), nullptr, ModulePhase::Evaluation);
+        for (std::optional<ModuleID> target : { level->next, level->firstFileBehindNext }) {
+            if (!target)
+                continue;
+            Identifier key = keyOfRequest(*target);
+            record->appendRequestedModule(key, nullptr, ModulePhase::Evaluation);
+            record->didRequestCompiledModule(key, *target);
+        }
         return true;
     };
     if (!m_levelsOfLoads.isEmpty() && appendNextOnWay())
@@ -1061,8 +1064,11 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
             keptAlive.append(keyOfRequest(target));
         else
             continue;
-        if (keys.add(keptAlive.last().impl()).isNewEntry)
-            record->appendRequestedModule(keptAlive.last(), nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
+        if (!keys.add(keptAlive.last().impl()).isNewEntry)
+            continue;
+        record->appendRequestedModule(keptAlive.last(), nullptr, request.isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation);
+        if (!targetData.isUncompiledCode())
+            record->didRequestCompiledModule(keptAlive.last(), target);
     }
 }
 
@@ -1653,6 +1659,17 @@ void ModuleRecord::didAskHostForRequest(uint8_t flagsBefore)
 {
     modules().setIsAskingHost(flagsBefore & 1);
     modules().setIsWalkingRequests(flagsBefore & 2);
+}
+
+AbstractModuleRecord* ModuleRecord::recordOfRequest(JSGlobalObject* globalObject, const Identifier& key)
+{
+    for (unsigned index = m_nextCompiledRequest; index < m_compiledRequests.size(); ++index) {
+        if (m_compiledRequests[index].first != key.impl())
+            continue;
+        m_nextCompiledRequest = index + 1;
+        return moduleRecord(globalObject, m_compiledRequests[index].second);
+    }
+    return nullptr;
 }
 
 void ModuleRecord::generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords& visited)

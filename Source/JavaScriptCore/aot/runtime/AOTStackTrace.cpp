@@ -94,14 +94,14 @@ String FunctionDescription::name(VM& vm) const
 {
     if (m_record == &traceOfCalledBuiltin)
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, m_function, NameForm::AsWritten);
+    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::AsWritten);
 }
 
 String FunctionDescription::nameInFrames(VM& vm, JSCell* callee) const
 {
     if (m_record == &traceOfCalledBuiltin)
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, m_function, NameForm::InFrames, callee ? asObject(callee) : nullptr);
+    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::InFrames, callee ? asObject(callee) : nullptr);
 }
 
 #define AOT_DEFINE_FLAG_OF_TRACE_RECORD(flag) \
@@ -432,22 +432,18 @@ static FunctionID compiledFunctionAt(const WTF::Vector<StackFrame>& frames, size
     return frames[index].compiledFrame().function;
 }
 
-static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>* otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
+static void validateCapturedTrace(VM& vm, JSCell* owner, const ReturnAddressTrace& trace, const WTF::Vector<StackFrame>& otherFrames, size_t maxStackSize, JSCell* lastConstructorToSkip)
 {
     WTF::Vector<StackFrame> expected;
     vm.interpreter.getStackTrace(owner, expected, 0, maxStackSize, lastConstructorToSkip);
 
     WTF::Vector<StackFrame> actual;
     size_t firstOtherFrame = trace.numberOfFramesOnTop;
-    if (firstOtherFrame)
-        actual.append(otherFrames->span().first(firstOtherFrame));
+    actual.append(otherFrames.span().first(firstOtherFrame));
     forEachShownFrame(trace, [&](const TraceFrame& frame) {
         actual.append(StackFrame(frame));
     });
-    if (otherFrames) {
-        for (size_t i = firstOtherFrame; i < otherFrames->size(); ++i)
-            actual.append(otherFrames->at(i));
-    }
+    actual.append(otherFrames.span().subspan(firstOtherFrame));
 
     size_t numberCompared = std::min(expected.size(), actual.size());
     size_t index = 0;
@@ -509,7 +505,8 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, JSCell* owner, W
     const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
-    framesOnTop.reserveInitialCapacity(1);
+    if (!framesOnTop.capacity())
+        framesOnTop.reserveInitialCapacity(1);
     framesOnTop.append(StackFrame(vm, owner, callee));
     return RunStart { stackPointerOfCaller(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
 }
@@ -551,24 +548,23 @@ static bool mayHaveFramesBelow(VM& vm, const RunWalk& walk, EntryFrame* entryFra
     return context && JSC::Interpreter::asyncFunctionIn(context);
 }
 
-ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)
+// `otherFrames` gets the frames on top of the run, then those below it. `allocate` gives the memory of the trace.
+static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& otherFrames, JSCell* lastConstructorToSkip, const Invocable<void*(size_t)> auto& allocate)
 {
     if (!vm.hasCompiledCode() || !vm.topCallFrame || !maxStackSize)
         return nullptr;
-    std::optional<AssertNoGC> assertNoGC { std::in_place };
 
-    WTF::Vector<StackFrame> results;
     FramesAboveRun framesAbove;
     std::optional<RunStart> start = findRunAtTop(vm);
     if (!start) {
         if (lastConstructorToSkip)
             return nullptr;
-        start = findRunBelowHostFunction(vm, owner, results, maxStackSize);
+        start = findRunBelowHostFunction(vm, owner, otherFrames, maxStackSize);
         if (!start)
-            start = findRunBelowOtherFrames(vm, owner, results, maxStackSize);
+            start = findRunBelowOtherFrames(vm, owner, otherFrames, maxStackSize);
         if (!start)
             return nullptr;
-        framesAbove = { results.size(), true };
+        framesAbove = { otherFrames.size(), true };
     }
     // A return address does not say which function object runs in the frame.
     bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCallees() || FunctionTables::of(vm).recordsCalleesOfCallsByValue();
@@ -584,9 +580,7 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     if (run.hasFrameNamedByCallee || !run.numberShown || !run.foundConstructorToSkip || !fitsInTrace(run))
         return nullptr;
 
-    assertNoGC.reset();
-    auto* trace = static_cast<ReturnAddressTrace*>(vm.auxiliarySpace().allocate(vm, ReturnAddressTrace::allocationSize(run.returnAddresses.size()), nullptr, AllocationFailureMode::ReturnNull));
-    assertNoGC.emplace();
+    auto* trace = static_cast<ReturnAddressTrace*>(allocate(ReturnAddressTrace::allocationSize(run.returnAddresses.size())));
     if (!trace)
         return nullptr;
     fillTrace(*trace, instance, run, maxStackSize, framesAbove, start->calleeWasEntered);
@@ -596,20 +590,58 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     // The body of an async generator that has gone on behind an await runs above the function that the job entered. Nobody awaits the body.
     EntryFrame* entryFrameOfFramesAbove = walk.isAmongFramesThatWait() ? nullptr : start->entryFrame;
     if (mayHaveFramesBelow(vm, walk, entryFrameOfFramesAbove, numberOfFramesAbove < maxStackSize)) {
-        vm.interpreter.appendStackTrace(owner, results, {
+        vm.interpreter.appendStackTrace(owner, otherFrames, {
             .compiledFrameExit = walk.isAtEnd() ? &walk.exit() : nullptr,
             .entryFrameOfFramesAbove = entryFrameOfFramesAbove,
             .numberOfFramesAbove = numberOfFramesAbove - framesAbove.numberShown,
         }, maxStackSize);
     }
-    if (!results.isEmpty()) {
+
+    if (validatesRuntime(vm)) [[unlikely]]
+        validateCapturedTrace(vm, owner, *trace, otherFrames, maxStackSize, lastConstructorToSkip);
+    return trace;
+}
+
+ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip)
+{
+    std::optional<AssertNoGC> assertNoGC { std::in_place };
+    WTF::Vector<StackFrame> results;
+    auto* trace = tryCaptureRun(vm, owner, maxStackSize, results, lastConstructorToSkip, [&](size_t size) {
+        assertNoGC.reset();
+        void* memory = vm.auxiliarySpace().allocate(vm, size, nullptr, AllocationFailureMode::ReturnNull);
+        assertNoGC.emplace();
+        return memory;
+    });
+    if (trace && !results.isEmpty()) {
         results.shrinkToFit();
         otherFrames = makeUnique<WTF::Vector<StackFrame>>(WTF::move(results));
     }
-
-    if (validatesRuntime(vm)) [[unlikely]]
-        validateCapturedTrace(vm, owner, *trace, otherFrames.get(), maxStackSize, lastConstructorToSkip);
     return trace;
+}
+
+bool tryGetStackTrace(VM& vm, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& results)
+{
+    AssertNoGC assertNoGC;
+    ASSERT(results.isEmpty());
+    results.reserveCapacity(std::min(maxStackSize, CapturedRun::inlineCapacity));
+    WTF::Vector<uint64_t, ReturnAddressTrace::allocationSize(CapturedRun::inlineCapacity) / sizeof(uint64_t)> memory;
+    auto* trace = tryCaptureRun(vm, owner, maxStackSize, results, nullptr, [&](size_t size) -> void* {
+        memory.grow(WTF::roundUpToMultipleOf<sizeof(uint64_t)>(size) / sizeof(uint64_t));
+        return memory.mutableSpan().data();
+    });
+    if (!trace) {
+        results.shrink(0);
+        return false;
+    }
+    size_t onTop = trace->numberOfFramesOnTop;
+    if (results.size() == onTop) [[likely]] {
+        StackFrame::appendCompiledFrames(*trace, results);
+        return true;
+    }
+    WTF::Vector<StackFrame> compiledFrames;
+    StackFrame::appendCompiledFrames(*trace, compiledFrames);
+    results.insertVector(onTop, compiledFrames);
+    return true;
 }
 
 bool beginsAt(const ReturnAddressTrace& trace, const void* returnAddress)
@@ -641,8 +673,9 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
         CompiledFunctionID code = entry->code;
         CallSiteRecord record = entry->site;
         CallSiteIndex site = flags.contains(ReturnAddressTrace::Flag::IsAtFirstReadSite) && record.firstReadSite ? *record.firstReadSite : record.callSite;
-        bool isTailDeleted = record.isTailDeleted(i || trace.calleeOfFirstFrameWasEntered);
-        for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site, record.inlineFrame, isTailDeleted, record.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, code, frame)) {
+        bool isCaller = i || trace.calleeOfFirstFrameWasEntered;
+        bool isTailDeleted = record.isTailDeleted(isCaller);
+        for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site, record.inlineFrame, isTailDeleted, record.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, code, frame), isCaller = true) {
             if (pending && !isEntrypointOf(frame.function, pendingSource))
                 flush();
 
@@ -655,7 +688,7 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
                     if (numberShown == trace.limit)
                         return;
                     ++numberShown;
-                    pending = TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, false };
+                    pending = TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller };
                     pendingSource = description.sourceFunction();
                 }
             }
@@ -704,7 +737,14 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
     const Image& image = *Image::current();
     if (image.isObfuscated())
         return SourcePosition { obfuscatedPositionOf(frame), ModuleID() };
-    return image.positionOf(frame.code.index(), frame.callSite);
+    std::optional<SourcePosition> position = image.positionOf(frame.code.index(), frame.callSite);
+    if (position && position->startIsForCallers) {
+        if (frame.isCaller)
+            position->lineColumn = position->constructionStart;
+        position->constructionStart = { 0, 0 };
+        position->startIsForCallers = false;
+    }
+    return position;
 }
 
 LineColumn obfuscatedPositionOf(const TraceFrame& frame)

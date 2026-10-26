@@ -86,7 +86,8 @@ struct ModuleData {
     uint8_t hasInstalledPositions : 1;
     uint8_t loadedByLoader : 1;
     uint8_t faceOfFile : 1;
-    uint8_t unusedBits : 5;
+    uint8_t importedByModule : 1;
+    uint8_t unusedBits : 4;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -108,6 +109,8 @@ struct ModuleData {
     bool isLoadedByLoader() const { return loadedByLoader; }
     // Its first request is the CommonJS file that it stands for where ES modules import the file.
     bool isFaceOfFile() const { return faceOfFile; }
+    // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
+    bool isImportedByModule() const { return importedByModule; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.

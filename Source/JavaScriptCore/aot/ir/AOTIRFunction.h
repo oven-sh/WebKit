@@ -118,6 +118,8 @@ struct ConstructionStart {
     uint32_t start { 0 };
     // Reflect.construct(..), which calls the host function where it cannot construct.
     bool isWrittenAsCall { false };
+    // No construction: an operation that reports its own errors at one place, and at `start` whatever it calls.
+    bool isForCallers { false };
 };
 
 struct Function : FunctionRecord {

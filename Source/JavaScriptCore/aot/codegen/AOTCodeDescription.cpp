@@ -298,6 +298,7 @@ static void describeConstructionStart(const Program& program, const ShownFunctio
     LineColumn lineColumn = program.lineColumnFor(module, construction->start);
     position.constructionStartLine = lineColumn.line;
     position.constructionStartColumn = lineColumn.column;
+    position.startIsForCallers = construction->isForCallers;
 }
 
 static Vector<SitePosition> describePositions(const DescribedFunction& described, const Vector<RecordedSite>& renumbered)

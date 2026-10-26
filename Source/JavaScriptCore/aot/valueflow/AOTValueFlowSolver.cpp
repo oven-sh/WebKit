@@ -318,7 +318,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_takenByRetiredNodes = takenByRetiredNodes;
         if (m_input.universe) {
             // Start-up locks a member that no statement writes, and a write counts for the holders that its receiver lists. So a node lists such a holder whether it arrives before the unknown object or after it, and a read off the unknown object lists none.
-            ValueSetID holders = m_input.universe->builtinTables().heap().closedHoldersOfReplaceableMembers();
+            ValueSetID holders = m_input.universe->builtinTables().heap().holdersOfReplaceableMembers();
             takenByRetiredNodes = maker.unite(takenByRetiredNodes, holders);
             keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, holders);
         }
@@ -328,9 +328,10 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             // What arrives behind a retired node that carries values out goes straight on to the node that takes them.
             m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut), wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
         }
+        m_keptOutOfNodesMadeForUnknownObject = keptOutOfNodesMadeForUnknownObject;
         if (keptOutOfNodesMadeForUnknownObject != ValueSets::nothing) {
             m_graph.keepOutOfNodesMadeForPlaceholders(keptOutOfNodesMadeForUnknownObject, m_input.escaped, [](const void* solver, ValueFlowNodeID node) {
-                return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
+                return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node) && !static_cast<const ValueFlowSolver*>(solver)->takesArgumentsOfCallGroup(node);
             }, this);
         }
     }
@@ -2993,7 +2994,7 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
         auto goOnThroughHoldersOf = [&](ValueFlowObjectID lookedFor) {
             bool hasHolder = false;
             for (ValueFlowNodeID predecessor : predecessors) {
-                bool hasComeBy = m_sets.contains(m_objectsLookedForBesideUnknownObject, lookedFor) && isMadeForUnknownObject(predecessor);
+                bool hasComeBy = m_sets.contains(m_keptOutOfNodesMadeForUnknownObject, lookedFor) && isMadeForUnknownObject(predecessor);
                 hasComeBy |= m_input.nodes && predecessor == m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut);
                 if (!hasComeBy && !m_sets.contains(m_graph.valueOf(predecessor), lookedFor))
                     continue;
@@ -3535,6 +3536,16 @@ bool ValueFlowSolver::isMadeForUnknownObject(ValueFlowNodeID node) const
 {
     const ValueFlowNodeKey* key = keyOfMadeNode(node);
     return key && traitsOfMadeNodes(key->kind).contains(TraitOfMadeNodes::IsMadeForObjects) && key->set && m_sets.onlyMember(key->set) == m_input.placeholders.unknown;
+}
+
+// Nothing is read off such a node: it hands what it takes on to the node of values carried out, which tells an argument from a receiver.
+bool ValueFlowSolver::takesArgumentsOfCallGroup(ValueFlowNodeID node) const
+{
+    const ValueFlowNodeKey* key = keyOfMadeNode(node);
+    if (!key || key->kind != ValueFlowMadeNodeKind::CallGroup)
+        return false;
+    ValueFlowCallGroup group = callGroupAt(firstOfMadeNodesAt(indexOfMadeNodes(*key)));
+    return node == group.otherArguments || node == group.laterArguments || node.index() >= group.firstArgument.index();
 }
 
 bool ValueFlowSolver::maySaturate(ValueFlowNodeID node) const

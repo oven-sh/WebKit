@@ -317,6 +317,18 @@ void StoresByLayout::followCopiedProperties()
     }
 }
 
+void StoresByLayout::noteKeyBroughtByCopies(LayoutID target, PropertyKeyID key, ValueSetID value)
+{
+    StoresIntoObjects& stores = m_storesOfLayout[target.index()];
+    if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
+        return;
+    StoredUnderKey& stored = stores.underKey.add(key.index(), StoredUnderKey { }).iterator->value;
+    unite(stored.value, value);
+    stored.uniteNumbers(ValueFlowNumbers::any());
+    stored.isStoredAfterCreation = true;
+    stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
+}
+
 void StoresByLayout::findReceiversBehindChecks()
 {
     const Program& program = m_inputs.program;

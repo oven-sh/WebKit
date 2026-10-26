@@ -61,6 +61,7 @@ public:
 
     Flags flagsOf(unsigned module) const { return Flags::fromRaw(m_modules[module].flags); }
     bool has(unsigned module, Flags expected) const { return flagsOf(module) == expected; }
+    bool isImportedByModule(unsigned module) const { return m_modules[module].isImportedByModule(); }
 
 private:
     struct Node {
@@ -110,6 +111,24 @@ static void testChain()
 
     Graph empty;
     empty.compute();
+}
+
+static void testOnlyWhatAModuleImportsIsImportedByAModule()
+{
+    Graph graph;
+    unsigned root = graph.addSourceText();
+    unsigned imported = graph.addSourceText();
+    unsigned deferred = graph.addSourceText();
+    unsigned required = graph.addSourceText();
+    unsigned both = graph.addSourceText();
+    graph.request(root, imported);
+    graph.request(root, deferred, Edge::Deferred);
+    graph.request(root, required, Edge::Require);
+    graph.request(root, both, Edge::Require);
+    graph.request(imported, both);
+    graph.compute();
+    AOT_TEST_CHECK(!graph.isImportedByModule(root) && graph.isImportedByModule(imported) && graph.isImportedByModule(deferred));
+    AOT_TEST_CHECK(!graph.isImportedByModule(required) && graph.isImportedByModule(both));
 }
 
 static void testSelfImportIsSimple()
@@ -418,6 +437,7 @@ std::span<const NativeTest> moduleGraphTests()
 {
     static constexpr NativeTest tests[] = {
         { "module-graph/chain"_s, testChain },
+        { "module-graph/only-what-a-module-imports-is-imported-by-a-module"_s, testOnlyWhatAModuleImportsIsImportedByAModule },
         { "module-graph/self-import-is-simple"_s, testSelfImportIsSimple },
         { "module-graph/modules-of-a-cycle-are-not-simple"_s, testModulesOfACycleAreNotSimple },
         { "module-graph/top-level-await-at-a-leaf"_s, testTopLevelAwaitAtALeaf },

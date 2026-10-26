@@ -51,6 +51,8 @@ enum class InPlaceOfOperation : uint8_t {
     TheSameOperationElsewhere,
     // Control never comes here.
     NothingBecauseNothingComesHere,
+    // All that it does is complete or throw, and the same code runs next either way, with the same values, and reads neither its result nor what it threw.
+    NothingBecauseNobodySeesHowItEnds,
     // The pass knows of the operands what their types do not say: their values, the objects that it has made itself, what the flow analysis holds of the place.
     NothingByProofOfThePass,
 };

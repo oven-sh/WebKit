@@ -266,6 +266,14 @@ void HeapRule::noteMembersLookedForBeforeChange(ClimbingSet receivers, const Hea
         noteMaking(unknownHeapKey);
 }
 
+// Retired nodes list the holders of replaceable members all over a program. What is written escapes through the unknown object, so such a holder takes the unknown value, and the writes that list it are not joined with the reads that do.
+void HeapRule::writeToListedObjects(ClimbingSet listed, ValueFlowName name, const ValueFlowOperand& value)
+{
+    ValueSetID holders = m_tables.holdersOfReplaceableMembers();
+    write(m_context.restrict(listed, ValueSets::complement(holders)), name, value);
+    write(m_context.restrict(listed, holders), name, ValueFlowOperand { { }, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject) });
+}
+
 void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, bool areOnlyListed)
 {
     if (!m_context.meet(receivers, m_tables.builtinObjectsAndPlaceholders()))
@@ -385,7 +393,7 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
     noteWrittenMembers(receivers, key);
     noteMembersLookedForBeforeChange(receivers, key);
     if (ClimbingSet listed = unlockedObjectsListedBesideUnknownObject(object, receivers, key); holdsAnything(listed)) {
-        write(listed, writtenName(key, part), value);
+        writeToListedObjects(listed, writtenName(key, part), value);
         noteWrittenMembers(listed, key);
         noteMembersLookedForBeforeChange(listed, key);
     }
@@ -463,6 +471,7 @@ void HeapRule::callSettersOfReceivers(ClimbingSet start, const HeapKey& key, con
 {
     ClimbingSet setters = accessorsFoundFrom(start, key, HeapPropertyPart::Setter);
     HeapReceiver receiver { nullptr, start };
+    receiver.keyLookedUp = &key;
     if (mayBeAccessorNobodyKnows(setters))
         receiver.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chainFrom(start, key).start, key, HeapPropertyPart::Setter);
     callAccessors(setters, ValueFlowCallKind::Set, receiver, &value, { });
@@ -571,10 +580,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     convertStoredValue(receivers, key, value);
     noteWrittenMembers(receivers, key);
     if (ClimbingSet listed = builtinObjectsListedBesideUnknownObject(object, receivers, key); holdsAnything(listed)) {
-        // Retired nodes list these holders all over a program. What is stored escapes through the unknown object, so such a holder takes the unknown value, and the stores that list it are not joined with the reads that do.
-        ValueSetID holders = m_tables.closedHoldersOfReplaceableMembers();
-        write(m_context.restrict(listed, ValueSets::complement(holders)), writtenName(key, HeapPropertyPart::Value), value);
-        write(m_context.restrict(listed, holders), writtenName(key, HeapPropertyPart::Value), ValueFlowOperand { { }, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject) });
+        writeToListedObjects(listed, writtenName(key, HeapPropertyPart::Value), value);
         noteWrittenMembers(listed, key, true);
     }
     if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {

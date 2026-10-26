@@ -30,7 +30,7 @@ namespace AOT {
 inline TraceFrame TraceFrame::of(CompiledFrameIterator& frames)
 {
     auto& frame = frames.frame();
-    return { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, frames.isConstructCall() };
+    return { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, frames.isConstructCall(), false, false, frames.calleeWasEntered() };
 }
 
 struct ReturnAddressTrace {
@@ -88,6 +88,8 @@ static_assert(static_cast<uint32_t>(ReturnAddressTrace::Flag::IsAtFirstReadSite)
 static_assert(!(sizeof(ReturnAddressTrace) % sizeof(uint32_t)));
 
 JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, size_t maxStackSize, std::unique_ptr<WTF::Vector<StackFrame>>& otherFrames, JSCell* lastConstructorToSkip = nullptr);
+// The frames that Interpreter::getStackTrace lists, for an owner that reads them at once.
+JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, size_t maxStackSize, WTF::Vector<StackFrame>& results);
 JS_EXPORT_PRIVATE bool beginsAt(const ReturnAddressTrace&, const void* returnAddress);
 JS_EXPORT_PRIVATE void forEachShownFrame(const ReturnAddressTrace&, const ScopedLambda<void(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&);

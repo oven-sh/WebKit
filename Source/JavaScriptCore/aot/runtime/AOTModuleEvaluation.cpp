@@ -799,7 +799,7 @@ bool Modules::comesToLoadInFlight(ModuleID required)
             loaderGoesThroughGraph = true;
             if (!std::exchange(load.hasMarksBelowRoot, true))
                 markModulesBelowWalkedRoot(load.root);
-        } else if (status(load.root) != ModuleStatus::Evaluating)
+        } else if (status(load.root) != ModuleStatus::Evaluating && (load.root == required || data(load.root).isImportedByModule()))
             rootsThatWait.append(load.root);
     }
     if (!loaderGoesThroughGraph && rootsThatWait.isEmpty())
@@ -891,9 +891,7 @@ bool Modules::isNotLoaded(ModuleID module)
         return false;
     if (ModuleRecord* record = recordIfExists(module))
         return record->status() == CyclicModuleRecord::Status::New || record->status() == CyclicModuleRecord::Status::Unlinked;
-    if (storedStatus(module) != StoredModuleStatus::Unlinked || (m_entryPointIsLinked && data(module).isLinkedWithEntryPoint()))
-        return false;
-    return data(module).needsLink() || !wasLoadedWithGraphBeingEvaluated(module);
+    return storedStatus(module) == StoredModuleStatus::Unlinked && isNotLoadedWithoutStatus(module, data(module));
 }
 
 // A graph is loaded before a module of it begins, and nothing is stored when a module that needs no link is loaded. What has not begun below a module that is being evaluated was loaded with it.
@@ -923,14 +921,15 @@ bool Modules::wasLoadedWithGraphBeingEvaluated(ModuleID module)
 
 bool Modules::planLevelsOfLoad(ModuleID root)
 {
+    // The importer is a place in the list of the modules that were found.
     struct Found {
         ModuleID module;
         uint32_t importer;
         uint32_t place;
     };
     struct Level {
-        Vector<Found, 8> modules;
-        Vector<Found, 8> files;
+        uint32_t firstModule;
+        uint32_t firstFile;
     };
     if (data(root).reachesUncompiledCode())
         return false;
@@ -950,6 +949,14 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         ModuleRecord* record = isCommonJSFileOrFace(module) ? nullptr : recordIfExists(module);
         return record && record->status() == CyclicModuleRecord::Status::Unlinked;
     };
+    // Most of what a large graph requests has no record. The loader takes no step for what is neither of the program nor data.
+    auto hasNoRecordAndIsNoFile = [&](const ModuleData& moduleData, StoredModuleStatus stored) ALWAYS_INLINE_LAMBDA {
+        return stored != StoredModuleStatus::InRecord && moduleData.kind != ModuleKind::CommonJs && !moduleData.isFaceOfFile() && moduleData.kind != ModuleKind::Data;
+    };
+    // Such an ES module of the program is loaded if it has a status, and no load has come to it if it has none.
+    auto isFoundWithoutRecord = [&](ModuleID module, const ModuleData& moduleData, StoredModuleStatus stored) ALWAYS_INLINE_LAMBDA {
+        return stored == StoredModuleStatus::Unlinked && moduleData.kind == ModuleKind::SourceText && !moduleData.isOfLibrary() && isNotLoadedWithoutStatus(module, moduleData);
+    };
     // Most requests of a large graph lead to a module that the search has come to.
     Vector<uint64_t> modulesSeen;
     modulesSeen.fill(0, m_table.size() / 64 + 1);
@@ -964,29 +971,28 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     // What is found is what lies below the root and is not loaded.
     m_modulesBelowWalkedRoots.ensureSize(m_table.size());
     m_modulesBelowWalkedRoots.quickSet(root.index());
-    Vector<Level, 8> levels(1);
-    levels[0].modules.append(Found { root, 0, 0 });
+    // The levels stand one behind the other.
+    Vector<Found, 64> modules;
+    Vector<Found, 8> files;
+    Vector<Level, 32> levels;
+    modules.append(Found { root, 0, 0 });
+    levels.append(Level { 0, 0 });
     while (true) {
-        Level next;
+        Level next { static_cast<uint32_t>(modules.size()), static_cast<uint32_t>(files.size()) };
         uint32_t place = 0;
-        const Level& level = levels.last();
-        for (uint32_t importer = 0; importer < level.modules.size(); ++importer) {
-            for (const ModuleRequestData& request : m_table.requests(level.modules[importer].module)) {
+        for (uint32_t importer = levels.last().firstModule; importer < next.firstModule; ++importer) {
+            for (const ModuleRequestData& request : m_table.requests(modules[importer].module)) {
                 if (request.isHoisted || request.isRequire)
                     continue;
                 ModuleID target = request.targetModule();
                 if (wasSeen(target))
                     continue;
-                // Most of the others have no record. Such an ES module of the program is loaded if it has a status, and no load has come to it if it has none. The loader takes no step for what is neither of the program nor data.
                 const ModuleData& targetData = data(target);
                 StoredModuleStatus stored = storedStatus(target);
-                bool isFileOrFace = targetData.kind == ModuleKind::CommonJs || targetData.isFaceOfFile();
-                if (stored != StoredModuleStatus::InRecord && !isFileOrFace && targetData.kind != ModuleKind::Data) {
-                    if (stored != StoredModuleStatus::Unlinked || targetData.kind != ModuleKind::SourceText || targetData.isOfLibrary() || !isNotLoaded(target))
+                if (hasNoRecordAndIsNoFile(targetData, stored)) {
+                    if (!isFoundWithoutRecord(target, targetData, stored))
                         continue;
-                    if (!m_levelsOfLoads.isEmpty() && m_levelsOfLoads.contains(target))
-                        return false;
-                    next.modules.append(Found { target, importer, place++ });
+                    modules.append(Found { target, importer, place++ });
                     m_modulesBelowWalkedRoots.quickSet(target.index());
                     continue;
                 }
@@ -996,31 +1002,40 @@ bool Modules::planLevelsOfLoad(ModuleID root)
                 if (isInHandsOfLoader(target))
                     return false;
                 if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data)
-                    next.files.append(Found { target, importer, place++ });
+                    files.append(Found { target, importer, place++ });
                 else if (isFileOfProgram(target))
-                    next.modules.append(Found { target, importer, place++ });
+                    modules.append(Found { target, importer, place++ });
                 else
                     continue;
                 m_modulesBelowWalkedRoots.quickSet(target.index());
             }
         }
-        if (next.modules.isEmpty() && next.files.isEmpty())
+        if (next.firstModule == modules.size() && next.firstFile == files.size())
             break;
-        levels.append(WTF::move(next));
+        levels.append(next);
+    }
+    // Another graph that is being loaded will come to a module without a record that was found. Few modules wait on the ways of other graphs.
+    for (ModuleID onWay : m_levelsOfLoads.keys()) {
+        bool wasReached = modulesSeen[onWay.index() / 64] >> (onWay.index() % 64) & 1;
+        if (wasReached && hasNoRecordAndIsNoFile(data(onWay), storedStatus(onWay)) && isFoundWithoutRecord(onWay, data(onWay), storedStatus(onWay)))
+            return false;
     }
 
     std::optional<ModuleID> below;
     std::optional<ModuleID> firstFileBehind;
-    uint32_t position = 0;
+    uint32_t position = levels.last().firstModule;
+    uint32_t endOfModules = modules.size();
+    uint32_t endOfFiles = files.size();
     for (size_t depth = levels.size(); depth--;) {
         const Level& level = levels[depth];
-        bool isFile = !below && level.modules.isEmpty();
-        const Found& onWay = isFile ? level.files[0] : level.modules[position];
+        std::span<const Found> filesOfLevel = files.span().subspan(level.firstFile, endOfFiles - level.firstFile);
+        bool isFile = !below && level.firstModule == endOfModules;
+        const Found& onWay = isFile ? filesOfLevel[0] : modules[position];
         auto planned = makeUnique<LevelOfLoad>();
         planned->next = below;
         planned->firstFileBehindNext = std::exchange(firstFileBehind, std::nullopt);
         std::unique_ptr<LevelOfLoad> behind;
-        for (const Found& file : level.files) {
+        for (const Found& file : filesOfLevel) {
             if (file.module == onWay.module)
                 continue;
             if (isFile || file.place < onWay.place)
@@ -1037,6 +1052,8 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         m_levelsOfLoads.set(onWay.module, WTF::move(planned));
         below = onWay.module;
         position = onWay.importer;
+        endOfModules = level.firstModule;
+        endOfFiles = level.firstFile;
     }
     for (LoadInFlight& load : m_loadsInFlight)
         load.hasMarksBelowRoot |= load.root == root;

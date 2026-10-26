@@ -244,7 +244,7 @@ void BodyDecoder::decodeValue(Block& block)
         return;
 
     auto head = nextRecord<Wire::ValueHead>();
-    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~(Wire::WrittenPositionFollows | Wire::StandsInTailPosition));
+    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~(Wire::WrittenPositionFollows | Wire::StandsInTailPosition | Wire::WrittenPositionIsForCallers));
     adoptCheckerFailure();
     if (opcode == Opcode::Parameter)
         fail(InternalErrorKind::EngineOnlyOnWire);
@@ -260,8 +260,9 @@ void BodyDecoder::decodeValue(Block& block)
     adoptCheckerFailure();
     if (head.opcode & Wire::WrittenPositionFollows) {
         uint32_t written = next();
-        if (constructsWhereWritten(value)) {
-            m_function.constructionStarts.append({ value.position, written, isWrittenAsReflectConstruct(value) });
+        bool isForCallers = head.opcode & Wire::WrittenPositionIsForCallers;
+        if (isForCallers || constructsWhereWritten(value)) {
+            m_function.constructionStarts.append({ value.position, written, isWrittenAsReflectConstruct(value), isForCallers });
             value.isPartOfConstruction = true;
         } else
             m_function.writtenPositions.append({ id, written });

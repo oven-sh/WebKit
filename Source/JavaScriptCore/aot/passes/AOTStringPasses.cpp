@@ -2053,7 +2053,8 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
         });
     };
     // A concatenation fails for lack of memory or for its length, with one error. Which of two such operations fails first, nobody can tell: `a[i] + a[j] + a[k]` reads a character, which may have to be made, between two concatenations.
-    auto hasObservableEffects = [&](ValueID id) { return !analyses.isRemovableWhenUnused(id) && !isConcatenation(function.at(id)); };
+    // The analyses hear of a concatenation that has absorbed another at the end of the walk, so they are asked about the other values alone.
+    auto hasObservableEffects = [&](ValueID id) { return !isConcatenation(function.at(id)) && !analyses.isRemovableWhenUnused(id); };
     auto hasObservableEffectsBetween = [&](BlockID id, uint32_t begin, uint32_t end) { return std::ranges::any_of(function.at(id).values.subspan(begin, end - begin), hasObservableEffects); };
 
     auto becomeConcatenationOf = [&](ValueID id, std::span<const ValueID> parts) {
@@ -2717,11 +2718,15 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
     const EscapeAnalysis& escape = context.analyses.escape();
     const ValueIdentities& identities = context.analyses.identities();
     auto isOnlyInspected = [](const ObjectUse& objectUse) { return !objectUse.isEscape && objectUse.uses.containsOnly({ OperandUse::Inspects }); };
-    // The copies of a site that inlining and cloning make share the object of the site.
-    auto takesObjectOfAnotherCopy = [&](const Value& user, ValueID id) {
+    // The copies of a site that inlining and cloning make share the object of the site. A built-in that matches takes one of them where they meet in one operand.
+    auto takesObjectOfAnotherCopy = [&](const Value& user, const ObjectUse& objectUse, ValueID id) {
         const Value& literal = function.at(id);
+        ValueID operandThatMatches = effectRuleOf(user.opcode) == EffectRule::Builtin && objectUse.uses.containsAny(contentsReadOrWritten) ? user.operand(objectUse.use.operandIndex) : ValueID();
+        bool isNamedOnce = operandThatMatches && std::ranges::count(user.operands(), operandThatMatches) == 1;
         bool result = false;
         user.forEachChild([&](ValueID operand) {
+            if (isNamedOnce && operand == operandThatMatches)
+                return;
             for (ObjectID object : escape.pointsTo(operand).objects) {
                 const Value& other = function.at(escape.at(object).definition);
                 if (escape.at(object).definition != id && other.opcode == Opcode::NewRegExp && other.position == literal.position && other.pattern() == literal.pattern() && other.regExpFlags() == literal.regExpFlags())
@@ -2730,9 +2735,9 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         });
         return result;
     };
-    auto isHarmlessInBuiltin = [&](const Value& call, const ObjectUse& objectUse, OptionSet<RegExpFlags> flags) {
+    auto isHarmlessInBuiltin = [&](const Value& call, const ObjectUse& objectUse, OptionSet<RegExpFlags> flags, bool isOfOneEvaluation) {
         if (!objectUse.uses.containsAny(contentsReadOrWritten))
-            return isOnlyInspected(objectUse);
+            return isOfOneEvaluation && isOnlyInspected(objectUse);
         std::optional<InlineBuiltin> builtin;
         if (objectUse.uses.containsOnly(usesOfMatching) && declaredBehaviorOf(program.builtins().at(call.overload()), builtinOperandAt(call, objectUse.use.operandIndex)).protocols.containsOnly({ Protocol::ToPrimitive }))
             builtin = inlineImplementationOf(program, call);
@@ -2754,22 +2759,23 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
             return build.isSabotaged(Sabotage::SharedPatternsAreUsedInUnknownWays);
         }
     };
-    auto isHarmless = [&](const ObjectUse& objectUse, ValueID literal) {
+    // A value that stands for the objects of several evaluations may be handed on and matched with. Whoever inspects it could tell them apart.
+    auto isHarmless = [&](const ObjectUse& objectUse, ValueID literal, bool isOfOneEvaluation) {
         if (objectUse.use.kind != Use::Kind::Operand)
-            return isOnlyInspected(objectUse);
+            return isOnlyInspected(objectUse) && (isOfOneEvaluation || objectUse.use.isEdgeUse());
         const Value& user = function.at(objectUse.use.user);
-        if (takesObjectOfAnotherCopy(user, literal))
+        if (takesObjectOfAnotherCopy(user, objectUse, literal))
             return false;
         switch (effectRuleOf(user.opcode)) {
         case EffectRule::Declared:
         case EffectRule::Operator:
         case EffectRule::Access:
-            return isOnlyInspected(objectUse);
+            return isOnlyInspected(objectUse) && (isOfOneEvaluation || isCastWithoutTest(user.opcode));
         case EffectRule::Call:
             // A callee may evaluate the site of the literal again, and would find the two objects identical.
             return build.isSabotaged(Sabotage::SharedPatternsReachCalls);
         case EffectRule::Builtin:
-            return isHarmlessInBuiltin(user, objectUse, function.at(literal).regExpFlags());
+            return isHarmlessInBuiltin(user, objectUse, function.at(literal).regExpFlags(), isOfOneEvaluation);
         case EffectRule::Inline:
             return false;
         }
@@ -2779,9 +2785,8 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         std::optional<ObjectID> object = escape.objectDefinedBy(literal);
         if (!object || escape.at(*object).reasons.contains(EscapeReason::LimitReached))
             return false;
-        if (!std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) { return identities.identityOf(alias) == literal; }))
-            return false;
-        if (!std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) { return isHarmless(objectUse, literal); }))
+        bool isOfOneEvaluation = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) { return identities.identityOf(alias) == literal; });
+        if (!std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) { return isHarmless(objectUse, literal, isOfOneEvaluation); }))
             return false;
         // The operation that creates a shared literal cannot throw, and a pattern may fail to compile unless the build has its metadata.
         const RegExpSummary& summary = regExpSummaryOf(context, function.at(literal).pattern(), function.at(literal).regExpFlags());

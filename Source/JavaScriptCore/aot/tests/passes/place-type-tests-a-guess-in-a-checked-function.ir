@@ -1,5 +1,5 @@
 # A value of type `any` in a checked function is no better known than a value in a function that nobody has checked: the layouts expected of it are a guess from the names it is asked for.
-# The copy behind that guess holds the stretch alone and comes back behind it. Behind a type that the checker has given, the copy goes on behind the stretch
+# The copy behind that guess holds the stretch alone, comes back behind it and is expected to run now and then. Behind a type that the checker has given, the copy goes on behind the stretch
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass PlaceTypeTests
@@ -16,7 +16,8 @@ function f0 name="guessedFromTheName" flags=[IsChecked] parameters=[{type=object
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
 # CHECK-COUNT-1: = Call v1
-# CHECK: = PropGet v0 key="memoizedState"
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="memoizedState"
 # CHECK-NOT: = Call v1
 }
 

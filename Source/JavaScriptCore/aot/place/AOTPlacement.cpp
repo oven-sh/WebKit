@@ -122,14 +122,14 @@ std::span<const KeyOrderContinuation> KeyOrders::continuationsCreating(LayoutID 
     return found->continuations.span();
 }
 
-std::optional<uint32_t> KeyOrders::numberOfStoreThatMayAdd(FunctionID function, uint32_t storesInFront) const
+std::optional<PlaceOfStoreThatMayAdd> KeyOrders::placeOfStoreThatMayAdd(FunctionID function, uint32_t storesInFront) const
 {
     if (function.index() + 1 >= firstStoreThatMayAdd.size())
         return std::nullopt;
     uint32_t first = firstStoreThatMayAdd[function.index()];
     if (storesInFront >= firstStoreThatMayAdd[function.index() + 1] - first)
         return std::nullopt;
-    return first + storesInFront;
+    return placesOfStoresThatMayAdd[first + storesInFront];
 }
 
 GuardBitID GuardBitTable::find(LayoutID classLayout, ClassSide side, MemberGuardKind kind, PropertyKeyID key) const

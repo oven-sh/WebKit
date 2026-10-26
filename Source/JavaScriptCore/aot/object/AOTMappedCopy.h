@@ -79,6 +79,8 @@ struct MappedCopy {
     bool mayStoreCells { false };
     // The slots that the copy writes hold nothing yet, and it takes loads and stores alone and at the most a new Extension out of a free list.
     bool takesNoFrame { false };
+    // Whether it does is asked when the copy is made for the second time: many a kind of copy is made once.
+    bool mayTakeNoFrame { false };
     bool extensionWordOfTargetIsWide { false };
     bool extensionWordOfSourceIsWide { false };
     StructureID structureOfTarget;

@@ -126,6 +126,7 @@ struct SitePosition {
     uint32_t inlineFrame;
     uint32_t constructionStartLine { 0 };
     uint32_t constructionStartColumn { 0 };
+    bool startIsForCallers { false };
 };
 
 struct InlineFrame {

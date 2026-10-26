@@ -25,6 +25,7 @@
 #include "Error.h"
 
 #include "AOTCompiledFrame.h"
+#include "AOTStackTrace.h"
 #include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
@@ -259,6 +260,15 @@ bool addErrorInfo(VM& vm, Vector<StackFrame>* stackTrace, JSObject* obj)
 void addErrorInfo(JSGlobalObject* globalObject, JSObject* obj, bool useCurrentFrame)
 {
     VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && useCurrentFrame) [[unlikely]] {
+        Vector<StackFrame> stackTrace;
+        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, *stackTraceLimit, stackTrace)) {
+            addErrorInfo(vm, &stackTrace, obj);
+            return;
+        }
+    }
+#endif
     std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, obj, useCurrentFrame);
     addErrorInfo(vm, stackTrace.get(), obj);
 }

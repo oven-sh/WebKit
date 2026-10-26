@@ -263,18 +263,6 @@ public:
         insertPhis(beforeVariable, functor);
     }
 
-    void computeDominanceFrontiers()
-    {
-        ensureDominanceFrontiers(DominanceFrontierCache::Unfiltered, [](Node) { return true; });
-    }
-
-    // Valid after computeDominanceFrontiers().
-    const Vector<Node, 2>& dominanceFrontierOf(Node block) const LIFETIME_BOUND
-    {
-        ASSERT(m_dominanceFrontierCache == DominanceFrontierCache::Unfiltered);
-        return m_dominanceFrontiers[block];
-    }
-
     const Vector<Def*>& phisForBlock(Node block)
     {
         return m_data[block].m_phis;

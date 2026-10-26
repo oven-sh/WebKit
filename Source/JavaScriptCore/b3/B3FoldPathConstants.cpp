@@ -290,6 +290,7 @@ public:
 
         m_dominators = &m_proc.dominators();
         sortOverrides();
+        findRunsOfDecidedComparisons();
 
         bool changed = applyOverrides();
 
@@ -358,6 +359,8 @@ private:
         IntRange operandRange;
         Override falseOverride;
         Override trueOverride;
+        // The position behind the entries that follow this one in its list and have the same comparison.
+        unsigned endOfRun { 0 };
     };
 
     // A node of a tree over the positions of a list of decided comparisons. Inserting a comparison copies the path to its position.
@@ -463,6 +466,17 @@ private:
             m_firstOverride[m_overrides[i].first->index()] = i;
     }
 
+    void findRunsOfDecidedComparisons()
+    {
+        for (auto& decidedComparisons : m_decidedComparisons.values()) {
+            auto& list = decidedComparisons.list;
+            for (unsigned position = list.size(); position--;) {
+                bool isFollowedByItsLike = position + 1 < list.size() && list[position + 1].comparison == list[position].comparison;
+                list[position].endOfRun = isFollowedByItsLike ? list[position + 1].endOfRun : position + 1;
+            }
+        }
+    }
+
     Override* findOverrideOfValue(BasicBlock* block, Value* value)
     {
         unsigned index = value->index();
@@ -565,8 +579,13 @@ private:
 
     Override* findImpliedOverrideInList(Vector<DecidedComparison>& list, BasicBlock* block, Value* value, Override* result)
     {
-        for (DecidedComparison& decided : list) {
-            if (decided.comparison == value || !m_dominators->dominates(decided.trueOverride.block, block))
+        for (unsigned position = 0; position < list.size(); ++position) {
+            DecidedComparison& decided = list[position];
+            if (decided.comparison == value) {
+                position = decided.endOfRun - 1;
+                continue;
+            }
+            if (!m_dominators->dominates(decided.trueOverride.block, block))
                 continue;
             TriState outcome = evaluateComparison(value->opcode(), decided.operandRange, value->child(1)->asInt());
             if (outcome == TriState::Indeterminate)

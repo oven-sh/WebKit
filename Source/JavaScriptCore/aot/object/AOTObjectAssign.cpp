@@ -788,8 +788,6 @@ void describeMovesForStub(MappedCopy& copy)
 
 static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
 {
-    if (target.orderWord() != unorderedOrderWord || copy.granuleBitsOfTargetBefore)
-        return false;
     if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
         return false;
     for (const MappedCopy::Move& move : copy.moves) {
@@ -815,6 +813,16 @@ static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& t
     copy.structureOfSource = source.structureID();
     describeMovesForStub(copy);
     return true;
+}
+
+static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
+{
+    if (copy.mayTakeNoFrame) {
+        copy.mayTakeNoFrame = false;
+        copy.takesNoFrame = takesNoFrame(vm, state, copy, target, source);
+    }
+    if (copy.takesNoFrame)
+        placeOfCopyWithoutFrame(state, copy) = &copy;
 }
 
 bool clearFieldsMovedInVain(const MappedCopy& copy, const MappedCopy::Move* end, JSCell* target)
@@ -859,6 +867,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     }
     copy.granuleBitsOfSource = sourceLayout.hasExtension() ? granuleBitsOf(source.extension()) : 0;
     copy.granuleBitsOfTargetBefore = targetLayout.hasExtension() ? granuleBitsOf(target.extension()) : 0;
+    // Where nobody lists the keys, the order word says nothing of what the target holds.
+    bool writesFieldThatIsListed = !listsKeys && target.orderWord() != unorderedOrderWord;
     Vector<MappedCopy::Move> moves;
     moves.reserveInitialCapacity(entries.size());
     for (uint16_t index : entries) {
@@ -885,6 +895,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
             copy.granuleBitsFilled |= granuleBitOf(to.slot.offset);
         if (listsKeys && !isListed.set(key))
             keysAfter.append(key);
+        else
+            writesFieldThatIsListed |= listsKeys;
     }
     for (MappedCopy::Move& move : moves) {
         if (move.readsExtension)
@@ -901,7 +913,7 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     }
     copy.moves = WTF::move(moves);
     copy.state = MappedCopy::State::IsServed;
-    copy.takesNoFrame = takesNoFrame(vm, state, copy, target, source);
+    copy.mayTakeNoFrame = !writesFieldThatIsListed && !copy.granuleBitsOfTargetBefore;
     return true;
 }
 
@@ -971,7 +983,7 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
         uint64_t& bits = *value++;
         bool didRead = tryMove(state.instance.cellCageBase, move, slot, [&](uint64_t read) ALWAYS_INLINE_LAMBDA {
             bits = read;
-        }, [&] {
+        }, [&]() ALWAYS_INLINE_LAMBDA {
             return move.kind == MappedCopy::MoveKind::Tested ? tryReadTested(state, move, fieldsOfTarget[move.fieldOfTarget], slot, bits) : tryReadInOtherForm(state, move, slot, bits);
         });
         if (!didRead)
@@ -995,8 +1007,8 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     if (copy.mayStoreCells)
         vm.writeBarrier(&target);
     didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
-    if (copy.takesNoFrame)
-        placeOfCopyWithoutFrame(state, copy) = &copy;
+    if ((copy.takesNoFrame || copy.mayTakeNoFrame) && !isFirstCopy) [[unlikely]]
+        offerCopyWithoutFrame(vm, state, copy, target, source);
     return isFirstCopy ? RepeatedCopy::ByMapForTheFirstTime : RepeatedCopy::ByMap;
 }
 

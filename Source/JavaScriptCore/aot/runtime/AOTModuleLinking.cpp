@@ -230,26 +230,31 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     }
 }
 
-// What has no work left by now has a step that does nothing. A replay goes past an ES module that another link has linked since and past all that the walk found below it: a walk made now would find none of it
-// if all of that is settled too.
-bool ModuleLinkWalk::stillHolds(const Modules& modules) const
+// What has no work left by now has a step that does nothing. A replay goes past a module that another link has linked since, or that has run since, and past all that the walk found below it: a walk made now
+// would find none of that if all of it is settled too.
+bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
 {
     if (m_linkEpoch != modules.linkEpoch())
         return false;
     if (hasPlan())
         return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
-    std::span<const Step> steps = m_steps.span();
+    std::span<Step> steps = m_steps.mutableSpan();
     for (size_t index = 0; index < steps.size(); ++index) {
-        const Step& step = steps[index];
-        if (static_cast<StepKind>(step.kind) != StepKind::Enter || modules.status(ModuleID(step.module)) == ModuleStatus::Unlinked)
+        const Step& enter = steps[index];
+        if (static_cast<StepKind>(enter.kind) != StepKind::Enter || modules.status(ModuleID(enter.module)) == ModuleStatus::Unlinked)
             continue;
-        if (!index || modules.data(ModuleID(step.module)).capturesExports())
+        if (!index)
             return false;
-        for (const Step& below : steps.subspan(index + 1, step.leave - index - 1)) {
+        size_t leave = enter.leave;
+        bool isFollowedByOwnCapture = static_cast<StepKind>(steps[index + 1].kind) == StepKind::CapturesExports && steps[index + 1].module == enter.module;
+        size_t firstBelow = index + 1 + isFollowedByOwnCapture;
+        for (const Step& below : steps.subspan(firstBelow, leave - firstBelow)) {
             if (static_cast<StepKind>(below.kind) != StepKind::Leave && !modules.isSettledForLinks(ModuleID(below.module)))
                 return false;
         }
-        index = step.leave;
+        if (isFollowedByOwnCapture)
+            std::swap(steps[index], steps[index + 1]);
+        index = leave;
     }
     return true;
 }

@@ -10,6 +10,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsCache.h"
 #include "AOTEffectsCheck.h"
 #include "AOTIR.h"
 #include "AOTIRTestSupport.h"
@@ -24,6 +25,7 @@
 #include <span>
 #include <wtf/DataLog.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -659,6 +661,37 @@ void testEffectsExceedReplacedGroupInProvisionalFunction()
     AOT_TEST_CHECK(error.function == f7 && !error.block && !error.value);
 }
 
+void testEffectsAskedAgainAfterUnreportedEdit()
+{
+    VerifierTest test;
+    Program& program = *test.program;
+    Typed::Function copy = program.at(f7);
+    ValueID comparison = addValue(copy, b0, Opcode::StrictEq, { v2, v2 });
+    typeFunctionAsRead(program, f7, copy, test.build());
+
+    EffectSummaries summaries;
+    EffectContext context { program, summaries };
+    Diagnostics& diagnostics = test.build().diagnostics();
+    EffectsCache effects(context, copy, &diagnostics);
+    effects.resizeToFunction();
+    auto compare = [&](ValueID operand) {
+        copy.edit(comparison).setOperand(0, operand);
+        copy.edit(comparison).setOperand(1, operand);
+    };
+
+    EffectsOnEdges effectsOnIntegers = effects.of(comparison);
+    AOT_TEST_CHECK(effects.of(comparison) == effectsOnIntegers);
+    compare(v0);
+    effects.didChangeFunction();
+    AOT_TEST_CHECK(effects.of(comparison) != effectsOnIntegers);
+    AOT_TEST_CHECK(!diagnostics.hasErrors());
+
+    compare(v2);
+    AOT_TEST_CHECK(effects.of(comparison) != effectsOnIntegers);
+    test.expectOnly(Kind::VerificationFailedAfterPass);
+    AOT_TEST_CHECK(diagnostics.internalErrors()[0].detail.startsWith(makeString("the pass asked for the effects of v"_s, comparison.index(), " (StrictEq) after an edit that the analyses were not told of: they answered reads("_s)));
+}
+
 // The record of a type is planned from the type without what no test finds, and the tables hold the cells of the realm alone.
 void testRecordOfEveryBuiltinNamesOnlyCellsOfRealm()
 {
@@ -723,6 +756,7 @@ std::span<const NativeTest> verifierTests()
         { "verifier/record-id-out-of-range"_s, testRecordIDOutOfRange },
         { "verifier/effects-exceed-replaced-group"_s, testEffectsExceedReplacedGroup },
         { "verifier/effects-exceed-replaced-group-in-provisional-function"_s, testEffectsExceedReplacedGroupInProvisionalFunction },
+        { "verifier/effects-asked-again-after-unreported-edit"_s, testEffectsAskedAgainAfterUnreportedEdit },
         { "verifier/record-of-every-builtin-names-only-cells-of-realm"_s, testRecordOfEveryBuiltinNamesOnlyCellsOfRealm },
     };
     return tests;

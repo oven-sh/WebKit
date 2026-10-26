@@ -467,7 +467,8 @@ static void planFieldDefinition(const PropertyAccessContext& context, const Prop
         return;
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);
-    if (!query.isPrivate && !query.isLeftOutByUnfinishedAllocation && !mayFindSlotEmpty(context, query, state)) {
+    bool mayBeFirstToFillSlot = query.isLeftOutByUnfinishedAllocation || (state.isLeftOutAtConstruction && !query.isListedByAllocation);
+    if (!query.isPrivate && !mayBeFirstToFillSlot && !mayFindSlotEmpty(context, query, state)) {
         setSlotOperation(plan, Opcode::PutSlot);
         return;
     }

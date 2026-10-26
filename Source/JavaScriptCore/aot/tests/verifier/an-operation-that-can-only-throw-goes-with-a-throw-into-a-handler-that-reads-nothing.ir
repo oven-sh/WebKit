@@ -1,0 +1,44 @@
+# function joined(a: string, b: string) { try { throw new RangeError(a + b) } catch { return -1 } }
+# The sum of two strings throws where it is too long and does nothing else. Whether it completes or throws, the code of the handler runs next, with the same arguments, and reads neither a result nor
+# what was thrown: SimplifyControlFlow takes the sum out with the throw, and a build that verifies each pass has nothing to say. A sum that may run code of the program stays.
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# OPTIONS: check=VerifyEachPass
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="joined" parameters=[{type=string}, {type=string}] results=[{type=number}] {
+  b0(v0: string, v1: string) handler=b1():
+    v2 = Add v0, v1
+    v3 = CallBuiltin -, v2 overload=RangeError/1
+    Throw v3
+  b1() role=CatchHandler:
+    v4 = Integer integer=-1
+    Return v4
+# CHECK: b0(v0: string, v1: string) handler=b1():
+# CHECK-NEXT: Jump -> next
+}
+
+function f1 name="joinedInTemplate" parameters=[{type=string}, {type=string}] results=[{type=number}] {
+  b0(v0: string, v1: string) handler=b1():
+    v2 = Strcat v0, v1
+    Throw v2
+  b1() role=CatchHandler:
+    v3 = Integer integer=-2
+    Return v3
+# CHECK: b0(v0: string, v1: string) handler=b1():
+# CHECK-NEXT: Jump -> next
+}
+
+function f2 name="convertedByCodeOfTheProgram" parameters=[{type=string}, {type=anything}] results=[{type=number}] {
+  b0(v0: string, v1: anything) handler=b1():
+    v2 = Add v0, v1
+    v3 = CallBuiltin -, v2 overload=RangeError/1
+    Throw v3
+  b1() role=CatchHandler:
+    v4 = Integer integer=-3
+    Return v4
+# CHECK: = Add v0, v1
+# CHECK-NEXT: Jump -> next
+}

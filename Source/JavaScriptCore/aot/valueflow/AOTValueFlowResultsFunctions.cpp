@@ -300,11 +300,25 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
             const FlowCallStamp* stampOfCall = hasCalleeStamp(statement) ? findByValue(application.bodies[index].calls.span(), statement.site, &FlowCallStamp::value) : nullptr;
             const CalleeSet* stamp = stampOfCall ? &program.at(stampOfCall->callees) : nullptr;
             std::optional<BuiltinCallbackTimes> timesOfCallbacksOfStatement;
+            ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
+            size_t firstOfStatement = calls.size();
+            // The accessors that one site enters count together, however many of its receivers find each of them.
+            auto nameNoEscapedAccessorPastThoseToldApart = [&] {
+                Vector<FunctionID, 8> accessors;
+                for (const FlowIndirectCall& call : calls.span().subspan(firstOfStatement)) {
+                    if (call.kind == FlowIndirectCallKind::Accessor && !accessors.contains(call.callee))
+                        accessors.append(call.callee);
+                }
+                if (accessors.size() <= inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
+                    return;
+                calls.removeAllMatching([&](const FlowIndirectCall& call) {
+                    return call.kind == FlowIndirectCallKind::Accessor && sets.contains(escaped, universe.closureOf(call.callee));
+                }, firstOfStatement);
+            };
             auto add = [&](const EnteredGroup& group, const CalleeSet* stampThatListsCallees) {
                 if (ValueSets::isComplement(group.callees))
                     return;
                 bool namesNoEscapedClosure = sets.size(group.callees) > inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
-                ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
                 sets.forEachMember(group.callees, [&](ValueFlowObjectID callee) {
                     FunctionID entered = universe.closureFunction(callee);
                     if (!entered || throwsBeforeEntry(program.at(entered), group.kind))
@@ -364,6 +378,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 for (uint32_t asked : statementsAskedFor.of(number))
                     follow(asked);
             }
+            nameNoEscapedAccessorPastThoseToldApart();
         }
         mergeIndirectCalls(calls, first);
     });

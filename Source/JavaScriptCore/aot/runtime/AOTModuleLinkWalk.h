@@ -27,8 +27,8 @@ public:
     ModuleLinkWalk(const Modules&, ModuleID root);
 
     ModuleID root() const { return m_root; }
-    // Whether a replay does what the replay of a walk made now would do.
-    bool stillHolds(const Modules&) const;
+    // Whether a replay does what the replay of a walk made now would do. A walk made now captures what a file that has run since exports and does not enter the file: the step that captures moves in front of the one that enters.
+    bool bringUpToDate(const Modules&);
     // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
     bool hasPlan() const { return !m_plan.empty(); }
     // Of a plan other than the entry point's.

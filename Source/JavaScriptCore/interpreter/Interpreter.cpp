@@ -1015,7 +1015,7 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 if (visitor->isOfBuiltinCalledByCompiledFrame())
                     results.append(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
                 else
-                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }, visitor.compiledFrames().recordedCallee()));
+                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered() }, visitor.compiledFrames().recordedCallee()));
                 if (Options::useAsyncStackTrace() && !frame.inlineFrame && AOT::FunctionDescription(frame.function).isAsync() && visitor.compiledFrames().isAboveFramesThatWait())
                     entryFrameWhoseContextWaits = currentEntryFrame;
 #endif
@@ -1073,9 +1073,11 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 String Interpreter::stackTraceAsString(VM& vm, const Vector<StackFrame>& stackTrace)
 {
     // FIXME: JSStringJoiner could be more efficient than StringBuilder here.
+    static constexpr unsigned expectedLengthOfFrame = 96;
     StringBuilder builder;
+    builder.reserveCapacity(std::min<size_t>(stackTrace.size() * expectedLengthOfFrame, String::MaxLength));
     for (unsigned i = 0; i < stackTrace.size(); i++) {
-        builder.append(String(stackTrace[i].toString(vm)));
+        stackTrace[i].appendTo(vm, builder);
         if (i != stackTrace.size() - 1)
             builder.append('\n');
     }

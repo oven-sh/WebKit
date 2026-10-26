@@ -1,0 +1,45 @@
+# function ask(constructor) { return 1 instanceof constructor }   Object.defineProperty(target, Symbol.hasInstance, { value: answer })   ask(target.bind(null)); ask(handedIn); handedIn[someName]
+# `1 instanceof bound` finds Function.prototype[Symbol.hasInstance] above the bound function, and that asks the target for its own method with the target as `this`.
+# The same test is given a value nobody knows, and a read of that value under a key nobody knows may answer the inherited method, so what the two find together lists no method by name.
+# The bound function says by itself what it finds: `answer` runs.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK: unreached f4
+# RUN(ESCAPED): valueflow-why escaped=f1
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    PropDefine v0, v1 key=@@hasInstance
+    v3 = Builtin builtin=FunctionPrototypeBind
+    v4 = Null
+    v5 = Call v3, v0, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="handedIn" [isFreeName]
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v5
+    v10 = Call v8, -, v7
+    v11 = PropGet v6 key="someName" [isFreeName]
+    v12 = ElemGet v7, v11
+    v13 = NewClosure function=f4
+    Return
+}
+function f1 name="target" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="answer" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Boolean boolean=true
+    Return v2
+}
+function f3 name="ask" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = InstanceOf v1, v0
+    Return v2
+}
+function f4 name="neverCalled" kind=Arrow results=[{type=anything}] {
+    Return
+}

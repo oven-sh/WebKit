@@ -260,7 +260,7 @@ void describeAccess(const Program& program, const Function& function, const Valu
         describeBound(form, description);
     }
     if (proven.isLookupByKey)
-        description.addOwn(effectsOfLookupByKey);
+        description.addOwn(declared.mayCallUnknownCode ? effectsOfLookupByKey : effectsOfLookupByKey.intersectedWith(declared));
     if (proven.definesOwnProperty)
         description.addOwn(effectsOfDefinition);
     describeAccessors(program, value, proven.accessors.span(), description);

@@ -941,7 +941,11 @@ private:
                 return setConstant(id, constantOf({ ValueFlowObjectKind::Key, key.index(), { } }));
             if (!isObjectKind(builtins.at(builtin).kind))
                 return setConstant(id, constantOfType(type));
-            setConstant(id, constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }));
+            // An import of the whole of "bun" is followed as what require("bun") answers is.
+            if (builtin == Builtins::Bun)
+                at(id).role = Role::Result;
+            else
+                setConstant(id, constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }));
             m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::BuiltinsThatStatementsName), constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }), 0 });
             return;
         }

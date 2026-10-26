@@ -1,0 +1,42 @@
+# `{ a: first(), b: second() }`: the allocation leaves `b` out and a definition fills it, so every finished object holds `b`.
+# The definition is what puts the key among the keys, so one that does not see an allocation that lists `b` creates the property where it is missing.
+# Where every allocation of the layout lists the field, a definition is a plain store.
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 name="SomeLeaveOut" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="AllList" module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="SomeLeaveOut"{{*}}{key="b"{{*}}occupancy=AlwaysFilled
+# CHECK: layout L1 name="AllList"{{*}}{key="b"{{*}}occupancy=AlwaysFilled
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v1, v0 key="b"
+    v3 = FinishObject v1
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v3, v0
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v4, v0
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectKeys
+    v11 = Call v10, v9, v6
+    v12 = Call v10, v9, v8
+    Return v11
+}
+
+function f1 name="defineInSomeLeaveOut" module=m0 parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropDefine v0, v1 key="b"
+    Return v0
+}
+# CHECK-LABEL: name="defineInSomeLeaveOut"
+# CHECK: PutSlotOrAdd {{*}} key="b"
+
+function f2 name="defineInAllList" module=m0 parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+    PropDefine v0, v1 key="b"
+    Return v0
+}
+# CHECK-LABEL: name="defineInAllList"
+# CHECK: PutSlot {{*}} key="b"

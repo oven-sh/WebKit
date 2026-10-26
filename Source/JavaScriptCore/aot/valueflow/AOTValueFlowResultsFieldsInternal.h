@@ -449,6 +449,7 @@ public:
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
+    void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
     std::span<const PropertyKeyID> keysReadFrom(LayoutID layout) const LIFETIME_BOUND { return m_keysReadFrom[layout.index()].span(); }
 
     bool hasEscapedObject(LayoutID layout) const { return m_hasEscapedObject.quickGet(layout.index()); }

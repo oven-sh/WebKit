@@ -504,7 +504,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersWithMembers;
         Objects holdersWithMembersUnderNumericNames;
         Objects holdersOfMembersThatHostMakes;
-        Objects closedHoldersOfReplaceableMembers;
+        Objects holdersOfReplaceableMembers;
         Objects namespacesWhoseHoldersListThem;
         Objects holdersThatListAllMembers;
         Objects lockedObjects;
@@ -629,8 +629,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     namespacesWhoseHoldersListThem.appendVector(objects);
             }
             // A prototype object is found above every instance: HeapRule::notePrototypeObjectsThatWriteMayReach() says which of them a write reaches.
-            if (hasReplaceableMember && hasClosedKeys && entry.kind != BuiltinKind::Prototype)
-                closedHoldersOfReplaceableMembers.appendVector(objects);
+            if (hasReplaceableMember && entry.kind != BuiltinKind::Prototype)
+                holdersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
         }
@@ -654,7 +654,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
-        m_closedHoldersOfReplaceableMembers = maker.of(closedHoldersOfReplaceableMembers.span());
+        m_holdersOfReplaceableMembers = maker.of(holdersOfReplaceableMembers.span());
         m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
         m_namespacesNotedWhenCarriedOut = maker.unite(m_namespacesWhoseHoldersListThem, universe.holdersOfLibraryExports());
         m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));

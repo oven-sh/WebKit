@@ -38,6 +38,7 @@ class FunctionDescription {
 public:
     JS_EXPORT_PRIVATE explicit FunctionDescription(FunctionID);
 
+    FunctionID function() const { return m_function; }
     JS_EXPORT_PRIVATE String name(VM&) const;
     JS_EXPORT_PRIVATE String nameInFrames(VM&, JSCell* callee = nullptr) const;
     JS_EXPORT_PRIVATE CodeType codeType() const;

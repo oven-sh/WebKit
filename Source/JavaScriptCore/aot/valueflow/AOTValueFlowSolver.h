@@ -693,6 +693,7 @@ private:
     ValueSetID findFamilyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
     bool maySaturate(ValueFlowNodeID) const;
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
+    bool takesArgumentsOfCallGroup(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
     void saturate(std::span<const ValueFlowNodeID> moved);
     void leaveOutWhatIsCoveredInTheEnd();
@@ -959,6 +960,7 @@ private:
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
+    ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
     bool m_haveLostObjectsEscaped { false };

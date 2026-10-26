@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEdgeResults.h"
+#include "AOTForwardedCalls.h"
 #include "AOTFunctionKinds.h"
 #include "AOTThreshold.h"
+#include "AOTUseLists.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
 #include <wtf/SetForScope.h>
@@ -821,20 +824,36 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
     }
 
     // An accessor that a free name finds is entered with undefined.
-    bool mayBeFoundByFreeName = m_context.contains(receiver.operand ? m_context.valueOf(*receiver.operand) : receiver.set, m_universe.objectOf(Builtins::GlobalThis));
-    forEachPartOfCallees(m_context, m_context.restrict(functions, m_tables.knownAccessors()), [&](ClimbingSet callees) {
-        ValueFlowCallGroup group = m_context.group(callees, kind);
-        if (receiver.operand)
-            connect(*receiver.operand, group.thisValue);
-        else
-            add(group.thisValue, receiver.set);
-        if (mayBeFoundByFreeName)
-            add(group.thisValue, m_universe.undefinedValue());
-        if (value)
-            connect(*value, group.argument(0));
-        connect(group.result, result);
-        connect(group.thrown, ValueFlowProgramNodes::escaped());
-    });
+    ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
+    auto enter = [&](ClimbingSet accessors, ClimbingSet receivers) {
+        forEachPartOfCallees(m_context, m_context.restrict(accessors, m_tables.knownAccessors()), [&](ClimbingSet callees) {
+            ValueFlowCallGroup group = m_context.group(callees, kind);
+            if (receiver.operand)
+                connect(*receiver.operand, group.thisValue);
+            else
+                add(group.thisValue, receivers);
+            if (m_context.contains(receiver.operand ? m_context.valueOf(*receiver.operand) : receivers, globalObject))
+                add(group.thisValue, m_universe.undefinedValue());
+            if (value)
+                connect(*value, group.argument(0));
+            connect(group.result, result);
+            connect(group.thrown, ValueFlowProgramNodes::escaped());
+        });
+    };
+
+    // A function of the program is entered with the receivers that find it by themselves, whichever others are looked up beside them.
+    ClimbingSet closures = m_context.restrict(functions, m_universe.closures());
+    if (!receiver.operand && receiver.keyLookedUp && holdsAnything(closures) && !m_context.holdsOneMember(receiver.set)) {
+        HeapPropertyPart part = kind == ValueFlowCallKind::Set ? HeapPropertyPart::Setter : HeapPropertyPart::Getter;
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(m_context, known(receiver.set));
+        if (receivers.rest != ValueSets::nothing)
+            receivers.groups.append(receivers.rest);
+        for (ValueSetID toldApart : receivers.groups)
+            enter(m_context.restrict(accessorsFoundFrom(ClimbingSet(toldApart), *receiver.keyLookedUp, part), m_universe.closures()), ClimbingSet(toldApart));
+        enter(closures, m_context.restrict(receiver.set, ValueSets::complement(m_universe.knownObjects())));
+        functions = m_context.restrict(functions, ValueSets::complement(m_universe.closures()));
+    }
+    enter(functions, receiver.set);
 }
 
 void HeapRule::handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey& key)
@@ -985,6 +1004,111 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     });
 }
 
+// f.call(..), f.apply(..): the receiver of a member of functions that does nothing with it but call it.
+static bool isReceiverOfForwardedCall(const Program& program, const Function& function, const Value& user, uint32_t operandIndex)
+{
+    if (!PayloadWord::calleeKey(user.opcode) || !user.calleeKey() || user.thisValueOperand() != user.operand(operandIndex))
+        return false;
+    for (uint32_t index = 0; index < user.numberOfOperands(); ++index) {
+        if (index != operandIndex && user.operand(index) == user.operand(operandIndex))
+            return false;
+    }
+    const Value& read = function.at(definitionThroughSameValues(function, user.calleeOperand()));
+    if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != user.calleeKey() || definitionThroughSameValues(function, read.objectOperand()) != definitionThroughSameValues(function, user.thisValueOperand()))
+        return false;
+    BuiltinID member = findOwnMember(program, Builtins::FunctionPrototype, read.key());
+    return member && std::ranges::all_of(program.builtins().overloadsOf(member), [](const BuiltinOverload& overload) {
+        std::optional<BuiltinOperand> called = operandCalledBy(overload);
+        return called && called->isReceiver();
+    });
+}
+
+// f(..), new f(..), f.call(..): whether the value, and what conversions, tests and edges make of it, goes nowhere but into callees.
+static bool isOnlyCalled(const Program& program, const Function& function, ValueID value)
+{
+    AOT_THRESHOLD(unsigned, mostValuesFollowed, 8);
+    constexpr OperandUses inspectsOrCalls { OperandUse::Inspects, OperandUse::Calls };
+    CFG cfg(function);
+    UseLists uses(function, cfg);
+    Vector<ValueID, 8> followed { value };
+    auto follow = [&](ValueID id) {
+        if (!followed.contains(id))
+            followed.append(id);
+    };
+    for (size_t index = 0; index < followed.size(); ++index) {
+        if (followed.size() > mostValuesFollowed)
+            return false;
+        ValueID current = followed[index];
+        for (const Use& use : uses.usesOf(current)) {
+            switch (use.kind) {
+            case Use::Kind::Operand: {
+                const Value& user = function.at(use.user);
+                const OperandInfo& info = operandInfoOf(user.opcode, use.operandIndex);
+                if (sameValueOperandOf(user) == current)
+                    follow(use.user);
+                else if ((!info.uses.containsOnly(inspectsOrCalls) || !info.protocols.isEmpty()) && !isReceiverOfForwardedCall(program, function, user, use.operandIndex))
+                    return false;
+                break;
+            }
+            case Use::Kind::TerminatorOperand:
+                if (!operandInfoOf(function.at(use.block).terminator.kind, use.operandIndex).uses.containsOnly(OperandUse::Inspects))
+                    return false;
+                break;
+            case Use::Kind::EdgeArgument:
+                follow(function.at(function.at(use.block).terminator.targets[use.targetIndex].block).parameters[use.operandIndex]);
+                break;
+            case Use::Kind::HandlerArgument:
+            case Use::Kind::BlockSubject:
+                return false;
+            }
+        }
+        for (uint32_t from = 0; from < function.blocks.size(); ++from) {
+            const auto& targets = function.blocks[from].terminator.targets;
+            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+                uint32_t first = firstEdgeResultParameter(function, BlockID(from), targetIndex);
+                for (uint32_t result = 0; result < numberOfEdgeResults(function, BlockID(from), targetIndex); ++result) {
+                    if (operandNarrowedOnEdge(function, { BlockID(from), targetIndex, result }) == current)
+                        follow(function.at(targets[targetIndex].block).parameters[first + result]);
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// The public built-in modules that the value, or what it is a copy of, such as a namespace object, may be.
+ClimbingSet HeapRule::publicModulesThatMayBe(const ValueFlowOperand& object)
+{
+    // Beside the unknown object the value leaves out what has escaped. The node lists it.
+    ClimbingSet objects = known(m_context.valueOf(object));
+    if (object.node)
+        objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), object.node));
+    if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(objects, copiedFromName))
+        objects = m_context.unite(objects, withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))));
+    return m_context.restrict(objects, m_tables.objectsOfPublicModules());
+}
+
+// module[key]: the read leaves out createRequire, which loads nothing by itself. Where what it answers is only called, it answers that too.
+void HeapRule::readMembersLeftOutThatAreOnlyCalled(const ValueFlowOperand& object)
+{
+    if (m_statement.kind != ValueFlowStatementKind::Operation || !m_statement.function || !m_statement.site || !m_statement.result)
+        return;
+    ValueSetID membersThatLoadNothingThemselves = m_context.maker().intersect(m_tables.objectsThatLetInUnseenCode(), ValueSets::complement(m_tables.objectsThatLetInUnseenCodeWhenCalled()));
+    if (!m_context.holdsAnyOf(ClimbingSet(membersThatLoadNothingThemselves), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
+        return;
+    ValueSetID members = ValueSets::nothing;
+    m_context.forEachMember(publicModulesThatMayBe(object), [&](ValueFlowObjectID holder) {
+        members = m_context.maker().unite(members, m_tables.membersOf(m_universe.builtinOf(holder)).leftOut);
+    });
+    members = m_context.maker().intersect(members, membersThatLoadNothingThemselves);
+    if (members == ValueSets::nothing || !isOnlyCalled(m_program, m_program.at(m_statement.function), m_statement.site))
+        return;
+    m_context.sets().forEachMember(members, [&](ValueFlowObjectID member) {
+        use(m_universe.builtinOf(member), BuiltinUse::Read);
+    });
+    add(m_statement.result, members);
+}
+
 void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key)
 {
     ValueSetID holders = ValueSets::nothing;
@@ -993,16 +1117,15 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         holders = m_tables.under(key.name).holdersOfEvaluators;
         break;
     case HeapKeyClass::Index:
+        break;
     case HeapKeyClass::Unknown:
+        readMembersLeftOutThatAreOnlyCalled(object);
         break;
     }
     if (holders == ValueSets::nothing || !isOperationOfFunction())
         return;
 
     Members getters;
-    auto holdsMarkOfMemberLeftOut = [&](ValueFlowNodeID node) {
-        return node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfMemberLeftOut())), node);
-    };
     bool mayAnswerMemberLeftOut = holdsMarkOfMemberLeftOut(m_statement.result) || holdsMarkOfMemberLeftOut(object.node);
     HeapChain chain = chainFrom(m_context.valueOf(object), key);
     ClimbingSet found = m_context.restrict(chain.objects, holders);
@@ -1011,8 +1134,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
-        if (object.node)
-            above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(holders, m_tables.objectsOfPublicModules()), allButBunUnlessNamed(object))), object.node));
+        above = m_context.unite(above, m_context.restrict(publicModulesThatMayBe(object), m_context.maker().intersect(holders, allButBunUnlessNamed(object))));
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
             found = m_context.unite(found, m_context.restrict(above, holders));
             if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
@@ -1357,8 +1479,10 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     HeapReceiver thisValue = receiver;
     if (!receiver.operand && mayBeAccessorNobodyKnows(getters))
         thisValue.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chain.start, key, HeapPropertyPart::Getter);
-    if (!receiver.operand)
+    if (!receiver.operand) {
         thisValue.set = receiversThatLookPastPropertiesOfCreation(receiver.set, key);
+        thisValue.keyLookedUp = &key;
+    }
     SetForScope ofEngine(m_undescribedNativeCodeIsOfEngine, undescribedNativeCodeIsOfEngine);
     callAccessors(getters, ValueFlowCallKind::Get, thisValue, nullptr, result);
 }

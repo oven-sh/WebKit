@@ -142,6 +142,18 @@ std::pair<BuiltinCallMode, BuiltinUse> modeAndUseOf(ValueFlowCallKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A set that holds a callee nobody follows lists none of the callees that one stands for. A receiver that finds one of those and no callee nobody follows names it.
+static ClimbingSet withCalleesThatReceiversFindAlone(ValueFlowRuleContext& context, ClimbingSet callees, ClimbingSet receivers, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (!context.meet(callees, universe.placeholdersAlone()))
+        return callees;
+    context.forEachMember(context.restrict(receivers, universe.knownObjects()), [&](ValueFlowObjectID receiver) {
+        callees = context.unite(callees, find(only(context, receiver)));
+    });
+    return callees;
+}
+
 // A callee nobody follows that was found for several receivers at once gets those that find it by themselves, whichever others were looked at beside them.
 static void passReceiversToCalleesTheyFind(ValueFlowRuleContext& context, ClimbingSet callees, const ValueFlowOperand& receivers, ValueFlowNodeID thisValue, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
 {
@@ -164,6 +176,7 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
     const ValueFlowUniverse& universe = context.universe();
     if (!context.meet(members, universe.callables()))
         return;
+    members = withCalleesThatReceiversFindAlone(context, members, context.valueOf(thisValue), find);
 
     // A built-in is applied to the operands of this call and answers to this call alone, whoever else calls it.
     ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .thisValue = thisValue, .argumentsMayBeAbsent = true, .otherArguments = operandHolding(arguments), .result = result, .thrown = ValueFlowProgramNodes::escaped() };
@@ -294,7 +307,7 @@ public:
     void callNamedMember(ClimbingSet members, const ValueFlowOperand& thisValue, std::span<const BuiltinPlace> arguments, ValueFlowNodeID result, NOESCAPE const Invocable<ClimbingSet(ClimbingSet)> auto& find)
     {
         actWithoutOverload();
-        forEachPartOfCallees(m_context, m_context.restrict(members, m_universe.callables()), [&](ClimbingSet callees) {
+        forEachPartOfCallees(m_context, m_context.restrict(withCalleesThatReceiversFindAlone(m_context, members, m_context.valueOf(thisValue), find), m_universe.callables()), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::CallByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
             passReceiversToCalleesTheyFind(m_context, callees, thisValue, group.thisValue, find);
             passArguments(group, arguments);
@@ -2805,18 +2818,9 @@ static void callTargetsWithoutBoundArguments(ClimbingSet callees, const ValueFlo
     });
 }
 
-static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
+static void callTargetsWithBoundArguments(ClimbingSet callees, ValueFlowCallKind kind, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueFlowCallKind kind = isConstruction(description.kind) ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode;
-    ClimbingSet allCallees = callees;
-    if (!isConstruction(kind)) {
-        ValueSetID bindingNoArgument = boundFunctionsBindingNoArgumentAmong(callees, context);
-        if (context.meet(callees, bindingNoArgument)) {
-            callTargetsWithoutBoundArguments(context.restrict(callees, bindingNoArgument), description, context);
-            callees = context.restrict(callees, ValueSets::complement(bindingNoArgument));
-        }
-    }
     auto slot = [&](BuiltinSlotID id) {
         return context.read(callees, { ValueFlowNameKind::HiddenSlot, id.index() });
     };
@@ -2845,19 +2849,30 @@ static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& 
     forEachPartOfCallees(context, context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), universe.callables()), [&](ClimbingSet targets) {
         if (!isConstruction(kind))
             return callTargets(targets);
-        // `new` on a bound function enters its target with the target as new.target: a target that reads new.target sees itself there, and no other target.
-        Vector<ValueFlowObjectID, 8> readingNewTarget;
-        context.forEachMember(context.restrict(targets, universe.closures()), [&](ValueFlowObjectID target) {
-            if (context.program().at(universe.closureFunction(target)).newTargetParameterIndex())
-                readingNewTarget.append(target);
-        });
-        for (ValueFlowObjectID target : readingNewTarget)
+        // `new` on a bound function enters its target with that target as new.target, and no other.
+        context.forEachMember(targets, [&](ValueFlowObjectID target) {
             callTargets(only(context, target));
-        ClimbingSet others = readingNewTarget.isEmpty() ? targets : context.restrict(targets, ValueSets::complement(context.maker().of(readingNewTarget.span())));
-        if (context.meet(others, ValueSets::anything))
-            callTargets(others);
+        });
     });
-    settlePromisesThrough(allCallees, description, context);
+}
+
+// Each bound function enters its own target, with its own receiver and its own arguments, whichever others are called at the same place.
+static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
+{
+    ValueFlowCallKind kind = isConstruction(description.kind) ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode;
+    ValueSetID bindingNoArgument = isConstruction(kind) ? ValueSets::nothing : boundFunctionsBindingNoArgumentAmong(callees, context);
+    auto callTargetsOf = [&](ClimbingSet boundFunctions) {
+        if (ClimbingSet bare = context.restrict(boundFunctions, bindingNoArgument); context.meet(bare, ValueSets::anything))
+            callTargetsWithoutBoundArguments(bare, description, context);
+        if (ClimbingSet others = context.restrict(boundFunctions, ValueSets::complement(bindingNoArgument)); context.meet(others, ValueSets::anything))
+            callTargetsWithBoundArguments(others, kind, description, context);
+    };
+    if (std::optional<ClimbingSet> boundFunctions = context.holdersUnder({ ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }, callees)) {
+        context.forEachMember(*boundFunctions, [&](ValueFlowObjectID boundFunction) {
+            callTargetsOf(only(context, boundFunction));
+        });
+    }
+    settlePromisesThrough(callees, description, context);
 }
 
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext& context)
@@ -2966,12 +2981,13 @@ static void runGetterOfPrototypeProperty(ValueFlowRuleContext& context, const Va
     if (bornWithoutProperty.isEmpty())
         return;
     ValueSetID asked = context.maker().of(bornWithoutProperty.span());
-    ClimbingSet found = context.valueOf(context.lookup(ClimbingSet(asked), ValueFlowName::getter(context.program().keyOf(BuiltinNames::prototype))));
+    auto find = [&](ClimbingSet constructors) {
+        return context.valueOf(context.lookup(constructors, ValueFlowName::getter(context.program().keyOf(BuiltinNames::prototype))));
+    };
+    ClimbingSet found = withCalleesThatReceiversFindAlone(context, find(ClimbingSet(asked)), ClimbingSet(asked), find);
     forEachPartOfCallees(context, context.restrict(found, universe.callables()), [&](ClimbingSet getters) {
         ValueFlowCallGroup group = context.group(getters, ValueFlowCallKind::Get);
-        passReceiversToCalleesTheyFind(context, getters, operandHolding(asked), group.thisValue, [&](ClimbingSet alone) {
-            return context.valueOf(context.lookup(alone, ValueFlowName::getter(context.program().keyOf(BuiltinNames::prototype))));
-        });
+        passReceiversToCalleesTheyFind(context, getters, operandHolding(asked), group.thisValue, find);
         if (thrown)
             context.connect(group.thrown, thrown);
     });
@@ -2980,7 +2996,10 @@ static void runGetterOfPrototypeProperty(ValueFlowRuleContext& context, const Va
 static void testAgainstConstructor(ValueFlowRuleContext& context, const ValueFlowOperand& tested, const ValueFlowOperand& constructor, ValueFlowNodeID thrown, const ValueFlowStatement* operation)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ClimbingSet methods = context.restrict(context.valueOf(context.lookup(context.valueOf(constructor), property(context, BuiltinNames::hasInstanceSymbol))), universe.callables());
+    auto find = [&](ClimbingSet constructors) {
+        return context.valueOf(context.lookup(constructors, property(context, BuiltinNames::hasInstanceSymbol)));
+    };
+    ClimbingSet methods = context.restrict(withCalleesThatReceiversFindAlone(context, find(context.valueOf(constructor)), context.valueOf(constructor), find), universe.callables());
 
     ClimbingSet builtinFunctions = context.restrict(methods, universe.builtinFunctions());
     if (operation)
@@ -3002,9 +3021,7 @@ static void testAgainstConstructor(ValueFlowRuleContext& context, const ValueFlo
 
     forEachPartOfCallees(context, context.restrict(methods, ValueSets::complement(universe.builtinFunctions())), [&](ClimbingSet callees) {
         ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::CallByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
-        passReceiversToCalleesTheyFind(context, callees, constructor, group.thisValue, [&](ClimbingSet alone) {
-            return context.valueOf(context.lookup(alone, property(context, BuiltinNames::hasInstanceSymbol)));
-        });
+        passReceiversToCalleesTheyFind(context, callees, constructor, group.thisValue, find);
         context.connect(tested, group.argument(0));
         if (thrown)
             context.connect(group.thrown, thrown);

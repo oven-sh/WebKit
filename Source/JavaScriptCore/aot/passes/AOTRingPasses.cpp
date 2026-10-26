@@ -24,6 +24,7 @@
 #include "AOTInt32Conversions.h"
 #include "AOTKnownClosures.h"
 #include "AOTKnownValue.h"
+#include "AOTObservableOperations.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
@@ -2098,8 +2099,11 @@ struct ControlFlowSimplifier {
                 bypassedThrows.append({ block, findDeadValuesBeforeThrow(block) });
         }
         for (const auto& [block, deadValues] : bypassedThrows) {
-            if (bypassHandler(block) && !deadValues.isEmpty())
-                builder.eraseValues(block, deadValues);
+            if (!bypassHandler(block) || deadValues.isEmpty())
+                continue;
+            for (size_t index : deadValues)
+                explainOperationThatGoes(function, function.at(block).values[index], InPlaceOfOperation::NothingBecauseNobodySeesHowItEnds);
+            builder.eraseValues(block, deadValues);
         }
         for (size_t index = 0; index < handlerBodies.size(); ++index)
             bypassHandler(handlerBodies[index].second);

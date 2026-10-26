@@ -24,6 +24,7 @@
 #include "AOTIRProgram.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTIntegerRelations.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
@@ -190,7 +191,10 @@ const ChainMethod* findChainMethod(BuiltinID id)
 static std::optional<ArrayMethodCall> libraryMethodCallOf(const Program& program, const Function& function, ValueID id)
 {
     const BuiltinTable& table = program.builtins();
+    // A version of the method for the callback that it is handed takes the operands of the method.
     FunctionID callee = function.at(id).function();
+    while (program.at(callee).role == FunctionRole::CalleeVersion)
+        callee = program.at(callee).derivation.source;
     const Function& target = program.at(callee);
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, target.enclosingRuntimeFunction);
     if (!entry || entry->function != callee)
@@ -799,6 +803,27 @@ static bool endsGuardInUse(FunctionAnalyses& analyses)
     return false;
 }
 
+// The proof of a test that nobody has relied on is no value, and whoever asks what is proven at a place asks about values.
+static bool takeProofsOfPristineTests(FunctionPassContext& context, ValueID array)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    ValueID subject = analyses.identityOf(array);
+    Vector<Edge, 2> passingEdges;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch() || !terminator.taken().proofs.isEmpty())
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode == Opcode::IsPristine && analyses.identityOf(test.operand(0)) == subject)
+            passingEdges.append(Edge { block, 0 });
+    }
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (Edge edge : passingEdges)
+        ensureEdgeResult(builder, analyses, edge, 0);
+    return !passingEdges.isEmpty();
+}
+
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVector& calls)
 {
     if (context.function.role == FunctionRole::ChainStep || context.function.enclosingRuntimeFunction)
@@ -808,19 +833,25 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
         return PassOutcome::Unchanged;
 
     Vector<ArrayChain> accepted;
+    PassOutcome outcomeWithoutChain = PassOutcome::Unchanged;
     for (ArrayChain& chain : findArrayChains(context, &calls)) {
         ArrayChainDeclineReason obstacle = checkInterleaving(context, chain);
+        // Only for a call that is copied in if it stays: a chain that stays as it is would take the proofs again in every round, behind whoever drops what nobody uses.
+        if (obstacle == ArrayChainDeclineReason::SourceIsNotPristine && calls.get(chain.lastCall.index()) && takeProofsOfPristineTests(context, chain.source)) {
+            outcomeWithoutChain = PassOutcome::Changed;
+            obstacle = checkInterleaving(context, chain);
+        }
         if (obstacle == ArrayChainDeclineReason::None)
             accepted.append(WTF::move(chain));
         else
             context.addDecline(Wire::DeclineKind::ArrayChainNotFused, chain.lastCall, obstacle);
     }
     if (accepted.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeWithoutChain;
     auto declineAll = [&] {
         for (const ArrayChain& chain : accepted)
             context.addDecline(Wire::DeclineKind::ArrayChainNotFused, chain.lastCall, ArrayChainDeclineReason::Unknown);
-        return PassOutcome::Unchanged;
+        return outcomeWithoutChain;
     };
     // The traversal is library code.
     const EffectContext& effects = context.analyses.effectContext();

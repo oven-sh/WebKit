@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsPropertyKeys.h"
@@ -27,6 +28,7 @@
 #include "JSString.h"
 #include "MarkedBlock.h"
 #include "SmallStrings.h"
+#include "SparseArrayValueMap.h"
 #include "Structure.h"
 #include <initializer_list>
 #include <optional>
@@ -163,10 +165,13 @@ static void emitGetByValAtIndexEntry(StubAssembler& jit, const ElementRegisters&
     jit.boxInt52(index, index, storage, number);
 }
 
-static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow)
+static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRegisters& registers, GPRReg probe, JumpList& isAbsent, JumpList& slow)
 {
     const auto [base, key, storage, index, shape, number] = registers;
+    const GPRReg owner = shape;
+    const GPRReg entry = base;
     JumpList isOutsideVector;
+    JumpList isAbsentInMap;
 
     static_assert(ArrayStorageShape > DoubleShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ArrayStorageShape && SlowPutArrayStorageShape == IndexingShapeMask - 2);
     slow.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(ArrayStorageShape)));
@@ -176,13 +181,23 @@ static void loadArrayStorageElementAndReturn(StubAssembler& jit, const ElementRe
 
     isOutsideVector.link(&jit);
     slow.append(jit.branch32(CCallHelpers::LessThan, key, TrustedImm32(0)));
-    callLeafLookup(jit, Entry::operationAOTGetSparseElement, key, std::nullopt, storage);
-    Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, jit.result());
+    jit.load8(Address(base, JSCell::typeInfoTypeOffset()), storage);
+    Jump isArray = jit.branch32(CCallHelpers::Equal, storage, TrustedImm32(ArrayType));
+    slow.append(jit.branch32(CCallHelpers::NotEqual, storage, TrustedImm32(FinalObjectType)));
+    isArray.link(&jit);
+    jit.move(base, owner);
+    emitFindSparseElement(jit, { owner, index, entry, probe, storage }, isAbsentInMap);
+    Jump isAccessor = jit.branchTest32(CCallHelpers::NonZero, Address(entry, SparseArrayEntry::offsetOfAttributes()), TrustedImm32(static_cast<int32_t>(PropertyAttribute::Accessor)));
+    jit.load64(Address(entry, SparseArrayEntry::offsetOfValue()), jit.result());
     jit.returnToCaller();
 
-    hasNoAnswer.link(&jit);
-    jit.move(storage, base);
+    isAccessor.link(&jit);
+    jit.move(owner, base);
     slow.append(jit.jump());
+
+    isAbsentInMap.link(&jit);
+    jit.move(owner, base);
+    isAbsent.append(jit.jump());
 }
 
 static Label emitAbsentElement(StubAssembler& jit, const ElementRegisters& registers, JumpList& slow)
@@ -307,6 +322,7 @@ void generateGetByVal(StubAssembler& jit)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
     const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
+    const GPRReg probe = jit.allocateScratch(StubRegister::A2);
     const auto [base, key, storage, index, shape, number] = registers;
     const BaseIndex element(storage, index, CCallHelpers::TimesEight);
     JumpList slow;
@@ -337,7 +353,7 @@ void generateGetByVal(StubAssembler& jit)
     returnBoxedDouble(jit, registers, PureDouble::branchIfNaN(jit, number, absent), numberScratch);
 
     isArrayStorage.link(&jit);
-    loadArrayStorageElementAndReturn(jit, registers, slow);
+    loadArrayStorageElementAndReturn(jit, registers, probe, absent, slow);
 
     absent.link(&jit);
     Label isAbsent = emitAbsentElement(jit, registers, slow);

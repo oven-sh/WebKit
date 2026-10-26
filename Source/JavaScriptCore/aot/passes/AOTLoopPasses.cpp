@@ -781,8 +781,11 @@ static void unroll(FunctionPassContext& context, const ShortLoop& loop)
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
-    bool mayHaveShortLoop = std::ranges::any_of(context.function.blocks, [&](const Block& block) {
-        return mayBeHeaderOfShortLoop(context.program, context.function, block);
+    const CFG& cfg = context.analyses.cfg();
+    bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
+        return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
+            return cfg.isReachable(edge.from) && cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block);
+        });
     });
     if (!mayHaveShortLoop)
         return outcome;

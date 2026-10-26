@@ -30,6 +30,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestSite.h"
+#include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/HashMap.h>
@@ -1339,6 +1340,8 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
 // The code behind a failing edge is generic as a rule and relies on no proof about an array.
 static void findConversionsEndingProofs(FunctionPassContext& context, Vector<FailedStorageTest, 4>& failedTests)
 {
+    if (failedTests.isEmpty())
+        return;
     const Function& function = context.function;
     const GuardAvailability& guards = context.analyses.guards();
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
@@ -1373,6 +1376,7 @@ struct ReadsBehindStorageTest {
     ValueID guard;
     Vector<ValueID, 8> proofs;
     Vector<ValueID, 8> reads;
+    Vector<ValueID, 4> repeatedTests;
     Vector<BlockID, 8> region;
 };
 
@@ -1440,6 +1444,25 @@ static bool collectReadsRelyingOn(FunctionPassContext& context, const Value& tes
     return joinsTheseAlone && !found.reads.isEmpty();
 }
 
+// A validating build asks again each test that the proof stands for, and names the proof in no operand.
+static void collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
+{
+    if (!context.build.validates())
+        return;
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    ValueID array = analyses.identityOf(test.arrayOperand());
+    findReadsKeptForValidation(function).forEachSetBit([&](size_t index) {
+        ValueID id(index);
+        const Value& kept = function.at(id);
+        if (kept.opcode != Opcode::HasArrayStorage || kept.arrayStorage() != test.arrayStorage() || analyses.identityOf(kept.arrayOperand()) != array || analyses.useLists().useCount(id) != 1)
+            return;
+        ValueLocation location = analyses.useLists().locationOf(id);
+        if (analyses.dominators().dominates(found.passed, location.block) && analyses.guards().stateAt(found.guard, ProgramPoint { location.block, location.index }) == GuardState::Available)
+            found.repeatedTests.append(id);
+    });
+}
+
 // An element that is no number leaves where an absent one does: nothing has happened since that test.
 static bool standsBehindPresenceTest(FunctionPassContext& context, const ReadsBehindStorageTest& found, ValueID id)
 {
@@ -1489,6 +1512,10 @@ static bool cutOutRegionOfReads(FunctionPassContext& context, IRBuilder& builder
     std::ranges::for_each(found.reads, addUse);
     if (!isRepeated)
         return false;
+    for (ValueID repeated : found.repeatedTests) {
+        addUse(repeated);
+        addUse(useLists.usesOf(repeated).front().user);
+    }
     while (!worklist.isEmpty()) {
         BlockID block = worklist.takeLast();
         if (block == found.passed)
@@ -1534,12 +1561,13 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     FunctionAnalyses& analyses = context.analyses;
     Value test = *findStorageTestBranchedOnBy(function, tested);
     ArrayStorage other = test.arrayStorage() == ArrayStorage::Double ? ArrayStorage::Contiguous : ArrayStorage::Double;
-    ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { } };
+    ReadsBehindStorageTest found { function.at(tested).terminator.taken().block, { }, { }, { }, { }, { } };
     if (numberOfEdgeResults(function, tested, 0) != 1 || analyses.cfg().predecessors(found.passed).size() != 1)
         return { };
     found.guard = function.at(found.passed).parameters.last();
     if (!collectReadsRelyingOn(context, test, found))
         return { };
+    collectTestsRepeatedForValidation(context, test, found);
     // Double storage is asked for where numbers are expected.
     auto fitsOtherStorage = [&](ValueID read) {
         if (other == ArrayStorage::Contiguous)
@@ -1574,8 +1602,10 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     RegionCloner cloner(builder, function);
     cloner.mapValue(found.guard, isOfOther.provenOnTaken);
     cloner.cloneBlocks(found.region.span(), [&](ValueID original, Value& clone) {
-        if (found.reads.contains(original))
+        if (found.reads.contains(original) || found.repeatedTests.contains(original))
             clone.setArrayStorage(other);
+        if (found.repeatedTests.contains(original))
+            clone.setIsWritable(false);
     });
     for (BlockID block : cloner.clonedBlocks()) {
         Block& clone = function.edit(block, BlockEdit::Rest);

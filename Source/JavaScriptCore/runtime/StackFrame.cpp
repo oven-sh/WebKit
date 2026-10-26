@@ -32,6 +32,7 @@
 #include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 #include "AOTFunctionDescription.h"
 #include "AOTStackTrace.h"
@@ -99,9 +100,8 @@ static String compiledSourceURL(const std::optional<AOT::SourcePosition>& positi
     return position && position->source ? AOT::sourceURLOf(position->source) : emptyString();
 }
 
-static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame)
+static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame, const AOT::FunctionDescription& description)
 {
-    AOT::FunctionDescription description(compiledFrame.frame.function);
     if (description.codeType() == ModuleCode)
         return "module code"_s;
     if (!compiledFrame.frame.isAsyncFrame)
@@ -352,7 +352,7 @@ String StackFrame::functionName(VM& vm) const
         }
 #if ENABLE(AOT)
         , [&vm](const CompiledFrameData& compiledFrame) -> String {
-            return compiledFunctionName(vm, compiledFrame);
+            return compiledFunctionName(vm, compiledFrame, AOT::FunctionDescription(compiledFrame.frame.function));
         }
 #endif
     );
@@ -399,20 +399,53 @@ static StringView truncateLongDataURL(StringView sourceURL)
     return sourceURL.left(length);
 }
 
-String StackFrame::toString(VM& vm) const
+template<typename Functor>
+ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor) const
 {
-    String functionName = this->functionName(vm);
+    String functionName;
     // sourceURL points into fullSourceURL, so keep fullSourceURL around.
-    String fullSourceURL = this->sourceURLStripped(vm);
+    String fullSourceURL;
+    LineColumn lineColumn;
+    bool hasLineAndColumnInfo;
+#if ENABLE(AOT)
+    if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData)) {
+        AOT::FunctionDescription description(compiledFrame->frame.function);
+        functionName = compiledFunctionName(vm, *compiledFrame, description);
+        auto position = AOT::positionOf(compiledFrame->frame);
+        fullSourceURL = compiledSourceURL(position);
+        hasLineAndColumnInfo = description.builtinKind() != AOT::StackTraceBuiltinKind::HostFunction;
+        if (position)
+            lineColumn = position->lineColumn;
+        if (fullSourceURL.isEmpty() && !hasLineAndColumnInfo)
+            return functor(functionName, "@[native code]"_s);
+    } else
+#endif
+    {
+        functionName = this->functionName(vm);
+        fullSourceURL = this->sourceURLStripped(vm);
+        hasLineAndColumnInfo = this->hasLineAndColumnInfo();
+        if (hasLineAndColumnInfo && !fullSourceURL.isEmpty())
+            lineColumn = computeLineAndColumn();
+    }
     auto sourceURL = truncateLongDataURL(fullSourceURL);
 
-    if (sourceURL.isEmpty() && representsHostFunction())
-        return makeString(functionName, "@[native code]"_s);
-    if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
-        return makeString(functionName, '@', sourceURL);
+    if (sourceURL.isEmpty() || !hasLineAndColumnInfo)
+        return functor(functionName, '@', sourceURL);
+    return functor(functionName, '@', sourceURL, ':', lineColumn.line, ':', lineColumn.column);
+}
 
-    auto lineColumn = computeLineAndColumn();
-    return makeString(functionName, '@', sourceURL, ':', lineColumn.line, ':', lineColumn.column);
+String StackFrame::toString(VM& vm) const
+{
+    return withPartsOfString(vm, [](const auto&... parts) {
+        return makeString(parts...);
+    });
+}
+
+void StackFrame::appendTo(VM& vm, StringBuilder& builder) const
+{
+    withPartsOfString(vm, [&](const auto&... parts) {
+        builder.append(parts...);
+    });
 }
 
 } // namespace JSC

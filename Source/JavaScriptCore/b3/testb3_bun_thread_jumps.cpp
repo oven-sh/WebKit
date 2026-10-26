@@ -993,6 +993,55 @@ static void testFixSSAWithLongChainOfBlocksThatBranchToOneBlock()
     CHECK(upsilonCount == chainLength + 1);
 }
 
+// Each block of a long chain may leave for a side block of its own, which goes on to the side block of the next link. A variable of
+// its own carries a value into each side block.
+static void testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn()
+{
+    constexpr unsigned chainLength = 20000;
+    Procedure proc;
+    Vector<Variable*> variables;
+    Vector<BasicBlock*> sideBlocks;
+    for (unsigned link = 0; link < chainLength; ++link) {
+        variables.append(proc.addVariable(Int64));
+        sideBlocks.append(nullptr);
+    }
+    BasicBlock* block = proc.addBlock();
+    for (BasicBlock*& sideBlock : sideBlocks)
+        sideBlock = proc.addBlock();
+    Value* argument = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = proc.addBlock();
+        Value* sum = block->appendNew<Value>(proc, Add, Origin(), argument, block->appendNew<Const64Value>(proc, Origin(), link));
+        block->appendNew<VariableValue>(proc, B3::Set, Origin(), variables[link], sum);
+        block->appendNew<Value>(proc, Branch, Origin(), sum);
+        block->setSuccessors(FrequentedBlock(next), FrequentedBlock(sideBlocks[link]));
+        block = next;
+
+        BasicBlock* sideBlock = sideBlocks[link];
+        Value* carried = sideBlock->appendNew<VariableValue>(proc, B3::Get, Origin(), variables[link]);
+        if (link + 1 == chainLength) {
+            sideBlock->appendNew<Value>(proc, Return, Origin(), carried);
+            continue;
+        }
+        sideBlock->appendNew<VariableValue>(proc, B3::Set, Origin(), variables[link + 1], carried);
+        sideBlock->appendNew<Value>(proc, Jump, Origin());
+        sideBlock->setSuccessors(FrequentedBlock(sideBlocks[link + 1]));
+    }
+    block->appendNew<Value>(proc, Return, Origin(), argument);
+    proc.resetReachability();
+
+    CHECK(fixSSA(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == chainLength - 1);
+    CHECK(upsilonCount == 2 * (chainLength - 1));
+}
+
 static void testFoldPathConstantsFindsTheSameInIndexAndList()
 {
     auto policyWithLimit = [](uint64_t limit) {
@@ -1270,6 +1319,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());
     RUN(testEliminateDeadCodeFollowsLongChainOfPhis());
     RUN(testFixSSAWithLongChainOfBlocksThatBranchToOneBlock());
+    RUN(testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn());
     RUN(testFoldPathConstantsFindsTheSameInIndexAndList());
     RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testFoldPathConstantsFoldsSelect());

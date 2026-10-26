@@ -2785,14 +2785,15 @@ struct TestPlacer {
     {
         if (!copy)
             return;
-        // In a checked function of the program the type that a test expects is what the checker says. Elsewhere it is a guess, and the copy runs.
+        // In a checked function of the program the type that a test expects is what the checker says. Elsewhere, and where the checker names no layout, it is a guess, and the copy runs.
+        bool expectsWhatCheckerSays = expectsCheckedTypes && std::ranges::none_of(clonedRanges(), [&](const StretchRange& range) { return stretchesThatGuessLayouts.quickGet(range.stretch); });
         everyTestIsUnpredictable = std::ranges::all_of(plan.uses, [&](const PlannedUse& use) {
             return !isPlaced(use.stretch) || plan.sites.sites[use.site].outcome == TestOutcome::IsUnpredictable;
         });
         if (everyTestIsUnpredictable)
             copy->clone(+[](BlockFrequency original) { return original; });
         else
-            copy->clone(expectsCheckedTypes ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
+            copy->clone(expectsWhatCheckerSays ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
 
         RELEASE_ASSERT(extentOfCopy != GenericCopy::Extent::NotCopied);
         if (extentOfCopy == GenericCopy::Extent::ToWaysBack)

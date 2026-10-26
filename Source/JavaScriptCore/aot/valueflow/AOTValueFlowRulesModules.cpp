@@ -758,7 +758,12 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
 
     switch (statement.opcode) {
     case Opcode::Builtin:
-        requireModule(statement, context, compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())));
+        if (ModuleID module = compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())))
+            requireModule(statement, context, module);
+        else if (statement.result) {
+            context.add(statement.result, only(context, context.universe().objectOf(operation.builtin())));
+            context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
+        }
         return;
     case Opcode::ModuleNamespace:
         noteRequest(context, statement.function, operation.module());

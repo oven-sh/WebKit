@@ -33,6 +33,8 @@ static uint32_t firstWordOf(const LayoutData& layout)
     return std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(layout)[0];
 }
 
+static constexpr bool copyChunkWritesScratches = !isX86_64();
+
 static void copyChunk(StubAssembler& jit, GPRReg source, GPRReg target, GPRReg offset, GPRReg firstScratch, GPRReg secondScratch)
 {
 #if CPU(X86_64)
@@ -199,29 +201,23 @@ static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPR
     jit.move(TrustedImm32(0), count);
 }
 
-PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
-{
-    // A call that preserves registers has none to copy with.
-    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::None)
-        return PreludeExit::CallsOperation;
+struct ChunkCopy {
+    GPRReg target;
+    GPRReg source;
+    GPRReg excludedRun;
+    GPRReg count;
+    // Holds the StructureID of both.
+    GPRReg structure;
+    GPRReg word;
+    GPRReg orderWord;
+};
 
-    constexpr GPRReg target = operationArgumentGPR(1);
-    constexpr GPRReg source = operationArgumentGPR(2);
-    constexpr GPRReg excludedRun = operationArgumentGPR(3);
-    constexpr GPRReg count = operationArgumentGPR(4);
-    constexpr GPRReg excludedKeys = operationArgumentGPR(5);
-    const GPRReg word = jit.allocateScratch(StubRegister::R0);
-    const GPRReg orderWord = jit.allocateScratch(StubRegister::T9);
-    const GPRReg structure = jit.allocateScratch(StubRegister::T12);
+// Between records of one Structure that hold their fields in plain slots of the cell. It falls through where the copy is made.
+static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& callsOperation)
+{
+    const auto [target, source, excludedRun, count, structure, word, orderWord] = copy;
     const GPRReg layout = structure;
     const GPRReg fieldBytes = structure;
-    RELEASE_ASSERT(noOverlap(target, source, excludedRun, count, excludedKeys, word, orderWord, structure, instanceGPR));
-    jit.recordClobbers(RegisterSet(excludedRun, count, excludedKeys));
-    JumpList callsOperation;
-
-    callsOperation.append(jit.branchIfNotCell(source));
-    jit.load32(Address(target, JSCell::structureIDOffset()), structure);
-    Jump structuresDiffer = jit.branch32(CCallHelpers::NotEqual, structure, Address(source, JSCell::structureIDOffset()));
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(target, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType)));
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
@@ -272,6 +268,67 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
     isCopied.link(&jit);
     jit.and32(TrustedImm32(orderAndCountMask), orderWord);
     jit.store32(orderWord, Address(target, offsetOfOrderWord));
+}
+
+PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
+{
+    StubFamily family = jit.key().family();
+    bool preservesRegisters = family == StubFamily::CallOperationPreservingRegisters;
+    if ((family != StubFamily::CallOperation && !preservesRegisters) || jit.signature().result != StubResult::None)
+        return PreludeExit::CallsOperation;
+
+    constexpr GPRReg target = operationArgumentGPR(1);
+    constexpr GPRReg source = operationArgumentGPR(2);
+    constexpr GPRReg excludedRun = operationArgumentGPR(3);
+    constexpr GPRReg count = operationArgumentGPR(4);
+    constexpr GPRReg excludedKeys = operationArgumentGPR(5);
+    constexpr GPRReg word = gprOf(StubRegister::R0);
+    constexpr GPRReg orderWord = gprOf(StubRegister::T9);
+    constexpr GPRReg structure = gprOf(StubRegister::T12);
+    static_assert(noOverlap(target, source, excludedRun, count, excludedKeys, word, orderWord, structure, instanceGPR));
+    auto allocateScratches = [&] {
+        for (StubRegister scratch : { StubRegister::R0, StubRegister::T9, StubRegister::T12 })
+            jit.allocateScratch(scratch);
+    };
+    JumpList callsOperation;
+    callsOperation.append(jit.branchIfNotCell(source));
+
+    // A call that preserves registers may write that of its immediate. With it the Structures are compared; what the copy by chunks writes is saved behind that. The copy by moves writes more: there it is left to the operation.
+    if (preservesRegisters) {
+        const GPRReg immediate = *jit.signature().immediate;
+        RELEASE_ASSERT(noOverlap(immediate, target, source, excludedRun, count, word, structure, instanceGPR));
+        jit.recordClobbers(RegisterSet(immediate));
+        jit.load32(Address(target, JSCell::structureIDOffset()), immediate);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, immediate, Address(source, JSCell::structureIDOffset())));
+        Vector<GPRReg, 4> saved;
+        for (GPRReg written : { word, orderWord, structure }) {
+            if (written != immediate)
+                saved.append(written);
+        }
+        if (copyChunkWritesScratches)
+            saved.append(excludedRun);
+        jit.preserving(saved.span(), [&] {
+            allocateScratches();
+            JumpList isLeftToOperation;
+            jit.move(immediate, structure);
+            copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, isLeftToOperation);
+            jit.move(TrustedImm32(0), immediate);
+            Jump isCopied = jit.jump();
+            isLeftToOperation.link(&jit);
+            jit.move(TrustedImm32(1), immediate);
+            isCopied.link(&jit);
+        });
+        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, immediate));
+        jit.returnToCaller();
+        callsOperation.link(&jit);
+        return PreludeExit::CallsOperation;
+    }
+
+    allocateScratches();
+    jit.recordClobbers(RegisterSet(excludedRun, count, excludedKeys));
+    jit.load32(Address(target, JSCell::structureIDOffset()), structure);
+    Jump structuresDiffer = jit.branch32(CCallHelpers::NotEqual, structure, Address(source, JSCell::structureIDOffset()));
+    copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, callsOperation);
     jit.returnToCaller();
 
     structuresDiffer.link(&jit);

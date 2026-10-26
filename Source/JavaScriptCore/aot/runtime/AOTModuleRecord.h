@@ -75,6 +75,10 @@ public:
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
     void didAskHostForRequest(uint8_t flagsBefore);
+    // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
+    AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
+    // Behind appendRequestedModule() with a key of a compiled module.
+    void didRequestCompiledModule(const Identifier& key, ModuleID module) { m_compiledRequests.append({ key.impl(), module }); }
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
@@ -98,6 +102,9 @@ private:
     ModuleID m_module;
     const ModuleEvaluationStack* m_evaluationStack { nullptr };
     Vector<UniquedStringImpl*, 2> m_resolveSet;
+    // The requests keep the keys. The loader asks in the order of the requests, and not for all of them.
+    Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
+    unsigned m_nextCompiledRequest { 0 };
     bool m_holdsStatus { false };
     bool m_isRetained { false };
     bool m_runsWhenLoaded { false };

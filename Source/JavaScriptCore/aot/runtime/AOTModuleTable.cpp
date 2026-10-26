@@ -196,8 +196,13 @@ String ModuleTable::pathText(ModuleID module) const
 {
     if (data(module).directory == Number24::max)
         return ProgramStrings::text(*m_tables, StringID(data(module).publicPathOrName));
+    PiecesOfPath pieces = piecesOfPath(module);
+    unsigned length = 0;
+    for (StringView piece : pieces)
+        length += piece.length();
     StringBuilder path;
-    for (StringView piece : piecesOfPath(module))
+    path.reserveCapacity(length);
+    for (StringView piece : pieces)
         path.append(piece);
     return path.toString();
 }

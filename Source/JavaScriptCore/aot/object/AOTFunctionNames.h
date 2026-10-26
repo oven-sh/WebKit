@@ -21,12 +21,13 @@ class VM;
 
 namespace AOT {
 
+class FunctionDescription;
 struct State;
 
 enum class NameForm : uint8_t { AsWritten, InFrames };
 
 // callee: the function object that runs in the frame, where the frame has recorded it.
-JS_EXPORT_PRIVATE String functionName(VM&, FunctionID, NameForm, JSObject* callee = nullptr);
+JS_EXPORT_PRIVATE String functionName(VM&, const FunctionDescription&, NameForm, JSObject* callee = nullptr);
 JSString* functionSourceText(JSGlobalObject*, FunctionID);
 
 String writtenFunctionName(FunctionID);

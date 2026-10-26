@@ -33,6 +33,7 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Point" fields=[
 layout L1 name="Copy"
 layout L2 name="Tail" fields=[{key="z" declared={type=anything}}]
 layout L3 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L4 name="Labeled" fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -43,7 +44,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
     v6 = NewClosure function=f5
-    v7 = Call v1, -, v2, v3, v4, v5, v6
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
     Return
 }
 function f1 name="makePoint" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -70,6 +72,11 @@ function f5 name="makePair" results=[{type=anything}] {
     v0 = NewObject layout=L3 fields=[]
     v1 = FinishObject v0
     Return v1
+}
+function f6 name="makeLabeled" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = FinishObject v1
+    Return v2
 }
 )IR"_s;
 
@@ -593,6 +600,10 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
         RepeatedCopy way = tryRepeatAssignment(vm, program.state(), first, source, 0);
         AOT_TEST_CHECK(way == RepeatedCopy::ByMap || way == RepeatedCopy::ByMapForTheFirstTime);
         AOT_TEST_CHECK(hasKeys(program, first, { "x"_s, "y"_s }) && holdsPropertiesOf(program, first, source));
+        if (way == RepeatedCopy::ByMapForTheFirstTime) {
+            AOT_TEST_CHECK(!place && !tryCopy(allocate(program, "Pair"_s), source));
+            AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), allocate(program, "Pair"_s), source, 0) == RepeatedCopy::ByMap);
+        }
         AOT_TEST_CHECK(place && place->takesNoFrame);
 
         Object* second = allocate(program, "Pair"_s);
@@ -619,6 +630,35 @@ static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollectio
     AOT_TEST_CHECK(tryCopy(allocate(program, "Pair"_s), source));
     prototype->didBecomePrototype(vm);
     AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
+}
+
+static void testCopiesWithoutFrameWriteNoFieldThatTheTargetHolds(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    SetForScope withoutValidation(vm.aotState().validatesRuntime, false);
+    auto createWithFirstField = [&](ASCIILiteral layoutName) {
+        Object* target = allocate(program, layoutName);
+        AOT_TEST_CHECK(target->store(vm, target->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(5))));
+        return target;
+    };
+    auto copyAfterTwoCopiesInFrame = [&](ASCIILiteral layoutName, Object* source) {
+        AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), createWithFirstField(layoutName), source, 0) == RepeatedCopy::ByMapForTheFirstTime);
+        AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), createWithFirstField(layoutName), source, 0) == RepeatedCopy::ByMap);
+        Object* target = createWithFirstField(layoutName);
+        bool didCopy = tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(source), 0);
+        return std::pair { target, didCopy };
+    };
+
+    auto [labeled, didCopyBesideLabel] = copyAfterTwoCopiesInFrame("Labeled"_s, createPoint(program, 1, 2));
+    AOT_TEST_CHECK(didCopyBesideLabel && hasKeys(program, labeled, { "label"_s, "x"_s, "y"_s }));
+    AOT_TEST_CHECK(labeled->get(program.realm(), Identifier::fromString(vm, "label"_s)) == jsNumber(5) && labeled->get(program.realm(), Identifier::fromString(vm, "x"_s)) == jsNumber(1) && labeled->get(program.realm(), Identifier::fromString(vm, "y"_s)) == jsNumber(2));
+
+    Object* pair = allocate(program, "Pair"_s);
+    put(program, pair, "y"_s, 3);
+    put(program, pair, "x"_s, 4);
+    auto [point, didCopyOverX] = copyAfterTwoCopiesInFrame("Point"_s, pair);
+    AOT_TEST_CHECK(!didCopyOverX && hasKeys(program, point, { "x"_s }) && point->get(program.realm(), Identifier::fromString(vm, "x"_s)) == jsNumber(5));
 }
 
 static void testIntegersMoveIntoSlotsThatMayHoldNone()
@@ -668,6 +708,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
+        { "assignment-plans/copies-without-frame-write-no-field-that-the-target-holds"_s, withPoints<testCopiesWithoutFrameWriteNoFieldThatTheTargetHolds> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
     };
     return tests;

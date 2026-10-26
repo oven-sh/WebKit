@@ -1,0 +1,62 @@
+# const source = { b: 1.5, a: 1.5 }   unknown(source)   function copy(from) { return { z: 1.5, ...from } }   copy(source); copy(unknown())
+# Unknown code holds the source, and what it hands over arrives beside it. What the listed source is born with gets fields in the literal; nothing is said of what they hold.
+# function copyAlone(from) { return { ...from } } has no member of its own and gets none.
+# function copyEither(from) { return { z: 1.5, ...from } }   copyEither(source); copyEither({ a: 1.5, c: 1.5 }); copyEither(unknown()): only what both are born with.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="Copy" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}]}, {key="b" declared={type=anything} flags=[IsAddedLate{{*}}]}] ownFieldCount=1
+# CHECK: layout L2 name="CopyAlone" flow=
+# CHECK: layout L4 name="CopyOfEither" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}]}] ownFieldCount=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Source" fields=[{key="a" declared={type=undefined|number} flags=[IsRequired]}, {key="b" declared={type=undefined|number} flags=[IsRequired]}]
+layout L1 kind=Record name="Copy" fields=[{key="z" declared={type=undefined|number}}]
+layout L2 kind=Record name="CopyAlone"
+layout L3 kind=Record name="Other" fields=[{key="a" declared={type=undefined|number} flags=[IsRequired]}, {key="c" declared={type=undefined|number} flags=[IsRequired]}]
+layout L4 kind=Record name="CopyOfEither" fields=[{key="z" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Double number=1.5
+    v3 = NewObject -, v2, v2 layout=L0 fields=[1, 0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4
+    v6 = Call v1
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v4
+    v9 = Call v7, -, v6
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v4
+    v12 = Call v10, -, v6
+    v13 = NewObject -, v2, v2 layout=L3 fields=[0, 1]
+    v14 = FinishObject v13
+    v15 = Call v1, -, v14
+    v16 = NewClosure function=f3
+    v17 = Call v16, -, v4
+    v18 = Call v16, -, v14
+    v19 = Call v16, -, v6
+    Return
+}
+function f1 name="copy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+}
+function f2 name="copyAlone" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L2
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+}
+function f3 name="copyEither" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = NewObject -, v1 layout=L4 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+}

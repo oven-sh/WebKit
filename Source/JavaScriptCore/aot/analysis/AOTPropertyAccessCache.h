@@ -102,6 +102,19 @@ public:
 
     using ProvenNamedAccess = Answer<ProvenAccessKey, ProvenAccess>;
 
+    struct InheritedMemberKey {
+        LayoutID declaredClass;
+        BuiltinClassID builtinClass;
+        bool isOfInstances { false };
+        PropertyKeyID key;
+        Access access { Access::Read };
+        const FlowResults* flow { nullptr };
+
+        friend bool operator==(const InheritedMemberKey&, const InheritedMemberKey&) = default;
+    };
+
+    using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
+
     struct CodeOfOperand {
         TypeID operand;
         OperandBehavior behavior;
@@ -126,6 +139,7 @@ public:
     SharedMemo<ProvenNamedAccess> provenAccesses;
     SharedMemo<MethodsOfName> methodsByName;
     SharedMemo<CodeOfOperand> codeOfOperands;
+    SharedMemo<InheritedMember> inheritedMembers;
     RefusedContents refusedContents;
     bool checksAnswers { false };
 };

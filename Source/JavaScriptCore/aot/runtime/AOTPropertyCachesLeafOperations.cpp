@@ -324,12 +324,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, (
     return JSValue::encode(readByKey(instance, base, key).value);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSparseElement, EncodedJSValue, (Instance* instance, JSCell* base, EncodedJSValue index))
-{
-    LeafOperationScope leaf(*instance->vm);
-    return JSValue::encode(readSparseElement(asObject(base), JSValue::decode(index).asUInt32()));
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key))
 {
     LeafOperationScope leaf(*instance->vm);

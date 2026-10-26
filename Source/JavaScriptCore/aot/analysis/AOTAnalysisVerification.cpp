@@ -407,6 +407,10 @@ void FunctionAnalyses::verifyFrequencies()
 
 void FunctionAnalyses::verifyCached()
 {
+    // The build ends with that error. What the analyses hold behind it need not be right.
+    if (m_effects.didReportOutdatedAnswer())
+        return;
+
     if (m_values.useLists && !m_values.useLists->isUpToDate() && !m_values.useLists->mustBeMadeAnew())
         useLists();
 

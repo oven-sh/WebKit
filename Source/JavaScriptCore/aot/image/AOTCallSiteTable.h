@@ -104,11 +104,13 @@ bool catchesExceptions(const Image&, uint32_t function);
 struct SourcePosition {
     friend bool operator==(const SourcePosition&, const SourcePosition&) = default;
 
-    const LineColumn& startOfExpression() const { return constructionStart.line ? constructionStart : lineColumn; }
+    const LineColumn& startOfExpression() const { return constructionStart.line && !startIsForCallers ? constructionStart : lineColumn; }
 
     LineColumn lineColumn;
     ModuleID source;
     LineColumn constructionStart { 0, 0 };
+    // `constructionStart` is no start of a construction: it is where the site is reported while something that it called runs.
+    bool startIsForCallers { false };
 };
 
 static constexpr unsigned sitesBetweenPositionCheckpoints = 512;

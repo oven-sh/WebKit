@@ -184,6 +184,8 @@ public:
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     bool isNotLoaded(ModuleID);
+    // Of an ES module of the program that has neither a record nor a status.
+    bool isNotLoadedWithoutStatus(ModuleID, const ModuleData&);
     // An ES module of the program whose status stands in the table and says that it is linked, at the least.
     bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
@@ -469,6 +471,13 @@ ALWAYS_INLINE bool Modules::isLoadedModuleWithoutRecord(ModuleID module) const
         return false;
     const ModuleData& moduleData = data(module);
     return moduleData.kind == ModuleKind::SourceText && !moduleData.isOfLibrary() && !moduleData.isFaceOfFile();
+}
+
+ALWAYS_INLINE bool Modules::isNotLoadedWithoutStatus(ModuleID module, const ModuleData& moduleData)
+{
+    if (m_entryPointIsLinked && moduleData.isLinkedWithEntryPoint())
+        return false;
+    return moduleData.needsLink() || !m_innermostEvaluation || !wasLoadedWithGraphBeingEvaluated(module);
 }
 
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const

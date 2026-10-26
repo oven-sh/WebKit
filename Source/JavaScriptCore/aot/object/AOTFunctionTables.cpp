@@ -456,12 +456,12 @@ static String displayNameInFrames(VM& vm, FunctionID function)
     return classObject == entry->value.functionObject ? ownTextProperty(asObject(classObject), vm.propertyNames->displayName) : String();
 }
 
-static String functionNameAsWritten(FunctionID function)
+static String functionNameAsWritten(const FunctionDescription& description)
 {
-    FunctionKindData kind = functionKindData(function);
-    if (FunctionDescription(function).codeType() == ModuleCode || kind.isCommonJSModule)
+    FunctionKindData kind = functionKindData(description.function());
+    if (description.codeType() == ModuleCode || kind.isCommonJSModule)
         return emptyString();
-    String written = writtenFunctionName(function);
+    String written = writtenFunctionName(description.function());
     return kind.isBound() ? makeString("bound "_s, written) : written;
 }
 
@@ -489,19 +489,20 @@ static String nameGivenTo(VM& vm, JSObject* callee)
 }
 
 // The engine runs the body of a generator, and of an async function that awaits, as a function of its own. It has the name that is written in the function and none that the function takes from a variable or a property.
-static bool runsInBodyWithoutName(FunctionID function)
+static bool runsInBodyWithoutName(const FunctionDescription& description)
 {
-    FunctionKindData kind = functionKindData(sourceFunctionOf(function));
-    return kind.hasInferredName && (kind.isGenerator || (kind.isAsync && FunctionDescription(function).isNamedByOwner()));
+    FunctionKindData kind = functionKindData(sourceFunctionOf(description.function()));
+    return kind.hasInferredName && (kind.isGenerator || (kind.isAsync && description.isNamedByOwner()));
 }
 
-String functionName(VM& vm, FunctionID function, NameForm form, JSObject* callee)
+String functionName(VM& vm, const FunctionDescription& description, NameForm form, JSObject* callee)
 {
+    FunctionID function = description.function();
     switch (form) {
     case NameForm::AsWritten:
-        return functionNameAsWritten(function);
+        return functionNameAsWritten(description);
     case NameForm::InFrames:
-        if (runsInBodyWithoutName(function))
+        if (runsInBodyWithoutName(description))
             return emptyString();
         if (callee) [[unlikely]] {
             if (String name = nameGivenTo(vm, callee); !name.isNull())
@@ -512,9 +513,9 @@ String functionName(VM& vm, FunctionID function, NameForm form, JSObject* callee
             return name;
         else if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
             return displayName;
-        if (FunctionDescription(function).isNamedByComputedKey()) [[unlikely]]
+        if (description.isNamedByComputedKey()) [[unlikely]]
             return nameInFramesOfFunctionNamedByComputedKey(function);
-        return functionNameAsWritten(function);
+        return functionNameAsWritten(description);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

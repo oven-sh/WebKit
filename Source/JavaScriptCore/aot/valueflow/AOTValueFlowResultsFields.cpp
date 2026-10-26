@@ -523,6 +523,40 @@ struct FieldResults {
         return keys.value_or(Vector<PropertyKeyID>());
     }
 
+    // `{ delay: 50, ...options }`: a copy that may bring anything still brings what every source that is listed is born with. Those names get fields of which nothing else is said.
+    void nameKeysOfListedSources(std::span<const BirthWithCopies> births)
+    {
+        AOT_THRESHOLD(uint32_t, mostListedSourcesThatNameFields, 8);
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        auto isBornWith = [&](LayoutID source, PropertyKeyID key) {
+            const Layout& layout = program.at(source);
+            std::optional<uint32_t> field = layout.kind == LayoutKind::Record ? layout.findField(key) : std::nullopt;
+            return field && layout.fields[*field].flags.contains(FieldFlags::IsRequired) && layout.fields[*field].form.isEmpty() && !stores.mayGetAccessorUnder(source, key);
+        };
+        BitVector isLookedAt(numberOfLayouts);
+        for (const BirthWithCopies& birth : births) {
+            if (birth.copies.isEmpty() || birth.definedKeys.isEmpty() || isLookedAt.set(birth.layout.index()) || !hasObjects(birth.layout) || !stores.getsCopiedProperties(birth.layout))
+                continue;
+            ValueSetID sources = heap.writtenUnder(maker.get(), layoutsOfObjects.objectsWith(birth.layout), copiedFromName);
+            if (ValueSets::isComplement(sources) || sets.size(sources) > mostListedSourcesThatNameFields)
+                continue;
+            Vector<LayoutID, 4> layouts;
+            sets.forEachMember(sources, [&](ValueFlowObjectID object) {
+                layoutsOfObjects.forEachLayoutOf(object, [&](LayoutID layout) {
+                    layouts.append(layout);
+                });
+            });
+            if (layouts.isEmpty())
+                continue;
+            for (const Field& field : program.at(layouts[0]).fields) {
+                if (!field.key || !std::ranges::all_of(layouts, [&](LayoutID layout) { return isBornWith(layout, field.key); }))
+                    continue;
+                for (LayoutID layout : layouts)
+                    stores.noteKeyBroughtByCopies(birth.layout, field.key, stores.storedUnder(maker.get(), layout, field.key));
+            }
+        }
+    }
+
     void followCopiesAtBirth(std::span<const AllocatingOperation> operations)
     {
         isBornWithCopies = BitVector(numberOfLayouts);
@@ -533,6 +567,7 @@ struct FieldResults {
         });
         if (births.isEmpty())
             return;
+        nameKeysOfListedSources(births.span());
 
         BitVector hasOtherSites(numberOfLayouts);
         for (LayoutID layout : layoutsOfOtherSites([](ValueFlowObjectID, const ValueFlowSite&) { return true; })) {
@@ -540,7 +575,7 @@ struct FieldResults {
             hasOtherSites.quickSet(declaredLayoutOf(program, layout).index());
         }
         births.removeAllMatching([&](const BirthWithCopies& birth) {
-            return !hasObjects(birth.layout) || hasOtherSites.quickGet(birth.layout.index()) || stores.hasObjectOfCodeWithoutSolve(birth.layout) || !build.isEnabled(FlowResultKind::Initialization, birth.layout.index());
+            return !hasObjects(birth.layout) || hasOtherSites.quickGet(birth.layout.index()) || stores.hasObjectOfCodeWithoutSolve(birth.layout) || !build.isEnabled(FlowResultKind::Initialization, birth.layout.index()) || !build.isEnabled(FlowResultKind::ConstructorFieldOrders, birth.layout.index());
         });
         keysHeldSinceBirth = KeysByLayout(numberOfLayouts);
         for (BirthWithCopies& birth : births) {
