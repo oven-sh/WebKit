@@ -23,6 +23,7 @@
 #include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
