@@ -20,6 +20,7 @@ struct TraceFrame {
     CallSiteIndex callSite;
     bool isInlined;
     bool isConstructCall;
+    bool isClassCalledWithoutNew { false };
 
     static TraceFrame of(CompiledFrameIterator&);
 };

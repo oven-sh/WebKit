@@ -84,7 +84,7 @@ operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; w
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 
 family BuiltinCall Prepared..Placed
-operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDemotedTailCall] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
+operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDemotedTailCall isReflectConstructSyntax] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
 operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none
 operation ToInt32 (value: Number/inspects) -> natural(int32) ; none ; runtime = ToInt32
 operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32

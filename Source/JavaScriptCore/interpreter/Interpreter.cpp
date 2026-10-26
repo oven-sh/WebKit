@@ -986,6 +986,12 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 start.compiledFramesBelow->emplace(visitor.compiledFrames());
             return IterationStatus::Done;
         }
+        if (auto classFrame = AOT::tryGetFrameOfClassCalledWithoutNew(vm, visitor->callFrame())) [[unlikely]] {
+            results.append(StackFrame(*classFrame));
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+            return IterationStatus::Continue;
+        }
 #endif
 
         if (!visitor->isImplementationVisibilityPrivate()) {

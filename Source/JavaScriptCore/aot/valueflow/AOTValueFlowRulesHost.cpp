@@ -94,10 +94,10 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
     if (const auto* summary = nodes.resultSummaryOf(function))
-        context.connect(summary->ownResult, escaped);
+        carryOut(context, summary->ownResult);
     else {
         for (unsigned index = 0; index < callee.results.size(); ++index)
-            context.connect(nodes.result(function, index), escaped);
+            carryOut(context, nodes.result(function, index));
     }
     context.connect(nodes.thrown(function), escaped);
     if (!callee.isUnsplitCoroutine() || !callee.has(FunctionFlags::IsGenerator))

@@ -42,6 +42,7 @@ struct DirectEvalStructures {
     Structure* bindings { nullptr };
     Structure* scope { nullptr };
     Structure* variableScope { nullptr };
+    Structure* derivedConstructorStandIn { nullptr };
 };
 
 // How the getters of an object literal came to lie in the slots of one new object.

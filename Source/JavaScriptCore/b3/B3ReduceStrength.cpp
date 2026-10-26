@@ -545,6 +545,9 @@ private:
             
         case Add:
             handleCommutativity();
+
+            if (tryAddIntegersBehindDoubles())
+                break;
             
             if (m_value->child(0)->opcode() == Add && m_value->isInteger()) {
                 // Turn this: Add(Add(value, constant1), constant2)
@@ -650,6 +653,9 @@ private:
             break;
 
         case Sub:
+            if (tryAddIntegersBehindDoubles())
+                break;
+
             // Turn this: Sub(BitXor(BitAnd(value, mask1), mask2), mask2)
             // Into this: SShr(Shl(value, amount), amount)
             // Conditions: 
@@ -3060,6 +3066,17 @@ private:
             break;
         }
 
+        case Patchpoint: {
+            // Turn this: Patchpoint(truncatesDoubleToInt64, IToD(integer))
+            // Into this: integer
+            auto* patchpoint = m_value->as<PatchpointValue>();
+            if (!m_reducesWithRanges || !patchpoint->pureFunction || !patchpoint->pureFunction->truncatesDoubleToInt64)
+                break;
+            if (Value* integer = exactIntegerBehind(m_value->child(0), 53))
+                replaceWithIdentity(integer);
+            break;
+        }
+
         case Check: {
             CheckValue* checkValue = m_value->as<CheckValue>();
             
@@ -4353,6 +4370,35 @@ private:
         Value* left = lowWordOf(m_value->child(0));
         Value* right = lowWordOf(m_value->child(1));
         m_lowWords.add(m_value, m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left, right));
+    }
+
+    // The Int64 that IToD made the double from, where its magnitude is at most 2^bits, so that no bit was rounded away.
+    Value* exactIntegerBehind(Value* number, unsigned bits)
+    {
+        if (number->opcode() != IToD)
+            return nullptr;
+        Value* integer = number->child(0);
+        if (integer->type() == Int32)
+            return m_insertionSet.insert<Value>(m_index, SExt32, m_value->origin(), integer);
+        IntRange range = rangeFor(integer);
+        int64_t limit = 1ll << bits;
+        return range.min() >= -limit && range.max() <= limit ? integer : nullptr;
+    }
+
+    // Turn this: Add(IToD(a), IToD(b))
+    // Into this: IToD(Add(a, b))
+    // A sum of two integers of at most 2^52 is at most 2^53, which a double holds exactly. Neither form gives -0.
+    bool tryAddIntegersBehindDoubles()
+    {
+        if (!m_reducesWithRanges || m_value->type() != Double || m_value->child(0)->opcode() != IToD || m_value->child(1)->opcode() != IToD)
+            return false;
+        Value* left = exactIntegerBehind(m_value->child(0), 52);
+        Value* right = left ? exactIntegerBehind(m_value->child(1), 52) : nullptr;
+        if (!right)
+            return false;
+        Value* sum = m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left, right);
+        replaceWithNew<Value>(IToD, m_value->origin(), sum);
+        return true;
     }
 
     bool tryReduceWithRanges()

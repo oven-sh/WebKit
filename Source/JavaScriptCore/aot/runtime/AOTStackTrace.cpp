@@ -10,6 +10,7 @@
 
 #include "AOTAsyncResumption.h"
 #include "AOTCallSiteTable.h"
+#include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
@@ -357,7 +358,7 @@ static bool isSameFrame(const StackFrame& expected, const StackFrame& actual)
     if (expected.isCompiledFrame()) {
         const TraceFrame& left = expected.compiledFrame();
         const TraceFrame& right = actual.compiledFrame();
-        return left.code == right.code && left.function == right.function && left.callSite.bits() == right.callSite.bits() && left.isInlined == right.isInlined && left.isConstructCall == right.isConstructCall;
+        return left.code == right.code && left.function == right.function && left.callSite.bits() == right.callSite.bits() && left.isInlined == right.isInlined && left.isConstructCall == right.isConstructCall && left.isClassCalledWithoutNew == right.isClassCalledWithoutNew;
     }
     if (expected.callee() != actual.callee() || expected.codeBlock() != actual.codeBlock() || expected.isWasmFrame() != actual.isWasmFrame() || expected.hasBytecodeIndex() != actual.hasBytecodeIndex())
         return false;
@@ -583,6 +584,22 @@ void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, Show
         if (!frame.inlineFrame)
             break;
     }
+}
+
+// Bytecode enters the constructor and throws there, so the stack has a frame of the class at the start of its parameters.
+std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* callFrame)
+{
+    if (vm.aotState().classCalledWithoutNew != callFrame) [[likely]]
+        return std::nullopt;
+    FunctionID function = uncheckedDowncast<Closure>(callFrame->jsCallee())->function();
+    if (FunctionDescription(function).visibility() == TraceVisibility::Hidden)
+        return std::nullopt;
+    const Image& image = *Image::current();
+    for (FunctionID candidate : { function, sourceFunctionOf(function) }) {
+        if (auto code = image.imageFunctionOf(candidate))
+            return TraceFrame { CompiledFunctionID(*code), function, CallSiteIndex(0), false, false, true };
+    }
+    return std::nullopt;
 }
 
 std::optional<SourcePosition> positionOf(const TraceFrame& frame)

@@ -44,6 +44,7 @@
 #include "StructureCreateInlines.h"
 #include "TopExceptionScope.h"
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
@@ -140,6 +141,7 @@ JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, Ca
     Closure* classObject = uncheckedDowncast<Closure>(callFrame->jsCallee());
     String name = classObject->kind().hasInferredName ? String() : writtenFunctionName(classObject->function());
     ConstructorKind kind = FunctionDescription(classObject->function()).isNakedConstructor() ? ConstructorKind::Naked : ConstructorKind::Base;
+    SetForScope shownFrame(vm.aotState().classCalledWithoutNew, callFrame);
     return JSValue::encode(throwException(globalObject, scope, createConstructorCalledWithoutNewError(globalObject, kind, name)));
 }
 

@@ -191,9 +191,9 @@ static void recordNameSetAtRunTime(VM& vm, FunctionID closureFunction, const Str
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
     Locker locker { tables.namesLock };
     if (isOnlyClosure)
-        tables.namesSetAtRunTime.set(sourceFunction, name.isolatedCopy());
+        tables.namesSetAtRunTime.set(sourceFunction, name);
     else if (auto result = tables.namesSetAtRunTime.add(sourceFunction, String()); result.isNewEntry)
-        result.iterator->value = name.isolatedCopy();
+        result.iterator->value = name;
     else if (result.iterator->value != name)
         result.iterator->value = String();
     tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
@@ -206,7 +206,7 @@ static String nameSetAtRunTime(VM& vm, FunctionID function)
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
     Locker locker { tables.namesLock };
-    return tables.namesSetAtRunTime.get(sourceFunction).isolatedCopy();
+    return tables.namesSetAtRunTime.get(sourceFunction);
 }
 
 static bool usesOwnPropertiesForStackTraceName(JSCell* closure)
@@ -254,7 +254,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
     auto* classObject = dynamicDowncast<Closure>(closure);
     bool isClassObject = classObject && classObject->classData();
-    String text = isClassObject ? String() : ownDisplayNameText(vm, closure).isolatedCopy();
+    String text = isClassObject ? String() : ownDisplayNameText(vm, closure);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
@@ -289,7 +289,7 @@ static String displayNameInFrames(VM& vm, FunctionID function)
     if (entry == tables.displayNames.end() || entry->value.isOneOfSeveral)
         return String();
     if (!entry->value.stateOfClassObject)
-        return entry->value.text.isolatedCopy();
+        return entry->value.text;
     JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
     return classObject == entry->value.functionObject ? ownDisplayNameText(vm, asObject(classObject)) : String();
 }

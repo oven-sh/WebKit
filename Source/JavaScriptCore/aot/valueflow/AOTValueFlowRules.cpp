@@ -153,7 +153,7 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
     ClimbingSet others = context.restrict(arrived, ValueSets::complement(context.maker().of(instances.span())));
 
     for (ValueFlowNameKind kind : kindsOfMembers)
-        context.connect(context.read(arrived, { kind, 0 }), escapedNode);
+        carryOut(context, context.read(arrived, { kind, 0 }));
     context.connect(context.masked(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
     context.add(escapedNode, objectsHeldFromCreation(context, others));
@@ -338,6 +338,8 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);
+    if (ClimbingSet namespaces = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, namespaces))
+        connectEnumerableMembersOf(namespaces, escapedNode, context);
 
     if (context.holdsAnyOf(known(context, escaped), ValueFlowProgramNodes::lost())) {
         ClimbingSet untrackedObject(universe.untrackedObjectAlone());

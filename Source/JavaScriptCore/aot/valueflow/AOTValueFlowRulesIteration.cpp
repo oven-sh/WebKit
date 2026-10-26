@@ -21,7 +21,13 @@ struct BuiltinIteration {
 };
 
 struct StepTarget {
-    void take(ValueFlowNodeID values) const { context.connect(kind == IteratorKind::Async ? context.lookup(context.valueOf(values), awaitedValueName) : values, node); }
+    void take(ValueFlowNodeID values) const
+    {
+        if (kind == IteratorKind::Async)
+            connectAwaitedValue(context, { values, ValueSets::nothing, ValueSets::anything }, node);
+        else
+            context.connect(values, node);
+    }
 
     void take(ClimbingSet values) const
     {
@@ -366,7 +372,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
             context.add(values, context.universe().undefinedValue());
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)
-            context.connect(context.lookup(context.valueOf(operands[1]), awaitedValueName), values);
+            connectAwaitedValue(context, operands[1], values);
         else if (mode == ResumeMode::Return)
             context.connect(operands[1], values);
         if (mode == ResumeMode::Throw && statement.thrown)

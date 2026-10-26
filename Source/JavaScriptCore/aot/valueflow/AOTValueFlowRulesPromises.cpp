@@ -27,22 +27,27 @@ void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFl
 }
 
 // Bun has no `then`, so it settles a promise and comes out of `await` as it went in. Beside the unknown object only the node of the operand lists it.
-static ClimbingSet findListedBun(ValueFlowRuleContext& context, const ValueFlowOperand& operand, ClimbingSet values)
+ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext& context, const ValueFlowOperand& operand)
 {
-    if (!operand.node || !mayBeUnknownObject(context, values))
+    if (!operand.node || !mayBeUnknownObject(context, context.valueOf(operand)))
         return { };
-    return context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node);
+    ClimbingSet listed = context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node);
+    return holdsSomething(context, listed) ? context.holding(listed) : ValueFlowNodeID();
+}
+
+void connectAwaitedValue(ValueFlowRuleContext& context, const ValueFlowOperand& operand, ValueFlowNodeID target)
+{
+    context.connect(context.lookup(context.valueOf(operand), awaitedValueName), target);
+    if (ValueFlowNodeID listedBun = findNodeOfListedBun(context, operand))
+        context.connect(listedBun, target);
 }
 
 void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, const ValueFlowOperand& operand)
 {
-    ClimbingSet values = context.valueOf(operand);
-    ValueFlowNodeID settledWith = context.lookup(values, awaitedValueName);
-    ClimbingSet listedBun = findListedBun(context, operand, values);
     forEachNodeOfSlotWrittenThrough(context, promises, promiseValue, [&](ValueFlowNodeID held) {
-        context.connect(settledWith, held);
-        context.add(held, listedBun);
+        connectAwaitedValue(context, operand, held);
     });
+    ClimbingSet values = context.valueOf(operand);
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         adoptRejectionOf(context, values, held);
     });
@@ -60,11 +65,10 @@ void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context
 {
     const ValueFlowOperand& operand = context.operandsOf(statement)[0];
     ClimbingSet values = context.valueOf(operand);
-    ValueFlowNodeID awaited = context.lookup(values, awaitedValueName);
-    if (statement.result) {
-        context.connect(awaited, statement.result);
-        context.add(statement.result, findListedBun(context, operand, values));
-    }
+    if (statement.result)
+        connectAwaitedValue(context, operand, statement.result);
+    else
+        context.lookup(values, awaitedValueName);
     if (!statement.thrown)
         return;
     context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
@@ -104,7 +108,7 @@ static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, Cl
     return ClimbingSet(context.maker().of(finding.span()));
 }
 
-static ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, ClimbingSet values)
+ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, ClimbingSet values)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueSetID otherClasses = ValueSets::complement(context.maker().of(universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));

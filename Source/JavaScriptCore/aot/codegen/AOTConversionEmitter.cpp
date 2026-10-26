@@ -437,7 +437,7 @@ Integer ConversionEmitter::toInteger(Number value)
         return integer(static_cast<int64_t>(value.value()->asDouble()));
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return signExtended(*converted);
-    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, pureFunction(PureOperation::TruncateToInt64, 0, true));
+    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, truncationToInt64(0));
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
 #if CPU(ARM64)
@@ -452,7 +452,7 @@ Integer ConversionEmitter::toInteger(Number value)
 #if CPU(ARM64)
 Integer ConversionEmitter::toNearestInteger(Number value)
 {
-    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, pureFunction(PureOperation::TruncateToInt64, 1, true));
+    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, truncationToInt64(1));
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
     });

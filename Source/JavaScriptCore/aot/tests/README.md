@@ -264,7 +264,8 @@ schema is the reference for every keyword, field, operand, payload name and flag
   `Check`. With the flag `IsExpected` nothing checks what enters: a read of it proves nothing and expects `T`.
 - A value is `vN = Operation operands.. name=value.. [flag, flag] @position`. Operands come first, in declaration order, separated by
   commas, with `-` for an absent optional operand that another operand follows. An operation without a result has no `vN =` and
-  still takes the next id.
+  still takes the next id. The position is the offset in the module's text that a stack trace names. A second one, `@position @written`,
+  says where the text has the operation if that is elsewhere: the build report lists an access there.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
 - The head of `b0` may be left out. The block then has the parameters that the function's line gives it, `v0` onward: the captures, `this`, the

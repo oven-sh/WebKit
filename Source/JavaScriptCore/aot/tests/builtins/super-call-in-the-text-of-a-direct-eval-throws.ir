@@ -1,5 +1,5 @@
 # class A {}   class B extends A { constructor() { eval("super()") } }   try { new B() } catch (error) { report(error.message) }
-# The text of a direct eval cannot call the constructor of the parent class. The call throws an error that says so.
+# The binding of `this` names no constructor, so the text of the direct eval cannot call the constructor of the parent class. The call throws an error that says so.
 # FORM: AsRead
 # RUN: run-in-shell globalThis.report = message => { print(message); };
 # CHECK: super() cannot be called from direct eval in a compiled executable

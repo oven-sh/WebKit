@@ -618,10 +618,11 @@ static bool isValidEvalBinding(const Program& program, const EvalBinding& bindin
         return hasFunctions && hasValidPrivateHolder(program, binding);
     case EvalBindingKind::MappedArgument:
         return !hasFunctions && !binding.variable && binding.operand && binding.field && !binding.layout;
+    case EvalBindingKind::This:
+        return (binding.function || !binding.setter) && hasValidStorage(program, binding);
     case EvalBindingKind::Variable:
     case EvalBindingKind::Constant:
     case EvalBindingKind::FunctionName:
-    case EvalBindingKind::This:
     case EvalBindingKind::NewTarget:
     case EvalBindingKind::HomeObject:
     case EvalBindingKind::ClassObject:

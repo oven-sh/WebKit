@@ -103,6 +103,8 @@ using ShownFunctions = Vector<ShownFunction, 4>;
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
 static constexpr LineColumn startOfBuiltinFunction { 1, 11 };
 static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
+static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
+static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
 
 static void reportUndeclaredTrap(const DescribedFunction& described, ValueID value)
 {
@@ -217,9 +219,19 @@ static std::optional<LineColumn> positionOfImplementedBuiltin(StackTraceBuiltinK
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The front end gives a constructor that no class member writes the position of its class.
+static bool isDefaultConstructor(const Program& program, const Function& function)
+{
+    if (function.kind != FunctionKind::BaseConstructor && function.kind != FunctionKind::DerivedConstructor)
+        return false;
+    return function.constructedClass && program.at(function.constructedClass).position == function.position;
+}
+
 static std::optional<LineColumn> positionInBuiltin(const Program& program, FunctionID shown)
 {
     const Function& owner = program.at(shown);
+    if (isDefaultConstructor(program, owner))
+        return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
@@ -275,7 +287,10 @@ static Vector<SitePosition> describePositions(const DescribedFunction& described
     ShownFunctions shownFunctions = findShownFunctions(described);
     Vector<SitePosition> positions;
     positions.reserveInitialCapacity(renumbered.size() + 1);
-    positions.append(positionIn(program, shownFunctions[0], program.at(shownFunctions[0].id).position, 0));
+    const Function& outermost = program.at(shownFunctions[0].id);
+    positions.append(positionIn(program, shownFunctions[0], outermost.position, 0));
+    if (isDefaultConstructor(program, outermost))
+        positions[0].column = startOfBuiltinFunction.column;
     for (const RecordedSite& site : renumbered)
         positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
     return positions;

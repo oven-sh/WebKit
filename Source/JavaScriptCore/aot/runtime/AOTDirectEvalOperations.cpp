@@ -111,6 +111,12 @@ static JSValue boundThisOrEmpty(JSValue thisValue, bool isInDerivedConstructor)
     return isInDerivedConstructor && thisValue.isUndefined() ? JSValue() : thisValue;
 }
 
+// `this` of a derived constructor names the constructor, and lies where compiled code reads it again.
+static bool canBeBoundByText(const EvalBindingData& thisBinding)
+{
+    return thisBinding.function != EvalBindingData::noOperand && formOf(thisBinding) == EvalBindingForm::EnvironmentSlot;
+}
+
 static const EvalBindingData* findBinding(std::span<const EvalBindingData> bindings, EvalBindingKind kind)
 {
     for (auto& binding : bindings) {
@@ -195,6 +201,57 @@ static JSObject* createAccessorPair(VM& vm, JSGlobalObject* globalObject, JSValu
     if (setter)
         pair->putDirect(vm, builtinNames.setPrivateName(), setter);
     return pair;
+}
+
+// What evaluated text finds as the derived constructor. `super()` constructs its prototype: that of the class at that moment.
+class DerivedConstructorStandIn final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) { return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info()); }
+    static DerivedConstructorStandIn* create(VM&, Structure*, JSObject* constructor);
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSValue getPrototype(JSObject*, JSGlobalObject*);
+
+private:
+    DerivedConstructorStandIn(VM& vm, Structure* structure, JSObject* constructor)
+        : Base(vm, structure)
+        , m_constructor(constructor, WriteBarrierEarlyInit)
+    {
+    }
+
+    WriteBarrier<JSObject> m_constructor;
+};
+
+const ClassInfo DerivedConstructorStandIn::s_info = { "DerivedConstructorStandIn"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DerivedConstructorStandIn) };
+
+DerivedConstructorStandIn* DerivedConstructorStandIn::create(VM& vm, Structure* structure, JSObject* constructor)
+{
+    auto* result = new (NotNull, allocateCell<DerivedConstructorStandIn>(vm)) DerivedConstructorStandIn(vm, structure, constructor);
+    result->finishCreation(vm);
+    return result;
+}
+
+template<typename Visitor>
+void DerivedConstructorStandIn::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<DerivedConstructorStandIn>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_constructor);
+}
+
+DEFINE_VISIT_CHILDREN(DerivedConstructorStandIn);
+
+JSValue DerivedConstructorStandIn::getPrototype(JSObject* object, JSGlobalObject* globalObject)
+{
+    return uncheckedDowncast<DerivedConstructorStandIn>(object)->m_constructor->getPrototype(globalObject);
 }
 
 class EvalBindings final : public JSNonFinalObject {
@@ -438,11 +495,16 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
         RELEASE_AND_RETURN(scope, thisObject->storeVariable(globalObject, *binding, name, value));
     if (kind == EvalBindingKind::FunctionName && !slot.isStrictMode())
         return true;
-    RELEASE_ASSERT(isNamedBinding(kind) || kind == EvalBindingKind::This);
-    if (kind == EvalBindingKind::This)
-        throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
-    else
-        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+    if (kind == EvalBindingKind::This) {
+        if (!canBeBoundByText(*binding)) {
+            throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
+            return false;
+        }
+        thisObject->writeBinding(vm, *binding, value);
+        return true;
+    }
+    RELEASE_ASSERT(isNamedBinding(kind));
+    throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
     return false;
 }
 
@@ -615,8 +677,12 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
 
     JSObject* homeObjectHolder = nullptr;
     if (const EvalBindingData* homeObject = findBinding(bindings, EvalBindingKind::HomeObject)) {
-        // `super()` in the text constructs the prototype of what it finds as the derived constructor.
-        if (request.isInDerivedConstructor)
+        const EvalBindingData* thisBinding = request.isInDerivedConstructor ? findBinding(bindings, EvalBindingKind::This) : nullptr;
+        if (thisBinding && canBeBoundByText(*thisBinding)) {
+            homeObjectHolder = DerivedConstructorStandIn::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::derivedConstructorStandIn, DerivedConstructorStandIn::createStructure), asObject(operandCopy->get(thisBinding->function)));
+            if (JSValue initializer = operandOrEmpty(operandCopy, thisBinding->setter))
+                homeObjectHolder->putDirect(vm, vm.propertyNames->builtinNames().instanceFieldInitializerPrivateName(), initializer);
+        } else if (request.isInDerivedConstructor)
             homeObjectHolder = constructEmptyObject(globalObject, JSFunction::create(vm, globalObject, 0, String(), throwSuperCallInDirectEvalError, ImplementationVisibility::Private, NoIntrinsic, throwSuperCallInDirectEvalError));
         else if (JSObject* parent = request.allowsSuperCall ? parentOfClass(*homeObject) : nullptr)
             homeObjectHolder = constructEmptyObject(globalObject, parent);
@@ -772,8 +838,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
     EvalScopeChain chain = buildScopeChain(instance, globalObject, vm, request, unsafeMakeSpan(operands, count));
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    bool hasThisBinding = findBinding(unsafeMakeSpan(request.bindings, request.numberOfBindings), EvalBindingKind::This);
+    const EvalBindingData* thisBinding = findBinding(unsafeMakeSpan(request.bindings, request.numberOfBindings), EvalBindingKind::This);
+    bool hasThisBinding = thisBinding;
     RELEASE_ASSERT(!request.isInDerivedConstructor || hasThisBinding);
+    bool initializesInstances = request.isInDerivedConstructor && canBeBoundByText(*thisBinding) && thisBinding->setter != EvalBindingData::noOperand;
     DirectEvalCaches*& caches = instance->state->objects->caches->directEvalCaches;
     if (!caches) {
         caches = DirectEvalCaches::create(vm, instance->globalObject);
@@ -787,7 +855,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
         .lexicallyScopedFeatures = request.isStrict ? StrictModeLexicallyScopedFeature : NoLexicallyScopedFeatures,
         .derivedContextType = request.allowsSuperCall ? DerivedContextType::DerivedConstructorContext : request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None,
         .evalContextType = request.isInFieldInitializer ? EvalContextType::InstanceFieldEvalContext : request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None,
-        .needsClassFieldInitializer = NeedsClassFieldInitializer::No,
+        .needsClassFieldInitializer = initializesInstances ? NeedsClassFieldInitializer::Yes : NeedsClassFieldInitializer::No,
         .privateBrandRequirement = PrivateBrandRequirement::None,
         .isArrowFunctionContext = hasThisBinding,
         .isInsideOrdinaryFunction = !!request.allowsNewTarget,

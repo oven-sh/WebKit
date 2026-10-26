@@ -71,7 +71,7 @@ static void fillAccessSites(const Program& program, FlowAccessSiteNumbering& num
             sites.callsOfBoundFunctions[site.index()] = PayloadWord::callees(function.at(value).opcode).has_value();
         });
         for (const WrittenPosition& written : function.writtenPositions) {
-            if (hasAccessSite(function.at(written.value).opcode))
+            if (written.value.index() < function.values.size() && hasAccessSite(function.at(written.value).opcode))
                 found.append({ numbering.siteOfValue(id, written.value), written.position });
         }
     });

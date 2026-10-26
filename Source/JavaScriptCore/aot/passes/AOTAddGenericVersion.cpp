@@ -1235,17 +1235,18 @@ static bool markExpected(Program& program, Position position)
     return true;
 }
 
-static bool canBeAssignedByEvaluatedText(EvalBindingKind kind)
+static bool canBeAssignedByEvaluatedText(const EvalBinding& binding)
 {
-    switch (kind) {
+    switch (binding.kind) {
     case EvalBindingKind::Variable:
     case EvalBindingKind::Arguments:
     case EvalBindingKind::PrivateName:
     case EvalBindingKind::SimpleCatchParameter:
         return true;
+    case EvalBindingKind::This:
+        return binding.function.has_value();
     case EvalBindingKind::Constant:
     case EvalBindingKind::FunctionName:
-    case EvalBindingKind::This:
     case EvalBindingKind::NewTarget:
     case EvalBindingKind::HomeObject:
     case EvalBindingKind::ClassObject:
@@ -1269,7 +1270,7 @@ static Vector<Position> findPositionsAssignedByEvaluatedText(const Program& prog
     };
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
-            if (!canBeAssignedByEvaluatedText(binding.kind))
+            if (!canBeAssignedByEvaluatedText(binding))
                 continue;
             if (binding.variable)
                 add({ Position::Kind::Variable, binding.variable.index(), 0 });

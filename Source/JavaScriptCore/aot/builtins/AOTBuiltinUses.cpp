@@ -577,9 +577,11 @@ static bool reliesOnPristineOperand(const BuiltinCallPlan& call)
 static void becomePlannedCall(Value& value, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
 {
     bool isDemotedTailCall = FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall();
+    bool isReflectConstructSyntax = FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
     becomeBuiltinCall(value, plan.call.overload, plan.form, operands, plan.stamps);
     value.setNeedsPristineReceiver(reliesOnPristineOperand(plan.call));
     value.setIsDemotedTailCall(isDemotedTailCall);
+    value.setIsReflectConstructSyntax(isReflectConstructSyntax);
 }
 
 static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, Origin origin)

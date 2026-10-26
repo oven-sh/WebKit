@@ -146,7 +146,8 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
     case InlineBuiltin::ReflectApply:
         return callIf(site, site.arguments().size() != 3, InlineForm::TwoWay);
     case InlineBuiltin::ReflectConstruct:
-        return callIf(site, site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
+        // Bytecode constructs in place only where the call is written so. Every other call has a frame of the host function.
+        return callIf(site, !site.value().isReflectConstructSyntax() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
         return InlineForm::Whole;
     default:

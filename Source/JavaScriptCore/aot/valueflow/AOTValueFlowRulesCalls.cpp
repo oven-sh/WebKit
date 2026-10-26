@@ -656,12 +656,20 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (context.meet(closures, ValueSets::anything))
             passOperands(context, statement, closures, kind, passKnownReceiversToTheirCallees(context, statement, closures));
     }
-    callListedBuiltins(statement, context, callees, kind);
+    // A promise of the realm answers with the methods of promises, whatever else the callee may be.
+    ClimbingSet listedCallees = callees;
+    if (PropertyKeyID key = context.contains(callees, ValueFlowUniverse::unknownObject()) ? keyReadFromReceiver(context.program(), statement) : PropertyKeyID()) {
+        ClimbingSet all = context.valueOf(context.operandsOf(statement)[1]);
+        ClimbingSet receivers = context.restrict(all, context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Promise), promisesAllocatedByBuiltins(context, all)));
+        if (context.meet(receivers, ValueSets::anything))
+            listedCallees = context.unite(callees, context.valueWithin(ClimbingSet(universe.builtinFunctions()), context.lookup(receivers, ValueFlowName::property(key))));
+    }
+    callListedBuiltins(statement, context, listedCallees, kind);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
         const Function& function = context.program().at(statement.function);
         ValueID callee = function.at(statement.site).operand(0);
         BuiltinID named = callee ? entryNamedByOperations(context.program(), function, callee) : BuiltinID();
-        if (named && context.program().builtins().at(named).origin == BuiltinOrigin::Host && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)))
+        if (named && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)))
             applyBuiltin(named, kind, statement, context);
     }
     for (ValueFlowObjectID placeholder : { ValueFlowUniverse::untrackedObject(), ValueFlowUniverse::unknownObject() }) {
@@ -898,9 +906,9 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         if (group.newTarget)
             context.connect(group.newTarget, escaped);
         for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
-            context.connect(group.argument(index), escaped);
-        context.connect(group.laterArguments, escaped);
-        context.connect(group.otherArguments, escaped);
+            carryOut(context, group.argument(index));
+        carryOut(context, group.laterArguments);
+        carryOut(context, group.otherArguments);
         context.add(group.result, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
         context.add(group.thrown, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
     };

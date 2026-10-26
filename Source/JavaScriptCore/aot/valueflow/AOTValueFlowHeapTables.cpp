@@ -487,6 +487,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersWithMembers;
         Objects holdersWithMembersUnderNumericNames;
         Objects holdersOfMembersThatHostMakes;
+        Objects namespacesWhoseHoldersListThem;
         Objects holdersThatListAllMembers;
         Objects lockedObjects;
         Objects holdersWithLockedIndexes;
@@ -601,8 +602,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                         instances = maker.unite(instances, kindsOf(maker, Primitive::AnyString));
                 }
             }
-            if (hasMemberThatHostMakes)
+            if (hasMemberThatHostMakes) {
                 holdersOfMembersThatHostMakes.appendVector(objects);
+                if (entry.origin == BuiltinOrigin::Host && entry.kind == BuiltinKind::Namespace && builtins.canonicalID(holder) != Builtins::Bun)
+                    namespacesWhoseHoldersListThem.appendVector(objects);
+            }
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
         }
@@ -615,6 +619,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
+        m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
         m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));
         m_holdersOfUndeclaredPropertiesUnderIndexes = m_holdersThatListNotAllMembers;
         m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersThatListNotAllMembers, maker.of(prototypesOfInstancesWithNames.span()));

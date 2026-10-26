@@ -63,6 +63,9 @@ void holdContentsIteratedByResult(BuiltinID, const ValueFlowBuiltinCall&, ValueF
 bool applyConstructionOfPromise(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 void adoptRejectionOf(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID reason);
+ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext&, const ValueFlowOperand&);
+ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext&, ClimbingSet values);
+void connectAwaitedValue(ValueFlowRuleContext&, const ValueFlowOperand&, ValueFlowNodeID target);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&, ValueSetID receivers = ValueSets::anything);
 void applyBuiltinFoundThroughUnknownObject(BuiltinID, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void readSpeciesOfUnknownObject(BuiltinID, ValueFlowRuleContext&);
@@ -71,6 +74,9 @@ void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const Va
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext&);
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
+void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
+void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
+void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
 bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);

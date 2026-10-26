@@ -128,6 +128,8 @@ bool StackFrame::isConstructor() const
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
         auto& frame = compiledFrame();
+        if (frame.isClassCalledWithoutNew)
+            return false;
         AOT::FunctionDescription description(frame.function);
         return frame.isConstructCall || description.isConstructor() || description.builtinKind() == AOT::StackTraceBuiltinKind::JSBuiltinConstructor;
     }

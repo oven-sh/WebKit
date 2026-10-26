@@ -17,6 +17,7 @@
 
 namespace JSC {
 
+class CallFrame;
 class Structure;
 class VM;
 
@@ -74,6 +75,8 @@ public:
     bool validatesRuntime { false };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
+    // The frame of the host function that throws because a class was called without `new`, while it makes the error.
+    CallFrame* classCalledWithoutNew { nullptr };
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
