@@ -241,6 +241,8 @@ struct Function : FunctionRecord {
 
     bool isModuleBody() const;
     bool isUnsplitCoroutine() const;
+    // A stack frame shows the property `name` of the function object from the first look for it on. Before that it shows the displayName, and the name of an accessor without "get " or "set ".
+    bool framesTellWhetherNameWasLookedFor() const { return has(FunctionCapabilities::NotesLooksForName) || kind == FunctionKind::Getter || kind == FunctionKind::Setter; }
     bool runsOnlyBehindFailedTest() const { return role == FunctionRole::GenericVersion || has(FunctionFlags::IsSplitOffGenericVersion); }
     ConstructorForm constructorForm() const;
 
@@ -255,6 +257,7 @@ struct Function : FunctionRecord {
     Wire::SourceLocation locationOf(ValueID) const;
     Wire::SourceLocation locationOf(Origin) const;
     std::optional<uint32_t> writtenPositionOf(ValueID) const;
+    Wire::SourceLocation writtenLocationOf(ValueID) const;
     Wire::SourceLocation declarationLocation() const;
 
     unsigned numberOfEntryParameters() const;

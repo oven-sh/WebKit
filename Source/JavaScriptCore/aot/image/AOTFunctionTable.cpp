@@ -79,6 +79,8 @@ static FrameShape frameShapeOf(const FrameDescription& frame)
         RELEASE_ASSERT((offset < 0 || (!offset && !frame.hasFrameRecord)) && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
         shape.calleeSavesStart = static_cast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
     }
+    RELEASE_ASSERT(!(frame.bytesAboveFrameRecord % stackAlignmentBytes()) && frame.bytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord && frame.bytesAboveFrameRecord <= frame.frameSizeInBytes);
+    shape.calleeSavesStart |= static_cast<uint16_t>(frame.bytesAboveFrameRecord / stackAlignmentBytes() << ImageFrame::unitsAboveFrameRecordShift);
     if (!frame.hasFrameRecord)
         shape.calleeSavesStart |= ImageFrame::hasNoFrameRecordBit;
     return shape;

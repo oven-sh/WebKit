@@ -603,7 +603,12 @@ static AllocationHeapCause checkObjectForm(const Program& program, const Value& 
 
 static AllocationHeapCause checkCellForm(const Program& program, const Value& allocation)
 {
-    return allocation.opcode == Opcode::NewClosure ? checkClosureForm(program, allocation) : checkObjectForm(program, allocation);
+    if (allocation.opcode != Opcode::NewClosure)
+        return checkObjectForm(program, allocation);
+    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list.
+    if (program.at(allocation.function()).has(FunctionCapabilities::RecordsCallee))
+        return AllocationHeapCause::ClosureIsNotOnlyCalled;
+    return checkClosureForm(program, allocation);
 }
 
 static bool fitsInFrame(const Program& program, const BuildContext& build, const Value& allocation)

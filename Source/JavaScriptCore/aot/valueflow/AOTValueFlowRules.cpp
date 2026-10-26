@@ -140,6 +140,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
         ValueFlowBuiltinCall application;
         application.kind = ValueFlowCallKind::CallByNativeCode;
         application.thisValue = context.operandHolding(call.thisValue);
+        application.isFoundOnReceiver = call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName;
         application.arguments = arguments.span();
         application.otherArguments = { { }, call.otherArguments, ValueSets::anything };
         application.result = call.result;

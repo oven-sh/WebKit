@@ -25,6 +25,7 @@ struct ValueFlowBuiltinCall {
     ValueFlowObjectID resultObject;
     ValueFlowObjectID contentsObject;
     const ValueFlowStatement* operation { nullptr };
+    bool isFoundOnReceiver { false };
     bool saysOnlyWhatIsCalled { false };
     bool readsOnlySpecies { false };
 };

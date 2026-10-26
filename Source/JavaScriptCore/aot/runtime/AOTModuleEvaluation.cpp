@@ -978,7 +978,8 @@ bool Modules::wasLoadedWithEarlierGraph(ModuleID module)
 ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module)
 {
     ModuleID file = m_table.fileBehindFace(module).value_or(module);
-    if (status(file) == ModuleStatus::Evaluating)
+    // Where nothing but its face runs a file, the face alone has the status.
+    if (status(file) == ModuleStatus::Evaluating || status(module) == ModuleStatus::Evaluating)
         ensureLoaded(file).wasLoadedWhileItRan = true;
     ModuleRecord* record = ensureRecord(module);
     record->retain();
@@ -996,6 +997,9 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     if (m_fileWhoseJobsWaitForLoader && m_fileWhoseJobsWaitForLoader == m_table.fileBehindFace(module).value_or(module)) [[unlikely]]
         queueJobsThatWaitForLoader();
     ModuleStatus statusAtStart = status(module);
+    // A graph that the file requires comes to the file: the loader makes its record a second time.
+    if (statusAtStart == ModuleStatus::Evaluating)
+        ensureLoaded(m_table.fileBehindFace(module).value_or(module)).wasLoadedWhileItRan = true;
     if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
         return;
     evaluateModuleInRecord(module);
@@ -1035,7 +1039,13 @@ void Modules::evaluateCommonJSForLoader(ModuleID file)
     auto scope = DECLARE_THROW_SCOPE(vm);
     evaluateCommonJS(file);
     Exception* exception = scope.exception();
-    if (!exception || vm.isTerminationException(exception) || !wasImportedWhileItRan(file)) [[likely]]
+    if (!exception) [[likely]] {
+        // `bun run` imports an entry point, so its loader takes the names of the file when the file has run. An import() finds them as they were then.
+        if (std::optional<ModuleID> face = m_table.faceOfFile(file))
+            RELEASE_AND_RETURN(scope, evaluateLoadedCommonJSFile(*face));
+        return;
+    }
+    if (vm.isTerminationException(exception) || !wasImportedWhileItRan(file))
         return;
     TRY_CLEAR_EXCEPTION(scope, void());
     if (status(file) != ModuleStatus::Failed)
@@ -1373,13 +1383,13 @@ JSValue Modules::require(ModuleID target)
     }
 
     LoadedModule& loaded = ensureLoaded(target);
+    // In plain Bun the cache holds a module object with empty exports until the loader's require() returns. The jobs of the loader that it runs behind the evaluation can run a file that requires the module.
+    if (loaded.isBeingRequired) {
+        if (!loaded.exportsWhileRequired)
+            loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
+        return loaded.exportsWhileRequired.get();
+    }
     if (status(target) != ModuleStatus::Evaluated) {
-        // In plain Bun the cache holds a module object with empty exports while the loader's require() evaluates the module.
-        if (loaded.isBeingRequired) {
-            if (!loaded.exportsWhileRequired)
-                loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
-            return loaded.exportsWhileRequired.get();
-        }
         // An evaluation that an import has begun shows the namespace object, with its bindings as they are.
         loaded.isBeingRequired = status(target) != ModuleStatus::Evaluating;
         evaluateSynchronously(target, SynchronousEvaluationReason::Require);

@@ -80,7 +80,7 @@ JS_EXPORT_PRIVATE String modulePath(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
-JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // A file whose loader answers an object of the host, a database or a page.
 JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
 

@@ -48,6 +48,7 @@ EffectsOnEdges resolveEffects(const EffectContext&, const EffectDescription&);
 bool isRefinedByValue(Opcode, const Effects& bound);
 void describeDeclaredEntry(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 bool hasTextByItself(const Type&);
+uint64_t longestTextOf(const Program&, const Type& primitives);
 
 // The texts of values that one string is made of. A string longer than a string may be is a RangeError.
 class JoinedTexts {

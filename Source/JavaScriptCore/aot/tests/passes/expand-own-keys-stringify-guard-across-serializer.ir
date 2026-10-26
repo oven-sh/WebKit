@@ -23,9 +23,11 @@ function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, prov
     v8 = Undefined
     Return v8
 # CHECK: = GetArrayElement v0, v6, v3 arrayStorage=Int32
+# CHECK: b5() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard
 # CHECK: role=CatchHandler
 # CHECK-NEXT: = CatchValue
-# CHECK-NEXT: JSONResetHolders
+# CHECK-NEXT: Jump -> next b5()
 # CHECK: = CallDirect v1, {{*}} function=
 }
 

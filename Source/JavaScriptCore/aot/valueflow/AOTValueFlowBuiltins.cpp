@@ -1071,6 +1071,42 @@ private:
         throwValue(undescribedValue());
     }
 
+    // A method of a host class that was found on its receiver refuses an object that stands below the holder of the method or has the method stored on its chain: no other object finds it.
+    // What stands below an object nobody knows may find it there, and is in the hands of native code.
+    void describeReceiversThatAnswer(ValueSetID refused, ValueFlowNodeID description)
+    {
+        ValueSetMaker& maker = m_context.maker();
+        auto objectsOf = [&](BuiltinID builtin) {
+            Vector<ValueFlowObjectID, 32> objects;
+            if (builtin)
+                m_universe.appendObjectsOf(builtin, objects);
+            return maker.of(objects.span());
+        };
+        BuiltinID method = m_builtins.canonicalID(m_builtin);
+        ValueSetID holders = objectsOf(m_builtins.at(method).holder);
+        ValueSetID methods = objectsOf(method);
+        ValueSetID objectsOfProgram = maker.intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
+        ValueSetID objectsNobodyKnows = ValueSets::complement(m_universe.knownObjects());
+        auto answers = [&](ClimbingSet chain) {
+            return m_context.meet(chain, holders) || m_context.meet(m_context.valueOf(m_context.read(m_context.restrict(chain, objectsOfProgram), everyPropertyName)), methods);
+        };
+
+        ClimbingSet receivers = m_context.restrict(valueAt(BuiltinOperand::receiver()), maker.intersect(refused, m_universe.knownObjects()));
+        ClimbingSet chainOfAll = m_context.valueOf(m_context.lookup(receivers, prototypeLinkName));
+        if (!answers(chainOfAll) && !m_context.meet(chainOfAll, objectsNobodyKnows))
+            return;
+        ValueFlowObjectsToldApart apart = tellObjectsApart(m_context, receivers);
+        if (apart.rest != ValueSets::nothing)
+            apart.groups.append(apart.rest);
+        for (ValueSetID group : apart.groups) {
+            ClimbingSet chain = m_context.valueOf(m_context.lookup(ClimbingSet(group), prototypeLinkName));
+            if (answers(chain))
+                m_context.add(description, group);
+            if (m_context.meet(chain, objectsNobodyKnows))
+                m_context.add(escaped(), group);
+        }
+    }
+
     // A function is described by its name, and an object of a class that the parameter takes is not refused. Of any other object that it takes, native code may refuse what it reads out of it.
     void describeRefusedOperands(const BuiltinParameter& parameter)
     {
@@ -1078,6 +1114,8 @@ private:
         bool takesAnyObject = !parameter.accepted || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
         if (!takesAnyObject) {
             ValueSetID refused = ValueSets::complement(m_context.maker().unite(m_universe.callables(), m_tables.membersSurelyOf(parameter.accepted)));
+            if (parameter.operand.isReceiver() && m_call.isFoundOnReceiver)
+                return describeReceiversThatAnswer(refused, description);
             forEachOperandAt(parameter.operand, [&](ValueFlowOperand operand) {
                 operand.mask = m_context.maker().intersect(operand.mask, refused);
                 m_context.connect(operand, description);
@@ -2622,6 +2660,7 @@ void applyBuiltin(BuiltinID builtin, ValueFlowCallKind kind, const ValueFlowStat
     }
     ValueFlowBuiltinCall description = describeBuiltinUse(kind, call, context);
     description.thisValue.mask = context.maker().intersect(description.thisValue.mask, receivers);
+    description.isFoundOnReceiver = receivers != ValueSets::anything;
     applyBuiltin(builtin, description, context);
 }
 
@@ -2740,9 +2779,11 @@ static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& 
         ValueFlowCallGroup group = context.group(targets, kind);
         if (isConstruction(kind)) {
             context.add(group.newTarget, targets);
-            ClimbingSet handedOn = context.restrict(context.valueOf(description.thisValue), ValueSets::complement(universe.otherCallables()));
+            ValueFlowNodeID fromOperands = context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands);
+            ClimbingSet newTargets = context.valueOf(description.thisValue);
+            ClimbingSet handedOn = context.unite(context.restrict(newTargets, ValueSets::complement(universe.otherCallables())), context.valueWithin(context.restrict(newTargets, universe.otherCallables()), fromOperands));
             context.add(group.newTarget, handedOn);
-            context.add(context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands), handedOn);
+            context.add(fromOperands, handedOn);
         } else
             context.connect(slot(BuiltinSlots::BoundFunctionBoundThis), group.thisValue);
         context.connect(slot(BuiltinSlots::BoundFunctionBoundArguments), group.otherArguments);
@@ -2815,6 +2856,8 @@ void noteCallOfBuiltin(BuiltinID builtin, ValueFlowCallKind kind, ValueFlowRuleC
 
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind kind, const ValueFlowStatement& call, ValueFlowRuleContext& context)
 {
+    if (isConstruction(kind) && context.program().at(call.function).at(call.site).operand(1))
+        context.connect(context.operandsOf(call)[1], context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands));
     callOtherCallables(callees, describeBuiltinUse(kind, call, context), context);
 }
 

@@ -171,15 +171,16 @@ function f7 name="D" module=m0 kind=DerivedConstructor flags=[HasRestParameter, 
     Return v4
 }
 function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g1
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = NewClosure v0 function=f10
-    v4 = Convert v3 declared={type=function flags=[IsExpected]}
-    PropDefine v0, v4 key="arrowField"
-    v6 = Undefined
-    Return v6
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = NewClosure v1 function=f10
+    v5 = Convert v4 declared={type=function flags=[IsExpected]}
+    PropDefine v1, v5 key="arrowField"
+    v7 = Undefined
+    Return v7
 }
 function f9 module=m0 kind=Arrow captures=[{type=L0 flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] {
   b0(v0: anything):
@@ -372,12 +373,13 @@ function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     Return v4
 }
 function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g1
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = Undefined
-    Return v3
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Undefined
+    Return v4
 }
 entry module=m0
 )IR"_s;
@@ -514,15 +516,16 @@ function f5 name="run" module=m0 kind=Method flags=[HasThis, HasExplicitName] le
     Return v36
 }
 function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g1
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = Integer
-    v4 = Convert v3 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v4 key="total"
-    v6 = Undefined
-    Return v6
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v5 key="total"
+    v7 = Undefined
+    Return v7
 }
 entry module=m0
 )IR"_s;
@@ -685,28 +688,30 @@ function f7 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     Return v2
 }
 function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g2
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = Integer integer=7
-    v4 = Convert v3 declared={type=number flags=[IsExpected]}
-    v5 = GetModuleVariable variable=g2
-    PrivateDefine v0, v5, v4 layout=L0 field=1
-    v7 = Integer integer=1
-    v8 = Convert v7 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v8 key="a"
-    v10 = Undefined
-    Return v10
+    v2 = GetModuleVariable variable=g2
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer integer=7
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g2
+    PrivateDefine v1, v6, v5 layout=L0 field=1
+    v8 = Integer integer=1
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v9 key="a"
+    v11 = Undefined
+    Return v11
 }
 function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=2
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v2 key="b"
-    v4 = Undefined
-    Return v4
+    v2 = Integer integer=2
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="b"
+    v5 = Undefined
+    Return v5
 }
 entry module=m0
 )IR"_s;

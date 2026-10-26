@@ -108,6 +108,10 @@ static Origin parseOrigin(TextParser& parser)
         origin.isTailCall = true;
         parser.advance();
     }
+    if (parser.token().isWord("constructs"_s)) {
+        origin.isPartOfConstruction = true;
+        parser.advance();
+    }
     return origin;
 }
 
@@ -302,7 +306,7 @@ void TextParser::parseValue()
         code().append(parseUInt32());
     }
     overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionFollows, origin.position });
-    if (engineFlags || origin.inlineFrame || origin.isTailCall) {
+    if (engineFlags || origin.inlineFrame || origin.isTailCall || origin.isPartOfConstruction) {
         addPatch([function = m_body.function, id, engineFlags, origin](PatchContext& context) {
             Value& value = context.program.at(function).edit(id);
             value.flags |= engineFlags;
@@ -348,7 +352,7 @@ void TextParser::parseTerminator()
 
     Origin origin = parseOrigin(*this);
     overwriteRecord(code(), headPosition, Wire::TerminatorHead { static_cast<uint32_t>(kind), origin.position, static_cast<uint32_t>(targetNames.size()) });
-    if (origin.inlineFrame || origin.isTailCall) {
+    if (origin.inlineFrame || origin.isTailCall || origin.isPartOfConstruction) {
         addPatch([function = m_body.function, block = m_body.block, origin](PatchContext& context) {
             context.program.at(function).edit(block).terminator.setOrigin(origin);
         });

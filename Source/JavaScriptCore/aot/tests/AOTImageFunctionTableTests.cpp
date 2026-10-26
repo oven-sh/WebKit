@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompiledFrame.h"
 #include "AOTFunctionTable.h"
 #include "AOTFunctionTables.h"
 #include "AOTImageTestSupport.h"
@@ -253,6 +254,30 @@ static void testManyFrameShapes()
     AOT_TEST_CHECK(build.statistic(StatisticID::FrameShapesEmitted) == numberOfShapes);
     for (uint32_t function : { 1u, 4097u, numberOfShapes })
         AOT_TEST_CHECK(image.image->frameOf(image.indexOf(function)).frameSizeInBytes() == function * stackAlignmentBytes());
+}
+
+static void testSlotsAboveFrameRecord()
+{
+    TestBuild build(4);
+    Vector<CompiledCode> code = bodies(plainBody(1, 48), plainBody(2, 48), plainBody(3, 512));
+    code[1].frame.bytesAboveFrameRecord = 32;
+    code[2].frame.bytesAboveFrameRecord = ImageFrame::maxUnitsAboveFrameRecord * stackAlignmentBytes();
+    TestImage image = build.build(WTF::move(code));
+    const Image& loaded = *image.image;
+    const ImageFrame& below = loaded.frameOf(image.indexOf(1));
+    const ImageFrame& above = loaded.frameOf(image.indexOf(2));
+    const ImageFrame& most = loaded.frameOf(image.indexOf(3));
+
+    AOT_TEST_CHECK(&below != &above);
+    AOT_TEST_CHECK(!below.bytesAboveFrameRecord() && !bytesAboveReturnAddressOf(below));
+    AOT_TEST_CHECK(above.bytesAboveFrameRecord() == 32 && bytesAboveReturnAddressOf(above) == 32);
+    AOT_TEST_CHECK(most.bytesAboveFrameRecord() == ImageFrame::maxUnitsAboveFrameRecord * stackAlignmentBytes());
+    for (const ImageFrame* frame : { &below, &above, &most })
+        AOT_TEST_CHECK(frame->hasFrameRecord() && !frame->startOfCalleeSaves() && !frame->liesBelowSpilledArguments() && !frame->isEmpty());
+    AOT_TEST_CHECK(above.frameSizeInBytes() == 48);
+
+    auto* record = std::bit_cast<CallFrame*>(uintptr_t { 0x1000 });
+    AOT_TEST_CHECK(std::bit_cast<uintptr_t>(stackPointerOfCaller(record, bytesAboveReturnAddressOf(above))) == 0x1000 + sizeof(CallerFrameAndPC) + 32);
 }
 
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
@@ -578,6 +603,7 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/inner-entries-of-folded-bodies"_s, testInnerEntriesOfFoldedBodies },
         { "image/functions/records"_s, testRecords },
         { "image/functions/many-frame-shapes"_s, testManyFrameShapes },
+        { "image/functions/slots-above-frame-record"_s, testSlotsAboveFrameRecord },
         { "image/functions/frame-maps"_s, testFrameMaps },
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
         { "image/functions/frame-ranges-name-no-epilogue"_s, testFrameRangesNameNoEpilogue },

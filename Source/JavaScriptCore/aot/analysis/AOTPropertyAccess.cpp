@@ -394,6 +394,8 @@ static MemberPartition partitionFor(const PropertyAccessContext& context, const 
         if (query.isOwnLookup)
             return partitionOwnMembers(context, members.span(), query.key);
         MemberPartition partition = partitionMembers(context, members.span(), query.key, query.access);
+        if (query.receivers.proof != ReceiverProof::Type)
+            mergeArmsWithSameMember(partition, query.receivers.isProven() ? ArmsToMerge::All : ArmsToMerge::WhereFewerAreProven);
         if (query.access == Access::Store && query.stored)
             separateSlotsThatHoldOneValue(context.program, query, partition);
         return partition;

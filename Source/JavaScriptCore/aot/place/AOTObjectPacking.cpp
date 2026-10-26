@@ -261,6 +261,7 @@ public:
 private:
     const ParallelLoops& loops() const { return m_context.build.parallelLoops(); }
     uint32_t cellSizeFor(uint32_t bytes) const { return static_cast<uint32_t>(m_context.sizeClasses.cellSizeFor(bytes)); }
+    uint32_t largestCellSizeWithin(uint32_t bytes) const { return static_cast<uint32_t>(m_context.sizeClasses.largestCellSizeWithin(bytes)); }
     const PlacedSlot& slotOf(MemberRow member) const { return m_packed.slots[member.row]; }
     const PlacedSlot& extensionWordOf(MemberRow member) const { return m_packed.slots[m_context.rows.extensionWordOf(member.layout)]; }
     std::span<MemberRow> memberRowsOf(const LocationRequest& request) { return m_memberRows.mutableSpan().subspan(request.firstMemberRow, request.numberOfMemberRows); }
@@ -630,8 +631,16 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
     if (cellSizeFor(everything) <= cap)
         return;
     // An Extension saves room where many objects are made and few of them get the field. Where few are made it saves next to nothing, and every access of the field pays for it.
-    if (cellSizeFor(everything) <= maxInlineSizeAtCreation && m_context.isMadeSeldom(id))
-        return;
+    if (m_context.isMadeSeldom(id)) {
+        if (cellSizeFor(everything) <= maxInlineSizeAtCreation)
+            return;
+        // Only what the largest such cell has no room for leaves it. A layout with heirs keeps that room for their rows.
+        bool hasHeirs = std::ranges::any_of(optionalRows, [&](SlotRow row) {
+            return m_rowsWithHeirs.quickGet(row);
+        });
+        if (!hasHeirs)
+            cap = std::max(cap, largestCellSizeWithin(maxInlineSizeAtCreation));
+    }
 
     // Neither estimate says how many objects get a field.
     SlotRow firstRow = m_context.rows.firstRowOf(id);

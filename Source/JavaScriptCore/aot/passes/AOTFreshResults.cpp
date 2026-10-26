@@ -288,6 +288,7 @@ bool FreshResultVariant::buildsSameValueAs(const FreshResultVariant& other) cons
     return kind == other.kind
         && constant == other.constant
         && description.kind == other.description.kind
+        && description.elementType == other.description.elementType
         && prototype.opcode == other.prototype.opcode
         && haveSamePayloadButForPlace(prototype, other.prototype)
         && length == other.length
@@ -382,9 +383,12 @@ void ObjectInterpreter::returnVariant(uint32_t resultVariant, VirtualObjectID ob
 
     auto returnFields = [&](std::span<const FreshResultField> entries) {
         for (const FreshResultField& entry : entries) {
-            std::optional<uint32_t> field = m_sinking.familyOf(object).findField(entry.field);
+            const VirtualFamily& family = m_sinking.familyOf(object);
+            std::optional<uint32_t> field = family.findField(entry.field);
             RELEASE_ASSERT(field && shape && hasStored(*shape, *field));
-            operands[resultShape.resultOfPart(entry.part)] = valueOfField(object, *field);
+            // Where lists meet, an element is carried with a type that takes in the elements of all of them. The list that is made of the parts is born with the storage that fits their types.
+            bool isElement = entry.field.kind == VirtualFieldKind::Element;
+            operands[resultShape.resultOfPart(entry.part)] = isElement ? valueOfField(object, *field, typeOfField(m_sinking.objectContext(), family.descriptionOf(*shape), entry.field)) : valueOfField(object, *field);
         }
     };
     returnFields(variant.properties.span());

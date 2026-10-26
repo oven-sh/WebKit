@@ -10,6 +10,7 @@
 
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTJSONParseEmitter.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
 
@@ -52,6 +53,11 @@ void JSONWriteEmitter::generateJSONListedHolders(const ValueContext& value)
 void JSONWriteEmitter::generateJSONRestoreHolders(const ValueContext& value)
 {
     m_out.storePtr(holdersOf(value).value(), listedHoldersOf(value));
+}
+
+void JSONWriteEmitter::generateJSONEnterWatchedLevel(const ValueContext& value)
+{
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::JSONEnterWatchedLevel, { builderOf(value), in<Boxed>(value->holderOperand()), emitter<JSONParseEmitter>().framePointerAtThisPoint() }, { .isOnRarePath = true }));
 }
 
 void JSONWriteEmitter::generateJSONAppendKey(const ValueContext& value)

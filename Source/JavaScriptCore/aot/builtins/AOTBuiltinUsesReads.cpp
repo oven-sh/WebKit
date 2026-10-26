@@ -491,8 +491,20 @@ static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const Me
     return plan;
 }
 
+// The run time notes such a look.
+static bool looksForNameThatFramesTellOf(const BuiltinUseInputs& inputs, const MemberSite& site)
+{
+    if (site.answer.member != inputs.program.builtins().canonicalID(Builtins::FunctionPrototypeName))
+        return false;
+    return std::ranges::any_of(receiverTypeAt(inputs, site).functions, [&](FunctionID function) {
+        return inputs.program.at(function).framesTellWhetherNameWasLookedFor();
+    });
+}
+
 static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use, BuiltinCallMode mode, ProgramPoint point)
 {
+    if (looksForNameThatFramesTellOf(inputs, site))
+        return { };
     bool isRead = mode == BuiltinCallMode::Get;
     if (isRead) {
         if (BuiltinUsePlan plan = planReadOfClosureProperty(inputs, site, use))

@@ -782,6 +782,7 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
 void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable)
 {
     RELEASE_ASSERT(!m_hasSolved);
+    RELEASE_ASSERT(m_coverings.isEmpty() || !m_coverings.last().retiresNoNodeByItself);
     Covering covering;
     covering.placeholder = placeholder;
     covering.isFirstOfPlaceholder = !std::ranges::contains(m_coverings, placeholder, &Covering::placeholder);
@@ -790,6 +791,22 @@ void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFl
     covering.listedMembersOfWhole = m_makers[0]->intersect(whole, ValueSets::complement(m_lowMembers));
     covering.allButCoverable = ValueSets::complement(coverable);
     covering.lowMembersNotCoverable = lowMembersOf(covering.allButCoverable, *m_makers[0]);
+    covering.flowsIntoCovered.ensureSize(m_capacity);
+    covering.isRetired.ensureSize(m_capacity);
+    covering.hasStoppedAt.ensureSize(m_capacity);
+    m_coverings.append(WTF::move(covering));
+}
+
+void ValueFlowGraph::handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder isMadeForPlaceholder, const void* context)
+{
+    RELEASE_ASSERT(!m_hasSolved);
+    Covering covering;
+    covering.isFirstOfPlaceholder = false;
+    covering.retiresNoNodeByItself = true;
+    covering.isMadeForPlaceholder = isMadeForPlaceholder;
+    covering.contextOfIsMadeForPlaceholder = context;
+    covering.covered = taking.index();
+    covering.allButCoverable = ValueSets::anything;
     covering.flowsIntoCovered.ensureSize(m_capacity);
     covering.isRetired.ensureSize(m_capacity);
     covering.hasStoppedAt.ensureSize(m_capacity);
@@ -845,7 +862,7 @@ bool ValueFlowGraph::takesNoMore(uint32_t node) const
 bool ValueFlowGraph::retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const
 {
     for (const Covering& covering : m_coverings) {
-        if (!covering.isRetired.quickGet(node))
+        if (covering.retiresNoNodeByItself || !covering.isRetired.quickGet(node))
             continue;
         if (!(low & covering.lowMembersNotCoverable) && (!set || !m_sets.meet(ValueSetID(set), covering.allButCoverable)))
             return false;
@@ -857,7 +874,7 @@ ValueSetID ValueFlowGraph::whatRetiredNodeTakes(uint32_t node, ValueSetMaker& ma
 {
     ValueSetID taken = ValueSets::anything;
     for (const Covering& covering : m_coverings) {
-        if (covering.isRetired.quickGet(node))
+        if (!covering.retiresNoNodeByItself && covering.isRetired.quickGet(node))
             taken = maker.intersect(taken, covering.allButCoverable);
     }
     return taken;
@@ -891,7 +908,10 @@ void ValueFlowGraph::findIndices(Team* team, size_t count, Vector<uint32_t>& fou
 
 void ValueFlowGraph::connectStraightToCoveredNode(Covering& covering, uint32_t node)
 {
-    if (node == covering.covered || covering.isRetired.quickGet(node) || takesNoMore(node))
+    if (node == covering.covered || !isFollowedBackThrough(covering, node))
+        return;
+    // A node may have been retired before it was seen to flow into a node that retires none: then it still has to hand on what it lists.
+    if (!covering.retiresNoNodeByItself && (covering.isRetired.quickGet(node) || takesNoMore(node)))
         return;
     ValueFlowEdge straight { ValueFlowNodeID(node), ValueFlowNodeID(covering.covered) };
     if (!addEdgeIfAbsent(straight))
@@ -937,7 +957,7 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
     Vector<uint32_t, 16> toVisit;
     auto lengthensFlowInto = [&](const Covering& covering, ValueFlowEdge edge) {
         uint32_t to = edge.to.index();
-        return covering.flowsIntoCovered.quickGet(to) && !covering.flowsIntoCovered.quickGet(edge.from.index()) && (to == covering.covered || passesEverythingOn(to));
+        return covering.flowsIntoCovered.quickGet(to) && !covering.flowsIntoCovered.quickGet(edge.from.index()) && (to == covering.covered || passesEverythingOn(to)) && isFollowedBackThrough(covering, edge.from.index());
     };
     for (Covering& covering : m_coverings)
         covering.flowsIntoCovered.quickSet(covering.covered);
@@ -950,7 +970,7 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
     for (Covering& covering : m_coverings) {
         auto markPredecessorsOf = [&](uint32_t node) {
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
-                if (!covering.flowsIntoCovered.quickSet(predecessor))
+                if (isFollowedBackThrough(covering, predecessor) && !covering.flowsIntoCovered.quickSet(predecessor))
                     toVisit.append(predecessor);
             });
         };
@@ -989,6 +1009,8 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
     Team& team = *m_team;
     Vector<uint32_t> retired;
     auto isToBeRetiredUnder = [&](const Covering& covering, uint32_t node) {
+        if (covering.retiresNoNodeByItself)
+            return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && (m_gates[node].flags & IsRetired);
         return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
             && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].set));
     };
@@ -1020,9 +1042,18 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
         for (uint32_t index : m_found)
             retire(covering.nodesToLookAt[index]);
         covering.nodesToLookAt.shrink(0);
+        if (covering.retiresNoNodeByItself) {
+            for (const Covering& other : m_coverings) {
+                for (uint32_t node : other.nodesJustRetired) {
+                    if (isToBeRetired(node))
+                        retire(node);
+                }
+            }
+        }
 
         AOT::sort(retired);
-        m_counters.nodesRetired += retired.size();
+        if (!covering.retiresNoNodeByItself)
+            m_counters.nodesRetired += retired.size();
         ASSERT(covering.nodesJustRetired.isEmpty());
         std::swap(covering.nodesJustRetired, retired);
     }

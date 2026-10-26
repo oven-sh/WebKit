@@ -48,8 +48,8 @@ struct CastSimplification : Rewrite {
         unsigned changed = static_cast<unsigned>(moveCastsToEdges());
         for (;;) {
             changed += removeCasts();
-            // The check that has gone may have been the last one in front of such a claim.
-            while (std::exchange(hasKeptClaimBehindCheck, false) & std::exchange(hasRemovedCheck, false))
+            // What has gone may have been the last way from a check to such a claim.
+            while (std::exchange(hasKeptClaimBehindCheck, false) & std::exchange(hasTakenValuesFromBehindChecksInThisTurn, false))
                 changed += removeCasts();
             // removeCasts() judges each cast by what it leaves behind, so it finds nothing more until removeRepeatedCasts() has changed something.
             unsigned repeated = removeRepeatedCasts();
@@ -149,6 +149,7 @@ struct CastSimplification : Rewrite {
         }
         if (movedParameters.isEmpty())
             return 0;
+        mayHaveTakenValuesFromBehindChecks = true;
 
         builder().applyInsertions();
         predicted.reset();
@@ -228,7 +229,8 @@ struct CastSimplification : Rewrite {
             hasKeptClaimBehindCheck = true;
             return changed;
         }
-        hasRemovedCheck |= cast.opcode == Opcode::Check;
+        // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
+        bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
         if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
             substitution.replace(id, operand);
@@ -237,6 +239,8 @@ struct CastSimplification : Rewrite {
             becomeUpcast(function, id, operand);
         else
             return changed;
+        hasTakenValuesFromBehindChecksInThisTurn |= standsBehindMoreChecksThanOperand;
+        mayHaveTakenValuesFromBehindChecks |= standsBehindMoreChecksThanOperand;
         return changed + 1;
     }
 
@@ -298,6 +302,7 @@ struct CastSimplification : Rewrite {
             user.setOperand(operandIndex, current);
             return 0;
         }
+        mayHaveTakenValuesFromBehindChecks = true;
         return 1;
     }
 
@@ -401,6 +406,7 @@ struct CastSimplification : Rewrite {
                     continue;
                 if (ValueID earlier = passed.get(keyOf(id))) {
                     substitution.replace(id, earlier);
+                    mayHaveTakenValuesFromBehindChecks |= opcode == Opcode::Check;
                     explainOperationThatGoes(function, id, InPlaceOfOperation::AnEarlierOneThatCompleted);
                     eraseValue(block, index);
                     ++changed;
@@ -430,7 +436,9 @@ struct CastSimplification : Rewrite {
 
     ValueSubstitution substitution { function };
     bool hasKeptClaimBehindCheck { false };
-    bool hasRemovedCheck { false };
+    bool hasTakenValuesFromBehindChecksInThisTurn { false };
+    // A check has gone, or a cast that read something else beside what it let through, or an operation has got another operand than a cast of the one that it had.
+    bool mayHaveTakenValuesFromBehindChecks { false };
     // The pass makes no check.
     std::optional<bool> hasChecks;
     std::optional<PredictedValues> predicted;
@@ -441,10 +449,12 @@ struct CastSimplification : Rewrite {
 
 PassOutcome simplifyCasts(FunctionPassContext& context)
 {
-    if (!CastSimplification(context).run())
+    CastSimplification simplification(context);
+    if (!simplification.run())
         return PassOutcome::Unchanged;
     // A check that the type of its operand answers is gone.
-    settleProofsBehindAnsweredChecks(context.function, context.analyses.cfg());
+    if (simplification.mayHaveTakenValuesFromBehindChecks)
+        settleProofsBehindAnsweredChecks(context.function, context.analyses.cfg());
     // Every step drops what its edits have made stale, so what is held at the end was made behind the last edit.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;

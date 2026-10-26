@@ -226,19 +226,15 @@ void BodyDecoder::decodeParameters(Block& block, uint32_t count)
     }
 }
 
+static bool isWrittenAsReflectConstruct(const Value& value)
+{
+    return FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
+}
+
 static bool constructsWhereWritten(const Value& value)
 {
-    switch (value.opcode) {
-    case Opcode::Construct:
-    case Opcode::ConstructList:
-    case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList:
-        return true;
-    case Opcode::Call:
-        return value.isReflectConstructSyntax();
-    default:
-        return false;
-    }
+    bool callsWithNewTarget = accessClassOf(value.opcode) == AccessClass::IndirectCall && OperandPosition::newTarget(value.opcode);
+    return callsWithNewTarget || isWrittenAsReflectConstruct(value);
 }
 
 void BodyDecoder::decodeValue(Block& block)
@@ -263,9 +259,10 @@ void BodyDecoder::decodeValue(Block& block)
     adoptCheckerFailure();
     if (head.opcode & Wire::WrittenPositionFollows) {
         uint32_t written = next();
-        if (constructsWhereWritten(value))
-            m_function.constructionStarts.append({ value.position, written, opcode == Opcode::Call });
-        else
+        if (constructsWhereWritten(value)) {
+            m_function.constructionStarts.append({ value.position, written, isWrittenAsReflectConstruct(value) });
+            value.isPartOfConstruction = true;
+        } else
             m_function.writtenPositions.append({ id, written });
     }
     if (opcode == Opcode::Convert && !hasFailed())

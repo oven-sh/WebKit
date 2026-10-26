@@ -21,6 +21,8 @@ enum class CallableKind : uint8_t { Plain, Arrow, Method, Bound };
 static constexpr unsigned classObjectClosureStructure = 4;
 static constexpr unsigned numberOfClosureStructures = classObjectClosureStructure + 1;
 static constexpr unsigned numberOfSlimClosureKinds = 2;
+// In FunctionKindData::accessorKind, beside the members of MethodKind: no accessor, and a stack frame shows another name once something has looked for the property `name` of the function object.
+static constexpr unsigned methodThatNotesLooksForName = 3;
 
 struct FunctionKindData {
     uint16_t closureStructure : 3;
@@ -39,7 +41,8 @@ struct FunctionKindData {
     constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
-    constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }
+    constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
+    constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
     constexpr bool isBound() const { return callable() == CallableKind::Bound; }
     constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
 };

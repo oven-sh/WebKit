@@ -38,6 +38,7 @@ public:
         , inlineFrame(other.inlineFrame)
         , flags(other.flags)
         , isTailCall(other.isTailCall)
+        , isPartOfConstruction(other.isPartOfConstruction)
     {
         copyWordsFrom(other);
     }
@@ -46,6 +47,7 @@ public:
         , inlineFrame(other.inlineFrame)
         , flags(other.flags)
         , isTailCall(other.isTailCall)
+        , isPartOfConstruction(other.isPartOfConstruction)
     {
         moveWordsFrom(other);
     }
@@ -59,6 +61,7 @@ public:
         inlineFrame = other.inlineFrame;
         flags = other.flags;
         isTailCall = other.isTailCall;
+        isPartOfConstruction = other.isPartOfConstruction;
         copyWordsFrom(other);
         return *this;
     }
@@ -71,6 +74,7 @@ public:
         inlineFrame = other.inlineFrame;
         flags = other.flags;
         isTailCall = other.isTailCall;
+        isPartOfConstruction = other.isPartOfConstruction;
         moveWordsFrom(other);
         return *this;
     }
@@ -99,10 +103,11 @@ public:
     uint32_t flags : 8 { 0 };
     // The operation is a call in tail position that returns here, or stands for a part of one. A stack trace leaves out the frame that makes it.
     uint8_t isTailCall : 1 { false };
+    // The operation is an expression that constructs, or stands for a part of one. Its position is the callee's, and call sites show where the expression starts.
+    uint8_t isPartOfConstruction : 1 { false };
 private:
     uint8_t m_numberOfInlinePayloadWords : 2 { 0 };
     uint8_t m_hasOutOfLineWords : 1 { false };
-    uint8_t : 1;
     uint8_t m_numberOfInlineOperands : 3 { 0 };
 
 public:
@@ -242,12 +247,13 @@ public:
     }
 
     bool hasPosition() const { return position != noPosition; }
-    Origin origin() const { return { position, inlineFrame, !!isTailCall }; }
+    Origin origin() const { return { position, inlineFrame, !!isTailCall, !!isPartOfConstruction }; }
     void setOrigin(Origin origin)
     {
         position = origin.position;
         inlineFrame = origin.inlineFrame;
         isTailCall = origin.isTailCall;
+        isPartOfConstruction = origin.isPartOfConstruction;
     }
 
     uint32_t payloadWordAt(unsigned word) const

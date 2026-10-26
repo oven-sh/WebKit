@@ -23,6 +23,7 @@ public:
     void generateJSONLeaveHolder(const ValueContext&);
     void generateJSONListedHolders(const ValueContext&);
     void generateJSONRestoreHolders(const ValueContext&);
+    void generateJSONEnterWatchedLevel(const ValueContext&);
     void generateJSONAppendKey(const ValueContext&);
     void generateJSONAppendToken(const ValueContext&);
     void generateJSONAppendBoolean(const ValueContext&);

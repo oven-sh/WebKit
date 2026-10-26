@@ -880,6 +880,9 @@ private:
     bool haveFailure() const;
     bool hasRemainingCapacity(unsigned size = 1);
     bool hasRemainingCapacitySlow(unsigned size);
+#if ENABLE(AOT)
+    bool hasStackSpaceAtWatchedLevel(JSValue, void* stackPointer);
+#endif
     bool mayHaveToJSON(JSObject&) const;
 
     static void logOutcome(ASCIILiteral);
@@ -911,6 +914,8 @@ private:
     uint8_t* m_stackLimit { nullptr };
 #if ENABLE(AOT)
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
+    // While it watches, m_stackLimit lies above every frame.
+    NO_UNIQUE_ADDRESS std::conditional_t<bufferMode == BufferMode::DynamicBuffer, AOT::WatchedJSONLevels, std::monostate> m_watchedLevels;
 #endif
 
     CharType m_buffer[staticBufferSize];
@@ -1163,6 +1168,10 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         return true;
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
+#if ENABLE(AOT)
+        if (m_watchedLevels.isWatchingAfterGrowthTo(newSize))
+            m_stackLimit = std::bit_cast<uint8_t*>(std::numeric_limits<uintptr_t>::max());
+#endif
         if (newSize > lengthOfBigResult) {
             size_t lengthOfLast = stringifyHints.lengthOfBigResult;
             size_t sizeForResultLikeLast = lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6;
@@ -1187,6 +1196,30 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         return true;
     }
 }
+
+#if ENABLE(AOT)
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE bool FastStringifier<CharType, bufferMode>::hasStackSpaceAtWatchedLevel(JSValue value, void* stackPointer)
+{
+    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+        uint8_t* stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
+        if (std::bit_cast<uint8_t*>(stackPointer) < stackLimit) {
+            recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+            return false;
+        }
+        bool goesOn = !m_watchedLevels.isWatching() || !value.isObject() || m_watchedLevels.enter(JSValue::encode(value), stackPointer);
+        if (!m_watchedLevels.isWatching())
+            m_stackLimit = stackLimit;
+        if (!goesOn)
+            recordFailure("object inside itself"_s);
+        return goesOn;
+    } else {
+        UNUSED_PARAM(value);
+        UNUSED_PARAM(stackPointer);
+        return true;
+    }
+}
+#endif
 
 template<typename CharType, BufferMode bufferMode>
 template<typename StringCharType>
@@ -1578,8 +1611,13 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
 {
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+#if ENABLE(AOT)
+            if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
+                return;
+#else
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
             return;
+#endif
         }
     }
 
@@ -2651,8 +2689,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
     auto data = butterfly->contiguous();
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
-            recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
-            return;
+            // append() has shown the array.
+            if (!hasStackSpaceAtWatchedLevel(jsUndefined(), currentStackPointer()))
+                return;
         }
     }
 

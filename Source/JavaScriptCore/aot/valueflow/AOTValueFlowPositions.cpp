@@ -117,11 +117,12 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
             set = maker.unite(set, solver.possibleValuesOf(ValueFlowProgramNodes::lost()));
         return maker.intersect(set, universe.closures());
     };
+    ValueSetID heritagesOutsideProgram = maker.unite(universe.builtinObjects(), maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Null)));
     auto getsOwnLayoutFromEach = [&](LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) {
         size_t numberOnChain = 0;
         for (size_t steps = 0; newTarget && steps <= program.layouts.size(); ++steps, newTarget = layoutAbove(newTarget)) {
             numberOnChain += std::ranges::binary_search(sortedConstructorFunctions, newTarget);
-            if (!program.at(newTarget).has(LayoutFlags::HasHeritage))
+            if (!program.at(newTarget).has(LayoutFlags::HasHeritage) || sets.isSubset(heritageOfClass[newTarget.index()], heritagesOutsideProgram))
                 return numberOnChain == sortedConstructorFunctions.size();
         }
         return true;

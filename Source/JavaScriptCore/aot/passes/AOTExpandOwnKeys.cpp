@@ -1011,8 +1011,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         } else {
             // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
             builder.append(Opcode::CatchValue, { });
-            builder.append(Opcode::JSONResetHolders, { stringBuilder });
-            builder.emitJump(generic);
+            builder.emitJump(noText);
         }
         builder.moveToEndOf(finished);
     }

@@ -146,6 +146,19 @@ std::optional<ModuleID> ModuleTable::fileBehindFace(ModuleID module) const
     return file;
 }
 
+// The further modules of a file follow the file.
+std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
+{
+    for (unsigned index = file.index() + 1; index < size(); ++index) {
+        ModuleID module(index);
+        if (fileBehindFace(module) == file)
+            return module;
+        if (!spellOneText(piecesOfDisplayPath(file), piecesOfDisplayPath(module)))
+            break;
+    }
+    return std::nullopt;
+}
+
 auto ModuleTable::linkPlanOfRoot(ModuleID module) const -> std::optional<LinkPlanOfRoot>
 {
     std::span<const LinkPlanRootData> roots = m_tables->linkPlanRoots();

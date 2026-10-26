@@ -1428,8 +1428,19 @@ Function buildSerializer(const DerivedFunctionKey& key, DerivedFunctionInputs& d
 
     BlockID differs = builder.addBlock(BlockFrequency::Rare);
     builder.emitFailureOfPredictions(Target { differs, { }, { } });
-    writer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
     writer.m_codeMayRunAroundValues = writer.writingRunsCode(Type::forLayout(layout, inputs.types));
+    // Where code may run, the holders are listed. Where none runs, nothing is kept about them until the text has grown long: then the run time asks for those that follow.
+    if (!writer.m_codeMayRunAroundValues && writer.mayHoldItself(layout)) {
+        IRBuilder::BranchBlocks atEntry = builder.emitBranch(builder.append(Emission::make<&Value::setFailsAtWatchedLevels>(Opcode::JSONHasStackSpace, { }, true)), BlockFrequency::Normal, BlockFrequency::Rare);
+        builder.moveToEndOf(atEntry.notTaken);
+        IRBuilder::BranchBlocks whenAsked = builder.emitBranch(builder.append(Opcode::JSONEnterWatchedLevel, { head.parameters[1], head.parameters[0] }), BlockFrequency::Rare, BlockFrequency::Rare);
+        builder.moveToEndOf(whenAsked.notTaken);
+        builder.emitJump(differs);
+        builder.moveToEndOf(whenAsked.taken);
+        builder.emitJump(atEntry.taken);
+        builder.moveToEndOf(atEntry.taken);
+    } else
+        writer.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), differs);
     writer.appendObjectOfLayout(head.parameters[0], layout, differs);
     builder.emitReturn(writer.appendOutcome(JSONOutcome::Parsed));
 

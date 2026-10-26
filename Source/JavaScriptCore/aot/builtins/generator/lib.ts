@@ -412,6 +412,8 @@ export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnl
 export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfObjectsOnly" };
 // Native code tests that a value it means to call is callable, and keeps it.
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
+// Of the objects that it meets, native code converts those to a primitive that are made by Number, String or a class below one of them, and no other.
+export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
   { use: "Role", role: "KeysAreNotListed" },

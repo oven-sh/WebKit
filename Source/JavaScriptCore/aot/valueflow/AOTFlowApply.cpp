@@ -432,6 +432,8 @@ static void applySignatureUpdates(const FlowApplyContext& context)
         applyEntryParameterUpdates(function, update.entryParameters.span());
         applyResultUpdates(function, update.results.span());
         function.capabilities.add(update.provenCapabilities);
+        if (context.results.closuresMayBeRenamed(FunctionID(index)))
+            function.capabilities.add(FunctionCapabilities::NotesLooksForName);
     });
 }
 

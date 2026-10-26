@@ -105,6 +105,8 @@ static constexpr LineColumn startOfBuiltinFunction { 1, 11 };
 static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
 static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
+static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };
+static_assert(sizeof("(function (...args) { ") == startOfSuperCallOfDefaultConstructor.column);
 
 static void reportUndeclaredTrap(const DescribedFunction& described, ValueID value)
 {
@@ -262,11 +264,7 @@ static SitePosition positionIn(const Program& program, const ShownFunction& show
     if (position == Instruction::noPosition)
         position = 0;
     LineColumn lineColumn = program.lineColumnFor(owner.module, position);
-    // The lines of a text that the program evaluates are counted in the text. The file is the one that evaluates it.
-    ModuleID shownModule = owner.module;
-    if (shownModule && program.at(shownModule).kind == ModuleKind::CommonJs && program.at(shownModule).referrer)
-        shownModule = program.at(shownModule).referrer;
-    return { lineColumn.line, lineColumn.column, shownModule, position, frame };
+    return { lineColumn.line, lineColumn.column, owner.module, position, frame };
 }
 
 static ShownFunctions findShownFunctions(const DescribedFunction& described)
@@ -281,14 +279,21 @@ static ShownFunctions findShownFunctions(const DescribedFunction& described)
     return shownFunctions;
 }
 
-static void describeConstructionStart(const Program& program, const ShownFunction& shown, bool siteConstructs, SitePosition& position)
+static void describeConstructionStart(const Program& program, const ShownFunction& shown, const RecordedSite& site, SitePosition& position)
 {
+    if (!site.origin.isPartOfConstruction && !isConstructOf(site.kind))
+        return;
+    const Function& owner = program.at(shown.id);
+    if (owner.kind == FunctionKind::DerivedConstructor && isDefaultConstructor(program, owner)) {
+        position.constructionStartLine = startOfSuperCallOfDefaultConstructor.line;
+        position.constructionStartColumn = startOfSuperCallOfDefaultConstructor.column;
+        return;
+    }
     if (shown.positionInBuiltin)
         return;
     ModuleID module = program.at(shown.id).module;
     const ConstructionStart* construction = program.findConstructionReportedAt(module, position.sourceOffset);
-    // A construction may have become an allocation and a call of the body.
-    if (!construction || (construction->isWrittenAsCall && !siteConstructs))
+    if (!construction || (construction->isWrittenAsCall && !isConstructOf(site.kind)))
         return;
     LineColumn lineColumn = program.lineColumnFor(module, construction->start);
     position.constructionStartLine = lineColumn.line;
@@ -307,7 +312,7 @@ static Vector<SitePosition> describePositions(const DescribedFunction& described
         positions[0].column = startOfBuiltinFunction.column;
     for (const RecordedSite& site : renumbered) {
         positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
-        describeConstructionStart(program, shownFunctions[site.origin.inlineFrame], isConstructOf(site.kind), positions.last());
+        describeConstructionStart(program, shownFunctions[site.origin.inlineFrame], site, positions.last());
     }
     return positions;
 }
@@ -471,6 +476,7 @@ static FrameDescription describeFrame(const CodeRecords& records, EmittedCode& e
     const B3::Procedure& procedure = *emitted.procedure;
     const B3::Air::Code& code = procedure.code();
     frame.frameSizeInBytes = procedure.frameSize();
+    frame.bytesAboveFrameRecord = code.frameLayout().bytesAboveFrameRecord;
     frame.bytesDeadAtSuspensions = code.frameLayout().bytesDeadAtSuspensions;
     frame.hasFrameRecord = !code.frameLayout().hasFrame || code.frameLayout().hasFrameRecord;
     frame.calleeSaveRegisters = registersRestoredByUnwinding(procedure, function);

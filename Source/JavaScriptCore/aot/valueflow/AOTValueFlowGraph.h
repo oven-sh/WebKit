@@ -77,6 +77,8 @@ public:
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
     using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
+    // A retired node lists no more of what arrives at it. `taking` gets what is carried to it whether that arrives before a node on the way is retired or after: all but what comes out of a covered node or a node made for a placeholder.
+    void handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder, const void* context);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     struct StoppedPlaceholder {
@@ -285,6 +287,9 @@ private:
     struct Covering {
         ValueFlowObjectID placeholder;
         bool isFirstOfPlaceholder { true };
+        bool retiresNoNodeByItself { false };
+        IsMadeForPlaceholder isMadeForPlaceholder { nullptr };
+        const void* contextOfIsMadeForPlaceholder { nullptr };
         uint32_t covered { 0 };
         uint64_t lowMembersOfWhole { 0 };
         ValueSetID listedMembersOfWhole;
@@ -384,6 +389,7 @@ private:
     void connectPredecessorsOfRetiredNodes(Team&);
     void connectStraightToCoveredNode(Covering&, uint32_t node);
     bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
+    bool isFollowedBackThrough(const Covering& covering, uint32_t node) const { return !covering.retiresNoNodeByItself || (!(m_gates[node].flags & IsCoveredNode) && !covering.isMadeForPlaceholder(covering.contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))); }
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 

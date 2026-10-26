@@ -120,8 +120,12 @@ public:
     void throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier);
     void didRequestFromHost(ModuleID module) { m_firstModuleRequestedByHost = m_firstModuleRequestedByHost.value_or(module); }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
+    // `bun run` loads the entry point as the one import of the module bun:main: the graph is loaded one step of the loader behind the entry point. Says so once.
+    bool takeStepOfMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !std::exchange(m_didTakeStepOfMainModule, true); }
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
-    bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost; }
+    // The text of a data: URL that the program imports under a constant name is part of the program.
+    bool isTextNamedByProgram(StringView url) const;
+    bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
     bool isAskingHost() const { return m_isAskingHost; }
     // A name that the build did not follow finds an entry point and no other file of the image.
     bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
@@ -337,7 +341,9 @@ private:
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
+    bool m_didTakeStepOfMainModule { false };
     bool m_admitsCodeOutsideImage;
+    bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
     bool m_loadsModulesByName;
     bool m_isAskingHost { false };

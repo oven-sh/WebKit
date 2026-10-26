@@ -21,6 +21,7 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTEffectsOfProtocols.h"
 #include "AOTExpandOwnKeysInternal.h"
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
@@ -2689,6 +2690,33 @@ static PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builde
 
 // Spreads.
 
+// Where the protocol finds no method of the program in the operand, the effects of a spread say that it runs no code, and tests are placed by them. A call of the function that walks anything
+// counts as running any code, so nothing of such an operand goes there: a string is walked here, and the rest throws. Answers what is left to walk.
+static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, BlockFrequency frequency)
+{
+    Type type = pass.program.typeOf(pass.function, source);
+    if (type.without(pass.types.at(TypeTable::string), pass.types).isNever() || protocolMayFindMember(pass.program, type, Protocol::Iterate))
+        return source;
+
+    ValueID string;
+    BlockID blockOfString;
+    if (type.primitives & Primitive::AnyString) {
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::string), OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
+        string = branch.provenOnTaken;
+        blockOfString = branch.taken;
+        source = branch.provenOnNotTaken;
+        builder.moveToEndOf(branch.notTaken);
+    }
+    if (pass.program.typeOf(pass.function, source).mayBeUndefinedOrNull())
+        source = builder.append(makeRequireObjectCoercible(source, IterationOrigin::Spread));
+    if (pass.function.at(source).type != TypeTable::never)
+        builder.append(makeWith(Opcode::ThrowNotIterable, { source }, &Value::setIsSpread, true));
+    builder.emitUnreachable();
+    if (string)
+        builder.moveToEndOf(blockOfString);
+    return string;
+}
+
 static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramPoint point, const IterationPlan& plan, Vector<SpreadLoop>& loops)
 {
     Function& function = pass.function;
@@ -2756,6 +2784,10 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramP
     if (!loopEntry)
         return;
     builder.moveToEndOf(loopEntry);
+    source = emitThrowWhereNoMethodIsFound(pass, builder, source, loopFrequency);
+    if (!source)
+        return;
+    loopEntry = builder.currentBlock();
     ValueID open = builder.append(makeWith(Opcode::IteratorOpen, { source }, &Value::setIteratorKind, IteratorKind::Sync));
     builder.endExpansion(cut, std::span<const ValueID> { });
     loops.append({ open, original.arrayOperand(), loopEntry, cut.continuation, cut.handler, std::nullopt });

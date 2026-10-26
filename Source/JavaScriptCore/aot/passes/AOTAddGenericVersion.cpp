@@ -87,49 +87,6 @@ static Value makeMismatchReport(ValueID value, ExpectedType expectedType, TypeSi
     return report;
 }
 
-static TypeID typeOfKind(TypeArena& types, OperandKind kind)
-{
-    switch (kind) {
-    case OperandKind::Boolean:
-        return TypeTable::boolean;
-    case OperandKind::Integer:
-        return TypeTable::integer;
-    case OperandKind::Number:
-        return TypeTable::number;
-    case OperandKind::String:
-        return types.intern(Type::fromPrimitives(Primitive::AnyString));
-    case OperandKind::PropertyKey:
-        return types.intern(Type::fromPrimitives(Primitive::AnyString | Primitive::AnySymbol));
-    case OperandKind::Object:
-    case OperandKind::Layout:
-        return TypeTable::object;
-    case OperandKind::Callable:
-        return TypeTable::function;
-    case OperandKind::Array:
-        return types.intern(Type::builtinClass(BuiltinClasses::Array));
-    case OperandKind::Any:
-    case OperandKind::Declared:
-    case OperandKind::Environment:
-    case OperandKind::EvalOperand:
-    case OperandKind::Results:
-    case OperandKind::Convertible:
-    case OperandKind::IteratorState:
-    case OperandKind::Enumerator:
-    case OperandKind::Exception:
-    case OperandKind::ClassToken:
-    case OperandKind::Guard:
-    case OperandKind::StringBuilder:
-    case OperandKind::Cursor:
-    case OperandKind::KeyOrder:
-    case OperandKind::FlatString:
-    case OperandKind::CodeAddress:
-    case OperandKind::JSONHolders:
-    case OperandKind::BuilderCursor:
-        return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 namespace {
 
 
@@ -146,14 +103,6 @@ struct GenericVersionCut {
     ProgramPoint point;
     BlockID blockBefore;
     BlockID blockAfter;
-};
-
-struct OperandOfOtherKind {
-    ProgramPoint point;
-    // Null: the terminator of the block.
-    ValueID user;
-    uint32_t operandIndex;
-    TypeID castType;
 };
 
 struct GenericVersionBuilder {
@@ -680,55 +629,11 @@ struct GenericVersionBuilder {
         context.build.statistics().count(StatisticID::ChecksReplacedByGuards, checks.size());
     }
 
-    // An operation that takes one kind of value has no form for any other.
-    bool assumeOperandKinds()
-    {
-        Vector<OperandOfOtherKind, 8> found;
-        auto visit = [&](ProgramPoint point, ValueID user, const auto& instruction) {
-            instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                TypeID required = typeOfKind(types, instruction.operandKind(operandIndex));
-                TypeID type = function.at(operand).type;
-                if (required && types.at(type).isJavaScriptValue() && !types.at(type).isSubsetOf(types.at(required), program))
-                    found.append({ point, user, operandIndex, types.intersectionOf(type, required) });
-            });
-        };
-        for (BlockID block : analyses.cfg().reversePostOrder()) {
-            const Block& contents = function.at(block);
-            uint32_t numberOfValues = contents.values.size();
-            for (uint32_t index = 0; index < numberOfValues; ++index)
-                visit({ block, index }, contents.values[index], function.at(contents.values[index]));
-            visit({ block, numberOfValues }, { }, contents.terminator);
-        }
-        // The front end lays its own test in front of such an operation.
-        return insertAssumedTypes(found.span(), Proven::byConstruction);
-    }
-
-    bool insertAssumedTypes(std::span<const OperandOfOtherKind> uses, ProvenInEveryVersion (*reason)(TypeID))
-    {
-        if (uses.empty())
-            return false;
-        for (const OperandOfOtherKind& use : uses) {
-            const Instruction& user = use.user ? static_cast<const Instruction&>(function.at(use.user)) : function.at(use.point.block).terminator;
-            ValueID operand = user.operand(use.operandIndex);
-            builder.setOrigin(user.origin());
-            if (context.build.validates())
-                builder.insertBefore(use.point, makeValidateType(operand, use.castType));
-            ValueID assumed = builder.insertBefore(use.point, makeAssumeType(operand, reason(use.castType)));
-            Instruction& edited = use.user ? static_cast<Instruction&>(function.edit(use.user, ValueEdit::Definition)) : function.edit(use.point.block, BlockEdit::Terminator).terminator;
-            edited.setOperand(use.operandIndex, assumed);
-        }
-        builder.applyInsertions();
-        analyses.didChangeValues();
-        return true;
-    }
-
     void finishTyping()
     {
         // Every check is a test by now or is gone.
         settleProofsBehindAnsweredChecks(function, analyses.cfg());
         typeAgain();
-        if (assumeOperandKinds())
-            typeAgain();
         // Whatever it stores behind an allocation, it puts a value in for.
         size_t numberOfValuesBefore = function.values.size();
         storeUnprovenInitialValues(program, context.id, function, types, context.build);
@@ -1827,7 +1732,7 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     if (checksOfLayouts.isEmpty())
         return;
     BitVector mayBeTurnedAway = valuesThatAre(function, cfg, checksOfLayoutsThatMayFail.span());
-    BitVector isAnsweredForByCheckAlone = valuesThatAre(function, cfg, checksOfLayouts.span());
+    std::optional<BitVector> isAnsweredForByCheckAlone;
     auto append = [&](FieldReference field) {
         FieldReference declaration = declarationOf(program, field);
         if (tellsObjectsApartByLayout(program.at(fieldAt(program, declaration).declared.expected().predicted())))
@@ -1845,7 +1750,9 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
                         append({ store.layout(), store.fields()[index] });
                 }
             } else if (store.opcode == Opcode::CopyDataProperties) {
-                if (!isAnsweredForByCheckAlone.get(store.sourceOperand().index()))
+                if (!isAnsweredForByCheckAlone)
+                    isAnsweredForByCheckAlone = valuesThatAre(function, cfg, checksOfLayouts.span());
+                if (!isAnsweredForByCheckAlone->get(store.sourceOperand().index()))
                     continue;
                 for (LayoutID member : membersOf(program, program.typeOf(function, store.targetOperand()))) {
                     for (uint32_t field = 0; field < program.at(member).fields.size(); ++field)
@@ -1881,13 +1788,9 @@ static void collectTaintedStores(const Program& program, FunctionID id, BuildCon
     Vector<TypedStore, 16> stores = findTypedStores(typing, analyses.cfg());
     if (stores.isEmpty())
         return;
-    BitVector isBehindCheck;
-    BitVector isCheckedValueItself;
+    BitVector storedValuesThatCount;
     if (!checks.isEmpty())
-        isBehindCheck = valuesBehind(function, analyses.cfg(), checks.span());
-    if (isAfterFlow)
-        isCheckedValueItself = valuesThatAre(function, analyses.cfg(), checks.span());
-    const BitVector& storedValuesThatCount = isAfterFlow ? isCheckedValueItself : isBehindCheck;
+        storedValuesThatCount = isAfterFlow ? valuesThatAre(function, analyses.cfg(), checks.span()) : valuesBehind(function, analyses.cfg(), checks.span());
 
     // Past form AsRead the type of a value need not be what its rule gives.
     bool isAsRead = program.form() == IRForm::AsRead;
@@ -1900,6 +1803,10 @@ static void collectTaintedStores(const Program& program, FunctionID id, BuildCon
         return;
     }
 
+    BitVector valuesBehindChecksAfterFlow;
+    if (isAfterFlow)
+        valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
+    const BitVector& isBehindCheck = isAfterFlow ? valuesBehindChecksAfterFlow : storedValuesThatCount;
     // A check that has nothing left to test in the typed code is dropped in front of the copy, so it holds nothing back there.
     Function withoutChecks(function);
     // A check answers a claim of flow that says no more than the check does, whatever the claim rests on, and the claim is gone when the check goes.

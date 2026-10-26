@@ -1,5 +1,6 @@
 # function result(x: number) { return x + 1 }   function variable(x: number) { held = x + 1 }   function argument(x: number) { return taker(x + 1) }   function capture(x: number) { const sum = x + 1; return () => sum }
 # function itself(x: number) { return x }   Each is called with 1 and with "a", so the check of its parameter stays.
+# main reads itself(1).a too: flow follows a string as a constant where its text is a key, and this read makes "a" a key of the program.
 # Flow follows what a check turns away through the same operations: the sum is an integer or a string, and so is every position that takes it. By the rules the sum behind the check is a number, which lies inside that type
 # as long as the check stands. The check may go, so flow writes what it holds of the position in front of each store, as a type that holds in every version.
 # The very value that the check tests gets no such type: the position that takes it is only expected
@@ -25,6 +26,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v11 = CallDirect v1 function=f7
     v12 = Call v8
     v13 = Call v9
+    v14 = PropGet v10 key="a"
     Return
 # CHECK: int|whole|string = CallDirect v0 function=f1
 # CHECK: anything ~ 1|"a" = CallDirect v0 function=f7

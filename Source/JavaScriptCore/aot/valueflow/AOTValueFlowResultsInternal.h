@@ -237,6 +237,13 @@ struct ValueFlowResultInputs {
 
     ValueSetID possibleValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().possibleValuesOf(operand.node) : ValueSets::nothing); }
     ValueSetID seenValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().seenValuesOf(operand.node) : ValueSets::nothing); }
+    bool isSeenAt(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueFlowObjectID object) const { return sets().contains(seenValuesOf(maker, operand), object); }
+
+    ValueSetID seenBuiltinObjectsAt(ValueSetMaker& maker, const ValueFlowOperand& operand) const
+    {
+        ValueSetID seen = seenValuesOf(maker, operand);
+        return ValueSets::isComplement(seen) ? ValueSets::nothing : maker.intersect(seen, universe().builtinObjects());
+    }
 
     ValueSetID throughMaskOf(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueSetID valuesOfNode) const
     {
@@ -776,6 +783,7 @@ struct ValueFlowBuiltinApplication {
     ValueFlowCallKind kind { ValueFlowCallKind::Call };
     FunctionID function;
     ValueID site;
+    const ValueFlowStatement* statement { nullptr };
     ValueSetID thisValue { ValueSets::nothing };
     Vector<ValueSetID, numberOfGroupedArguments> arguments;
     ValueSetID otherArguments { ValueSets::nothing };

@@ -1178,6 +1178,20 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         // loadRequestedModules settled: on fulfillment, call finishLoading and update entry
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = context->module();
+#if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeStepOfMainModule()) {
+                // The entry point is loaded from here on, for whoever asks the loader for it. Who asked for the program hears of it in the next step.
+                JSPromise* loadedBelowMainModule = JSPromise::create(vm, globalObject->promiseStructure());
+                loadedBelowMainModule->markAsHandled();
+                loadedBelowMainModule->fulfill(vm, module);
+                auto* entry = context->entry();
+                entry->setRecord(vm, module);
+                entry->setStatus(ModuleRegistryEntry::Status::Fetched);
+                entry->setLoadPromise(vm, loadedBelowMainModule);
+                loadedBelowMainModule->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
+                return;
+            }
+#endif
             context->loader()->finishLoadingImportedModule(globalObject, context->referrer(), context->moduleRequest(), context->payload(), module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);

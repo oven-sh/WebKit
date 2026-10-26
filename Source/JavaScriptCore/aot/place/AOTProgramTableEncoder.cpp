@@ -2294,8 +2294,8 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.exportRule = module.exportRule;
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));
-    RELEASE_ASSERT(module.kind != ModuleKind::External || !module.runtimeModule);
-    entry.referrerOrRuntimeModule = optionalNumber24(module.kind == ModuleKind::External ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
+    RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
+    entry.referrerOrRuntimeModule = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
     if (module.exportsVariable)
         entry.value = placedVariableSlot(encoder, module.exportsVariable);
     else if (encoder.placement.hasModuleValue(id))

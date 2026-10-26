@@ -96,7 +96,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
         const Function& function = program.at(id);
         bool isSeenCode = isInSeenCode(solution, id);
         auto add = [&](UnseenCodeCause cause, BuiltinID builtin, ValueID site) {
-            Witness witness = site ? Witness { index, site.index(), function.locationOf(site) } : Witness { index, Wire::none, function.declarationLocation() };
+            Witness witness = site ? Witness { index, site.index(), function.writtenLocationOf(site) } : Witness { index, Wire::none, function.declarationLocation() };
             recordsOfFunction[index].append(UnseenCodeRecord { cause, builtin ? builtin.index() : Wire::none, witness });
         };
 

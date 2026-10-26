@@ -22,7 +22,7 @@ operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), 
 operation JSONFindMember (string: String, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember
 operation JSONMemberRepeats (string: String, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats
 operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState)
-operation JSONHasStackSpace () -> natural(boolean) ; reads(RuntimeState)
+operation JSONHasStackSpace () [failsAtWatchedLevels] -> natural(boolean) ; reads(RuntimeState)
 operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none
 operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; reads(RuntimeState) ; runtime = JSONObjectKey
 operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; Allocates reads(OrderWords, ObjectFields) writes(OrderWords, NamedProperties, RuntimeState) ; runtime = JSONObjectFinish
@@ -39,6 +39,7 @@ operation JSONEnterHolder (builder: StringBuilder/inspects, holder: Any/inspects
 operation JSONLeaveHolder (builder: StringBuilder/inspects, holders: JSONHolders/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents)
 operation JSONListedHolders (builder: StringBuilder/inspects) -> natural(JSONHolders) ; reads(StringBuilderContents)
 operation JSONRestoreHolders (builder: StringBuilder/inspects, holders: JSONHolders/inspects) -> none ; writes(StringBuilderContents)
+operation JSONEnterWatchedLevel (builder: StringBuilder/inspects, holder: Any/inspects) -> natural(boolean) ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = JSONEnterWatchedLevel
 operation JSONAppendKey (string: String, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) [opensObject followsMember] -> natural(BuilderCursor) ; writes(StringBuilderContents)
 operation JSONAppendToken (jsonToken: JSONToken, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) writes(StringBuilderContents)
 operation JSONAppendBoolean (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Boolean/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents)

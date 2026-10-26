@@ -100,11 +100,24 @@ struct MarkWalk {
         }
     }
 
+    // Nothing takes a mark in front of the first value that has one. A test that is read gives one to what it leaves.
+    uint32_t findFirstBlockWithMark(NOESCAPE const Invocable<uint8_t(ValueID, const Value&)> auto& ownMarksOf) const
+    {
+        std::span<const BlockID> order = cfg.reversePostOrder();
+        if (programToReadComparisonsWith)
+            return 0;
+        auto hasMark = [&](ValueID id) { return at(id) || ownMarksOf(id, function.at(id)); };
+        return static_cast<uint32_t>(std::ranges::find_if(order, [&](BlockID id) {
+            const Block& block = function.at(id);
+            return std::ranges::any_of(block.parameters, hasMark) || std::ranges::any_of(block.values, hasMark);
+        }) - order.begin());
+    }
+
     void run(NOESCAPE const Invocable<uint8_t(ValueID, const Value&)> auto& ownMarksOf)
     {
         std::span<const BlockID> order = cfg.reversePostOrder();
         uint32_t numberOfBlocks = static_cast<uint32_t>(order.size());
-        for (uint32_t first = 0; first < numberOfBlocks;) {
+        for (uint32_t first = findFirstBlockWithMark(ownMarksOf); first < numberOfBlocks;) {
             // Only an edge that leads back brings a mark to a block that the walk has left.
             uint32_t firstBlockToWalkAgain = numberOfBlocks;
             for (uint32_t position = first; position < numberOfBlocks; ++position) {
@@ -360,8 +373,10 @@ ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVe
             // Where the type of the check is expected no longer, what flow has seen is what is left to expect.
             if (hasReceivers)
                 function.edit(id, ValueEdit::Definition).setReceivers(expectedTypes == ExpectedTypes::Dropped ? withReceiversNobodyHasSeen(types, value.receivers()) : LayoutSetID());
-            if (hasCallees && withCalleesNobodyHasSeen(types, value.callees()) != value.callees())
-                function.edit(id, ValueEdit::Definition).setCallees(withCalleesNobodyHasSeen(types, value.callees()));
+            if (!hasCallees)
+                continue;
+            if (CalleeSetID callees = withCalleesNobodyHasSeen(types, value.callees()); callees != value.callees())
+                function.edit(id, ValueEdit::Definition).setCallees(callees);
         }
     }
     return forgotten;

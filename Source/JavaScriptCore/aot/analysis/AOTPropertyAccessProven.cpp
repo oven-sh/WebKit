@@ -171,10 +171,18 @@ static bool readsNameOfClosuresWithoutCode(const Program& program, const Type& r
     });
 }
 
+// The run time notes such a look, so it is no access that leaves everything as it was.
+static bool looksForNameThatFramesTellOf(const Program& program, const Type& receiver, PropertyKeyID key)
+{
+    return key == program.keyOf(BuiltinNames::name) && std::ranges::any_of(receiver.functions, [&](FunctionID closureFunction) {
+        return program.at(closureFunction).framesTellWhetherNameWasLookedFor();
+    });
+}
+
 static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Function& function, const Value& access, PredictedReceivers predictedReceivers = PredictedReceivers::LeftOut)
 {
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, function, access, ExpectedClassObjects::Ignored, predictedReceivers);
-    if (!query)
+    if (!query || looksForNameThatFramesTellOf(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
         return ProvenAccess::unknown();
     query->receivers.mayBeNullish = false;
     query->receivers.predicted.clear();
@@ -573,7 +581,7 @@ ProvenAccess provenStepOf(const Program& program, const Type& receiver, Protocol
     return result;
 }
 
-static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout, SortedSet<TypeID, 8>& types)
+static bool addOwnFields(const Program& program, LayoutID instanceLayout, Vector<const Field*, 8>& fields)
 {
     ReceiverState state = receiverStateOf(program, instanceLayout);
     if (!state.cannot(ObjectMutation::AddProperty) || !state.cannot(ObjectMutation::RedefineProperty))
@@ -588,7 +596,7 @@ static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout,
                 continue;
             if (!field.declared.written() || field.declared.isExpected() || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
                 return false;
-            types.add(*field.declared.established());
+            fields.append(&field);
         }
 
         Ancestry ancestry = ancestryOf(layout.kind);
@@ -609,18 +617,18 @@ static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout,
     return false;
 }
 
-std::optional<SortedSet<TypeID, 8>> provenOwnValueTypesOf(const Program& program, const Type& receivers)
+std::optional<Vector<const Field*, 8>> provenOwnFieldsOf(const Program& program, const Type& receivers)
 {
     std::optional<LayoutList> layouts = provenLayoutsOf(program, receivers);
     if (!layouts)
         return std::nullopt;
 
-    SortedSet<TypeID, 8> types;
+    Vector<const Field*, 8> fields;
     for (LayoutID layout : *layouts) {
-        if (!addTypesOfOwnValues(program, layout, types))
+        if (!addOwnFields(program, layout, fields))
             return std::nullopt;
     }
-    return types;
+    return fields;
 }
 
 } } } // namespace JSC::AOT::Typed

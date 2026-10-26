@@ -31,6 +31,7 @@
 #include "AOTStubsCallHost.h"
 #include "AOTVector.h"
 #include "CodeSpecializationKind.h"
+#include "FunctionRareData.h"
 #include "JSCJSValueInlines.h"
 #include "NativeExecutable.h"
 #include "PageCount.h"
@@ -706,20 +707,33 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
             return;
         }
         LBasicBlock isCellCase = newBlock();
+        LBasicBlock isFunction = newBlock();
+        LBasicBlock holdsExecutable = newBlock();
+        LBasicBlock holdsRareData = newBlock();
         LBasicBlock isHostFunction = newBlock();
-        LBasicBlock hasExecutable = newBlock();
         branch(isCell(operand), { normalEdge(isCellCase), targets.notTaken });
 
         m_out.appendTo(isCellCase);
         CellPointer function = unboxCell(operand);
-        branch(equal(loadStructureID(function), loadImmutable32(AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))), { normalEdge(isHostFunction), targets.notTaken });
+        branch(hasCellType(function, JSFunctionType), { normalEdge(isFunction), targets.notTaken });
+
+        // The edge not taken says that the value is another function, so the answer may not depend on the properties that the function has got since it was made.
+        m_out.appendTo(isFunction);
+        const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
+        Pointer executableOrRareData = loadField<Pointer>(function, m_heaps.JSFunction_executableOrRareData);
+        OperandJoin executables(m_out, CellPointer::representation);
+        branch(Condition(m_out.testIsZeroPtr(executableOrRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(holdsExecutable), normalEdge(holdsRareData) });
+
+        m_out.appendTo(holdsExecutable);
+        executables.add(CellPointer(executableOrRareData.value()));
+
+        m_out.appendTo(holdsRareData);
+        executables.add(CellPointer(m_out.loadPtr(m_out.address(fixed, executableOrRareData.value(), FunctionRareData::offsetOfExecutable() - static_cast<ptrdiff_t>(JSFunction::rareDataTag)))));
+
+        CellPointer executable = executables.finish().as<CellPointer>();
+        branch(hasCellType(executable, NativeExecutableType), { normalEdge(isHostFunction), targets.notTaken });
 
         m_out.appendTo(isHostFunction);
-        Pointer executable = loadField<Pointer>(function, m_heaps.JSFunction_executableOrRareData);
-        branch(Condition(m_out.testIsZeroPtr(executable.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(hasExecutable), targets.notTaken });
-
-        m_out.appendTo(hasExecutable);
-        const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
         Pointer code(m_out.loadPtr(m_out.address(fixed, executable.value(), NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall))));
         Pointer bindings = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtinBindings.nativeFunctionsOfHost));
         ptrdiff_t offsetOfExpectedCode = *number * static_cast<ptrdiff_t>(sizeof(BuiltinNativeFunctionBinding)) + static_cast<ptrdiff_t>(OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function));

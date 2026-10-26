@@ -39,6 +39,7 @@ struct OperandBehavior {
     std::span<const BuiltinName> convertedMembers { };
     bool isDescribedWhenRefused { false };
     BuiltinTypeID accepted { };
+    bool onlyBoxedPrimitivesAreConverted { false };
 };
 
 struct OperandSummary {

@@ -153,7 +153,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { frame.callPosition, frame.parent } }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction } }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 

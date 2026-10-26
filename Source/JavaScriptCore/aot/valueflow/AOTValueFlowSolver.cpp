@@ -194,6 +194,16 @@ static Vector<std::unique_ptr<ValueSetMaker>> makeMakers(ValueSets& sets, const 
     return makers;
 }
 
+// createRequire() returns a require function. A call has to see createRequire among its callees for the call of the result to be seen as a load.
+static bool returnsBuiltinThatLetsInUnseenCode(const BuiltinTable& builtins, BuiltinID function)
+{
+    return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
+        return std::ranges::any_of(builtins.at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
+            return part.kind == BuiltinTypePartKind::Builtin && builtins.letsInUnseenCode(builtins.canonicalID(part.builtin));
+        });
+    });
+}
+
 ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& sets, ValueFlowRule rule, const ParallelLoops& loops, Rounds rounds)
     : m_input(input)
     , m_sets(sets)
@@ -225,7 +235,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         const BuiltinTable& builtins = m_input.program->builtins();
         Vector<ValueFlowObjectID, 32> objects;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && (builtins.letsInUnseenCode(BuiltinID(index)) || returnsBuiltinThatLetsInUnseenCode(builtins, BuiltinID(index))))
                 m_input.universe->appendObjectsOf(BuiltinID(index), objects);
         }
         // A read of `.default` must find the path even where the receiver may also be an unknown object.
@@ -253,7 +263,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             m_objectsLookedForBesideUnknownObject = maker.unite(m_objectsLookedForBesideUnknownObject, m_input.universe->embeddedFilePaths());
         }
         // A name read on Bun keeps that member, so a node lists Bun whether Bun arrives before the unknown object or after it.
-        ValueSetID takenByRetiredNodes = m_objectsLookedForBesideUnknownObject;
+        ValueSetID takenByRetiredNodes = maker.unite(m_objectsLookedForBesideUnknownObject, m_objectsAlwaysFollowed);
         ValueSetID keptOutOfNodesMadeForUnknownObject = m_objectsLookedForBesideUnknownObject;
         if (m_input.program && m_input.universe && m_input.program->builtins().contains(Builtins::Bun)) {
             ValueSetID mark = maker.of(ValueFlowUniverse::markOfNamedBun());
@@ -300,6 +310,11 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             });
             growAndFill(m_lastCountThatSaw, 1 + numberOfLayouts + numberOfClasses + universe.numberOfObjects(), 0u);
         }
+    }
+    if (m_input.nodes && m_input.universe) {
+        m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), [](const void* solver, ValueFlowNodeID node) {
+            return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
+        }, this);
     }
     constexpr size_t operandsInStretch = 1 << 16;
     Vector<Vector<uint32_t>> masksInStretches((m_input.operands.size() + operandsInStretch - 1) / operandsInStretch);
@@ -3756,8 +3771,10 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(mask.node, mask.mask, mask.kind, mask.familyObjects);
             if (m_input.lost)
                 m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
-            if (m_input.nodes && m_input.universe)
+            if (m_input.nodes && m_input.universe) {
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), m_input.universe->closures());
+            }
         },
         [&] {
             m_graph.addInitialEdges(m_input.edges);

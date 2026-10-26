@@ -512,24 +512,70 @@ bool UsesOfObjects::isFullyKnown(ValueSetID objects) const
     return !ValueSets::isComplement(objects) && !m_inputs.sets().meet(objects, m_inputs.universe().placeholdersAlone());
 }
 
-ValueSetID UsesOfObjects::builtinObjectsExpectedAt(ValueSetMaker& maker, const Function& function, std::span<const ValueID> values) const
+BuiltinID UsesOfObjects::builtinWrittenAs(const Function& function, ValueID id) const
 {
+    if (!id)
+        return { };
+    const Value& value = function.at(id);
+    if (value.opcode == Opcode::Builtin)
+        return value.builtin();
+    TypeID expected = value.expected().predicted();
+    if (!expected || m_inputs.program.types.at(expected).builtins.isEmpty())
+        return { };
+    return m_inputs.program.types.at(expected).withoutNullish().singleBuiltin();
+}
+
+// As an element of a list, an argument or what is stored. The receiver of a read or of a call is not handed on.
+ValueSetID UsesOfObjects::builtinObjectsHandedOnBy(Noter noter, FunctionID id) const
+{
+    if (noter.notes.functionThatHandsOn == id)
+        return noter.notes.builtinObjectsHandedOn;
+    const Function& function = m_inputs.program.at(id);
     ValueSetID objects = ValueSets::nothing;
-    for (ValueID value : values) {
-        TypeID expected = value ? function.at(value).expected().predicted() : TypeID();
-        if (BuiltinID builtin = expected ? m_inputs.program.types.at(expected).withoutNullish().singleBuiltin() : BuiltinID())
-            objects = maker.unite(objects, maker.of(m_inputs.universe().objectOf(builtin)));
+    for (const Block& block : function.blocks) {
+        for (ValueID user : block.values) {
+            Opcode opcode = function.at(user).opcode;
+            std::span<const ValueID> operands = function.at(user).operands();
+            for (uint32_t index = 0; index < operands.size(); ++index) {
+                BuiltinID builtin = builtinWrittenAs(function, operands[index]);
+                if (!builtin || (flowRuleOf(opcode) == FlowRule::Call && index == 1) || !declaredBehaviorOf(opcode, index).uses.contains(OperandUse::Retains))
+                    continue;
+                objects = noter.maker.unite(objects, noter.maker.of(m_inputs.universe().objectOf(builtin)));
+            }
+        }
     }
+    noter.notes.functionThatHandsOn = id;
+    noter.notes.builtinObjectsHandedOn = objects;
     return objects;
 }
 
-// Where the operand may be an object that nobody knows, the listing counts for the built-in objects that the values written there are expected to be.
-void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, ValueSetID expectedBuiltinObjects, bool goesOnToPrototypes) const
+// Of the built-in objects that flow sees arrive at the operands: those that the values written there are expected to be, and those that the function itself hands on.
+ValueSetID UsesOfObjects::builtinObjectsWrittenAt(Noter noter, const WrittenOperands& written) const
+{
+    if (!written.function)
+        return ValueSets::nothing;
+    const Function& function = m_inputs.program.at(written.function);
+    ValueSetID objects = ValueSets::nothing;
+    ValueSetID seenBuiltinObjects = ValueSets::nothing;
+    for (size_t index = 0; index < written.values.size(); ++index) {
+        const ValueFlowOperand& operand = written.operands[index];
+        BuiltinID builtin = builtinWrittenAs(function, written.values[index]);
+        if (builtin && m_inputs.isSeenAt(noter.maker, operand, m_inputs.universe().objectOf(builtin)))
+            objects = noter.maker.unite(objects, noter.maker.of(m_inputs.universe().objectOf(builtin)));
+        seenBuiltinObjects = noter.maker.unite(seenBuiltinObjects, m_inputs.seenBuiltinObjectsAt(noter.maker, operand));
+    }
+    if (seenBuiltinObjects == ValueSets::nothing)
+        return objects;
+    return noter.maker.unite(objects, noter.maker.intersect(seenBuiltinObjects, builtinObjectsHandedOnBy(noter, written.function)));
+}
+
+// Where the operand may be an object that nobody knows, the listing counts for the built-in objects written there.
+void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys shown, const WrittenOperands& written, bool goesOnToPrototypes) const
 {
     if (shown == ShownKeys::None)
         return;
     if (!isFullyKnown(objects))
-        objects = noter.maker.intersect(objects, expectedBuiltinObjects);
+        objects = builtinObjectsWrittenAt(noter, written);
     if (goesOnToPrototypes)
         noter.notes.walkedForEnumerableKeys.add(objects);
     else
@@ -538,16 +584,17 @@ void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys sho
 
 void UsesOfObjects::noteShownKeys(Noter noter, const ValueFlowBuiltinApplication& application, BuiltinOperand operand, ShownKeys shown) const
 {
-    ValueSetID expected = ValueSets::nothing;
-    if (application.function && application.kind != ValueFlowCallKind::CallByNativeCode) {
-        const Function& function = m_inputs.program.at(application.function);
-        std::span<const ValueID> operands = function.at(application.site).operands();
-        size_t first = operand.isReceiver() ? 1 : std::min<size_t>(2 + operand.argumentIndex(), operands.size());
-        size_t count = operand.kind() == BuiltinOperand::Kind::ArgumentsFrom ? operands.size() - first : std::min<size_t>(1, operands.size() - first);
-        if (!passesList(function.at(application.site).opcode))
-            expected = builtinObjectsExpectedAt(noter.maker, function, operands.subspan(first, count));
+    WrittenOperands written;
+    if (application.statement && application.kind != ValueFlowCallKind::CallByNativeCode) {
+        const Value& call = m_inputs.program.at(application.function).at(application.site);
+        std::span<const ValueID> values = call.operands();
+        std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(*application.statement);
+        size_t first = operand.isReceiver() ? 1 : std::min<size_t>(2 + operand.argumentIndex(), values.size());
+        size_t count = operand.kind() == BuiltinOperand::Kind::ArgumentsFrom ? values.size() - first : std::min<size_t>(1, values.size() - first);
+        if (!passesList(call.opcode) && values.size() == operands.size())
+            written = { application.function, values.subspan(first, count), operands.subspan(first, count) };
     }
-    noteShownKeys(noter, application.valueAt(operand, noter.maker), shown, expected);
+    noteShownKeys(noter, application.valueAt(operand, noter.maker), shown, written);
 }
 
 // Stops at an object whose prototype may be one that nobody knows.
@@ -586,7 +633,7 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                     continue;
                 ValueSetID objects = m_heap.possibleValuesOf(noter.maker, operands[operand]);
                 noter.notes.enumerated.add(objects);
-                noteShownKeys(noter, objects, ShownKeys::Enumerable, builtinObjectsExpectedAt(noter.maker, function, function.at(statement.site).operands().subspan(operand, 1)), protocols.contains(Protocol::PrototypeChain));
+                noteShownKeys(noter, objects, ShownKeys::Enumerable, { FunctionID(index), function.at(statement.site).operands().subspan(operand, 1), operands.subspan(operand, 1) }, protocols.contains(Protocol::PrototypeChain));
             }
             switch (statement.opcode) {
             case Opcode::PropHas:
@@ -601,7 +648,7 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
                 uint32_t sourceIndex = statement.opcode == Opcode::CopyObject ? OperandIndex::CopyObject::source : OperandIndex::CopyDataProperties::source;
                 ValueSetID source = m_heap.possibleValuesOf(noter.maker, operands[sourceIndex]);
                 noter.notes.enumerated.add(source);
-                noteShownKeys(noter, source, ShownKeys::Enumerable, builtinObjectsExpectedAt(noter.maker, function, function.at(statement.site).operands().subspan(sourceIndex, 1)));
+                noteShownKeys(noter, source, ShownKeys::Enumerable, { FunctionID(index), function.at(statement.site).operands().subspan(sourceIndex, 1), operands.subspan(sourceIndex, 1) });
                 break;
             }
             default:

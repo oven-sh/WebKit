@@ -331,6 +331,7 @@ static void* loopPollPage(Instance* instance)
 static void registerStackMirror(Instance* instance, VM& vm)
 {
     vm.traps().registerMirror(instance->stackMirror.get());
+    vm.traps().registerMirror(instance->jsonLevels.limit.get());
 #if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     Locker locker { loopPollPages.lock };
@@ -350,6 +351,7 @@ static void unregisterStackMirror(Instance* instance, VM& vm)
         loopPollPages.pages.removeFirst(loopPollPage(instance));
     }
 #endif
+    vm.traps().unregisterMirror(instance->jsonLevels.limit.get());
     vm.traps().unregisterMirror(instance->stackMirror.get());
 }
 

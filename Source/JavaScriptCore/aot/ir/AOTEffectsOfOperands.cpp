@@ -19,8 +19,10 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
+#include "JSString.h"
 #include <algorithm>
 #include <array>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -162,7 +164,8 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload& overload, BuiltinOpera
     bool membersAreOfObjectsOnly = parameter->roles.contains(BuiltinOperandRole::MembersAreOfObjectsOnly);
     bool functionsAreConvertedUnderNamesOnly = parameter->roles.contains(BuiltinOperandRole::FunctionsAreConvertedUnderNamesOnly);
     bool isDescribedWhenRefused = parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused);
-    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted };
+    bool onlyBoxedPrimitivesAreConverted = parameter->roles.contains(BuiltinOperandRole::OnlyBoxedPrimitivesAreConverted);
+    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted, onlyBoxedPrimitivesAreConverted };
 }
 
 const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable& table)
@@ -311,6 +314,67 @@ static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& 
 
 static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
+namespace {
+
+// How long the text is that JSON.stringify makes of a value, at the most, by the types of all that the value reaches through ordinary objects of the program.
+// A type is asked once, however many fields have it. A type that is reached from itself may be that of an object that holds itself.
+class TextOfData {
+public:
+    TextOfData(const Program& program, uint16_t admittedPrimitives)
+        : m_program(program)
+        , m_admittedPrimitives(admittedPrimitives)
+    {
+    }
+
+    bool fitsInString(const Type& type) { return longestOf(type).value_or(std::numeric_limits<uint64_t>::max()) <= JSString::MaxLength; }
+
+private:
+    static constexpr uint64_t charactersOfGap = 10;
+    static constexpr uint64_t charactersOfLineStart = "\n"_s.length() + charactersOfGap * maxReachableTypes;
+
+    static uint64_t quoted(uint64_t characters) { return "\"\""_s.length() + "\\u0000"_s.length() * characters; }
+
+    std::optional<uint64_t> longestOf(const Type&);
+
+    const Program& m_program;
+    uint16_t m_admittedPrimitives;
+    UncheckedKeyHashMap<const Type*, std::optional<uint64_t>> m_longestOfObjects;
+};
+
+std::optional<uint64_t> TextOfData::longestOf(const Type& type)
+{
+    if (type.primitives & ~m_admittedPrimitives)
+        return std::nullopt;
+    if (!type.hasObjects())
+        return quoted(longestTextOf(m_program, type));
+
+    auto entry = m_longestOfObjects.add(&type, std::nullopt);
+    if (!entry.isNewEntry)
+        return entry.iterator->value;
+    if (m_longestOfObjects.size() > maxReachableTypes || !hasOnlyOrdinaryObjectsOfProgram(m_program, type))
+        return std::nullopt;
+    std::optional<Vector<const Field*, 8>> fields = provenOwnFieldsOf(m_program, Type::forLayoutSet(type.layouts));
+    if (!fields)
+        return std::nullopt;
+
+    uint64_t longest = quoted(longestTextOf(m_program, type)) + "{}"_s.length() + charactersOfLineStart;
+    for (const Field* field : *fields) {
+        if (!field->key || field->form.contains(FieldForm::IsAccessor))
+            return std::nullopt;
+        std::optional<uint64_t> value = longestOf(m_program.at(*field->declared.established()));
+        if (!value)
+            return std::nullopt;
+        StringID name = m_program.at(field->key).text;
+        longest += charactersOfLineStart + quoted(name ? m_program.string(name).size() : 0) + ": ,"_s.length() + *value;
+        if (longest > JSString::MaxLength)
+            return std::nullopt;
+    }
+    m_longestOfObjects.set(&type, longest);
+    return longest;
+}
+
+} // anonymous namespace
+
 static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const Type& operand)
 {
     const BuiltinType& admitted = program.builtins().at(admittedID);
@@ -322,7 +386,9 @@ static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const T
 
     if (admitted.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) && operand.primitives & Primitive::Integer && !operand.integers.isSubsetOf({ admitted.integers.minimum, admitted.integers.maximum }))
         return false;
-    return operand.hasOnlyPrimitives(primitives);
+    if (!admitted.flags.contains(BuiltinTypeFlag::HasPlainData))
+        return operand.hasOnlyPrimitives(primitives);
+    return operand.isJavaScriptValue() && TextOfData(program, primitives | Primitive::LiteralString).fitsInString(operand);
 }
 
 static bool mayRefuseChanges(const Program& program, const Type& operand, OperandUses changes)
@@ -568,16 +634,17 @@ void ReachableValueWalk::visit(const UnionPart& part)
 void ReachableValueWalk::visitLayouts(const Type& layouts)
 {
     m_description.addOwn(readsOfObjectsOperandsReach);
-    runProtocolsOn(layouts, m_behavior.protocols);
 
-    std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(m_program, layouts);
-    if (!ownValues) {
+    std::optional<Vector<const Field*, 8>> fields = provenOwnFieldsOf(m_program, layouts);
+    bool areBelowNoBuiltinClass = fields.has_value();
+    runProtocolsOn(layouts, areBelowNoBuiltinClass && m_behavior.onlyBoxedPrimitivesAreConverted ? m_behavior.protocols - Protocol::ToPrimitive : m_behavior.protocols);
+    if (!fields) {
         m_description.addUnknownCode();
         return;
     }
     m_description.followsFieldsOfOperands = true;
-    for (TypeID type : *ownValues)
-        reach(m_program.at(type));
+    for (const Field* field : *fields)
+        reach(m_program.at(*field->declared.established()));
 }
 
 void ReachableValueWalk::visitInstances(const Type& instances)

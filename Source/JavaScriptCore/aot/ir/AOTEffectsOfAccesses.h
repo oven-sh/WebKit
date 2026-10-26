@@ -9,12 +9,12 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTEffects.h"
-#include "AOTSortedSet.h"
 #include "AOTVector.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+struct Field;
 struct Type;
 
 struct ProvenAccess {
@@ -42,7 +42,8 @@ ProvenAccess provenLookupUnderAnyKey(const Program&, const Type& receiver);
 ProvenAccess provenReadOf(const Program&, const Type& receiver, BuiltinName);
 ProvenAccess provenStepOf(const Program&, const Type& receiver, Protocol keylessProtocol);
 
-std::optional<SortedSet<TypeID, 8>> provenOwnValueTypesOf(const Program&, const Type& layouts);
+// Every own property that an object of one of the layouts may have, each with an established type that is proven: one entry a layout and field.
+std::optional<Vector<const Field*, 8>> provenOwnFieldsOf(const Program&, const Type& layouts);
 
 Effects effectsOfAccessForm(const Program&, Opcode operation, PropertyKeyID key, LayoutSetID receivers);
 std::optional<Effects> effectsOfLookupFromBase(const Program&, const Function&, const Value&);

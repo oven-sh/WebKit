@@ -28,6 +28,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::IsHiddenInStackTraces,
     FunctionCapabilities::ClosuresAreReadWithoutCode,
     FunctionCapabilities::RecordsCallee,
+    FunctionCapabilities::NotesLooksForName,
 };
 
 bool isSentByFrontEnd(FunctionRole role)

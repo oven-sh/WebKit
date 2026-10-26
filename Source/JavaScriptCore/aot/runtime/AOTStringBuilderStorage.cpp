@@ -65,6 +65,99 @@ bool StringBuilderStorage::hasRepeatedHolder(const JSONHolderRecord* innermost)
     return false;
 }
 
+// The holders of a value that holds itself come round again and again, so from some length on the list holds the one in its middle twice.
+bool StringBuilderStorage::holderInTheMiddleRepeats(const JSONHolderRecord* innermost)
+{
+    size_t numberOfHolders = 0;
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer)
+        ++numberOfHolders;
+    const JSONHolderRecord* middle = innermost;
+    for (size_t index = 0; index < numberOfHolders / 2; ++index)
+        middle = middle->outer;
+    for (const JSONHolderRecord* record = innermost; record != middle; record = record->outer) {
+        if (record->holder == middle->holder)
+            return true;
+    }
+    return false;
+}
+
+bool WatchedJSONLevels::isWatchingAfterGrowthTo(size_t numberOfCharacters)
+{
+    AOT_THRESHOLD(size_t, charactersPerWatchedLevel, 64 * KB);
+    uint32_t numberOfLevels = static_cast<uint32_t>(numberOfCharacters / charactersPerWatchedLevel);
+    if (numberOfLevels > m_numberOfLevelsLeft) {
+        if (!m_numberOfLevelsLeft)
+            forgetLevels();
+        m_numberOfLevelsLeft = numberOfLevels;
+    }
+    return m_numberOfLevelsLeft;
+}
+
+void WatchedJSONLevels::forgetLevels()
+{
+    if (!m_levels)
+        return;
+    m_levels->path.shrink(0);
+    m_levels->holders.clear();
+}
+
+bool WatchedJSONLevels::enter(EncodedJSValue holder, void* frame)
+{
+    ASSERT(isWatching());
+    if (!m_levels)
+        m_levels = makeUnique<Levels>();
+    while (!m_levels->path.isEmpty() && std::bit_cast<uintptr_t>(m_levels->path.last().frame) <= std::bit_cast<uintptr_t>(frame))
+        m_levels->holders.remove(m_levels->path.takeLast().holder);
+    if (!m_levels->holders.add(holder).isNewEntry) {
+        stop();
+        return false;
+    }
+    m_levels->path.append(Level { frame, holder });
+    --m_numberOfLevelsLeft;
+    return true;
+}
+
+// The word that compiled code reads. The next change of the limit of the stack overwrites it.
+void StringBuilderStorage::setLevelLimit(void* limit)
+{
+    *std::bit_cast<void**>(std::bit_cast<uintptr_t>(&m_levelLimit) + StackManager::Mirror::offsetOfSoftStackLimit()) = limit;
+}
+
+void StringBuilderStorage::watchLevelsAfterGrowth(size_t numberOfCharacters)
+{
+    bool wasWatching = m_watchedLevels.isWatching();
+    if (!m_watchedLevels.isWatchingAfterGrowthTo(numberOfCharacters))
+        return;
+    if (!wasWatching)
+        m_lengthWhenWatchBegan = length();
+    setLevelLimit(std::bit_cast<void*>(std::numeric_limits<uintptr_t>::max()));
+}
+
+void StringBuilderStorage::stopWatchingLevels()
+{
+    m_watchedLevels.stop();
+    setLevelLimit(vm().softStackLimit());
+}
+
+bool StringBuilderStorage::enterWatchedLevel(EncodedJSValue holder, void* frame)
+{
+    if (std::bit_cast<uintptr_t>(frame) - stackReservedForJSONParsers < std::bit_cast<uintptr_t>(vm().softStackLimit()))
+        return false;
+    // Without a watch of its own: another builder has grown.
+    bool goesOn = true;
+    if (m_watchedLevels.isWatching()) {
+        // A builder that ends with a short text goes back to the pool as it is.
+        if (length() < m_lengthWhenWatchBegan) {
+            m_watchedLevels.forgetLevels();
+            m_lengthWhenWatchBegan = 0;
+        }
+        goesOn = m_watchedLevels.enter(holder, frame);
+    }
+    if (!m_watchedLevels.isWatching())
+        stopWatchingLevels();
+    return goesOn;
+}
+
 NEVER_INLINE void StringBuilderStorage::throwOutOfMemory(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -87,15 +180,17 @@ StringBuilderStorage::Limits::Limits(VM& vm)
 {
 }
 
-StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure)
+StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackManager::Mirror& levelLimit)
     : Base(vm, structure)
+    , m_levelLimit(levelLimit)
     , m_limits(vm)
 {
 }
 
-StringBuilderStorage* StringBuilderStorage::create(VM& vm)
+StringBuilderStorage* StringBuilderStorage::create(Instance& instance)
 {
-    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get());
+    VM& vm = *instance.vm;
+    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.jsonLevels.limit.get());
     storage->finishCreation(vm);
     storage->tryEnsureRoom(1);
     return storage;
@@ -140,7 +235,7 @@ StringBuilderStorage* StringBuilderStorage::acquire(Instance& instance)
         instance.state->caches->addClearedEachCollection("string builder pool"_s, asMutableByteSpan(words.freeStorage));
         words.isPoolRegistered = true;
     }
-    return create(*instance.vm);
+    return create(instance);
 }
 
 void StringBuilderStorage::release(Instance& instance)
@@ -177,6 +272,7 @@ void StringBuilderStorage::reset()
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
     m_jsonHolders = nullptr;
+    m_watchedLevels.stop();
     m_lastString.clear();
     bool isTooLargeToRetain = capacity() > m_limits.maxRetainedCapacity;
     if (isTooLargeToRetain)
@@ -215,6 +311,8 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
         updateLimit();
         return true;
     }
+    if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders))
+        return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
     return tryReplaceBuffer(std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength)));
 }
@@ -233,6 +331,7 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     m_characters = characters.data();
     m_sharedLength = 0;
     updateLimit();
+    watchLevelsAfterGrowth(newCapacity);
     vm().heap.reportExtraMemoryAllocated(this, newCapacity);
     return true;
 }
@@ -324,8 +423,13 @@ auto StringBuilderStorage::addSegment(JSGlobalObject* globalObject, JSString* st
     }
     if (m_segments.size() >= m_limits.maxSegments && !m_segments.isEmpty()) {
         countLimitHit(vm, LimitID::MaxStringBuilderSegments);
+        if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders)) {
+            throwOutOfMemory(globalObject);
+            return AppendResult::Failed;
+        }
         if (!collapseSegments(globalObject))
             return AppendResult::Failed;
+        watchLevelsAfterGrowth(this->length());
     }
     {
         Locker locker { cellLock() };
@@ -1218,6 +1322,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
     OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONEnterWatchedLevel, size_t, (Instance*, JSCell* builder, EncodedJSValue holder, void* frame))
+{
+    return cellArgument<StringBuilderStorage>(builder, Entry::operationAOTJSONEnterWatchedLevel)->enterWatchedLevel(holder, frame);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Instance*, JSCell* builder, uint32_t checkpoint))

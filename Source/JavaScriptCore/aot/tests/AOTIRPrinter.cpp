@@ -112,13 +112,30 @@ static void printOrigin(IRPrinter& printer, const Instruction& instruction)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
     bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
-    if (!instruction.hasPosition() && !inlineFrame && !isTailCall)
+    bool isPartOfConstruction = printer.printsEngineFields() && instruction.isPartOfConstruction;
+    if (!instruction.hasPosition() && !inlineFrame && !isTailCall && !isPartOfConstruction)
         return;
     printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
     if (isTailCall)
         printer.out().print(" tail"_s);
+    if (isPartOfConstruction)
+        printer.out().print(" constructs"_s);
+}
+
+static std::optional<uint32_t> findStartOfConstruction(const Program& program, const Function& function, const Value& value)
+{
+    if (!value.isPartOfConstruction)
+        return std::nullopt;
+    // A program that was only read keeps them with its functions.
+    for (const ConstructionStart& construction : function.constructionStarts) {
+        if (construction.reported == value.position)
+            return construction.start;
+    }
+    if (const ConstructionStart* construction = program.findConstructionReportedAt(function.module, value.position))
+        return construction->start;
+    return std::nullopt;
 }
 
 template<typename IDType>
@@ -428,6 +445,8 @@ void IRPrinter::printValue(const Function& function, ValueID id)
     printOrigin(*this, value);
     if (auto written = function.writtenPositionOf(id))
         m_out.print(" @"_s, *written);
+    else if (auto start = printsEngineFields() ? std::nullopt : findStartOfConstruction(m_program, function, value))
+        m_out.print(" @"_s, *start);
 }
 
 void IRPrinter::printEngineValueFields(const Value& value)

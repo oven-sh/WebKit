@@ -530,7 +530,7 @@ static bool createsPlainDataProperty(const PropertyDescriptor& descriptor)
 
 static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)
 {
-    if (name != vm.propertyNames->name || closure.classData() || closure.kind().hasInitialNamePrefix())
+    if (name != vm.propertyNames->name || closure.classData() || closure.kind().hasInitialNamePrefix() || closure.kind().notesLooksForName())
         return false;
     FunctionRareData* rareData = closure.rareData();
     if ((rareData && rareData->hasReifiedName()) || closure.getDirect(vm, vm.propertyNames->name))
@@ -572,7 +572,7 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     bool isName = propertyName == vm.propertyNames->name;
     if ((propertyName == vm.propertyNames->hasInstanceSymbol || isLength || isName) && closure->kind().isBound()) [[unlikely]]
         closure->adoptBoundFunctionStructure(vm);
-    else if ((isLength || isName) && closure->hasStructureOfNewClosure(vm)) {
+    else if ((isLength || (isName && !closure->kind().notesLooksForName())) && closure->hasStructureOfNewClosure(vm)) {
         JSValue value = isLength ? jsNumber(functionLengthOf(closure->function())) : JSValue(initialNamePropertyString(vm, closure->state(), closure->function()));
         slot.setValue(closure, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, value);
         return true;

@@ -674,6 +674,7 @@ function needsText(role: OperandRole): boolean {
     case "KeysAreNotListed":
     case "MembersAreOfObjectsOnly":
     case "FunctionsAreConvertedUnderNamesOnly":
+    case "OnlyBoxedPrimitivesAreConverted":
     case "BecomesLengthOfReceiver":
     case "CopiesHolesToResult":
     case "WorkerEntryPath":

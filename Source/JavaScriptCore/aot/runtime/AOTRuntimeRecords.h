@@ -112,7 +112,7 @@ enum class SlotKindFlag : uint8_t {
     v(TypedArrayLength, None, None, Present, None) \
     v(StringLength, None, None, Present, None) \
     v(ClosureLength, None, None, Present, None) \
-    v(ClosureName, None, None, Present, None) \
+    v(ClosureName, None, None, Unknown, None) \
     v(Constant, Constant, None, Present, None) \
     v(Uncacheable, None, None, Unknown, None) \
     v(Removal, Removal, WordIndex, Unknown, None) \

@@ -117,6 +117,9 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
         return ClosureForm::Full;
     if (function.captures.size() > ClosureRequest::maxSlimClosureCaptures)
         return ClosureForm::Full;
+    // A full closure has the property `name` from the first look for it on, which is what a stack frame asks it.
+    if (function.has(FunctionCapabilities::NotesLooksForName))
+        return ClosureForm::Full;
     return isExpectedToHaveNoProperties(program, flow, id) ? ClosureForm::Slim : ClosureForm::Full;
 }
 
@@ -213,7 +216,7 @@ static const Function& describedFunctionOf(const Program& program, FunctionID id
     }
 }
 
-static_assert(static_cast<unsigned>(MethodKind::Getter) == 1 && static_cast<unsigned>(MethodKind::Setter) == 2);
+static_assert(!static_cast<unsigned>(MethodKind::Method) && static_cast<unsigned>(MethodKind::Getter) == 1 && static_cast<unsigned>(MethodKind::Setter) == 2 && numberOfEnumerators<MethodKind> == methodThatNotesLooksForName);
 
 static FunctionKindData kindDataOf(FunctionKind functionKind)
 {
@@ -278,6 +281,8 @@ static FunctionKindData functionKindOf(const Program& program, const SlotPlan& s
     kind.isGenerator = described.has(FunctionFlags::IsGenerator);
     kind.takesNewTarget = takesNewTarget(program.at(id));
     kind.hasInferredName = !described.has(FunctionFlags::HasExplicitName);
+    if (described.has(FunctionCapabilities::NotesLooksForName) && kind.accessor() == MethodKind::Method)
+        kind.accessorKind = methodThatNotesLooksForName;
     kind.isInRuntimeModule = isInRuntimeModule(program, described);
     kind.isSlim = slots.closureFormOf(targetID) == ClosureForm::Slim;
     kind.closureStructure = kind.closureStructureOfKind();

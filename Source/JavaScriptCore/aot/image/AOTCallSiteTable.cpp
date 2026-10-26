@@ -679,7 +679,7 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
 }
 
 static Lock rememberedPositionsLock;
-static std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock);
+static constinit std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock) { };
 
 void forgetRememberedPositions()
 {

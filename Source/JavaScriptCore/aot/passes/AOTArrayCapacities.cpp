@@ -1244,8 +1244,10 @@ static bool flowAllowsConversion(FunctionPassContext& context, ValueID array)
         return true;
     bool isReceiver = false;
     for (const Use& use : context.analyses.useLists().usesOf(array)) {
+        if (use.kind != Use::Kind::Operand)
+            continue;
         const Value& access = function.at(use.user);
-        if (use.kind != Use::Kind::Operand || !PayloadWord::accessSite(access.opcode) || OperandPosition::array(access.opcode) != use.operandIndex)
+        if (!PayloadWord::accessSite(access.opcode) || OperandPosition::array(access.opcode) != use.operandIndex)
             continue;
         bool storageIsUndecided = Value::opcodesWithStorageIsUndecided.contains(access.opcode) && access.storageIsUndecided();
         if (!storageIsUndecided && !flow.mayChangeStorageOfReceiver(access.accessSite()))

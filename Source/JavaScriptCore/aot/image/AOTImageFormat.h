@@ -199,6 +199,8 @@ static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == 
 // A frame is named by the place of its frame record: the word below its return address.
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
+    static constexpr unsigned unitsAboveFrameRecordShift = 6;
+    static constexpr unsigned maxUnitsAboveFrameRecord = (1u << 5) - 1;
     static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
     // Not in the table: its reader sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
     static constexpr uint16_t liesBelowSpilledArgumentsBit = 1u << 14;
@@ -220,6 +222,8 @@ struct ImageFrame {
     bool hasFrameRecord() const { return !(calleeSavesStart & hasNoFrameRecordBit); }
     // In words below the place of the frame record.
     unsigned startOfCalleeSaves() const { return calleeSavesStart & maxCalleeSavesStart; }
+    // The part of the frame that lies between the frame record and what the caller has on the stack.
+    unsigned bytesAboveFrameRecord() const { return (calleeSavesStart >> unitsAboveFrameRecordShift & maxUnitsAboveFrameRecord) * stackAlignmentBytes(); }
     bool liesBelowSpilledArguments() const { return calleeSavesStart & liesBelowSpilledArgumentsBit; }
     bool isEmpty() const { return calleeSavesStart & isEmptyBit; }
     uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 16 | frameSizeInUnits; }

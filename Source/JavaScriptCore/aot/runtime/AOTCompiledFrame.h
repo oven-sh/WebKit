@@ -59,7 +59,7 @@ ALWAYS_INLINE void* stackPointerOfCaller(const CallFrame* frame, unsigned bytesA
 
 ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const ImageFrame& frame)
 {
-    return frame.liesBelowSpilledArguments() ? sizeOfSpilledArgumentRegisters : 0;
+    return frame.bytesAboveFrameRecord() + (frame.liesBelowSpilledArguments() ? sizeOfSpilledArgumentRegisters : 0);
 }
 
 ALWAYS_INLINE unsigned bytesAboveReturnAddressOf(const CallSiteCache::Entry& site)

@@ -26,7 +26,7 @@ bool hasTextByItself(const Type& type)
 }
 
 // A string of the program is held in no fewer bytes than it has characters.
-static uint64_t longestTextOf(const Program& program, const Type& type)
+uint64_t longestTextOf(const Program& program, const Type& type)
 {
     constexpr uint64_t longestTextOfNumberLike = std::tuple_size_v<NumberToStringBuffer>;
     static_assert(longestTextOfNumberLike >= "undefined"_s.length());

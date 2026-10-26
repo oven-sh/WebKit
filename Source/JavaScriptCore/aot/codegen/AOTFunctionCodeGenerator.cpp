@@ -50,6 +50,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxFrameSizeInBytes, hostArchitecture()) == std::numeric_limits<decltype(ImageFrame::frameSizeInUnits)>::max() * stackAlignmentBytes());
 static_assert(B3::AirLimits::maxFrameSizeWithPushedRegisters / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
 static_assert(B3::AirLimits::maxBytesBelowFrameRecord / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
+static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 

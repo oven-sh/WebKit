@@ -503,7 +503,7 @@ JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const Stri
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
 {
-    return createError(globalObject, withAOTErrorNote(makeString("The built-in function '"_s, functionName, "' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
+    return createBuiltinNotCompiledError(globalObject, functionName.isEmpty() ? "A built-in function"_str : makeString("The built-in function '"_s, functionName, '\''));
 }
 
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject* globalObject, std::span<const String> builtins)

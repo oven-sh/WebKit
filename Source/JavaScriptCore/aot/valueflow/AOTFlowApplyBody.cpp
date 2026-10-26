@@ -876,14 +876,20 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
     if (!predicted.hasChecks())
         return;
     // What is proven of a position that takes the very value that a check tests may rest on that check.
-    Vector<ValueID, 16> checks;
-    for (BlockID block : analyses.cfg().reversePostOrder()) {
-        for (ValueID id : function.at(block).values) {
-            if (function.at(id).opcode == Opcode::Check && mayTurnValueAway(program, function, function.at(id)))
-                checks.append(id);
+    std::optional<BitVector> checkedValuesThemselves;
+    auto isCheckedValueItself = [&](ValueID value) {
+        if (!checkedValuesThemselves) {
+            Vector<ValueID, 16> checks;
+            for (BlockID block : analyses.cfg().reversePostOrder()) {
+                for (ValueID id : function.at(block).values) {
+                    if (function.at(id).opcode == Opcode::Check && mayTurnValueAway(program, function, function.at(id)))
+                        checks.append(id);
+                }
+            }
+            checkedValuesThemselves = valuesThatAre(function, analyses.cfg(), checks.span());
         }
-    }
-    BitVector isCheckedValueItself = valuesThatAre(function, analyses.cfg(), checks.span());
+        return checkedValuesThemselves->get(value.index());
+    };
     TypingContext typing { program, function, types };
     Vector<StoreBehindChecks, 8> found;
 
@@ -916,7 +922,7 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
         }
     };
     auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
-        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required) || isCheckedValueItself.get(stored.index()))
+        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required) || isCheckedValueItself(stored))
             return;
         found.append({ point, user, operandIndex, required });
         visitElementsOfLiteral(stored, required);

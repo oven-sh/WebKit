@@ -68,6 +68,11 @@ private:
     alignas(T) uint8_t m_bytes[sizeof(T)];
 };
 
+// A function that writes an object whose type may hold itself compares its frame with this limit. It is the limit of the stack, or lies above every frame while a string builder watches which objects are written inside which.
+struct JSONLevelWords {
+    ZeroedStorage<StackManager::Mirror> limit;
+};
+
 // On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
     int64_t minInt64;
@@ -276,6 +281,7 @@ struct NumberWords {
     v(iteration, IterationWords) \
     v(json, JSONWords) \
     v(stringBuilder, StringBuilderWords) \
+    v(jsonLevels, JSONLevelWords) \
     writtenOnce(stubs, StubWords) \
     v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \

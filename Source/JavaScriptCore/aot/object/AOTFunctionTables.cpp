@@ -389,11 +389,16 @@ static String nameInFramesOfFunctionNamedByComputedKey(FunctionID function)
 // The engine shows the property `name` once the function object has it as a property, which is when it is defined.
 static String nameGivenTo(VM& vm, JSObject* callee)
 {
+    FunctionID function = *functionOf(callee);
+    // Such a closure has the property from the first look for it on. A slim closure has it from its first property on, whichever that is.
+    bool hasNameOnceLookedFor = isCompiledClosure(callee) && functionKindData(function).notesLooksForName();
     String name = ownTextProperty(callee, vm.propertyNames->name);
-    if (!name.isNull() && name != initialNameProperty(*functionOf(callee)))
+    if (!name.isNull() && (hasNameOnceLookedFor || name != initialNameProperty(function)))
         return name;
-    if (String name = nameLookedFor(vm, *functionOf(callee)); !name.isNull())
-        return name;
+    if (!hasNameOnceLookedFor) {
+        if (String name = nameLookedFor(vm, function); !name.isNull())
+            return name;
+    }
     return ownTextProperty(callee, vm.propertyNames->displayName);
 }
 

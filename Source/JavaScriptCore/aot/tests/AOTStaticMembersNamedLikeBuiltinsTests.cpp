@@ -136,7 +136,7 @@ function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
@@ -328,7 +328,7 @@ function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
@@ -451,7 +451,7 @@ function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
@@ -569,7 +569,7 @@ function f5 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f6 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
@@ -713,7 +713,7 @@ function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f9 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }
@@ -836,7 +836,7 @@ function f6 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 
     Return v3
 }
 function f7 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Convert v2 declared={type=Array<anything>}
+    v3 = Convert v2 declared={type=Array<anything> flags=[IsFromCompiler, IsClaim]}
     v4 = CallList v0, v1, v3
     Return v4
 }

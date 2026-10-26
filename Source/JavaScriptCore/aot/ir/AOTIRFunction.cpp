@@ -129,6 +129,14 @@ std::optional<uint32_t> Function::writtenPositionOf(ValueID id) const
     return found->position;
 }
 
+Wire::SourceLocation Function::writtenLocationOf(ValueID id) const
+{
+    Wire::SourceLocation location = locationOf(id);
+    if (std::optional<uint32_t> written = writtenPositionOf(id))
+        location.position = *written;
+    return location;
+}
+
 Wire::SourceLocation Function::declarationLocation() const
 {
     return locationInModule(module, position);
@@ -259,7 +267,7 @@ OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)
 
 OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept)
 {
-    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode };
+    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode, FunctionCapabilities::NotesLooksForName };
     return (initialCapabilitiesOf(replacement) - kept) | (ofReplaced & kept);
 }
 

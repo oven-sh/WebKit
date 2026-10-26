@@ -193,8 +193,8 @@ void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value
     callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
 }
 
-// functionNames has no "get ", "set " or "bound ".
-static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
+// functionNames has no "get ", "set " or "bound ". The run time notes a look that stack frames tell of.
+static void branchUnlessNameIsReadFromTable(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
 {
     constexpr CallableKind callableKinds[] = { CallableKind::Plain, CallableKind::Arrow, CallableKind::Method, CallableKind::Bound };
     auto encode = [](unsigned accessorKind, unsigned callableKind) -> uint32_t {
@@ -212,11 +212,12 @@ static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg ki
     for (CallableKind callableKind : callableKinds)
         callableKindMask |= encode(0, static_cast<unsigned>(callableKind));
     RELEASE_ASSERT(!(accessorKindMask & callableKindMask));
-    for (MethodKind accessorKind : allMembersOf<MethodKind>) {
+    for (unsigned accessorKind = 0; accessorKind <= methodThatNotesLooksForName; ++accessorKind) {
         for (CallableKind callableKind : callableKinds) {
-            const uint32_t functionKind = encode(static_cast<unsigned>(accessorKind), static_cast<unsigned>(callableKind));
-            const bool testFindsPrefix = (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind;
-            RELEASE_ASSERT(testFindsPrefix == std::bit_cast<FunctionKindData>(static_cast<uint16_t>(functionKind)).hasInitialNamePrefix());
+            const uint32_t functionKind = encode(accessorKind, static_cast<unsigned>(callableKind));
+            const bool testLeaves = (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind;
+            const FunctionKindData data = std::bit_cast<FunctionKindData>(static_cast<uint16_t>(functionKind));
+            RELEASE_ASSERT(testLeaves == (data.hasInitialNamePrefix() || data.notesLooksForName()));
         }
     }
 
@@ -283,7 +284,7 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
     }
     loadClosureFunction(jit, closure, function, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    branchIfNameHasPrefix(jit, function, scratch, miss);
+    branchUnlessNameIsReadFromTable(jit, function, scratch, miss);
     // ProgramTables::nameOfFunction(): functionSources begins at the first form of another function, and the groups of names end there.
     auto loadNumberOfFunctionsInFrontOfForms = [&] {
         jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);

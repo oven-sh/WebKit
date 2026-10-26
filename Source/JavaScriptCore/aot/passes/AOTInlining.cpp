@@ -1295,6 +1295,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .parent = call.inlineFrame,
         .isTailCall = !!call.isTailCall,
         .isConstruction = call.isConstruction(),
+        .callIsPartOfConstruction = !!call.isPartOfConstruction,
         .module = callee.module,
     }, callee);
     IRBuilder::Expansion expansion = resultReads ? builder.beginExpansion(point, *resultReads) : builder.beginExpansion(point);

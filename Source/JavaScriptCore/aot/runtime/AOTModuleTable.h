@@ -62,6 +62,7 @@ public:
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.
     std::optional<ModuleID> fileBehindFace(ModuleID) const;
+    std::optional<ModuleID> faceOfFile(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
     // Walks the table: for what happens rarely.
     bool isRuntimeFunction(FunctionID) const;

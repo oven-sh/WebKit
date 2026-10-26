@@ -466,6 +466,11 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
         setNamespace(module, phase, loaderNamespace);
         return loaderNamespace;
     }
+    // The names of a file are taken once, for whoever imports it and for the host.
+    if (moduleData.kind == ModuleKind::CommonJs) {
+        if (std::optional<ModuleID> face = m_table.faceOfFile(module))
+            RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase));
+    }
 
     bool ranCode = false;
     if (status(module) == ModuleStatus::Unlinked) {
@@ -587,6 +592,8 @@ JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
 
 const SourceOrigin& Modules::sourceOrigin(ModuleID module)
 {
+    if (std::optional<ModuleID> evaluator = data(module).evaluatorModule())
+        return sourceOrigin(*evaluator);
     LoadedModule& loaded = ensureLoaded(module);
     if (!loaded.sourceOrigin) {
         String path = m_table.pathText(module);
@@ -824,12 +831,26 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     return promise;
 }
 
-// Uncompiled code loads its own dependencies at any later time, so the first module the build named as external admits all.
+static bool isText(StringView path)
+{
+    return path.startsWith("data:"_s);
+}
+
+bool Modules::isTextNamedByProgram(StringView url) const
+{
+    return isText(url) && std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](uint32_t module) {
+        return url == m_table.pathText(ModuleID(module));
+    });
+}
+
+// A package loads its own files at any later time, so the first one the build named as external admits all. A text has no files of its own.
 const Identifier& Modules::resolvedKey(ModuleID external)
 {
     ASSERT(data(external).isUncompiledCode());
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    m_admitsCodeOutsideImage = true;
+    m_runsUncompiledCode = true;
+    if (!isText(m_table.pathText(external)))
+        m_admitsCodeOutsideImage = true;
     LoadedModule& loaded = ensureLoaded(external);
     if (!loaded.resolvedKey.isNull())
         return loaded.resolvedKey;
@@ -848,7 +869,7 @@ void Modules::admitCodeNamedBy(JSValue specifier)
     RETURN_IF_EXCEPTION(scope, void());
     m_admitsCodeOutsideImage = std::ranges::any_of(m_table.modulesOfUncompiledCode(), [&](uint32_t module) {
         String name = m_table.pathText(ModuleID(module));
-        return text == name || (text->startsWith(name) && text[name.length()] == '/');
+        return !isText(name) && (text == name || (text->startsWith(name) && text[name.length()] == '/'));
     });
 }
 
@@ -1193,7 +1214,9 @@ String modulePath(ModuleID module)
     return paths.byImageAndModule.ensure(key, [&] {
         std::optional<ModuleTable> table = currentModuleTable();
         RELEASE_ASSERT(table);
-        String path = table->pathText(module);
+        // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
+        std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
+        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->pathText(module);
         return &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef();
     }).iterator->value;
 }
@@ -1214,10 +1237,10 @@ void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)
     }
 }
 
-bool refusesCodeOutsideImage(JSGlobalObject* realm)
+bool refusesCodeOutsideImage(JSGlobalObject* realm, StringView path)
 {
     if (Modules* modules = modulesOf(realm))
-        return modules->refusesCodeOutsideImage();
+        return modules->refusesCodeOutsideImage() && !modules->isTextNamedByProgram(path);
     const Image* image = Image::current();
     return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector) && !image->loadsCodeOutsideImage();
 }
@@ -1225,7 +1248,7 @@ bool refusesCodeOutsideImage(JSGlobalObject* realm)
 bool refusesHostObjectsOutsideImage(JSGlobalObject* realm)
 {
     Modules* modules = modulesOf(realm);
-    return refusesCodeOutsideImage(realm) && !(modules && modules->isAskingHost());
+    return refusesCodeOutsideImage(realm, { }) && !(modules && modules->isAskingHost());
 }
 
 JSObject* mainModuleObject(JSGlobalObject* realm)
@@ -1472,6 +1495,11 @@ void ModuleRecord::willLoadRequests()
 void ModuleRecord::didLoad()
 {
     modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
+}
+
+bool ModuleRecord::takeStepOfMainModule()
+{
+    return !requestedModules().isEmpty() && modules().takeStepOfMainModule(m_module);
 }
 
 void ModuleRecord::takeStatus()

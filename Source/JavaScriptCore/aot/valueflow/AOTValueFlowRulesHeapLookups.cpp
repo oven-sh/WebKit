@@ -985,6 +985,8 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         ClimbingSet above = known(chain.start);
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
             found = m_context.unite(found, m_context.restrict(above, holders));
+            if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
+                found = m_context.unite(found, m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))), holders));
             ClimbingSet next(prototypesAtCreationOf(above));
             if (ValueFlowNodeID links = readWhereWritten(above, prototypeLinkName))
                 next = m_context.unite(next, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), links));
@@ -1169,6 +1171,13 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
+        if (handsOutEvaluators) {
+            // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
+            ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));
+            ClimbingSet writable = m_context.restrict(listed, ValueSets::complement(holdersWithLockedLocationUnder(key)));
+            if (ValueFlowNodeID written = holdsAnything(writable) ? readWhereWritten(writable, value) : ValueFlowNodeID())
+                connect(m_context.masked(written, m_tables.objectsThatLetInUnseenCode()), result);
+        }
     }
     if (chain.holdsUnknownObject)
         builtinGetters.append(ValueFlowUniverse::unknownObject());

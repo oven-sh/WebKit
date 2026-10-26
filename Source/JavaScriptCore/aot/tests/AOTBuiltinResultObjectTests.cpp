@@ -434,7 +434,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
-    v1 = Check v0 expectedType=object
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     v2 = GetInternalField v1
     v3 = Check v2 expectedType=i32
     v4 = Integer integer=-1

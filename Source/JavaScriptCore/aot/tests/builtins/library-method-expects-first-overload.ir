@@ -65,7 +65,7 @@ function f1 name="filter" kind=Method role=Library flags=[HasThis, HasArgumentCo
   b9(v35):
     Jump -> next b10()
   b10():
-    v36 = Convert v16 declared={type=object flags=[IsFromCompiler]}
+    v36 = Convert v16 declared={type=object flags=[IsFromCompiler, IsClaim]}
     ElemDefine v36, v21, v31
     v38 = Increment v21
     v39 = Convert v38 declared={type=number flags=[IsExpected]}
@@ -140,7 +140,7 @@ function f2 name="helper" kind=Method role=Library flags=[HasThis, HasArgumentCo
   b9(v35):
     Jump -> next b10()
   b10():
-    v36 = Convert v16 declared={type=object flags=[IsFromCompiler]}
+    v36 = Convert v16 declared={type=object flags=[IsFromCompiler, IsClaim]}
     ElemDefine v36, v21, v31
     v38 = Increment v21
     v39 = Convert v38 declared={type=number flags=[IsExpected]}

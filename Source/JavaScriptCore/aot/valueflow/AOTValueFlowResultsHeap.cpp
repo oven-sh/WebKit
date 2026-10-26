@@ -717,6 +717,7 @@ static void forEachBuiltinAppliedByOperation(const ValueFlowResultInputs& inputs
     application.kind = kindOfCallBy(call);
     application.function = call.function;
     application.site = call.site;
+    application.statement = &call;
     if (knownOperands) {
         application.thisValue = knownOperands->thisValue;
         application.otherArguments = knownOperands->otherArguments;

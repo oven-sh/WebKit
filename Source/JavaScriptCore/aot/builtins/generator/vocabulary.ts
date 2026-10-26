@@ -153,6 +153,7 @@ export const operandRoles = [
   "KeysAreNotListed",
   "MembersAreOfObjectsOnly",
   "FunctionsAreConvertedUnderNamesOnly",
+  "OnlyBoxedPrimitivesAreConverted",
   "BecomesLengthOfReceiver",
   "CopiesHolesToResult",
   "WorkerEntryPath",

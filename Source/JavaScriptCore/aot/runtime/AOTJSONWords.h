@@ -18,6 +18,7 @@ namespace JSC { namespace AOT {
 class JSONRuntime;
 
 inline constexpr size_t jsonSourcePadding = 64;
+inline constexpr int64_t stackReservedForJSONParsers = 64 * 1024;
 
 enum class JSONSourceEncoding : uint8_t {
     Latin1,
