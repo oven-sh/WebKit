@@ -1319,6 +1319,29 @@ static void testConversions()
         FFI_CHECK(decoded.isString());
         FFI_CHECK(asString(decoded)->value(s_globalObject) == String::fromUTF8("hello"));
     }
+    {
+        // A cstring that is not valid UTF-8 decodes to U+FFFD for each invalid sequence, and the valid text around it is kept.
+        static const struct {
+            const char* bytes;
+            const char16_t* expected;
+        } cstringDecodes[] = {
+            { "", u"" },
+            { "h\xc3\xa9!", u"h\u00e9!" },
+            { "\xf0\x9f\x98\x80", u"\U0001f600" },
+            { "a\xe9z", u"a\ufffdz" },
+            { "a\xc3\xa9z\xff", u"a\u00e9z\ufffd" },
+            { "\xe6\x97\xa5\xe6\x9c\xac\xe8", u"\u65e5\u672c\ufffd" },
+            { "\xf0\x9f\x98", u"\ufffd" },
+            { "a\x80\x80z", u"a\ufffd\ufffdz" },
+            { "\xed\xa0\x80", u"\ufffd\ufffd\ufffd" },
+        };
+        for (auto& entry : cstringDecodes) {
+            JSValue decoded = slotToJS(T::CString, reinterpret_cast<uintptr_t>(entry.bytes));
+            FFI_CHECK(decoded.isString());
+            if (decoded.isString())
+                FFI_CHECK(asString(decoded)->value(s_globalObject) == String(unsafeSpan(entry.expected)));
+        }
+    }
     expectSlotToNumber(T::Function, 1, 1);
     expectSlotToNumber(T::Buffer, 65536, 65536);
 

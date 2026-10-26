@@ -5683,7 +5683,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, Call
     if (!address)
         return JSValue::encode(jsNull());
 
-    return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(FFI::jsValueFromSlot(globalObject, globalObject->ffiContext(), FFI::Type::CString, static_cast<uint64_t>(reinterpret_cast<uintptr_t>(address)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject, CallFrame*))

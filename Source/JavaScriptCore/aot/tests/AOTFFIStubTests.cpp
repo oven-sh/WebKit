@@ -91,6 +91,20 @@ try {
 }
 print(callCbI32(timesThreePlusOne, 1));
 
+// A cstring that is not valid UTF-8, as a return value and as a callback parameter: U+FFFD for the invalid byte.
+const notUTF8 = new Uint8Array([0x61, 0xc3, 0xa9, 0x62, 0xff, 0]);
+function codeUnits(string) {
+    let result = "";
+    for (let i = 0; i < string.length; ++i)
+        result += (i ? " " : "") + string.charCodeAt(i).toString(16);
+    return result;
+}
+let cstringParameter;
+const takesCString = callback(["cstring"], "void", string => { cstringParameter = string; });
+$vm.ffiFunction({ args: ["ptr"], returns: "void" }, takesCString.ptr, "takesCString")(notUTF8);
+print(codeUnits(bind("ffi_echo_cstring", ["ptr"], "cstring")(notUTF8)) + " | " + codeUnits(cstringParameter));
+takesCString.close();
+
 timesThreePlusOne.close();
 i32x9.close();
 f64x9.close();
@@ -139,6 +153,7 @@ constexpr ASCIILiteral outputOfCallsAndCallbacks = R"(42
 13510798882152452
 RangeError: thrown by the callback for 13
 4
+61 e9 62 fffd | 61 e9 62 fffd
 256 RangeError
 257 258
 9 259 260

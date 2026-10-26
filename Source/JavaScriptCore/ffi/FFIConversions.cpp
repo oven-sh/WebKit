@@ -435,6 +435,18 @@ bool writeSlotFromJSValue(JSGlobalObject* globalObject, FFIContext& context, Typ
     return false;
 }
 
+// Out of line: the String needs callee-saved registers, and jsValueFromSlot would save them for every type.
+static NEVER_INLINE JSValue cstringToJSValue(JSGlobalObject* globalObject, const char* string)
+{
+    auto bytes = byteCast<char8_t>(unsafeSpan(string));
+    // Valid UTF-8 takes the strict decode, which is simdutf. fromUTF8ReplacingInvalidSequences is a scalar
+    // loop, so only a string that the strict decode rejects pays for it: U+FFFD for each invalid sequence.
+    String decoded { bytes };
+    if (!decoded) [[unlikely]]
+        decoded = String::fromUTF8ReplacingInvalidSequences(bytes);
+    return jsString(getVM(globalObject), decoded);
+}
+
 JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, uint64_t slot)
 {
     switch (type) {
@@ -478,8 +490,7 @@ JSValue jsValueFromSlot(JSGlobalObject* globalObject, FFIContext&, Type type, ui
         const char* string = reinterpret_cast<const char*>(static_cast<uintptr_t>(slot));
         if (!string)
             return jsNull();
-        String decoded = String::fromUTF8WithLatin1Fallback(std::span<const char>(string, strlen(string)));
-        return jsString(getVM(globalObject), decoded);
+        return cstringToJSValue(globalObject, string);
     }
     case Type::Pointer:
     case Type::Function:
