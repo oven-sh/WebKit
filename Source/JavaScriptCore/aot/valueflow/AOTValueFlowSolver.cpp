@@ -252,7 +252,11 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             m_objectsLookedForBesideUnknownObject = maker.unite(m_input.universe->holdersOfLibraryExports(), maker.intersect(m_objectsAlwaysFollowed, heap.holdersWithMembers()));
             m_objectsLookedForBesideUnknownObject = maker.unite(m_objectsLookedForBesideUnknownObject, m_input.universe->embeddedFilePaths());
         }
-        m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone, ValueSets::complement(m_objectsLookedForBesideUnknownObject));
+        // A name read on Bun keeps that member, so a node lists Bun whether Bun arrives before the unknown object or after it.
+        ValueSetID takenByRetiredNodes = m_objectsLookedForBesideUnknownObject;
+        if (m_input.program && m_input.universe && m_input.program->builtins().contains(Builtins::Bun))
+            takenByRetiredNodes = maker.unite(takenByRetiredNodes, maker.of(m_input.universe->objectOf(Builtins::Bun)));
+        m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone, ValueSets::complement(takenByRetiredNodes));
         if (m_objectsLookedForBesideUnknownObject != ValueSets::nothing) {
             m_graph.keepOutOfNodesMadeForPlaceholders(m_objectsLookedForBesideUnknownObject, m_input.escaped, [](const void* solver, ValueFlowNodeID node) {
                 return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);

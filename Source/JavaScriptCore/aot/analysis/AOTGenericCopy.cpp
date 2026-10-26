@@ -317,6 +317,12 @@ void GenericCopy::computeRegion(Extent extent)
             BlockID block = target.block;
             if (isInRegion(block) || isExit.get(block.index()))
                 return;
+            if (m_isRequiredRejoinBlock.get(block.index()) && !m_mustBeCopied.get(block.index())) {
+                isExit.set(block.index());
+                m_exits.append(block);
+                m_untestedRejoins.append(block);
+                return;
+            }
             bool isRarerRejoinBlock = m_leavesAtRarerRejoinBlocks && m_isRejoinBlock.get(block.index()) && m_function.at(block).frequency > frequencyOfStarts;
             bool isRejoinBlock = isRarerRejoinBlock || (comesBack && m_isRejoinBlock.get(block.index()));
             bool endsInRareCode = isRare(block) && !m_reachesNonRareCode.get(block.index());
@@ -415,6 +421,29 @@ bool GenericCopy::canLeaveCopyAt(BlockID block) const
     return !addsLoopEntry(block) && RegionCloner::canMergeAt(m_analyses, m_isInRegion, block);
 }
 
+// What the region makes and an exit still reads becomes a parameter of the exit. A copy that leaves at many places while much is alive grows by the product of the two.
+bool GenericCopy::handsOverTooMuchAtExits() const
+{
+    AOT_THRESHOLD(uint64_t, minValuesHandedOver, 1024);
+    uint64_t mostHandedOver = 0;
+    for (BlockID block : m_region)
+        mostHandedOver += m_function.at(block).parameters.size() + m_function.at(block).values.size();
+    mostHandedOver = std::max(mostHandedOver, minValuesHandedOver);
+
+    const Liveness& liveness = m_analyses.liveness();
+    const UseLists& useLists = m_analyses.useLists();
+    uint64_t handedOver = 0;
+    for (BlockID exit : m_exits) {
+        for (ValueID value : liveness.liveAtHead(exit)) {
+            BlockID definingBlock = useLists.blockOf(value);
+            handedOver += definingBlock && isInRegion(definingBlock);
+        }
+        if (handedOver > mostHandedOver)
+            return true;
+    }
+    return false;
+}
+
 bool GenericCopy::tryPlan(Extent extent, uint64_t maxBlocks, const RegionCloner::LivenessSource& liveness)
 {
     m_mustBeCopied.clearAll();
@@ -435,6 +464,8 @@ bool GenericCopy::tryPlan(Extent extent, uint64_t maxBlocks, const RegionCloner:
                 changed = true;
             }
         }
+        if (handsOverTooMuchAtExits())
+            return false;
     }
 
     if (!canCopyInsideFunction(RegionCloner::checkCanDuplicate(m_analyses, m_region.span(), m_entries.span(), liveness)))

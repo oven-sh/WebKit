@@ -1464,7 +1464,7 @@ static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResu
     return stored;
 }
 
-static void takeStoredIntegers(const Type& declared, const ValueFlowNumbers* numbers, TypeArena& types, FlowPositionUpdate& update)
+static void widenToStoredIntegers(const Type& declared, const ValueFlowNumbers* numbers, TypeArena& types, FlowPositionUpdate& update)
 {
     Range stored = numbers ? numbers->integers : Range::full();
     if (stored.isSubsetOf(declared.integers))
@@ -1487,7 +1487,7 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
     if (inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks.quickGet(id.index()))
-        takeStoredIntegers(inputs.program.at(inputs.program.at(id).declared.type), numbers.ofVariable(id), types, update.position);
+        widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.type), numbers.ofVariable(id), types, update.position);
 }
 
 using LayoutsCreatedBelowMembers = Vector<Vector<LayoutID, 2>>;

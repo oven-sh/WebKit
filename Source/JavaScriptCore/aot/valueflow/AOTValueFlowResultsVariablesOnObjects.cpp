@@ -178,18 +178,18 @@ struct ValueFlowAccessesThroughObjects {
         ValueID stored = function.at(statement.site).operand(*index);
         const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(statement.function);
         bool isBehindCheck = !valuesBehindChecks || valuesBehindChecks->get(stored.index());
-        bool takesStoredIntegers = type.primitives & Primitive::Integer && (isBehindCheck || inputs.program.typeOf(function, stored).integers.isSubsetOf(type.integers));
+        bool acceptsIntegers = type.primitives & Primitive::Integer && (isBehindCheck || inputs.program.typeOf(function, stored).integers.isSubsetOf(type.integers));
         bool isInside = true;
-        bool storesIntegersOfSomeRange = false;
+        bool storesIntegers = false;
         ValueFlowMembers members = forEachMemberOf(inputs, inputs.bodies().operandsOf(statement)[*index], [&](ValueFlowObjectID member) {
             if (sets.contains(valuesInsideType[variable.index()], member))
                 return;
-            storesIntegersOfSomeRange |= member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
-            isInside &= takesStoredIntegers && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
+            storesIntegers |= member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
+            isInside &= acceptsIntegers && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
         });
         if (!isInside || members != ValueFlowMembers::Listed)
             return false;
-        if (storesIntegersOfSomeRange && isBehindCheck)
+        if (storesIntegers && isBehindCheck)
             setFlag(isStoredIntegersBehindChecks, variable.index());
         return true;
     }

@@ -662,7 +662,18 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
 }
 
 // Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
-NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
+NEVER_INLINE // Until the program is analyzed as a whole, what the passes make of library code is the same in every build. A fuzzer makes millions of builds.
+static bool isVerifiedElsewhere(const FunctionPassContext& context)
+{
+#if ENABLE(FUZZILLI)
+    return context.program.form() == IRForm::AsRead && isLibraryCode(context.program, context.function);
+#else
+    UNUSED_PARAM(context);
+    return false;
+#endif
+}
+
+PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
@@ -688,7 +699,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         run.mayDecideTestsAcrossBlocks = false;
     std::optional<Function> functionBeforeRun;
     ChangeLog::Cursor logBeforeRun;
-    if (m_build.options().verifiesAfterEveryPass) [[unlikely]]
+    if (m_build.options().verifiesAfterEveryPass && !isVerifiedElsewhere(context)) [[unlikely]]
         functionBeforeRun.emplace(context.function);
     if (functionBeforeRun || isTimed) [[unlikely]]
         logBeforeRun = context.changes.end();
@@ -768,7 +779,7 @@ void PassRunner::stopBehind(PassID id, ScheduleRun& run) const
 
 void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, FunctionPassContext& context, ScheduleRun& run) const
 {
-    if (!m_build.options().verifiesAfterEveryPass) [[likely]]
+    if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
@@ -844,7 +855,7 @@ static String describeFirstDifference(const Function& function, const Function& 
 // The table says that the pass finds nothing to do here. A run on a copy shows whether that is true.
 void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, const FunctionPassContext& context, ScheduleRun& run) const
 {
-    if (!m_build.options().verifiesAfterEveryPass) [[likely]]
+    if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
     Function copy(context.function);
     FunctionAnalyses analyses(context.analyses.context(), copy);

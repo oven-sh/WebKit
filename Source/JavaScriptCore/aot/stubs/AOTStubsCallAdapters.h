@@ -21,6 +21,7 @@ constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterC
 
 void emitEnterAdapter(StubAssembler&, GPRReg calleeScratch, unsigned extraBytes = 0);
 void emitAdapterEpilogue(StubAssembler&);
+void emitRestoreAdapterCallerRegisters(StubAssembler&, GPRReg adapterFrame);
 
 // The callee is a closure of this realm that can be called, and word is its word.
 void emitConstructWithPlainFunction(StubAssembler&, GPRReg word, CCallHelpers::JumpList& isNotPlainFunction);

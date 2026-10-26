@@ -772,8 +772,13 @@ static void emitEngineCallFrame(StubAssembler& jit, GPRReg count, GPRReg frame, 
     jit.move(frame, sp);
     jit.store64(calleeGPR, outgoingFrameSlot(CallFrameSlot::callee));
     jit.add32(TrustedImm32(1), count, frame);
+#if CPU(ARM64)
+    static_assert(static_cast<int>(CallFrameSlot::thisArgument) == static_cast<int>(CallFrameSlot::argumentCountIncludingThis) + 1);
+    jit.storePair64(frame, thisGPR, sp, TrustedImm32(outgoingFrameSlot(CallFrameSlot::argumentCountIncludingThis).offset));
+#else
     jit.store64(frame, outgoingFrameSlot(CallFrameSlot::argumentCountIncludingThis));
     jit.store64(thisGPR, outgoingFrameSlot(CallFrameSlot::thisArgument));
+#endif
     jit.addPtr(TrustedImm32(outgoingFrameSlot(CallFrameSlot::thisArgument, sizeof(Register)).offset), sp, frame);
     Jump none = jit.branchTest32(CCallHelpers::Zero, count);
     emitCopyFromLastWord(jit, Address(fp, static_cast<int32_t>(offsetOfStackWordsFromFrame)), Address(frame), count, word);
@@ -814,6 +819,53 @@ static void emitCallNativeFunctionByOperation(StubAssembler& jit, GPRReg count, 
     isNotNative.link(&jit);
 }
 
+static Address returnAddressOf(StubFrameKind kind)
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind));
+}
+
+// The caller made a tail call, and it was entered through an adapter that returns to an earlier frame of this stub.
+// The new frame replaces the adapter's, as in a tail call of the engine, and the callee returns to that earlier frame.
+static void emitReplaceAdapterFrame(StubAssembler& jit, GPRReg target, Label returnSite, Label callsTarget)
+{
+    const GPRReg adapter = jit.clobberRegister(StubRegister::A1);
+    const GPRReg destination = jit.clobberRegister(StubRegister::A3);
+    const GPRReg index = jit.clobberRegister(StubRegister::T10);
+    const GPRReg word = jit.clobberRegister(StubRegister::T9);
+    ASSERT(noOverlap(adapter, destination, index, word, target, BaselineJITRegisters::Call::calleeGPR, BaselineJITRegisters::Call::callLinkInfoGPR));
+
+    jit.move(fp, adapter);
+    Label nextFrame = jit.label();
+    jit.loadPtr(Address(adapter, CallFrame::returnPCOffset()), word);
+    jit.loadPtr(Address(adapter, CallFrame::callerFrameOffset()), adapter);
+    jit.branchPtr(CCallHelpers::Equal, word, returnAddressOf(StubFrameKind::ArgumentList)).linkTo(nextFrame, &jit);
+    jit.branchPtr(CCallHelpers::NotEqual, word, returnAddressOf(StubFrameKind::Adapter)).linkTo(callsTarget, &jit);
+    jit.loadLabelAddress(returnSite, word);
+    jit.branchPtr(CCallHelpers::NotEqual, word, Address(adapter, CallFrame::returnPCOffset())).linkTo(callsTarget, &jit);
+
+    jit.loadPtr(Address(adapter, CallFrame::callerFrameOffset()), fp);
+    emitStoreCodeOwner(jit, word);
+    jit.load32(Address(adapter, static_cast<int>(CallFrameSlot::argumentCountIncludingThis) * static_cast<int>(sizeof(Register))), destination);
+    emitAlignedSizeOfWords(jit, destination, CallFrame::headerSizeInRegisters, destination);
+    jit.addPtr(adapter, destination);
+    jit.load32(outgoingFrameSlot(CallFrameSlot::argumentCountIncludingThis), index);
+    emitAlignedSizeOfWords(jit, index, CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters, index);
+    jit.subPtr(index, destination);
+    jit.urshift32(TrustedImm32(3), index);
+    emitRestoreAdapterCallerRegisters(jit, adapter);
+    const GPRReg source = adapter;
+    jit.move(sp, source);
+    emitCopyFromLastWord(jit, Address(source), Address(destination), index, word);
+    jit.move(destination, sp);
+#if CPU(ARM64)
+    jit.loadLabelAddress(returnSite, CCallHelpers::linkRegister);
+#else
+    jit.loadLabelAddress(returnSite, word);
+    jit.push(word);
+#endif
+    jit.farJump(target, JSEntryPtrTag);
+}
+
 void generateCallEngineCallee(StubAssembler& jit)
 {
     static_assert(BaselineJITRegisters::Call::calleeGPR == gprOf(StubRegister::R0) && BaselineJITRegisters::Call::callLinkInfoGPR == gprOf(StubRegister::A2));
@@ -825,12 +877,15 @@ void generateCallEngineCallee(StubAssembler& jit)
     emitSpillArgumentsAndPushFrame(jit);
     if (jit.options().validates)
         emitCallNativeFunctionByOperation(jit, count, frame);
-    if constexpr (!!EngineCalleeFrame::saveAreaSize)
-        jit.subPtr(TrustedImm32(EngineCalleeFrame::saveAreaSize), sp);
-    for (const AdapterFrame::SavedRegister& saved : EngineCalleeFrame::savedRegisters)
-        jit.storePtr(saved.reg, Address(fp, static_cast<int32_t>(saved.offset)));
+#if CPU(X86_64)
+    for (size_t index = 0; index < EngineCalleeFrame::savedRegisters.size(); ++index) {
+        RELEASE_ASSERT(EngineCalleeFrame::savedRegisters[index].offset == -static_cast<ptrdiff_t>((index + 1) * sizeof(CPURegister)));
+        jit.push(EngineCalleeFrame::savedRegisters[index].reg);
+    }
+#else
+    static_assert(!EngineCalleeFrame::saveAreaSize);
+#endif
     emitEngineCallFrame(jit, count, frame, word, doesNotFitOnStack);
-    emitStoreCodeOwner(jit, word);
 #if CPU(X86_64)
     jit.emitMaterializeTagCheckRegisters();
 #endif
@@ -838,7 +893,6 @@ void generateCallEngineCallee(StubAssembler& jit)
     const GPRReg calleeOfTrampoline = jit.reuseScratch(StubRegister::R0);
     const GPRReg callLinkInfo = jit.allocateScratch(StubRegister::A2);
     JumpList needsTrampoline;
-    needsTrampoline.append(jit.branchIfNotCell(calleeGPR));
     needsTrampoline.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
     jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), word);
     needsTrampoline.append(jit.branchTestPtr(CCallHelpers::NonZero, word, TrustedImm32(JSFunction::rareDataTag)));
@@ -848,14 +902,28 @@ void generateCallEngineCallee(StubAssembler& jit)
     jit.loadPtr(Address(word, FunctionExecutable::offsetOfCodeBlockForCall()), word);
     jit.storePtr(word, outgoingFrameSlot(CallFrameSlot::codeBlock));
     Label hasTarget = jit.label();
+    JumpList mayReplaceAdapterFrame;
+#if CPU(ARM64)
+    constexpr GPRReg returnAddress = CCallHelpers::linkRegister;
+#else
+    const GPRReg returnAddress = word;
+    jit.loadPtr(Address(fp, CallFrame::returnPCOffset()), returnAddress);
+#endif
+    mayReplaceAdapterFrame.append(jit.branchPtr(CCallHelpers::Equal, returnAddress, returnAddressOf(StubFrameKind::Adapter)));
+    mayReplaceAdapterFrame.append(jit.branchPtr(CCallHelpers::Equal, returnAddress, returnAddressOf(StubFrameKind::ArgumentList)));
+    Label callsTarget = jit.label();
     jit.call(frame, JSEntryPtrTag);
-    jit.bindReturnLabel(StubFrameKind::EngineCallee);
+    Label returnSite = jit.bindReturnLabel(StubFrameKind::EngineCallee);
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         needsTrampoline.link(&jit);
+        emitStoreCodeOwner(jit, word);
         jit.move(calleeGPR, calleeOfTrampoline);
         jit.loadRuntimePointer(Entry::CallLinkInfoForCall, callLinkInfo);
         jit.loadRuntimePointer(Entry::VirtualCallTrampoline, frame);
         jit.jump().linkTo(hasTarget, &jit);
+
+        mayReplaceAdapterFrame.link(&jit);
+        emitReplaceAdapterFrame(jit, frame, returnSite, callsTarget);
     });
     for (const AdapterFrame::SavedRegister& saved : EngineCalleeFrame::savedRegisters)
         jit.loadPtr(Address(fp, static_cast<int32_t>(saved.offset)), saved.reg);

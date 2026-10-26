@@ -121,8 +121,11 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (isNamed && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {
             use(named, BuiltinUse::Read);
             add(m_statement.result, only(m_universe.objectOf(named)));
-        } else if (isNamed || (object.node && m_context.holdsAnyOf(bun, object.node))) {
+        } else if (isNamed)
             connect(m_context.lookup(bun, name), m_statement.result);
+        else if (object.node && m_context.holdsAnyOf(bun, object.node)) {
+            // The read already answers a value nobody knows, which stands for whatever has escaped.
+            connect(m_context.lookup(bun, name), ValueFlowProgramNodes::escaped());
         }
     }
     if (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey() && object.node && mayBeUnknownObject(receivers)) {
@@ -421,7 +424,7 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
 {
     if (!object.node || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
         return { };
-    return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key))), object.node);
+    return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key)), allButBun())), object.node);
 }
 
 void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)

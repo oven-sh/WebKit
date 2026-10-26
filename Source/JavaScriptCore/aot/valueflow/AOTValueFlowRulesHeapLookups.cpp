@@ -778,12 +778,16 @@ void HeapRule::callAccessors(ClimbingSet functions, ValueFlowCallKind kind, cons
         functions = m_context.restrict(functions, ValueSets::complement(only(accessorOfPrototypeLink)));
     }
 
+    // An accessor that a free name finds is entered with undefined.
+    bool mayBeFoundByFreeName = m_context.contains(receiver.operand ? m_context.valueOf(*receiver.operand) : receiver.set, m_universe.objectOf(Builtins::GlobalThis));
     forEachPartOfCallees(m_context, m_context.restrict(functions, m_tables.knownAccessors()), [&](ClimbingSet callees) {
         ValueFlowCallGroup group = m_context.group(callees, kind);
         if (receiver.operand)
             connect(*receiver.operand, group.thisValue);
         else
             add(group.thisValue, receiver.set);
+        if (mayBeFoundByFreeName)
+            add(group.thisValue, m_universe.undefinedValue());
         if (value)
             connect(*value, group.argument(0));
         connect(group.result, result);

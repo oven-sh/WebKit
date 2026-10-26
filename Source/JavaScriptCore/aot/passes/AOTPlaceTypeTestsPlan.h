@@ -75,6 +75,8 @@ struct TestPlacementPlan {
     Vector<StretchRange> ranges;
     Vector<ProgramPoint> rejoinPoints;
     Vector<ProgramPoint> rejoinPointsWithoutTests;
+    // A long stretch ends here and the next one begins. The generic copy comes back, whatever the tested code knows better.
+    Vector<ProgramPoint> splitPoints;
     Vector<PlannedWayBackIntoLoop> waysBackIntoLoops;
 
     bool isGuarded(unsigned stretch) const { return stretches[stretch].outcome == StretchOutcome::Guarded; }

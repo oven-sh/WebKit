@@ -571,7 +571,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     Structure* structure = structureID.decode();
     // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
     if (structure->isImmutableProperty(propertyName.uid())) [[unlikely]] {
-        if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
+        if (mode != PutModePut && structure->hasFrozenElementsInPlace()) {
+            moveFrozenElementsToSparseMap(vm);
+            structureID = this->structureID();
+            structure = structureID.decode();
+        } else if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
             return ReadonlyPropertyChangeError;
     }
     if (structure->isDictionary()) {

@@ -47,8 +47,8 @@ static void jumpToSlotHandlerAtSite(StubAssembler& jit, SlotHandlerTable table, 
     RELEASE_ASSERT(receiver == gprOf(firstStubOperandRegister));
     RELEASE_ASSERT(noOverlap(site, receiver, header, payload, kind, jit.immediate()));
     jit.loadPair64(site, header, payload);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), receiver);
-    jit.loadPtr(Address(receiver, JSGlobalObject::offsetOfGlobalThis()), receiver);
+    // Every slot of a free name has a holder, so the receiver is only what an accessor is entered with.
+    jit.move(TrustedImm64(JSValue::ValueUndefined), receiver);
     jumpToSlotHandler(jit, table, header, kind);
 }
 

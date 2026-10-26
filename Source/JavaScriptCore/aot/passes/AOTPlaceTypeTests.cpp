@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTCodeShapes.h"
+#include "AOTCodeSizeEstimate.h"
 #include "AOTExpectedTypesByUse.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
@@ -21,6 +22,7 @@
 #include "AOTPropertyAccess.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRepresentation.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
@@ -751,6 +753,154 @@ static BitVector findTestsRepeatedInVain(const TestPlacementPlan& plan, const Te
     return sites;
 }
 
+// The copy runs again what stands between its entry and the test, so the first tests in code that can run twice keep their own entries. The entry of the last of them serves every later test.
+AOT_THRESHOLD(uint32_t, maxEntriesInRepeatableCode, 8);
+
+// A failing test hands over to the generic copy what its stretch has made so far and the copy still reads. The tested code holds a number in a register of its own kind and the copy holds it as any value, so each is converted on the way.
+// Tests that follow each other while the numbers made between them stay alive convert values by the square of their number. In a function where that is much code, a stretch ends in front of a test once its conversions outweigh its own code and what it costs to let the copy come back. The tests behind hand over only what is made from there on.
+static Vector<ProgramPoint> findPointsToSplitStretchesAt(FunctionPassContext& context, const TestPlacementPlan& plan, const TestCoverage& coverage, const TestStretches& stretches)
+{
+    AOT_THRESHOLD(uint64_t, minBytesOfConversionsInFunction, 16 * KB);
+    AOT_THRESHOLD(uint64_t, bytesToConvertValue, 16);
+    // Behind the join the value is tested again where it is used.
+    AOT_THRESHOLD(uint64_t, bytesToJoinValue, 128);
+
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    auto isConverted = [&](ValueID id) {
+        const Value& value = function.at(id);
+        return value.type && value.expected() && defaultRepresentationOf(context.types.at(value.type)) != defaultRepresentationOf(context.types.at(value.expected()));
+    };
+    uint64_t numberOfTests = 0;
+    for (uint32_t index = 0; index < plan.requirements.size(); ++index)
+        numberOfTests += coverage.of(index) == RequirementCoverage::NeedsTest;
+    uint64_t numberOfConvertedValues = 0;
+    for (const StretchRange& range : stretches.ranges()) {
+        for (uint32_t index = range.begin; range.isCloned && index < range.end; ++index)
+            numberOfConvertedValues += isConverted(function.at(range.block).values[index]);
+    }
+    if (numberOfTests * numberOfConvertedValues * bytesToConvertValue <= minBytesOfConversionsInFunction)
+        return { };
+
+    struct Piece {
+        uint64_t bytesOfStretch { 0 };
+        uint64_t bytesOfConversions { 0 };
+        uint32_t alive { 0 };
+        uint32_t entriesInRepeatableCode { 0 };
+    };
+    constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+    size_t numberOfValues = function.values.size();
+    Vector<uint32_t> stretchOf(FillWith { }, numberOfValues, none);
+    unsigned numberOfStretches = 0;
+    for (const StretchRange& range : stretches.ranges()) {
+        numberOfStretches = std::max(numberOfStretches, range.stretch + 1);
+        for (uint32_t index = range.begin; range.isCloned && index < range.end; ++index)
+            stretchOf[function.at(range.block).values[index].index()] = range.stretch;
+    }
+    Vector<uint32_t> testsInFront(FillWith { }, numberOfValues, 0u);
+    Vector<uint64_t> testsLeftIn(FillWith { }, numberOfStretches, 0u);
+    BitVector hasOwnEntry(numberOfValues);
+    Vector<const TestSite*> siteOf(FillWith { }, numberOfValues, nullptr);
+    for (uint32_t index = 0; index < plan.requirements.size(); ++index) {
+        const TestRequirement& requirement = plan.requirements[index];
+        const TestSite& site = plan.sites.sites[requirement.site];
+        if (coverage.of(index) != RequirementCoverage::Unknown)
+            siteOf[site.use.index()] = &site;
+        if (coverage.of(index) != RequirementCoverage::NeedsTest)
+            continue;
+        ++testsInFront[site.use.index()];
+        if (uint32_t stretch = stretchOf[site.use.index()]; stretch != none)
+            ++testsLeftIn[stretch];
+        if (!plan.conditions->at(requirement.condition).lastsForStretch())
+            hasOwnEntry.quickSet(site.use.index());
+    }
+
+    const CFG& cfg = analyses.cfg();
+    const UseLists& useLists = analyses.useLists();
+    Vector<uint32_t> positionOf(FillWith { }, numberOfValues, 0u);
+    Vector<uint32_t> positionOfEnd(FillWith { }, function.blocks.size(), 0u);
+    uint32_t position = 0;
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID value : function.at(block).values)
+            positionOf[value.index()] = position++;
+        positionOfEnd[block.index()] = position++;
+    }
+    auto positionOfLastUse = [&](ValueID value) {
+        uint32_t last = 0;
+        for (const Use& use : useLists.usesOf(value))
+            last = std::max(last, use.kind == Use::Kind::Operand ? positionOf[use.user.index()] : positionOfEnd[use.block.index()]);
+        return last;
+    };
+    auto canRunTwice = [&](ValueID value) {
+        auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
+        if (const TestSite* site = siteOf[value.index()])
+            return isUnseen(site->effectsWhenPassed);
+        const EffectsOnEdges& effects = analyses.effectsOf(value);
+        return isUnseen(effects.normal) && isUnseen(effects.handler);
+    };
+
+    Vector<Piece> pieces;
+    Vector<uint32_t> currentPieceOf(FillWith { }, numberOfStretches, none);
+    Vector<uint32_t> pieceOf(FillWith { }, numberOfValues, none);
+    Vector<uint32_t> lastUseOf(FillWith { }, numberOfValues, 0u);
+    auto release = [&](ValueID value, uint32_t at) {
+        if (value && pieceOf[value.index()] != none && lastUseOf[value.index()] == at)
+            --pieces[std::exchange(pieceOf[value.index()], none)].alive;
+    };
+    uint64_t bytesOfConversionsInFunction = 0;
+
+    Vector<ProgramPoint> points;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const Block& contents = function.at(block);
+        bool isReachedOnOneEdge = cfg.incomingEdges(block).size() == 1;
+        for (uint32_t index = 0; index < contents.values.size(); ++index) {
+            ValueID value = contents.values[index];
+            uint32_t stretch = stretchOf[value.index()];
+            if (stretch != none) {
+                uint32_t& current = currentPieceOf[stretch];
+                auto startPiece = [&] {
+                    current = pieces.size();
+                    pieces.append(Piece { });
+                };
+                if (current == none)
+                    startPiece();
+                if (!index && !isReachedOnOneEdge)
+                    pieces[current].entriesInRepeatableCode = 0;
+                if (uint32_t tests = testsInFront[value.index()]) {
+                    const Piece& piece = pieces[current];
+                    bool repaysJoin = testsLeftIn[stretch] * bytesToConvertValue > bytesToJoinValue;
+                    if (index && repaysJoin && bytesOfConversionsInFunction > minBytesOfConversionsInFunction && piece.bytesOfConversions > std::max(piece.bytesOfStretch, bytesToJoinValue * piece.alive)) {
+                        points.append({ block, index });
+                        startPiece();
+                    }
+                    testsLeftIn[stretch] -= tests;
+                    Piece& entered = pieces[current];
+                    if (hasOwnEntry.quickGet(value.index()) || ++entered.entriesInRepeatableCode <= maxEntriesInRepeatableCode) {
+                        entered.bytesOfConversions += tests * bytesToConvertValue * entered.alive;
+                        bytesOfConversionsInFunction += tests * bytesToConvertValue * entered.alive;
+                    }
+                }
+            }
+            function.at(value).forEachOperand([&](ValueID operand, uint32_t) { release(operand, positionOf[value.index()]); });
+            if (stretch == none)
+                continue;
+            Piece& piece = pieces[currentPieceOf[stretch]];
+            piece.bytesOfStretch += estimatedCodeBytes(context.program, function, function.at(value));
+            if (!canRunTwice(value))
+                piece.entriesInRepeatableCode = 0;
+            if (!isConverted(value))
+                continue;
+            if (uint32_t last = positionOfLastUse(value); last > positionOf[value.index()]) {
+                lastUseOf[value.index()] = last;
+                pieceOf[value.index()] = currentPieceOf[stretch];
+                ++piece.alive;
+            }
+        }
+        contents.forEachChildOutsideValues([&](ValueID child) { release(child, positionOfEnd[block.index()]); });
+    }
+    return points;
+}
+
 // The blocks of the ranges that the functor picks, and every block that is reached from one of them.
 static BitVector findBlocksBehindRanges(const Function& function, std::span<const StretchRange> ranges, NOESCAPE const Invocable<bool(const StretchRange&)> auto& picks)
 {
@@ -844,7 +994,7 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
 }
 
 // Where the tested code wants none of the proofs of this plan, the generic copy may come back.
-static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& context, const TestStretches& stretches, WantedProofs& wanted)
+static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& context, const TestStretches& stretches, WantedProofs& wanted, std::span<const ProgramPoint> splitPoints)
 {
     FunctionAnalyses& analyses = context.analyses;
     const Function& function = context.function;
@@ -875,6 +1025,12 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     auto orderOf = [&](ProgramPoint point) { return std::pair { cfg.reversePostOrderIndex(point.block), point.index }; };
     AOT::sort(plan.rejoinPoints, { }, orderOf);
     removeRepeatedElements(plan.rejoinPoints);
+    for (ProgramPoint point : splitPoints) {
+        if (mayRejoinAt(point))
+            plan.splitPoints.append(point);
+    }
+    auto isSplitPoint = [&](ProgramPoint point) { return std::ranges::binary_search(plan.splitPoints, orderOf(point), { }, orderOf); };
+    plan.rejoinPoints.removeAllMatching(isSplitPoint);
 
     std::span<const StretchRange> ranges = stretches.ranges();
     BitVector isBehindCopiedRange = findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
@@ -930,7 +1086,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
 
     AOT::sort(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);
-    plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) { return std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf); });
+    plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) { return isSplitPoint(point) || std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf); });
 }
 
 // A test whose proof lasts forever, about values made in front of the loop, fails at every turn once it has failed. Where only such tests lead into the copy, it would come back in vain.
@@ -1015,7 +1171,14 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context)
     return planTestPlacement(context, collectTestSites(context));
 }
 
+static TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&, std::optional<Vector<ProgramPoint>>&& splitPoints);
+
 TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites)
+{
+    return planTestPlacement(context, WTF::move(sites), std::nullopt);
+}
+
+static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites, std::optional<Vector<ProgramPoint>>&& splitPoints)
 {
     TestPlacementPlan plan;
     plan.sites = WTF::move(sites);
@@ -1035,7 +1198,12 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
 
     Vector<ExistingProof> proofs = findExistingProofs(context, *plan.conditions);
     Vector<HoistedTest> hoistedTests = findHoistedTests(context, plan.sites, *plan.conditions, plan.requirements.span());
-    TestEvents events(TestEventInputs { context.analyses, *plan.conditions, plan.sites.sites.span(), plan.requirements.span(), proofs.span(), hoistedTests.span() });
+    BitVector valuesThatStartNewStretch;
+    if (splitPoints) {
+        for (ProgramPoint point : *splitPoints)
+            valuesThatStartNewStretch.set(context.function.at(point.block).values[point.index].index());
+    }
+    TestEvents events(TestEventInputs { context.analyses, *plan.conditions, plan.sites.sites.span(), plan.requirements.span(), proofs.span(), hoistedTests.span(), true, &valuesThatStartNewStretch });
     // The generic copy goes on behind a stretch, so it holds the code of a gap whether a proof bridges the gap or not.
     uint32_t widestGap = static_cast<uint32_t>(std::min<uint64_t>(context.limit(LimitID::MaxClonedBytesPerStretch), UINT32_MAX));
     TestCoverage coverage(TestCoverageInputs { events, GapBudget { widestGap, widestGap }, nullptr, SlowPaths::MayLeave });
@@ -1046,7 +1214,12 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
     if (!repeatedInVain.isEmpty()) {
         uint32_t index = 0;
         plan.sites.sites.removeAllMatching([&](const TestSite&) { return repeatedInVain.get(index++); });
-        return planTestPlacement(context, WTF::move(plan.sites));
+        return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
+    }
+    if (!splitPoints) {
+        splitPoints = findPointsToSplitStretchesAt(context, plan, coverage, stretches);
+        if (!splitPoints->isEmpty())
+            return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
     }
 
     const Function& function = context.function;
@@ -1083,7 +1256,7 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
     }
     AOT::sort(plan.slowPaths, { }, [&](const PlannedSlowPath& slowPath) { return std::pair { cfg.reversePostOrderIndex(slowPath.edge.from), slowPath.edge.targetIndex }; });
 
-    appendRejoinPoints(plan, context, stretches, wanted);
+    appendRejoinPoints(plan, context, stretches, wanted, splitPoints->span());
     appendWaysBackIntoLoops(plan, context, coverage, stretches.ranges(), wanted);
     for (uint32_t index = 0; index < proofs.size(); ++index) {
         if (wanted.isProofWanted(index))
@@ -2069,6 +2242,8 @@ struct TestPlacer {
     BitVector isRejoinBlock { };
     Vector<ProgramPoint> rejoinPointsWithoutTests { };
     BitVector isRejoinBlockWithoutTests { };
+    Vector<ProgramPoint> splitPoints { };
+    BitVector isSplitBlock { };
     Vector<SubjectOperand> subjectOperands { };
     Vector<Definitions> definitions = Vector<Definitions>(plan.conditions->size());
     BitVector isDefinition { };
@@ -2096,6 +2271,7 @@ struct TestPlacer {
         splitBlocks();
         findRejoinBlocks(rejoinPoints.span(), isRejoinBlock);
         findRejoinBlocks(rejoinPointsWithoutTests.span(), isRejoinBlockWithoutTests);
+        findRejoinBlocks(splitPoints.span(), isSplitBlock);
         checkStretches();
         if (!numberOfGuardedStretches()) {
             // Left split, the function would be simplified, planned, split and rejected again in every round of the fixpoint.
@@ -2315,6 +2491,7 @@ struct TestPlacer {
         };
         keepRejoinPoints(plan.rejoinPoints, rejoinPoints);
         keepRejoinPoints(plan.rejoinPointsWithoutTests, rejoinPointsWithoutTests);
+        keepRejoinPoints(plan.splitPoints, splitPoints);
 
         AOT::sort(cuts, { }, &Cut::key);
         removeRepeatedElements(cuts, [](const Cut& a, const Cut& b) { return a.point == b.point; });
@@ -2549,6 +2726,8 @@ struct TestPlacer {
             if (isPlaced(use.stretch))
                 copy->addValueToBeNarrowed(plan.sites.sites[use.site].use);
         }
+        for (size_t index : isSplitBlock)
+            copy->addRequiredRejoinBlock(BlockID(index));
         // A copy that holds its stretches alone leaves where they end: it looks for no place to come back at.
         if (!goesOnBehindStretches)
             return copy->plan(context.limit(LimitID::MaxBlocksCopiedBehindStretches), liveness);
@@ -3113,8 +3292,6 @@ struct TestPlacer {
                 hasEntry.quickSet(originals[test.failed.index()].index());
         }
 
-        // The copy runs again what stands between its entry and the test, so the first tests in code that can run twice keep their own entries. The entry of the last of them serves every later test.
-        AOT_THRESHOLD(uint32_t, maxEntriesInRepeatableCode, 8);
         struct EntriesAbove {
             uint32_t count { 0 };
             BlockID shared;

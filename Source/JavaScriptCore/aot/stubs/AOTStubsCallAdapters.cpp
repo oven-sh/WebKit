@@ -128,19 +128,24 @@ void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), calleeGPR);
 }
 
-void emitAdapterEpilogue(StubAssembler& jit)
+void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 {
     // What a caller expects of a method waits in these words while the method is looked up. A getter or a trap that the lookup ran has left its own calls in them.
     if (jit.options().validates)
         jit.store64(TrustedImm32(-1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.expectedCall.site)));
 #if CPU(ARM64)
-    jit.loadPtr(Address(fp, offsetOfInstanceRegisterInAdapter), instanceGPR);
-    jit.loadPtr(Address(fp, offsetOfCellCageBaseRegisterInAdapter), cellCageBaseGPR);
-    jit.loadPair64(fp, TrustedImm32(offsetOfNumberTagRegisterInAdapter), GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
+    jit.loadPtr(Address(adapterFrame, offsetOfInstanceRegisterInAdapter), instanceGPR);
+    jit.loadPtr(Address(adapterFrame, offsetOfCellCageBaseRegisterInAdapter), cellCageBaseGPR);
+    jit.loadPair64(adapterFrame, TrustedImm32(offsetOfNumberTagRegisterInAdapter), GPRInfo::numberTagRegister, GPRInfo::notCellMaskRegister);
 #else
     for (const AdapterFrame::SavedRegister& saved : AdapterFrame::savedRegisters)
-        jit.loadPtr(Address(fp, static_cast<int32_t>(saved.offset)), saved.reg);
+        jit.loadPtr(Address(adapterFrame, static_cast<int32_t>(saved.offset)), saved.reg);
 #endif
+}
+
+void emitAdapterEpilogue(StubAssembler& jit)
+{
+    emitRestoreAdapterCallerRegisters(jit, fp);
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
 }

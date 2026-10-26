@@ -46,6 +46,8 @@ public:
     void addEntry(BlockID block) { m_entries.append(block); }
     void addRejoinBlock(BlockID block) { m_isRejoinBlock.set(block.index()); }
     void addRejoinBlockWithoutTests(BlockID block) { m_isRejoinBlockWithoutTests.set(block.index()); }
+    // The copy comes back here even where the tested code knows more about a live value. Behind the block that value has the type of both.
+    void addRequiredRejoinBlock(BlockID block) { m_isRequiredRejoinBlock.set(block.index()); }
     void addValueToBeNarrowed(ValueID value) { m_valuesToBeNarrowed.append(value); }
     void addValueNarrowedInUnknownWay(ValueID value) { m_valuesNarrowedInUnknownWay.append(value); }
     void addValueKnownBeyondItsType(ValueID value) { m_valuesKnownBeyondTheirTypes.append(value); }
@@ -128,6 +130,7 @@ private:
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
+    bool handsOverTooMuchAtExits() const;
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);
     void recordTestedRejoins();
 
@@ -154,6 +157,7 @@ private:
     Vector<ValueID, 8> m_valuesKnownBeyondTheirTypes;
     BitVector m_isRejoinBlock;
     BitVector m_isRejoinBlockWithoutTests;
+    BitVector m_isRequiredRejoinBlock;
 
     BitVector m_reachesNonRareCode;
     BitVector m_mayBeNarrowed;
