@@ -2222,9 +2222,10 @@ private:
             m_errorCode = ErrorCode::TooManyCaptures;
     }
 
-    // A class of nothing but characters and ranges ends up as one sorted list, however long it is written. It counts as one character.
-    // Anything else in a class can cost far more than its length: \p{L} is about 650 ranges, and [\S--a] goes through every code point.
-    // A class with any of that counts in full.
+    // Returns the pattern's length with each plain character class counted as one character. A plain class contains only characters
+    // and ranges, so it compiles to one sorted list no matter how long its source is.
+    // Other classes can cost much more than their length suggests: \p{L} adds about 650 ranges, and [\S--a] visits every code point.
+    // Those are counted at their full length.
     unsigned sizeWithoutPlainCharacterClasses() const
     {
         auto isSetOfCharacters = [](char32_t escaped) {

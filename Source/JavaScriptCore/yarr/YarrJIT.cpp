@@ -8467,7 +8467,7 @@ class YarrGenerator final : public YarrJITInfo {
                 alternativeEndOpCode = YarrOpCode::NestedAlternativeEnd;
             }
 #if !defined(YARR_FOR_IMAGE)
-        // A tail loop relies on empty iterations going to the interpreter. An image's code handles them itself.
+        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it doesn't use tail loops.
         } else if (term->parentheses.isTerminal || term->parentheses.isTailLoop) {
 #else
         } else if (term->parentheses.isTerminal || (term->possessive() && term->parentheses.disjunction->m_minimumSize)) {
