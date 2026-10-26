@@ -28,6 +28,9 @@
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
+#include "AtomicsSync.h"
+#include "JSSharedArray.h"
+#include "JSSharedStruct.h"
 #include "BigIntConstructor.h"
 #include "BuiltinExecutableCreator.h"
 #include "BytecodeCacheError.h"
@@ -587,6 +590,14 @@ static JSC_DECLARE_HOST_FUNCTION(functionDollarGC);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarClearKeptObjects);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarGlobalObjectFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarIsRemoteFunction);
+static JSC_DECLARE_HOST_FUNCTION(functionAtomicsSyncState);
+static JSC_DECLARE_HOST_FUNCTION(functionAtomicsSyncFromState);
+static JSC_DECLARE_HOST_FUNCTION(functionSharedStructHandle);
+static JSC_DECLARE_HOST_FUNCTION(functionSharedStructFromHandle);
+static JSC_DECLARE_HOST_FUNCTION(functionSharedArrayHandle);
+static JSC_DECLARE_HOST_FUNCTION(functionCollectSharedCycles);
+static JSC_DECLARE_HOST_FUNCTION(functionLiveSharedBlocks);
+static JSC_DECLARE_HOST_FUNCTION(functionLiveSharedStrings);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarAgentStart);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarAgentReceiveBroadcast);
 static JSC_DECLARE_HOST_FUNCTION(functionDollarAgentReport);
@@ -892,6 +903,27 @@ private:
         addFunction(vm, "jscStack"_s, functionJSCStack, 1);
         addFunction(vm, "openFile"_s, functionOpenFile, 1);
         addFunction(vm, "readline"_s, functionReadline, 0);
+        if (Options::useStructs()) {
+            // Test hooks: the SharedArrayBuffer behind an Atomics.Mutex or Atomics.Condition, and a new wrapper
+            // for such a buffer (kind 0: mutex, 1: condition), which is how an embedder shares them between agents.
+            addFunction(vm, "atomicsSyncState"_s, functionAtomicsSyncState, 1);
+            addFunction(vm, "atomicsSyncFromState"_s, functionAtomicsSyncFromState, 2);
+            // Test hooks for handing a shared struct to other agents: sharedStructHandle(s, count) returns a number
+            // that owns count (default 1) new references to the struct's block, and sharedStructFromHandle(n)
+            // turns the number into a shared struct of the calling agent and consumes one of those references.
+            addFunction(vm, "sharedStructHandle"_s, functionSharedStructHandle, 2);
+            addFunction(vm, "sharedStructFromHandle"_s, functionSharedStructFromHandle, 1);
+            // The same for a SharedArray: sharedArrayHandle(a, count) and, in the other agent, sharedStructFromHandle(n),
+            // which wraps the block as whichever of the two it belongs to.
+            addFunction(vm, "sharedArrayHandle"_s, functionSharedArrayHandle, 2);
+            // Test hooks for the collector of reference cycles between shared structs and SharedArrays:
+            // collectSharedCycles() runs it now and returns the number of blocks it destroyed, and
+            // liveSharedBlocks() and liveSharedStrings() count the blocks and the strings (and BigInt digits)
+            // that exist in the process.
+            addFunction(vm, "collectSharedCycles"_s, functionCollectSharedCycles, 0);
+            addFunction(vm, "liveSharedBlocks"_s, functionLiveSharedBlocks, 0);
+            addFunction(vm, "liveSharedStrings"_s, functionLiveSharedStrings, 0);
+        }
         addFunction(vm, "preciseTime"_s, functionPreciseTime, 0);
         addFunction(vm, "neverInlineFunction"_s, functionNeverInlineFunction, 1);
         addFunction(vm, "noInline"_s, functionNeverInlineFunction, 1);
@@ -3191,6 +3223,88 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarIsRemoteFunction, (JSGlobalObject* global
 
 constexpr unsigned maxLiveAgentsInFuzzerMode = 64;
 static std::atomic<unsigned> numLiveAgents;
+
+JSC_DEFINE_HOST_FUNCTION(functionAtomicsSyncState, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArrayBuffer* state = atomicsMutexState(vm, callFrame->argument(0));
+    if (!state)
+        state = atomicsConditionState(vm, callFrame->argument(0));
+    if (!state)
+        return throwVMTypeError(globalObject, scope, "Expected an Atomics.Mutex or Atomics.Condition"_s);
+    return JSValue::encode(state);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSharedStructHandle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RefPtr<SharedStructBlock> block = sharedStructBlockOf(callFrame->argument(0));
+    if (!block)
+        return throwVMTypeError(globalObject, scope, "Expected a shared struct"_s);
+    // One reference for each agent that will turn the handle into a shared struct.
+    int32_t count = callFrame->argument(1).isUndefined() ? 1 : callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (int32_t i = 0; i < count; ++i)
+        block->ref();
+    return JSValue::encode(jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(block.get()))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSharedArrayHandle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RefPtr<SharedStructBlock> block = sharedArrayBlockOf(callFrame->argument(0));
+    if (!block)
+        return throwVMTypeError(globalObject, scope, "Expected a SharedArray"_s);
+    int32_t count = callFrame->argument(1).isUndefined() ? 1 : callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (int32_t i = 0; i < count; ++i)
+        block->ref();
+    return JSValue::encode(jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(block.get()))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCollectSharedCycles, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsNumber(static_cast<double>(collectSharedStructCycles())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionLiveSharedBlocks, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsNumber(static_cast<double>(liveSharedStructBlockCount())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionLiveSharedStrings, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsNumber(static_cast<double>(liveSharedStringCount())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSharedStructFromHandle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double handle = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!(handle > 0))
+        return throwVMTypeError(globalObject, scope, "Expected a shared struct handle"_s);
+    auto* block = reinterpret_cast<SharedStructBlock*>(static_cast<uintptr_t>(handle));
+    return JSValue::encode(wrapSharedStructBlock(globalObject, adoptRef(*block)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAtomicsSyncFromState, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* state = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    if (!state)
+        return throwVMTypeError(globalObject, scope, "Expected a SharedArrayBuffer"_s);
+    JSObject* result = callFrame->argument(1).toInt32(globalObject) == 1 ? createAtomicsCondition(globalObject, state) : createAtomicsMutex(globalObject, state);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!result)
+        return throwVMTypeError(globalObject, scope, "Atomics.Mutex and Atomics.Condition are not available"_s);
+    return JSValue::encode(result);
+}
 
 JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

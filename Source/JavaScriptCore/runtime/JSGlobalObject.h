@@ -112,6 +112,7 @@ class SetIteratorPrototype;
 class SetPrototype;
 class ShadowRealmConstructor;
 class ShadowRealmPrototype;
+class SharedStructWrapperCache;
 class SourceCodeKey;
 class SourceOrigin;
 class StringConstructor;
@@ -299,6 +300,9 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_relativeTimeFormatStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmentIteratorStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmenterStructure;
+    LazyProperty<JSGlobalObject, Structure> m_sharedStructStructure;
+    LazyProperty<JSGlobalObject, Structure> m_sharedArrayStructure;
+    std::unique_ptr<SharedStructWrapperCache> m_sharedStructWrapperCache;
     LazyProperty<JSGlobalObject, Structure> m_segmentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmentDataObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmentDataObjectWithIsWordLikeStructure;
@@ -1111,6 +1115,9 @@ public:
     Structure* relativeTimeFormatStructure() { return m_relativeTimeFormatStructure.get(this); }
     Structure* segmentIteratorStructure() { return m_segmentIteratorStructure.get(this); }
     Structure* segmenterStructure() { return m_segmenterStructure.get(this); }
+    Structure* sharedStructStructure() { return m_sharedStructStructure.get(this); }
+    Structure* sharedArrayStructure() { return m_sharedArrayStructure.get(this); }
+    JS_EXPORT_PRIVATE SharedStructWrapperCache& sharedStructWrapperCache();
     Structure* segmentsStructure() { return m_segmentsStructure.get(this); }
     Structure* segmentDataObjectStructure() { return m_segmentDataObjectStructure.get(this); }
     Structure* segmentDataObjectWithIsWordLikeStructure() { return m_segmentDataObjectWithIsWordLikeStructure.get(this); }

@@ -88,6 +88,12 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
     if (thisValue.inherits<JSFunction>()) {
         JSFunction* function = uncheckedDowncast<JSFunction>(thisValue);
         Integrity::auditStructureID(function->structureID());
+        // The constructor of a struct is a native function with the source text of its declaration.
+        if (function->isHostFunction()) {
+            JSValue source = function->getDirect(vm, vm.propertyNames->builtinNames().structSourcePrivateName());
+            if (source && source.isString())
+                return JSValue::encode(source);
+        }
         RELEASE_AND_RETURN(scope, JSValue::encode(function->toString(globalObject)));
     }
 
