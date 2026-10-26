@@ -60,6 +60,8 @@ struct ValueFlowSolverInput {
     bool isAskedHowValuesCame { true };
     uint32_t mostRounds { UINT32_MAX };
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
+    bool ignoresUnseenCode { false };
+    const class ValueFlowSolver* fullSolver { nullptr };
     RefusedCode refusedCode;
     std::array<uint64_t, 8> removedFeatures { };
     const ValueFlowInstancedFunctions* instancedFunctions { nullptr };
@@ -265,7 +267,16 @@ public:
     // Everything that may reach the node. A proof reads this.
     ValueSetID possibleValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     // What the program itself brings to the node. A prediction reads this: it may name too few, so nothing is proven from it.
-    ValueSetID seenValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
+    ValueSetID seenValuesOf(ValueFlowNodeID node) const
+    {
+        if (!m_seenCodeSolver || node.index() >= m_input.numberOfNodes)
+            return m_graph.valueOf(node);
+        ValueSetID seen = m_seenCodeSolver->m_graph.valueOf(node);
+        return seen == ValueSets::nothing ? m_graph.valueOf(node) : seen;
+    }
+    bool hasSeenValuesOf(ValueFlowNodeID node) const { return m_seenCodeSolver && node.index() < m_input.numberOfNodes && m_seenCodeSolver->m_graph.valueOf(node) != ValueSets::nothing; }
+    void setSeenCodeSolver(const ValueFlowSolver* solver) { m_seenCodeSolver = solver; }
+    const ValueFlowSolver* seenCodeSolver() const { return m_seenCodeSolver; }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
@@ -856,6 +867,7 @@ private:
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
     ValueSetID m_objectsLookedForBesideUnknownObject { ValueSets::nothing };
+    const ValueFlowSolver* m_seenCodeSolver { nullptr };
     ValueSetID m_objectsSaidToBeSomething { ValueSets::nothing };
     ValueSetID m_objectsOfProgram { ValueSets::nothing };
     Vector<KindThatCoversKeys, 2> m_kindsThatCoverKeys;

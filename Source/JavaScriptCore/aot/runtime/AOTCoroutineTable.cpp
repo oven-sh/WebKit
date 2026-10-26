@@ -286,13 +286,24 @@ void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t in
     vm.writeBarrier(this);
 }
 
+// For a function that waits for a settled result of a call. A synchronous module load resumes the body of a module before it returns.
+void SavedFrame::queueResumeJob(JSGlobalObject* globalObject, VM& vm, JSValue resolution, bool isRejected, JSValue asyncContext)
+{
+    auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
+    if (vm.m_synchronousModuleQueue && isSuspendedModuleBody(vm, this)) [[unlikely]] {
+        vm.m_synchronousModuleQueue->tasks.append({ InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext });
+        return;
+    }
+    globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext);
+}
+
 void SavedFrame::settle(JSGlobalObject* globalObject, VM& vm, JSValue value, bool isRejected)
 {
     auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
     switch (continuation()) {
     case Continuation::Waiter: {
         auto* waiter = uncheckedDowncast<SavedFrame>(m_promiseOrWaiter);
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), value, waiter, JSValue::decode(waiter->m_asyncContext));
+        waiter->queueResumeJob(globalObject, vm, value, isRejected, JSValue::decode(waiter->m_asyncContext));
         return;
     }
     // The job that the promise of the function would queue, had Promise.all been given one.

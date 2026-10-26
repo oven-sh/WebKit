@@ -656,6 +656,31 @@ void VM::updateHostObservesMicrotaskBoundaries()
 #endif
 }
 
+static void didOpenOrCloseSynchronousModuleQueue(VM& vm)
+{
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::didChangeMicrotaskQueueing(vm);
+#else
+    UNUSED_PARAM(vm);
+#endif
+}
+
+VM::SynchronousModuleQueueScope::SynchronousModuleQueueScope(VM& vm)
+    : m_vm(vm)
+{
+    m_queue.prev = std::exchange(vm.m_synchronousModuleQueue, &m_queue);
+    if (!m_queue.prev)
+        didOpenOrCloseSynchronousModuleQueue(vm);
+}
+
+VM::SynchronousModuleQueueScope::~SynchronousModuleQueueScope()
+{
+    m_vm.m_synchronousModuleQueue = m_queue.prev;
+    if (!m_queue.prev)
+        didOpenOrCloseSynchronousModuleQueue(m_vm);
+}
+
 void VM::queueMicrotask(QueuedTask&& task)
 {
     m_defaultMicrotaskQueue->enqueue(WTF::move(task));

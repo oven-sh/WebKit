@@ -167,6 +167,7 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case PropertyKeyKind::RegisteredSymbol:
         return createProvenAnswer(MemberKind::Absent);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
     case PropertyKeyKind::Text:

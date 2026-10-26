@@ -248,6 +248,7 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 CellPointer CellAllocationEmitter::allocateInFrame(size_t size)
 {
     B3::SlotBaseValue* slot = m_out.lockedStackSlot(size);
+    slot->slot()->setIsDeadAtSuspensions(true);
     m_records.slotsOfFrameCells.append(slot->slot());
     B3::PatchpointValue* birth = m_out.patchpoint(B3::pointerType());
     birth->append(slot, B3::ValueRep::SomeRegister);

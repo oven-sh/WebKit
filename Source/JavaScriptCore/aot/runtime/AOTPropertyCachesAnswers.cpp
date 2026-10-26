@@ -62,7 +62,7 @@ static bool isFunctionOwnName(VM& vm, UniquedStringImpl* uid)
 
 bool isNeverCachedName(VM& vm, UniquedStringImpl* uid)
 {
-    return parseIndex(PropertyName(uid)) || uid == vm.propertyNames->underscoreProto.impl() || (uid->isSymbol() && static_cast<SymbolImpl*>(uid)->isPrivate());
+    return parseIndex(PropertyName(uid)) || uid == vm.propertyNames->underscoreProto.impl() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies());
 }
 
 Structure* structureForPrimitive(JSGlobalObject* globalObject, JSValue primitive)

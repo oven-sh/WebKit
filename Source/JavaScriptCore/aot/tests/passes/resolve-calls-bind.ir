@@ -103,8 +103,8 @@ function f11 name="method-with-capture" parameters=[{type=anything}, {type=anyth
     v4 = Call v3, v0, v1, v2 calleeKey="bind"
     Return v4
 # CHECK-NEXT: b0(v0: f2, v1: L0):
-# CHECK: [[label]]: string = GetCapture v0 function=f2
-# CHECK-NEXT: = NewClosure [[label]], v1, v2, v0 function=[[scaleBoundToOne]]
+# CHECK-NOT: GetCapture
+# CHECK: = NewClosure v1, v2, v0 function=[[scaleBoundToOne]]
 # CHECK-NOT: CallBuiltin
 }
 function f12 name="method-created-here" parameters=[{type=anything}] results=[{type=anything}] {
@@ -115,7 +115,7 @@ function f12 name="method-created-here" parameters=[{type=anything}] results=[{t
     Return v4
 # CHECK: v2: f2 = NewClosure v1 function=f2
 # CHECK-NOT: GetCapture
-# CHECK: = NewClosure v1, v0, v2 function=[[scaleBoundToNothing]]
+# CHECK: = NewClosure v0, v2 function=[[scaleBoundToNothing]]
 # CHECK-NOT: GetCapture
 # CHECK-NOT: CallBuiltin
 }

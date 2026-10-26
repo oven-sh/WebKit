@@ -215,11 +215,17 @@ void generateCallProxy(StubAssembler& jit)
     jit.returnToCaller();
 
     isEngines.link(&jit);
-    jit.loadPtr(inFrame(CallFrameSlot::callee), calleeGPR);
+    jit.move(list, calleeGPR);
     loadCallFromFrame();
+    Jump isForwarded = jit.branchTestPtr(CCallHelpers::NonZero, calleeGPR);
+    jit.loadPtr(inFrame(CallFrameSlot::callee), calleeGPR);
     leaveFrames();
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineCallee());
+
+    isForwarded.link(&jit);
+    leaveFrames();
+    jit.jumpToStub(callValueCell(count));
 }
 
 } } // namespace JSC::AOT

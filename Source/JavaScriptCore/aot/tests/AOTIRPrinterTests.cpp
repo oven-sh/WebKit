@@ -559,6 +559,7 @@ void testPropertyKeys()
     };
     expectText(printKey(createKey(PropertyKeyKind::Text, name)), "\"x\""_s);
     expectText(printKey(createKey(PropertyKeyKind::EnginePrivateName, name)), "@\"x\""_s);
+    expectText(printKey(createKey(PropertyKeyKind::ModulePrivateName, name)), "@#\"x\""_s);
     expectText(printKey(createKey(PropertyKeyKind::PrivateName, name, L2)), "#\"x\"@L2"_s);
     expectText(printKey(createKey(PropertyKeyKind::WellKnownSymbol, { }, { }, WellKnownSymbol::Iterator)), "@@iterator"_s);
     expectText(printKey(createKey(PropertyKeyKind::WellKnownSymbol, { }, { }, WellKnownSymbol::AsyncDispose)), "@@asyncDispose"_s);

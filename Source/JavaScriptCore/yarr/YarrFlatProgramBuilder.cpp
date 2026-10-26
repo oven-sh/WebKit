@@ -1015,12 +1015,31 @@ private:
         uint64_t neededForAnotherIteration;
         std::optional<CaptureRange> captures;
         bool countsTurns { false };
+        bool makesNoChoice { false };
     };
+
+    static bool leavesFrameToResumeAt(const FlatOp& op)
+    {
+        switch (op.kind) {
+        case Kind::Choice:
+        case Kind::ChoiceByFirst:
+        case Kind::ChoiceByTable:
+        case Kind::GreedyLoopChoice:
+        case Kind::NegativeLookaheadBegin:
+        case Kind::GreedyRun:
+        case Kind::LazyRun:
+        case Kind::GreedyRunBeforeKnownCharacters:
+        case Kind::LazyRunBeforeKnownCharacters:
+            return true;
+        default:
+            return false;
+        }
+    }
 
     template<typename Body>
     bool emitLoop(const Loop& loop, const Body& emitBody)
     {
-        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns] = loop;
+        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns, makesNoChoice] = loop;
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
@@ -1028,6 +1047,11 @@ private:
         std::optional<unsigned> jumpToBody;
         std::optional<unsigned> jumpToMandatory;
         Vector<unsigned, 3> jumpsToExit;
+        // The first turn clears them.
+        if (makesNoChoice && captures) {
+            for (unsigned group = captures->first; group <= captures->last; ++group)
+                emit(Kind::LoggedCaptureEmpty, group << 1);
+        }
         unsigned loopBegin = here();
         if (needsCounter)
             emitWithRegister(Kind::LoggedSetRegister, counter, 0);
@@ -1093,10 +1117,15 @@ private:
             emit(Kind::LoggedClearCaptures, captures->first, captures->last);
         if (!emitBody())
             return false;
+        // A failure in a loop that leaves no frame to resume at goes back to before the loop. Its registers are set again on the way in, and what its captures held is logged in front of it,
+        // so that no turn keeps a frame. Its turns are not steps of a search either: each takes input.
+        bool keepsNoFrames = min == max && (makesNoChoice || !captures) && std::ranges::none_of(m_program->ops.span().subspan(loopBegin), leavesFrameToResumeAt);
+        if (keepsNoFrames)
+            removeLogging(m_program->ops.mutableSpan().subspan(loopBegin));
         if (canBeEmpty)
             emitWithRegister(Kind::LoopBackUnlessEmpty, start, 0, head);
         else
-            emit(Kind::LoopBack, 0, head);
+            emit(keepsNoFrames ? Kind::Jump : Kind::LoopBack, 0, head);
         if (canBeEmpty)
             isTurnThatMayTakeNothingSince(turnBegin, start);
         if (needsCounter)
@@ -1149,7 +1178,8 @@ private:
         const PatternDisjunction& disjunction = *term.parentheses.disjunction;
         if (!max)
             return true;
-        m_program->jitCountsTurns |= jitCountsTurnsOf(term);
+        bool jitCountsTurns = jitCountsTurnsOf(term);
+        m_program->jitCountsTurns |= jitCountsTurns;
         if (m_countsTurns) {
             bool isTestedForByParent = max == 1 && term.quantityType == QuantifierType::FixedCount;
             context.initialInputPosition = term.inputPosition - (isTestedForByParent ? disjunction.m_minimumSize : 0);
@@ -1163,7 +1193,7 @@ private:
         // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
         if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurnsOf(term) };
+        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, term.quantityType == QuantifierType::FixedCount && !jitCountsTurns };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
         });

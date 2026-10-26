@@ -2607,7 +2607,7 @@ PassOutcome foldConstantRegExps(FunctionPassContext& context)
             return;
         KnownValue flags = arguments.size() == 2 ? known(arguments[1]) : KnownValue::undefined();
         std::optional<RegExpLiteralInType> literal = createdLiteralOf(arguments.empty() ? ValueID() : arguments[0], flags);
-        if (!literal || mayRunJavaScript(call) || !regExpSummaryOf(context, literal->pattern, literal->flags()).isValid())
+        if (!literal || mayRunJavaScript(call) || !regExpSummaryOf(context, literal->pattern, literal->flags()).canBeCreated())
             return;
         Value creation(Opcode::NewRegExp);
         creation.setPattern(literal->pattern);

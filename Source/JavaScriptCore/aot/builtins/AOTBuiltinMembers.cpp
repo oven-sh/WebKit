@@ -50,6 +50,7 @@ BuiltinMemberName builtinMemberNameOf(const Program& program, PropertyKeyID id)
     const PropertyKey& key = program.at(id);
     switch (key.kind) {
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return { program.builtinName(key.text), true };
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:

@@ -679,6 +679,7 @@ export type ModelIntrinsicMeaning =
         | "PrivateGlobal"
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
+        | "ModulePrivateName"
         | "Erased"
         | "BundleError";
     };

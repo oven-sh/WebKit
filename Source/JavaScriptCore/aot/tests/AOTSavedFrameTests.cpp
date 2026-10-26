@@ -239,7 +239,7 @@ static void testSkippedWordsInSiteWord()
         uint32_t skippedAtBottom;
     };
     // The number of words kept stays even, and what does not fit the field is kept.
-    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 254, 254 }, { 255, 254 }, { 256, 254 }, { UINT32_MAX, 254 } };
+    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 126, 126 }, { 127, 126 }, { 128, 126 }, { UINT32_MAX, 126 } };
     for (const Case& testCase : cases) {
         uint64_t word = *SavedFrame::siteWord(maxOffset, UINT32_MAX, 3, testCase.deadWordsAtBottom);
         AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
@@ -247,7 +247,7 @@ static void testSkippedWordsInSiteWord()
     }
 
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 2u, 3u }) {
-        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, UINT32_MAX, savedRegistersOrPairs, 254));
+        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, UINT32_MAX, savedRegistersOrPairs, 126));
 #if CPU(X86_64)
         AOT_TEST_CHECK(skippedAtTop == (savedRegistersOrPairs == 3 ? 2u : 0u));
 #else

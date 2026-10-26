@@ -1323,7 +1323,7 @@ static bool tellsLayoutsApart(const Program& program, PropertyKeyID key)
     PropertyKeyKind kind = program.at(key).kind;
     if (kind == PropertyKeyKind::Text)
         return isOrdinaryText(program, key) && !program.builtinNameOf(key) && !program.isDefinedOnObjectsWithoutKnownLayout(key);
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::CreatedSymbol;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 static std::optional<std::pair<ValueID, PropertyKeyID>> propertyReadBy(const Program& program, const Value& value)
@@ -1436,10 +1436,29 @@ static bool callsBuiltinMethod(FunctionPassContext& context, ValueID read, Prope
     return context.function.at(read).opcode == Opcode::PropGet && isCalledByNameAlone(context.analyses, context.program, read) && !builtinClassesWithMethod(context.program, key).isEmpty();
 }
 
-// What is called only behind a join counts as not called: this feeds a guess.
-static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
+// A test between the read of a method and its call leaves a join between the two.
+static bool isCalled(FunctionPassContext& context, ValueID read)
 {
-    return anyUserBehindCasts(context.analyses, read, isCalleeOf);
+    const Function& function = context.function;
+    BitVector isVisited;
+    Vector<ValueID, 4> worklist { read };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : context.analyses.useLists().usesOf(worklist.takeLast())) {
+            ValueID next;
+            if (use.kind == Use::Kind::EdgeArgument)
+                next = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+            else if (use.kind == Use::Kind::Operand) {
+                const Value& user = function.at(use.user);
+                if (isCalleeOf(user, use.operandIndex))
+                    return true;
+                if (isCast(user.opcode) && !use.operandIndex)
+                    next = use.user;
+            }
+            if (next && !isVisited.set(next.index()))
+                worklist.append(next);
+        }
+    }
+    return false;
 }
 
 static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
@@ -1448,7 +1467,7 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
     if (!isOrdinaryText(context.program, key) || !name || name.isPrivateAlias)
         return false;
-    bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalledInPlace(context, access);
+    bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalled(context, access);
     std::span<const BuiltinClassID> classes = builtins.classesWithInstanceMember(name.name);
     if (asksForMethod && classes.empty())
         return false;
@@ -1718,7 +1737,7 @@ static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::s
     };
     LayoutList kept = layouts;
     for (const NamedUse& use : uses) {
-        bool asksForMethod = use.demand == NameDemand::Required && isCalledInPlace(context, use.access);
+        bool asksForMethod = use.demand == NameDemand::Required && isCalled(context, use.access);
         if (use.demand == NameDemand::Required && !asksForMethod)
             continue;
         LayoutList layoutsOfOtherKind;

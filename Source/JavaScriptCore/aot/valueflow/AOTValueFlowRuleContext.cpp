@@ -486,6 +486,13 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
 }
 
 bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
+bool ValueFlowRuleContext::ignoresUnseenCode() const { return m_solver.m_input.ignoresUnseenCode; }
+ClimbingSet ValueFlowRuleContext::dropUnknownObject(ClimbingSet objects)
+{
+    if (!ignoresUnseenCode() || ValueSets::isComplement(objects.m_set) || !sets().contains(objects.m_set, ValueFlowUniverse::unknownObject()))
+        return objects;
+    return ClimbingSet(m_maker.intersect(objects.m_set, ValueSets::complement(universe().unknownObjectAlone())));
+}
 bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
 RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
 
@@ -501,8 +508,11 @@ ValueFlowNodeID ValueFlowRuleContext::holdingNothing() { return m_holdingNothing
 
 ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
 {
+    objects = dropUnknownObject(objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
+    if (ignoresUnseenCode() && (shapeOf(name.kind).isAccessor() || name.kind == ValueFlowNameKind::PrototypeLink))
+        return masked(nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name)), ValueSets::complement(universe().unknownObjectAlone()));
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
@@ -553,6 +563,9 @@ bool ValueFlowRuleContext::usesGeneralRulesOnly() const { return m_solver.m_uses
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)
 {
+    objects = dropUnknownObject(objects);
+    if (ignoresUnseenCode() && objects.m_set == ValueSets::nothing)
+        return ValueFlowProgramNodes::escaped();
     if (std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(name.kind); write && m_solver.m_input.nodes && m_solver.m_input.universe)
         addObjectsOfProgram(rareWriteNode(*write), objects);
     if (m_solver.m_input.nodes && m_solver.m_input.universe) {
@@ -587,6 +600,13 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
         ValueFlowNodeID answer = masked(found, ValueSets::complement(m_maker.of(calleeOfDescribedCall(universe()))));
         noteUnknownSource(ValueFlowUnknownSource::ContentsOfEscapedObject);
         add(answer, ClimbingSet(leavesOut(ValueFlowUnknownSource::ContentsOfEscapedObject) ? universe().anyPrimitive() : m_maker.unite(universe().anyPrimitive(), universe().unknownObjectAlone())));
+        return answer;
+    }
+    if (ClimbingSet known = dropUnknownObject(receivers); known.m_set != receivers.m_set) {
+        if (shapeOf(name.kind).isAccessor())
+            return lookup(known, name);
+        ValueFlowNodeID answer = masked(lookup(known, name), ValueSets::complement(universe().untrackedObjectAlone()));
+        add(answer, ClimbingSet(universe().unknownObjectAlone()));
         return answer;
     }
     if (receivers.m_set == ValueSets::nothing)

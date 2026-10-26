@@ -451,10 +451,10 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
             for (const BuiltinTypePart& part : builtins.at(types[position]).parts) {
                 for (BuiltinClassID current = part.builtinClass; current; current = builtins.at(current).parent)
                     checkMakerOf(current.index(), maker);
-                for (uint32_t other = 0; part.builtinClass && !part.isOfClassItself && other < builtins.classCount(); ++other) {
-                    for (BuiltinClassID current = builtins.at(BuiltinClassID(other)).parent; current; current = builtins.at(current).parent) {
-                        if (current == part.builtinClass)
-                            checkMakerOf(other, maker);
+                if (part.builtinClass && !part.isOfClassItself) {
+                    for (BuiltinClassID below : inputs.universe().builtinTables().classesAtOrBelow(part.builtinClass)) {
+                        if (below != part.builtinClass)
+                            checkMakerOf(below.index(), maker);
                     }
                 }
                 for (const BuiltinSlotContents& contents : part.contents) {

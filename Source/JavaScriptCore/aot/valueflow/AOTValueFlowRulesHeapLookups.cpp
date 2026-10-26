@@ -150,10 +150,12 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
     PropertyKeyKind kind = m_program.at(key.name).kind;
     if ((kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol) && m_tables.under(key.name).holders == ValueSets::nothing && !doesUnseenCodeRun())
         return holders = ValueSets::nothing;
+    if (kind == PropertyKeyKind::ModulePrivateName)
+        return holders = ValueSets::nothing;
     holders = m_tables.under(key.name).holdersOfUndeclaredProperties;
     if (key.name == m_program.keyOf(BuiltinNames::then) && !doesUnseenCodeRun())
         holders = m_context.maker().intersect(holders, m_context.maker().unite(ValueSets::complement(m_universe.builtinObjects()), m_tables.prototypeObjects()));
-    bool isPrivateName = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    bool isPrivateName = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
     if (!isPrivateName && doesUnseenCodeRun())
         holders = m_context.maker().unite(holders, m_context.maker().intersect(m_tables.prototypeObjects(), ValueSets::complement(m_tables.under(key.name).holdersWithLockedLocation)));
     return holders;

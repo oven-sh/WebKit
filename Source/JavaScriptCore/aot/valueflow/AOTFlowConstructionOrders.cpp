@@ -154,7 +154,7 @@ bool isDirectOrIndirectCall(Opcode opcode)
 bool isPrivateKey(const Program& program, PropertyKeyID key)
 {
     PropertyKeyKind kind = program.at(key).kind;
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 std::optional<ConstructionEventKind> accessEventOf(Opcode opcode, uint32_t operandIndex)

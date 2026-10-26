@@ -37,7 +37,6 @@ struct DeclaredNames {
 
     Vector<Vector<uint32_t>> required;
     Vector<Vector<uint32_t>> declared;
-    Vector<Vector<uint32_t>> expectedOfInstances;
     BitVector declaresEveryName;
     uint32_t firstTaggedLayout { 0 };
     Vector<Vector<uint32_t>> declaredByTaggedLayouts;
@@ -111,14 +110,14 @@ static bool hasFieldsOfObjects(const Wire::Layout& checkedLayout)
     return false;
 }
 
-static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index, bool (*isCollected)(const Wire::Field&) = isNamedByProgram)
+static Vector<uint32_t> collectNames(const Wire::Sections& checkedSections, uint32_t index)
 {
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
     Vector<uint32_t> names;
     size_t remainingBases = layouts.size();
     for (uint32_t current = index; current != Wire::none && remainingBases--; current = layouts[current].base) {
         for (const Wire::Field& field : fieldsOf(checkedSections, layouts[current])) {
-            if (isCollected(field))
+            if (isNamedByProgram(field))
                 names.append(field.key);
         }
     }
@@ -157,11 +156,6 @@ static bool declaresEveryName(const Wire::Layout& checkedLayout)
     return false;
 }
 
-static bool isInstance(const Wire::Layout& checkedLayout)
-{
-    return static_cast<LayoutKind>(checkedLayout.kind) == LayoutKind::Instance;
-}
-
 static bool isRequiredField(const Wire::Field& field)
 {
     return isNamedByProgram(field) && has(field, FieldFlags::IsRequired) && !has(field, FieldFlags::IsMethod) && !has(field, FieldFlags::IsNeverWritten);
@@ -181,7 +175,7 @@ static DeclaredNames collectDeclaredNames(const ParallelLoops& loops, const Wire
             result.declaresEveryName.quickSet(index);
     }
     forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-        if (result.declaresEveryName.quickGet(index) || isInstance(layouts[index]))
+        if (result.declaresEveryName.quickGet(index))
             result.declared[index] = collectNames(checkedSections, index);
         if (!isStructuralType(layouts[index]))
             return;
@@ -190,28 +184,6 @@ static DeclaredNames collectDeclaredNames(const ParallelLoops& loops, const Wire
                 result.required[index].append(field.key);
         }
         AOT::sort(result.required[index]);
-    });
-
-    result.expectedOfInstances.grow(numberOfLayouts);
-    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-        if (isInstance(layouts[index]))
-            result.expectedOfInstances[index] = collectNames(checkedSections, index, isRequiredField);
-    });
-    for (uint32_t maker = 0; maker < numberOfLayouts; ++maker) {
-        if (!isInstance(layouts[maker]))
-            continue;
-        for (uint32_t type : checkedSections.words.subspan(layouts[maker].supertypes.start, layouts[maker].supertypes.count)) {
-            for (uint32_t name : result.required[type]) {
-                if (std::ranges::binary_search(result.declared[maker], name))
-                    result.expectedOfInstances[type].append(name);
-            }
-        }
-    }
-    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-        if (isInstance(layouts[index]))
-            return;
-        AOT::sort(result.expectedOfInstances[index]);
-        removeRepeatedElements(result.expectedOfInstances[index]);
     });
     return result;
 }
@@ -348,36 +320,8 @@ static bool requiresNoName(const Conversions& conversions, uint32_t type)
     return isStructuralType(conversions.checkedSections.layouts[type]) && conversions.declaredNames.required[type].isEmpty();
 }
 
-static bool isBaseOf(std::span<const Wire::Layout> checkedLayouts, uint32_t base, uint32_t derived)
-{
-    size_t remainingBases = checkedLayouts.size();
-    for (uint32_t current = checkedLayouts[derived].base; current != Wire::none && remainingBases--; current = checkedLayouts[current].base) {
-        if (current == base)
-            return true;
-    }
-    return false;
-}
-
-// `message as Response`, where Response is a class, or a type that a class declares to implement: the assertion picks the instances that have the fields of that class.
-static bool isLeftOutByAssertion(const Conversions& conversions, WireTypeConversion conversion, LayoutID member)
-{
-    std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
-    const DeclaredNames& names = conversions.declaredNames;
-    const Vector<uint32_t>& expected = names.expectedOfInstances[conversion.target];
-    if (expected.isEmpty() || member.index() >= layouts.size() || !isInstance(layouts[member.index()]))
-        return false;
-    if (std::ranges::includes(names.declared[member.index()], expected))
-        return false;
-    // The checker lets a value pass without an assertion only where it has every field.
-    if (std::ranges::includes(names.declared[conversion.source], expected))
-        return false;
-    return names.declaresEveryName.quickGet(conversion.source) || isBaseOf(layouts, conversion.source, conversion.target);
-}
-
 static bool passesOn(const Conversions& conversions, WireTypeConversion conversion, LayoutID member)
 {
-    if (isLeftOutByAssertion(conversions, conversion, member))
-        return false;
     if (!requiresNoName(conversions, conversion.source) || requiresNoName(conversions, conversion.target))
         return true;
     return member.index() == conversion.source && !has(conversions.checkedSections.layouts[conversion.source], LayoutFlags::IsNeverAllocated);

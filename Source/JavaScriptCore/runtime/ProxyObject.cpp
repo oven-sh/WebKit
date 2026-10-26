@@ -189,6 +189,17 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     return nullptr;
 }
 
+#if ENABLE(AOT)
+bool ProxyObject::isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached)
+{
+    ASSERT(cached < invalidOffset);
+    if (cached == emptyHandlerTrapCache || handler->type() != CompiledObjectType)
+        return false;
+    AOT::Object* compiledHandler = uncheckedDowncast<AOT::Object>(handler);
+    return !compiledHandler->hasFlagsInOrderWord() && !compiledHandler->isInSlot(compiledHandler->layout().fields()[invalidOffset - 1 - cached]);
+}
+#endif
+
 void ProxyObject::clearHandlerTrapsOffsetsCache()
 {
     std::fill_n(m_handlerTrapsOffsetsCache, numberOfCachedHandlerTrapsOffsets, emptyHandlerTrapCache);

@@ -418,7 +418,8 @@ static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept
     jit.add32(kept, inFrame);
 }
 
-// Checks the stack, pushes the frame record and copies the words kept to their place below it.
+// Checks the stack, pushes the frame record, copies the words kept to their place below it and clears the words skipped below them:
+// a frame that goes on at the address it had before would find there what it left.
 #if CPU(X86_64)
 static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 {
@@ -436,6 +437,13 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 
     jit.emitFunctionPrologue();
     jit.subPtr(scratch, sp);
+    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, destination);
+    Label clearNext = jit.label();
+    jit.store64(TrustedImm32(0), BaseIndex(sp, destination, CCallHelpers::TimesEight, -8));
+    jit.store64(TrustedImm32(0), BaseIndex(sp, destination, CCallHelpers::TimesEight, -16));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), destination).linkTo(clearNext, &jit);
+    jit.load8(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), destination);
+    skipsNothing.link(&jit);
     jit.getEffectiveAddress(BaseIndex(sp, destination, CCallHelpers::TimesEight), destination);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
     Jump isSmall = jit.branch32(CCallHelpers::Below, count, TrustedImm32(SavedFrame::minWordsForStringMove));
@@ -480,7 +488,11 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(sizeof(CallerFrameAndPC)), destination);
     jit.move(destination, sp);
-    jit.addLeftShift64(destination, skippedAtBottom, TrustedImm32(3), destination);
+    Jump skipsNothing = jit.branchTest32(CCallHelpers::Zero, skippedAtBottom);
+    Label clearNext = jit.label();
+    jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, CCallHelpers::PostIndexAddress(destination, 2 * sizeof(uint64_t)));
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), skippedAtBottom).linkTo(clearNext, &jit);
+    skipsNothing.link(&jit);
     jit.addPtr(TrustedImm32(SavedFrame::offsetOfWords()), saved, source);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
     Jump isMultipleOfFour = jit.branchTest32(CCallHelpers::Zero, count, TrustedImm32(2));

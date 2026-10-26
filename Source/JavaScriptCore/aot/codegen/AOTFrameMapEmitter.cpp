@@ -46,6 +46,7 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(B3::PatchpointValue* patchpo
     for (const FrameResultRoot& root : roots.resultRoots)
         append(m_generator.resultAt(root.producer, root.index), root.kind);
     patchpoint->clobberLate(registersClobberedBySuspension(m_proc.code()));
+    patchpoint->setIsSuspension(true);
     m_records.frame.savesFrameOnSuspend = true;
     return result;
 }
@@ -155,8 +156,7 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
     std::optional<uint32_t> savedRegisters = savedRegistersWord(code);
     if (!promiseLocation || !savedRegisters)
         return std::nullopt;
-    // The area of outgoing arguments lies at the stack pointer, and what a call left in it is dead.
-    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.callArgAreaSizeInBytes() / sizeof(uint64_t));
+    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.frameLayout().bytesDeadAtSuspensions / sizeof(uint64_t));
     size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
     return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
 }

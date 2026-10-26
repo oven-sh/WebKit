@@ -33,6 +33,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -75,6 +76,8 @@ namespace JSC { namespace Yarr {
     macro(CaptureEmpty) \
     macro(ClearCaptures) \
     macro(SavePosition) \
+    macro(SetRegister) \
+    macro(Increment) \
     macro(FailIfEmpty) \
     macro(NeedsInput) \
     macro(NeedsInputElseJump) \
@@ -305,6 +308,8 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 bool jitCountsTurnsOf(const PatternTerm&);
 void removeUnneededLogging(FlatProgram&);
+// For ops that run with nothing to undo: each becomes the form that pushes no undo frame.
+void removeLogging(std::span<FlatOp>);
 JSRegExpResult matchFlatProgram(const FlatProgram&, StringView input, unsigned start, unsigned* output, FlatMatchPolicy = FlatMatchPolicy::HandsOverEarly);
 JS_EXPORT_PRIVATE JSRegExpResult matchFlatProgram(const FlatProgram&, std::span<const Latin1Character> input, unsigned start, unsigned* output, FlatMatchPolicy = FlatMatchPolicy::HandsOverEarly);
 // For a match that matchFlatProgram() has given up with JSRegExpResult::JITCodeFailure: see FlatProgram::decodesSurrogatePairs.

@@ -48,7 +48,7 @@ export default b.declarations(
             target: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [], constructs: true, spreadArgs: listedArguments, result: "Returned" })],
             argumentsList: argumentListProtocols,
           },
-          implementation: b.hostCall,
+          implementation: b.inline("ReflectConstruct", { otherwise: b.hostCall }),
         },
         {
           ...operandCodeEffects,
@@ -60,7 +60,7 @@ export default b.declarations(
             argumentsList: argumentListProtocols,
             newTarget: [b.runs(b.named("prototype"))],
           },
-          implementation: b.hostCall,
+          implementation: b.inline("ReflectConstruct", { otherwise: b.hostCall }),
         },
       ],
       defineProperty: {

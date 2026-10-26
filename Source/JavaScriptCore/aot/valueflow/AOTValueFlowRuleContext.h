@@ -152,6 +152,8 @@ public:
     void noteUnknownSource(ValueFlowUnknownSource source) { m_unknownSource = source; }
     bool leavesOut(ValueFlowUnknownSource) const;
     bool leavesOutSomeUnknownSource() const;
+    bool ignoresUnseenCode() const;
+    ClimbingSet dropUnknownObject(ClimbingSet);
     RefusedCode refusedCode() const;
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;

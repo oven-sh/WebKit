@@ -8,6 +8,7 @@
 #if ENABLE(B3_JIT)
 
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -26,6 +27,8 @@ struct StackColoring {
 
     Vector<std::optional<UnitRange>> unitsOfSlot;
     Vector<unsigned> useCountOfSlot;
+    bool hasSuspensions { false };
+    BitVector spillSlotsLiveAcrossSuspensions;
     unsigned numberOfUnits { 0 };
 };
 

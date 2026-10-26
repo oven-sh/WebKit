@@ -85,17 +85,18 @@ public:
     static constexpr uint32_t locationHolding(uint32_t narrowLocation) { return (narrowLocation + 1) / 2; }
     static constexpr bool isInUpperHalf(uint32_t narrowLocation) { return narrowLocation % 2; }
 
-    // The site word, from bit 0: the offset of the live slot map, the saved registers or pairs, 32 bits of promise location, the number of words skipped at the bottom.
+    // The site word, from bit 0: the offset of the live slot map, the saved registers or pairs, the number of words skipped at the bottom, 32 bits of promise location.
+    // A promise near the frame pointer leaves the upper half zero, which makes the word a short immediate.
     static constexpr unsigned liveSlotMapOffsetBits = 18;
     static constexpr uint32_t functionSavesPreservedRegister = 1u << liveSlotMapOffsetBits;
     static constexpr uint32_t functionSavesR15 = 2u << liveSlotMapOffsetBits;
     static constexpr unsigned savedRegisterBits = 2;
-    static constexpr unsigned promiseLocationShift = liveSlotMapOffsetBits + savedRegisterBits;
-    static constexpr unsigned skippedAtBottomShift = 52;
-    static constexpr unsigned skippedAtBottomBits = 8;
-    static_assert(skippedAtBottomShift == promiseLocationShift + 32 && skippedAtBottomShift + skippedAtBottomBits <= 64);
+    static constexpr unsigned skippedAtBottomShift = liveSlotMapOffsetBits + savedRegisterBits;
+    static constexpr unsigned skippedAtBottomBits = 7;
+    static constexpr unsigned promiseLocationShift = skippedAtBottomShift + skippedAtBottomBits;
+    static_assert(promiseLocationShift + 32 <= 64);
     static constexpr size_t maxNumberOfWords = UINT16_MAX;
-    // deadWordsAtBottom is the outgoing argument area of the function, which no suspension has to keep.
+    // deadWordsAtBottom counts the outgoing arguments of the function and the stack slots that are live across no suspension.
     static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0)
     {
         if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || numberOfWordsInFrame > maxNumberOfWords)
@@ -156,6 +157,7 @@ public:
     JSPromise* promiseOfCombinator() const;
     JSCell* promiseOrWaiter() const { return m_promiseOrWaiter; }
     void setWaiter(VM&, SavedFrame* waiter, JSValue asyncContext);
+    void queueResumeJob(JSGlobalObject*, VM&, JSValue resolution, bool isRejected, JSValue asyncContext);
     void setCombinatorElement(VM&, JSCell* globalContext, uint32_t index);
     void fulfill(JSGlobalObject* globalObject, VM& vm, JSValue value) { settle(globalObject, vm, value, false); }
     void reject(JSGlobalObject* globalObject, VM& vm, JSValue error) { settle(globalObject, vm, error, true); }

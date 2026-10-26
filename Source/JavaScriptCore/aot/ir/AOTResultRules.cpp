@@ -42,6 +42,7 @@ static Type typeOfKeyConstant(const TypingContext& context, PropertyKeyID id)
     case PropertyKeyKind::RegisteredSymbol:
         return Type::symbolLiteral(id);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return Type::anything();
     }

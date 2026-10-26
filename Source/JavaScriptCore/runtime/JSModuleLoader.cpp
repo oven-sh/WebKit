@@ -1455,12 +1455,7 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    VM::SynchronousModuleQueue queue;
-    queue.prev = vm.m_synchronousModuleQueue;
-    vm.m_synchronousModuleQueue = &queue;
-    auto cleanup = WTF::makeScopeExit([&] {
-        vm.m_synchronousModuleQueue = queue.prev;
-    });
+    VM::SynchronousModuleQueueScope queue(vm);
 
     JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
     RETURN_IF_EXCEPTION(scope, result);

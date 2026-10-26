@@ -26,11 +26,22 @@ void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFl
     context.add(reason, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
 
-void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, ClimbingSet values)
+// Bun has no `then`, so it settles a promise and comes out of `await` as it went in. Beside the unknown object only the node of the operand lists it.
+static ClimbingSet findListedBun(ValueFlowRuleContext& context, const ValueFlowOperand& operand, ClimbingSet values)
 {
+    if (!operand.node || !mayBeUnknownObject(context, values))
+        return { };
+    return context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node);
+}
+
+void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, const ValueFlowOperand& operand)
+{
+    ClimbingSet values = context.valueOf(operand);
     ValueFlowNodeID settledWith = context.lookup(values, awaitedValueName);
+    ClimbingSet listedBun = findListedBun(context, operand, values);
     forEachNodeOfSlotWrittenThrough(context, promises, promiseValue, [&](ValueFlowNodeID held) {
         context.connect(settledWith, held);
+        context.add(held, listedBun);
     });
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         adoptRejectionOf(context, values, held);
@@ -47,10 +58,13 @@ void rejectPromises(ValueFlowRuleContext& context, ClimbingSet promises, const V
 
 void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    ClimbingSet values = context.valueOf(context.operandsOf(statement)[0]);
+    const ValueFlowOperand& operand = context.operandsOf(statement)[0];
+    ClimbingSet values = context.valueOf(operand);
     ValueFlowNodeID awaited = context.lookup(values, awaitedValueName);
-    if (statement.result)
+    if (statement.result) {
         context.connect(awaited, statement.result);
+        context.add(statement.result, findListedBun(context, operand, values));
+    }
     if (!statement.thrown)
         return;
     context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
@@ -197,7 +211,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall& ca
     }
     for (const ValueFlowOperand& operand : passed) {
         if (holdsSomething(context, resolved))
-            resolvePromises(context, resolved, context.valueOf(operand));
+            resolvePromises(context, resolved, operand);
         if (holdsSomething(context, rejected))
             rejectPromises(context, rejected, operand);
     }
@@ -235,7 +249,7 @@ void runPromiseOperation(const ValueFlowStatement& statement, ValueFlowRuleConte
         ClimbingSet promises = context.restrict(context.valueOf(operands[0]), universe.objects());
         context.mark(promises, ObjectMutation::StoreAfterCreation);
         if (statement.opcode == Opcode::ResolvePromise)
-            resolvePromises(context, promises, context.valueOf(operands[1]));
+            resolvePromises(context, promises, operands[1]);
         else
             rejectPromises(context, promises, operands[1]);
         return;

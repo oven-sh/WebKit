@@ -1463,6 +1463,18 @@ struct Machine {
         return Step::Next;
     }
 
+    ALWAYS_INLINE Step runSetRegister()
+    {
+        registers()[op->registerIndex] = op->argument;
+        return Step::Next;
+    }
+
+    ALWAYS_INLINE Step runIncrement()
+    {
+        ++registers()[op->registerIndex];
+        return Step::Next;
+    }
+
     ALWAYS_INLINE bool isAtWordBoundary() const
     {
         const CharacterSetBits& set = characterSets[op->set];

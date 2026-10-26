@@ -518,6 +518,7 @@ static bool namesPrivateMember(const Program& program, PropertyKeyID key)
     switch (program.at(key).kind) {
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::WellKnownSymbol:

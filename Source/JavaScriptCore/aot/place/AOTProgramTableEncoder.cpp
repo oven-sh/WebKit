@@ -1487,7 +1487,7 @@ static void encodeBoundFunctions(TableEncoder& encoder)
         }
         const Function& target = program.at(record.target);
         if (target.constructorForm() != ConstructorForm::NotConstructor) {
-            unsigned firstArgument = static_cast<unsigned>(target.captures.size()) + target.has(FunctionFlags::HasThis);
+            unsigned firstArgument = (record.capturesTargetClosure ? 0 : static_cast<unsigned>(target.captures.size())) + target.has(FunctionFlags::HasThis);
             data.constructs = true;
             data.numberOfCapturedArguments = record.numberOfCapturedArguments;
             data.firstArgumentSlot = record.numberOfCapturedArguments ? closureCaptureSlotOf(program, function, firstArgument) : 0;
@@ -2576,6 +2576,7 @@ static bool isEngineSymbol(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::PrivateName:

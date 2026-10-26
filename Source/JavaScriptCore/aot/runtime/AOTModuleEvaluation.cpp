@@ -845,13 +845,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         RETURN_IF_EXCEPTION(scope, void());
         if (moduleData.isSynchronous())
             RELEASE_AND_RETURN(scope, evaluateWithOwnStack(module));
-        // As in JSModuleLoader::loadModuleSync(): the jobs of the loader run before require() returns. One of them resumes a module that awaits a settled promise.
-        VM& vm = *m_instance.vm;
-        VM::SynchronousModuleQueue queue;
-        queue.prev = std::exchange(vm.m_synchronousModuleQueue, &queue);
-        auto restoreQueue = makeScopeExit([&] {
-            vm.m_synchronousModuleQueue = queue.prev;
-        });
+        // As in JSModuleLoader::loadModuleSync(): the jobs of the loader run before require() returns. One of them resumes a module whose awaited promise is settled.
+        VM::SynchronousModuleQueueScope queue(*m_instance.vm);
         promise = evaluate(module, std::nullopt, nullptr);
         RETURN_IF_EXCEPTION(scope, void());
         JSModuleLoader::drainSynchronousModuleQueue(realm);

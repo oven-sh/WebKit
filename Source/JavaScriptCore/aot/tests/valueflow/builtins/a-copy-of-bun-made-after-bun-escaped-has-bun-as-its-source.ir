@@ -1,7 +1,7 @@
-# hide(Bun); globalThis[key] = hide(); holder0 = { next: () => new { ...Bun }.SQL() }; holder1 = { next: () => holder0.next() }; and so on
-# Bun is in unknown hands before the copy is made. The copy still has Bun as its source, so the name SQL read on the copy is a use of Bun.SQL
+# hide(Bun); globalThis[key] = hide(); holder0 = { next: () => ({ ...Bun }).serve() }; holder1 = { next: () => holder0.next() }; and so on
+# Bun is in unknown hands before the copy is made. The copy still has Bun as its source, so the name serve read on the copy is a use of Bun.serve
 # RUN: valueflow-solve used
-# CHECK: BunSQL
+# CHECK: BunServe
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -76,8 +76,8 @@ function f2 name="next" kind=Arrow results=[{type=anything}] {
     v2 = NewObject layout=L1
     CopyDataProperties v2, v1
     v4 = FinishObject v2
-    v5 = PropGet v4 key="SQL"
-    v6 = Construct v5, -
+    v5 = PropGet v4 key="serve"
+    v6 = Call v5, v4
     Return v6
 }
 function f3 name="next" kind=Arrow results=[{type=anything}] {

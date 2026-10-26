@@ -43,6 +43,7 @@ struct FrameItem {
     unsigned alignment { 0 };
     unsigned useCount { 0 };
     unsigned bytesBelowAreaTop { 0 };
+    bool isDeadAtSuspensions { false };
 };
 
 // A store right behind a frame setup, which a push can stand for, or a reload right in front of a teardown, which a pop can stand for.
@@ -124,6 +125,8 @@ private:
     // Counts down from the top of the slot area, which lies m_bytesOfAreaAboveFramePointer above the place of the frame record.
     unsigned m_cursor { 0 };
     unsigned m_bytesOfAreaAboveFramePointer { 0 };
+    // From the top of the slot area down to the last item that some suspension keeps.
+    unsigned m_bytesKeptAtSuspensions { 0 };
 };
 
 FramePlanner::FramePlanner(Code& code, const StackColoring& coloring, const FramePlacement& placement)
@@ -285,6 +288,7 @@ void FramePlanner::createItems()
         item.lockedSlot = slot;
         item.numberOfWords = slot->byteSize() / wordSize + !!(slot->byteSize() % wordSize);
         item.alignment = std::max(wordSize, slot->alignment());
+        item.isDeadAtSuspensions = m_coloring.hasSuspensions && slot->isDeadAtSuspensions();
         if (hasUseCounts)
             item.useCount = m_coloring.useCountOfSlot[slot->index()];
         m_items.append(item);
@@ -297,6 +301,11 @@ void FramePlanner::createItems()
             if (const auto& units = m_coloring.unitsOfSlot[slotIndex])
                 m_items[m_itemOfSpillWord[units->first / StackColoring::unitsPerWord]].useCount += m_coloring.useCountOfSlot[slotIndex];
         }
+    }
+
+    for (size_t slotIndex : m_coloring.spillSlotsLiveAcrossSuspensions) {
+        if (const auto& units = m_coloring.unitsOfSlot[slotIndex])
+            m_items[m_itemOfSpillWord[units->first / StackColoring::unitsPerWord]].isDeadAtSuspensions = false;
     }
 
     std::ranges::sort(m_slotsWithFixedOffsets, std::ranges::greater { }, &StackSlot::offsetFromFP);
@@ -325,6 +334,7 @@ void FramePlanner::createSpillItems()
         item.firstSpillWord = word;
         item.numberOfWords = lastWord - word + 1;
         item.alignment = item.numberOfWords > 1 ? stackAlignmentBytes() : wordSize;
+        item.isDeadAtSuspensions = m_coloring.hasSuspensions;
         RELEASE_ASSERT(item.numberOfWords == 1 || !(word % 2));
         for (; word <= lastWord; ++word)
             m_itemOfSpillWord[word] = m_items.size();
@@ -614,8 +624,19 @@ void FramePlanner::placeItems()
     });
     for (unsigned itemIndex : itemsMovedAtFrameSites)
         place(m_items[itemIndex]);
-    for (unsigned itemIndex : computeItemOrder())
-        place(m_items[itemIndex]);
+    // At the bottom, next to the outgoing arguments, what no suspension has to keep.
+    Vector<unsigned> order = computeItemOrder();
+    auto firstDeadItem = std::stable_partition(order.begin(), order.end(), [&](unsigned itemIndex) {
+        return !m_items[itemIndex].isDeadAtSuspensions;
+    });
+    for (auto it = order.begin(); it != firstDeadItem; ++it)
+        place(m_items[*it]);
+    // A suspension keeps whole pairs of words.
+    if (firstDeadItem != order.end())
+        m_cursor = roundUpToStackAlignment(m_cursor);
+    m_bytesKeptAtSuspensions = m_cursor;
+    for (auto it = firstDeadItem; it != order.end(); ++it)
+        place(m_items[*it]);
 }
 
 void FramePlanner::assignOffsets()
@@ -644,6 +665,8 @@ void FramePlanner::assignOffsets()
             bytesOfSlots = std::max(bytesOfSlots, bytesBelowFramePointer(m_slotsWithFixedOffsets.last()));
         frameSize = bytesBelowFramePointerOf(bytesOfSlots + callArgAreaSize);
         saveSlotOffset = areaTop - static_cast<intptr_t>(m_bytesOfSaves);
+        if (m_layout.hasFrameRecord)
+            m_layout.bytesDeadAtSuspensions = frameSize - (m_slotsWithFixedOffsets.isEmpty() ? m_bytesKeptAtSuspensions : bytesOfSlots);
     }
 
     auto setOffset = [&](StackSlot* slot, unsigned bytesBelowAreaTop) {

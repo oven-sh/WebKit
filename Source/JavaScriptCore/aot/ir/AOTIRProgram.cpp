@@ -95,6 +95,7 @@ BuiltinName Program::builtinNameOf(PropertyKeyID id) const
         }
         return { };
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:
         return { };
@@ -114,6 +115,7 @@ NameClass Program::nameClassOf(PropertyKeyID id) const
     case PropertyKeyKind::Text:
         return strings.nameClass(key.text);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:

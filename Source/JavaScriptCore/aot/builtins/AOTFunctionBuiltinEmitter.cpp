@@ -115,6 +115,21 @@ void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { boxCell(function), thisValue, boxCell(list) }));
 }
 
+// Bytecode constructs in place too, so the stack has no frame of Reflect.construct. The host function throws what the arguments do not allow.
+void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
+{
+    RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
+    auto constructorOrMiss = [&](ValueID id) {
+        Boxed constructor = boxCell(objectOrMiss(call, id));
+        missUnless(call, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { constructor }));
+        return constructor;
+    };
+    Boxed target = constructorOrMiss(call.argument(0));
+    Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
+    Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
+    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }));
+}
+
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
 {
     auto argumentOrUndefined = [&](unsigned index) {

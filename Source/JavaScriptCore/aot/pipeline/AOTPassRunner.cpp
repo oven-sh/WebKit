@@ -302,7 +302,7 @@ void PassRunner::prepare(ScheduleRun& run) const
 
 static constexpr PassSet optionalPassesOfGenericVersions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
-    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
@@ -661,8 +661,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     return runFunctionPassThatMayFire(id, context, run);
 }
 
-// Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
-NEVER_INLINE // Until the program is analyzed as a whole, what the passes make of library code is the same in every build. A fuzzer makes millions of builds.
+// Until the program is analyzed as a whole, what the passes make of library code is the same in every build. A fuzzer makes millions of builds.
 static bool isVerifiedElsewhere(const FunctionPassContext& context)
 {
 #if ENABLE(FUZZILLI)
@@ -673,7 +672,8 @@ static bool isVerifiedElsewhere(const FunctionPassContext& context)
 #endif
 }
 
-PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
+// Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
+NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);

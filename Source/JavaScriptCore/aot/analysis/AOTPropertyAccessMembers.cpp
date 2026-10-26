@@ -152,6 +152,7 @@ static bool isPrivateName(const Program& program, PropertyKeyID key)
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
         return true;
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::Text:
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:

@@ -90,7 +90,7 @@ void didChangeMicrotaskQueueing(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances) {
         instance->realm.microtaskQueue = &instance->globalObject->microtaskQueue();
-        instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries();
+        instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries() || vm.m_synchronousModuleQueue;
         if (instance->awaitMustSuspend)
             instance->coroutines.frameThatMayContinue = nullptr;
     }

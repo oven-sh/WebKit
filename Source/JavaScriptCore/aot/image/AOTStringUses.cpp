@@ -433,6 +433,7 @@ static bool isEngineSymbol(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::PrivateName:

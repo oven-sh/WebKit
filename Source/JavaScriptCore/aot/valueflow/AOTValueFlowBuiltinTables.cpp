@@ -336,9 +336,9 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
     });
     auto standingForClassAndThoseBelow = [&](BuiltinClassID builtinClass) {
         Vector<ValueFlowObjectID, 8> standing;
-        for (uint32_t other = 0; other < builtins.classCount(); ++other) {
-            if (m_objectStandingForClass[other] && builtins.isSameOrSubclassOf(BuiltinClassID(other), builtinClass))
-                standing.append(m_objectStandingForClass[other]);
+        for (BuiltinClassID other : classesAtOrBelow(builtinClass)) {
+            if (m_objectStandingForClass[other.index()])
+                standing.append(m_objectStandingForClass[other.index()]);
         }
         return maker.of(standing.span());
     };

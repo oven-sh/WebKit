@@ -228,9 +228,12 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
         return addEntryParameter(capture);
     };
 
+    // A bound function that holds the closure of its target reads the captures out of it.
     Vector<ValueID, 8> targetCaptures;
-    for (const DeclaredType& capture : target.captures)
-        targetCaptures.append(addCapture(capture));
+    if (!record.capturesTargetClosure) {
+        for (const DeclaredType& capture : target.captures)
+            targetCaptures.append(addCapture(capture));
+    }
     ValueID boundThis;
     if (target.has(FunctionFlags::HasThis))
         boundThis = addCapture(target.thisType);
@@ -246,15 +249,18 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
         }
         arguments.append(addCapture(target.parameters[i]));
     }
-    // The body does not use the target closure. The run time reads it for instanceof.
+    // The run time reads the target closure for instanceof.
+    ValueID targetClosure;
     if (record.capturesTargetClosure)
-        addCapture(DeclaredType { .type = TypeTable::function });
+        targetClosure = addCapture(DeclaredType { .type = inputs.types.intern(Type::forFunction(targetID)) });
     for (size_t i = record.numberOfCapturedArguments; i < target.parameters.size(); ++i) {
         bound.parameters.append(target.parameters[i]);
         arguments.append(addEntryParameter(target.parameters[i]));
     }
 
     builder.moveToEndOf(block);
+    if (targetClosure)
+        targetCaptures = appendCaptures(builder, targetID, targetClosure);
     for (uint32_t i : argumentsHeldAsValues)
         arguments[i] = builder.append(makeAssumeType(arguments[i], TypingContext { program, bound, inputs.types }.typeIDOf(target.parameters[i])));
     ValueID result = appendDirectCall(builder, {

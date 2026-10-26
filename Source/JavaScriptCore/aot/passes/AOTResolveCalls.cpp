@@ -2369,7 +2369,7 @@ struct CallResolver {
         FunctionID boundFunction = context.derivedFunction(derivedFunctionKey(FunctionRole::BoundFunction, targetID, numberOfBound));
         CreatorRecord::BoundFunction record = program.at(boundFunction).creator.as<CreatorRecord::BoundFunction>();
         bool capturesThis = program.at(targetID).has(FunctionFlags::HasThis);
-        size_t numberOfCaptures = program.at(targetID).captures.size() + capturesThis + record.numberOfCapturedArguments + record.capturesTargetClosure;
+        size_t numberOfCaptures = (record.capturesTargetClosure ? 1 : program.at(targetID).captures.size()) + capturesThis + record.numberOfCapturedArguments;
         if (record.numberOfCapturedArguments > numberOfBound || numberOfCaptures != program.at(boundFunction).captures.size())
             return declined;
 
@@ -2384,7 +2384,9 @@ struct CallResolver {
                 std::span<const ValueID> arguments = expansion.original().argumentsOperands();
 
                 appendCalleeValidation(builder, closure);
-                Vector<ValueID, 8> captures = capturesOf(arm, closure, { });
+                Vector<ValueID, 8> captures;
+                if (!record.capturesTargetClosure)
+                    captures = capturesOf(arm, closure, { });
                 if (capturesThis)
                     captures.append(arguments.empty() ? builder.appendUndefined() : arguments[0]);
                 for (uint32_t index = 0; index < record.numberOfCapturedArguments; ++index)

@@ -145,6 +145,8 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
         return callIf(site, site.arguments().size() > 1 + JSBoundFunction::maxEmbeddedArgs || !receiverTypeOf(site).mayBeFunction(), InlineForm::TwoWay);
     case InlineBuiltin::ReflectApply:
         return callIf(site, site.arguments().size() != 3, InlineForm::TwoWay);
+    case InlineBuiltin::ReflectConstruct:
+        return callIf(site, site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
         return InlineForm::Whole;
     default:

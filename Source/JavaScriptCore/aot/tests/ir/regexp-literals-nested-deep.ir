@@ -1,0 +1,48 @@
+# A literal nested deeper than the build builds patterns is created by a call of RegExp where it is evaluated, and what the call throws becomes the SyntaxError of a literal
+# FORM: AsRead
+# OPTIONS: limit=RegExpNestingDepthWithCode:1
+# RUN: pass CheckRegExpLiterals
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+function f1 name="twoLiterals" results=[{type=anything}] {
+    v0 = NewRegExp pattern="((a+))" regExpFlags=[Global, IgnoreCase]
+    v1 = PropGet v0 key="source"
+    v2 = NewRegExp pattern="(?:(?:b))"
+    v3 = NewRegExp pattern="(c)"
+    Return v1
+# CHECK: Jump
+# CHECK: handler=
+# CHECK-NEXT: Builtin builtin=RegExp
+# CHECK-NEXT: String string="((a+))"
+# CHECK-NEXT: String string="gi"
+# CHECK-NEXT: Construct
+# CHECK-NEXT: Jump
+# CHECK: PropGet
+# CHECK: String string="(?:(?:b))"
+# CHECK: NewRegExp pattern="(c)"
+# CHECK: role=CatchHandler
+# CHECK-NEXT: CatchValue
+# CHECK-NEXT: Builtin builtin=SyntaxError
+# CHECK-NEXT: String string="Invalid regular expression: too many nested disjunctions"
+# CHECK-NEXT: Construct
+# CHECK-NEXT: Throw
+}
+function f2 name="underHandler" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = NewRegExp pattern="((d))"
+    Jump -> next b1()
+  b1():
+    Return v0
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+# CHECK: String string="((d))"
+# CHECK-NOT: NewRegExp
+}

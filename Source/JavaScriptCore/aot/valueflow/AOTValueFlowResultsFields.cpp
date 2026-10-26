@@ -537,7 +537,7 @@ struct FieldResults {
             return !program.isIndexLike(key);
         if (kind == PropertyKeyKind::CreatedSymbol)
             return inputs.symbolsCreatedOnce && inputs.symbolsCreatedOnce->get(key.index());
-        return kind == PropertyKeyKind::WellKnownSymbol || kind == PropertyKeyKind::RegisteredSymbol;
+        return kind == PropertyKeyKind::WellKnownSymbol || kind == PropertyKeyKind::RegisteredSymbol || kind == PropertyKeyKind::ModulePrivateName;
     }
 
     Vector<uint32_t> countOperationsNamingKeys() const
@@ -757,7 +757,7 @@ struct FieldResults {
             keysByLayout[id.index()].removeAllMatching([&](PropertyKeyID key) {
                 auto declarers = layoutsWithField.find(key.index());
                 PropertyKeyKind kind = program.at(key).kind;
-                bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol;
+                bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName;
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
                     return haveCommonMember(program.at(family).members.span(), declarers->value.span());
                 })));

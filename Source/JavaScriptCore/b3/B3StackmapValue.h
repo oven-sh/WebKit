@@ -236,6 +236,10 @@ public:
     void setNeedsFrameRecord(bool needsFrameRecord) { m_needsFrameRecord = needsFrameRecord; }
     bool needsFrameRecord() const { return m_needsFrameRecord; }
 
+    // The function may go on behind it in another frame, which holds only the stack slots that are live across it.
+    void setIsSuspension(bool isSuspension) { m_isSuspension = isSuspension; }
+    bool isSuspension() const { return m_isSuspension; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -331,6 +335,7 @@ private:
     bool m_runsWithoutFrame { false };
     bool m_followsFrameSetup { false };
     bool m_needsFrameRecord { false };
+    bool m_isSuspension { false };
     bool m_sharesLatePath { false };
 };
 

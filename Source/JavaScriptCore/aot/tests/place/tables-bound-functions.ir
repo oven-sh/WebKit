@@ -61,7 +61,7 @@ function f5 name="constructing" kind=Plain parameters=[{type=anything}, {type=an
 # CHECK: magic ok
 # CHECK: boundFunctions 3 48
 # BOUND: function [[bound]] name="published" callable=Bound {{*}}captures=1
-# BOUND: function [[boundCapturing]] name="capturing" callable=Bound {{*}}captures=3
+# BOUND: function [[boundCapturing]] name="capturing" callable=Bound {{*}}captures=2
 # BOUND: function [[boundConstructing]] name="constructing" callable=Bound {{*}}captures=3
 # BOUND: bound function=[[bound]] target={{*}} arguments=1 targetClosureSlot=- constructs=false firstArgumentSlot=0 capturedArguments=0
 # BOUND-NEXT: bound function=[[boundCapturing]] target={{*}} arguments=1 targetClosureSlot=[[slot]] constructs=false

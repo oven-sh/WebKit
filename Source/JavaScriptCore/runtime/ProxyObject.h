@@ -110,6 +110,9 @@ private:
     bool isConstructibleProxy() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
 
     bool isHandlerTrapsCacheValid(JSObject* handler);
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached);
+#endif
     void LEGACY_NODELETE clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -163,9 +166,14 @@ inline JSObject* ProxyObject::callTargetIfKnownToHaveNoApplyTrap()
         return nullptr;
     if (!isHandlerTrapsCacheValid(asObject(handlerValue)))
         return nullptr;
-    if (m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)] != invalidOffset)
-        return nullptr;
-    return target();
+    PropertyOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)];
+    if (offset == invalidOffset)
+        return target();
+#if ENABLE(AOT)
+    if (offset < invalidOffset && isCachedTrapFieldEmpty(asObject(handlerValue), offset))
+        return target();
+#endif
+    return nullptr;
 }
 
 } // namespace JSC

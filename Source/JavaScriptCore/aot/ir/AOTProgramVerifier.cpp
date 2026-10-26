@@ -390,6 +390,7 @@ bool isValidPropertyKey(const PropertyKey& key)
     switch (key.kind) {
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::RegisteredSymbol:
         return key.text && !key.owner && !key.symbol && !hasCreationSite;
     case PropertyKeyKind::PrivateName:

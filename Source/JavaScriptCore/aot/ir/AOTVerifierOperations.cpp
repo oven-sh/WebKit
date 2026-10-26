@@ -34,6 +34,7 @@ static bool isPrivateKind(PropertyKeyKind kind)
 {
     switch (kind) {
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return true;
     case PropertyKeyKind::Text:

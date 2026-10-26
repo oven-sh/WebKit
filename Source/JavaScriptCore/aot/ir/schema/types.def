@@ -8,7 +8,7 @@ enum NameClass (words: Text) {
 }
 record String wire customEngine customText { offset: UInt32 length: UInt32 nameClass: NameClass builtinName: BuiltinName? }
 
-enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol | engine RegisteredSymbol }
+enum PropertyKeyKind { Text EnginePrivateName PrivateName WellKnownSymbol CreatedSymbol ModulePrivateName | engine RegisteredSymbol }
 enum WellKnownSymbol {
     AsyncDispose AsyncIterator Dispose HasInstance IsConcatSpreadable Iterator Match MatchAll Replace Search Species Split ToPrimitive ToStringTag
     Unscopables

@@ -59,6 +59,7 @@ void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Type
 void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
+JS_EXPORT_PRIVATE bool isSuspendedModuleBody(VM&, JSValue coroutine);
 JS_EXPORT_PRIVATE JSPromise* asyncFunctionPromise(JSCell* coroutine);
 JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine);
 JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, WTF::Vector<StackFrame>&, JSCell* coroutine);

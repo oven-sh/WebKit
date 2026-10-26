@@ -18,7 +18,7 @@ void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     ClimbingSet coroutine = only(context, universe.coroutineResultOf(function));
     ValueFlowNodeID returned = nodes.result(function, 0);
     if (!context.program().at(function).has(FunctionFlags::IsGenerator)) {
-        resolvePromises(context, coroutine, context.valueOf(returned));
+        resolvePromises(context, coroutine, { returned, ValueSets::nothing, ValueSets::anything });
         rejectPromises(context, coroutine, { nodes.thrown(function), ValueSets::nothing, ValueSets::anything });
         return;
     }

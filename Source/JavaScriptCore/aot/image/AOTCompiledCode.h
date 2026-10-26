@@ -87,6 +87,7 @@ struct FrameDescription {
     bool hasFrameAt(uint32_t offset) const;
 
     unsigned frameSizeInBytes { 0 };
+    unsigned bytesDeadAtSuspensions { 0 };
     bool hasFrameRecord { true };
     bool spillsArgumentRegisters { false };
     RegisterAtOffsetList calleeSaveRegisters;

@@ -9,10 +9,13 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTValueFlow.h"
+#include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <atomic>
 #include <memory>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 
@@ -23,9 +26,8 @@ class ParallelLoops;
 namespace Typed {
 
 class Program;
+class MembersUnderKey;
 class ValueFlowUniverse;
-class ValueSetMaker;
-class ValueSets;
 
 struct ValueFlowMembersUnderKey {
     ValueSetID holders;
@@ -128,13 +130,17 @@ public:
     FOR_EACH_AOT_VALUE_OF_HEAP_TABLES(AOT_DECLARE_GETTER)
 #undef AOT_DECLARE_GETTER
 
-    const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[m_recordOfKey[key.index()]]; }
+    const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
-    ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return m_holdersThatAnswer[key.index()]; }
-    ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return m_holdersThatMayLoseMember[key.index()]; }
-    ValueSetID objectsStoredToAtCreationUnder(PropertyKeyID key) const { return m_objectsStoredToAtCreation[key.index()]; }
+    ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return holdersUnder(key).thatAnswer; }
+    ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return holdersUnder(key).thatMayLoseMember; }
+    ValueSetID objectsStoredToAtCreationUnder(PropertyKeyID key) const { return holdersUnder(key).storedToAtCreation; }
 
-    const ValueFlowMembersOfHolder& membersOf(BuiltinID holder) const LIFETIME_BOUND { return m_membersOfHolder[holder.index()]; }
+    const ValueFlowMembersOfHolder& membersOf(BuiltinID holder) const LIFETIME_BOUND
+    {
+        const ValueFlowMembersOfHolder* members = m_membersOfHolder[holder.index()].load(std::memory_order_acquire);
+        return members ? *members : describeMembersOf(holder);
+    }
     ModuleID compiledModuleOf(BuiltinID holder) const { return m_compiledModuleOfHolder[holder.index()]; }
     bool hasNumericName(BuiltinID member) const { return m_hasNumericName.quickGet(member.index()); }
     bool hasGetEntry(BuiltinID member) const { return m_hasGetEntry.quickGet(member.index()); }
@@ -151,15 +157,82 @@ public:
     std::atomic<uint64_t>& prototypesAtCreationOf(ValueFlowObjectID object) const { return m_prototypesAtCreation[object.index()]; }
 
 private:
-    void collectNamesReadByNativeCode(const Program&, const ValueFlowUniverse&, ValueSetMaker&);
+    struct HoldersUnderKey {
+        std::atomic<bool> isDescribed { false };
+        uint32_t record { 0 };
+        ValueSetID thatAnswer;
+        ValueSetID thatMayLoseMember;
+        ValueSetID storedToAtCreation;
+    };
 
-    Vector<ValueFlowMembersUnderKey> m_membersUnderKey;
-    Vector<uint32_t> m_recordOfKey;
+    struct MemberOfHolder {
+        BuiltinID holder;
+        BuiltinID member;
+    };
+
+    struct HolderListingName {
+        BuiltinName name;
+        BuiltinID holder;
+
+        auto operator<=>(const HolderListingName&) const = default;
+    };
+
+    struct ClosedHoldersNotListingKey {
+        bool isStarted { false };
+        Vector<BuiltinID> notAsked;
+        ValueSetID locked { ValueSets::nothing };
+    };
+
+    using RecordOfName = HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+
+    const HoldersUnderKey& holdersUnder(PropertyKeyID key) const LIFETIME_BOUND
+    {
+        const HoldersUnderKey& holders = m_holdersUnderKey[key.index()];
+        if (!holders.isDescribed.load(std::memory_order_acquire)) [[unlikely]]
+            describeKey(key);
+        return holders;
+    }
+
+    void collectNamesReadByNativeCode(const Program&, const ValueFlowUniverse&, ValueSetMaker&);
+    void describeKey(PropertyKeyID) const;
+    uint32_t findOrAddRecordOf(PropertyKeyID) const;
+    ValueFlowMembersUnderKey describeMembersUnder(PropertyKeyID, BuiltinName, bool isPrivateName) const;
+    ValueSetID findLockedHolders(const MembersUnderKey&, BuiltinName, bool isPrivateName) const;
+    const ValueFlowMembersOfHolder& describeMembersOf(BuiltinID holder) const LIFETIME_BOUND;
+    std::span<const ValueFlowObjectID> objectsOf(BuiltinID canonicalHolder) const LIFETIME_BOUND;
+    ValueFlowObjectID objectOf(BuiltinID) const;
+
+    const Program& m_program;
+    mutable Lock m_lock;
+    mutable ValueSetMaker m_maker;
+    mutable Vector<ValueFlowMembersUnderKey> m_membersUnderKey;
+    std::unique_ptr<HoldersUnderKey[]> m_holdersUnderKey;
+    mutable RecordOfName m_recordOfName;
+    mutable RecordOfName m_recordOfPrivateName;
+    mutable Vector<ClosedHoldersNotListingKey> m_closedHoldersNotListingKeyOfClass;
+    mutable BitVector m_listsNameOfKey;
+    std::unique_ptr<std::atomic<const ValueFlowMembersOfHolder*>[]> m_membersOfHolder;
+    mutable Vector<std::unique_ptr<ValueFlowMembersOfHolder>> m_describedMembersOfHolders;
+    uint32_t m_firstObjectOfBuiltins { 0 };
+    Vector<uint32_t> m_endOfObjectsOfHolder;
+    Vector<ValueFlowObjectID> m_objectsOfHolders;
+    Vector<uint32_t> m_endOfMembersUnderName;
+    Vector<MemberOfHolder> m_membersUnderNames;
+    Vector<HolderListingName> m_closedHoldersListingNames;
+    Vector<HolderListingName> m_prototypesOfInstancesWithNames;
+    Vector<std::pair<BuiltinName, ValueSetID>, 4> m_instancesThatKeepName;
+    Vector<BuiltinID> m_holdersWithClosedKeys;
+    BitVector m_hasClosedKeys;
+    ValueSetID m_builtinObjects;
+    ValueSetID m_holdersThatListNotAllMembers;
+    ValueSetID m_functionsOfEngine;
+    ValueSetID m_prototypeObjectsOfEntries;
+    ValueSetID m_anyPrimitive;
+    Vector<uint32_t> m_endOfObjectsCreatedWithKey;
+    Vector<ValueFlowObjectID> m_objectsCreatedWithKeys;
+    Vector<uint32_t> m_endOfObjectsStoredToUnderKey;
+    Vector<ValueFlowObjectID> m_objectsStoredToUnderKeys;
     Vector<ValueSetID> m_objectsDeclaringField;
-    Vector<ValueSetID> m_holdersThatAnswer;
-    Vector<ValueSetID> m_holdersThatMayLoseMember;
-    Vector<ValueSetID> m_objectsStoredToAtCreation;
-    Vector<ValueFlowMembersOfHolder> m_membersOfHolder;
     Vector<ModuleID> m_compiledModuleOfHolder;
     BitVector m_hasGetEntry;
     BitVector m_hasSetEntry;

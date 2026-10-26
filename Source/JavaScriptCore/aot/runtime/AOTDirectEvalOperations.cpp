@@ -576,6 +576,14 @@ static bool hasOwnScope(const EvalBindingData& binding)
     return kindOf(binding) == EvalBindingKind::WithObject || kindOf(binding) == EvalBindingKind::SimpleCatchParameter;
 }
 
+static JSC_DECLARE_HOST_FUNCTION(throwSuperCallInDirectEvalError);
+
+JSC_DEFINE_HOST_FUNCTION(throwSuperCallInDirectEvalError, (JSGlobalObject* globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMError(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
+}
+
 struct EvalScopeChain {
     JSScope* innermost;
     JSValue thisValue;
@@ -600,7 +608,11 @@ static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* global
 
     JSObject* homeObjectHolder = nullptr;
     if (const EvalBindingData* homeObject = findBinding(bindings, EvalBindingKind::HomeObject)) {
-        homeObjectHolder = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        // `super()` in the text constructs the prototype of what it finds as the derived constructor.
+        if (request.isInDerivedConstructor)
+            homeObjectHolder = constructEmptyObject(globalObject, JSFunction::create(vm, globalObject, 0, String(), throwSuperCallInDirectEvalError, ImplementationVisibility::Private, NoIntrinsic, throwSuperCallInDirectEvalError));
+        else
+            homeObjectHolder = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
         homeObjectHolder->putDirect(vm, vm.propertyNames->builtinNames().homeObjectPrivateName(), read(*homeObject));
     }
     JSValue newTarget;

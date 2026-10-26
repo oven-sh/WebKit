@@ -1857,7 +1857,7 @@ private:
         bool areLiterals = true;
         auto list = [&](PropertyKeyID key) {
             PropertyKeyKind kind = m_program.at(key).kind;
-            if (kind == PropertyKeyKind::Text || (listsSymbols && kind != PropertyKeyKind::PrivateName && kind != PropertyKeyKind::EnginePrivateName))
+            if (kind == PropertyKeyKind::Text || (listsSymbols && kind != PropertyKeyKind::PrivateName && kind != PropertyKeyKind::EnginePrivateName && kind != PropertyKeyKind::ModulePrivateName))
                 keys.append(m_universe.keyConstant(key));
         };
         m_context.forEachMember(listed, [&](ValueFlowObjectID object) {

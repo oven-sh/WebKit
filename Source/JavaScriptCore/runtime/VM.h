@@ -1549,6 +1549,17 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+
+    class SynchronousModuleQueueScope {
+        WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
+    public:
+        JS_EXPORT_PRIVATE explicit SynchronousModuleQueueScope(VM&);
+        JS_EXPORT_PRIVATE ~SynchronousModuleQueueScope();
+
+    private:
+        VM& m_vm;
+        SynchronousModuleQueue m_queue;
+    };
 private:
 #endif
 

@@ -784,9 +784,10 @@ uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const Call
 
 LValue RuntimeCallEmitter::transientBuffer(size_t bytes)
 {
-    if (!m_transientBuffer)
+    if (!m_transientBuffer) {
         m_transientBuffer = m_proc.addStackSlot(bytes);
-    else
+        m_transientBuffer->setIsDeadAtSuspensions(true);
+    } else
         m_transientBuffer->ensureSize(bytes);
     return m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_transientBuffer);
 }

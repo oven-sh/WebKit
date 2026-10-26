@@ -678,6 +678,16 @@ bool isSuspendedAsyncFunction(JSCell* cell)
     return !!findSuspendedAsyncFunction(cell).coroutine;
 }
 
+bool isSuspendedModuleBody(VM& vm, JSValue coroutine)
+{
+    SavedFrame* saved = coroutine.isCell() ? tryGetSavedFrame(coroutine.asCell()) : nullptr;
+    if (!saved)
+        return false;
+    const Image& image = *Image::current();
+    const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(image, saved->resumeAddress());
+    return entry && !entry->isStubReturnSite() && FunctionDescription(image.rootFunctionOf(entry->code.index())).codeType() == ModuleCode;
+}
+
 JSPromise* asyncFunctionPromise(JSCell* coroutine)
 {
     return findSuspendedAsyncFunction(coroutine).promise;

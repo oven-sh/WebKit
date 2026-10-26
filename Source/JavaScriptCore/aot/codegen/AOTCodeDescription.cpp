@@ -445,6 +445,7 @@ static FrameDescription describeFrame(const CodeRecords& records, EmittedCode& e
     const B3::Procedure& procedure = *emitted.procedure;
     const B3::Air::Code& code = procedure.code();
     frame.frameSizeInBytes = procedure.frameSize();
+    frame.bytesDeadAtSuspensions = code.frameLayout().bytesDeadAtSuspensions;
     frame.hasFrameRecord = !code.frameLayout().hasFrame || code.frameLayout().hasFrameRecord;
     frame.calleeSaveRegisters = registersRestoredByUnwinding(procedure, function);
     frame.frameRanges = describeFrameRanges(code, linkBuffer);

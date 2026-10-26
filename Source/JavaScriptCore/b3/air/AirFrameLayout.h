@@ -42,6 +42,8 @@ struct FrameLayout {
     CalleeSaveForm calleeSaveForm { CalleeSaveForm::Stored };
     unsigned bytesAboveFrameRecord { 0 };
     unsigned numberOfSavesClobberedAtSuspensions { 0 };
+    // At the bottom of the frame: the outgoing arguments and the slots that are live across no suspension.
+    unsigned bytesDeadAtSuspensions { 0 };
     unsigned numberOfFrameSetups { 0 };
     unsigned numberOfFrameTeardowns { 0 };
     unsigned numberOfSpillsPushedAtFrameSetup { 0 };

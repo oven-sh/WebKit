@@ -235,19 +235,26 @@ static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueF
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet configuration = valueOf(context, value);
-    if (context.meet(configuration, universe.placeholdersAlone()))
-        return true;
     auto found = [&](BuiltinName name) {
         return context.valueOf(context.lookup(configuration, ValueFlowName::property(program.keyOf(name))));
     };
-    for (BuiltinName name : { BuiltinNames::fetch, BuiltinNames::then }) {
-        ClimbingSet function = found(name);
-        if (context.meet(function, universe.callables()) || context.meet(function, universe.placeholdersAlone()))
+    auto hasHandler = [&] {
+        if (context.meet(configuration, universe.placeholdersAlone()))
             return true;
-    }
-    ValueFlowObjectID missing[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
-    ValueSetID present = ValueSets::complement(context.maker().of(std::span<const ValueFlowObjectID>(missing)));
-    return context.meet(found(BuiltinNames::app), present) || context.meet(found(BuiltinNames::routes), present);
+        for (BuiltinName name : { BuiltinNames::fetch, BuiltinNames::then }) {
+            ClimbingSet function = found(name);
+            if (context.meet(function, universe.callables()) || context.meet(function, universe.placeholdersAlone()))
+                return true;
+        }
+        ValueFlowObjectID missing[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
+        ValueSetID present = ValueSets::complement(context.maker().of(std::span<const ValueFlowObjectID>(missing)));
+        return context.meet(found(BuiltinNames::app), present) || context.meet(found(BuiltinNames::routes), present);
+    };
+    if (!hasHandler())
+        return false;
+    // A server has `fetch` too: the host reads `stop` to tell one from a configuration.
+    found(BuiltinNames::stop);
+    return true;
 }
 
 static bool mayHold(const BuiltinCondition* condition)

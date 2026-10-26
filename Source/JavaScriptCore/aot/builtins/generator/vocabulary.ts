@@ -732,6 +732,7 @@ export type IntrinsicSpec =
         | "PrivateGlobal"
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
+        | "ModulePrivateName"
         | "LinkedFunction"
         | "Erased"
         | "BundleError";

@@ -236,6 +236,8 @@ static void printCode(PrintStream& out, const CompiledCode& code)
         out.print(" provenToFitOnStack");
     if (!code.frame.hasFrameRecord)
         out.print(" noFrameRecord");
+    if (!sites.frameMapWords.isEmpty())
+        out.print(" deadAtSuspensions=", code.frame.bytesDeadAtSuspensions);
     out.println();
 }
 

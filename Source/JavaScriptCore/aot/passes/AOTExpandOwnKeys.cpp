@@ -450,7 +450,7 @@ static bool isUnderPrivateName(const Program& program, const Field& field)
     if (!field.key)
         return false;
     PropertyKeyKind kind = program.at(field.key).kind;
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 static bool isOrdinaryDataField(const Program& program, FieldReference reference)

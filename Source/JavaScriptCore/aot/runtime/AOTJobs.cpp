@@ -122,7 +122,7 @@ static void resumeWhenCallSettles(Instance& instance, JSValue awaited, SavedFram
             callee->setWaiter(vm, waiter, asyncContext);
         return;
     }
-    globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), awaited, waiter, asyncContext);
+    waiter->queueResumeJob(globalObject, vm, awaited, false, asyncContext);
 }
 
 // The frame is that of an async function that returns next: the job is taken out of the queue, so no code of the program may run before the frame has returned to the adapter.

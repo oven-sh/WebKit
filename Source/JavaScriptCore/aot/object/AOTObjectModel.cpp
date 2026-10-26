@@ -93,6 +93,7 @@ static FieldKeyKind keyKindOf(PropertyKeyKind kind)
     case PropertyKeyKind::RegisteredSymbol:
         return FieldKeyKind::Symbol;
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return FieldKeyKind::PrivateName;
     }

@@ -98,6 +98,8 @@ void StackmapValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
         out.print(comma, "followsFrameSetup"_s);
     if (m_needsFrameRecord)
         out.print(comma, "needsFrameRecord"_s);
+    if (m_isSuspension)
+        out.print(comma, "isSuspension"_s);
     if (m_sharesLatePath)
         out.print(comma, "sharesLatePath"_s);
     if constexpr (B3StackmapValueInternal::dumpRegisters) {

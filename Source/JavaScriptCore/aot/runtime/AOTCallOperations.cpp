@@ -43,6 +43,7 @@
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "LLIntThunks.h"
+#include "ObjectPrototype.h"
 #include "OwedOutOfMemoryError.h"
 #include "ProtoCallFrameInlines.h"
 #include "ProxyObject.h"
@@ -341,10 +342,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     // ProxyObject::createStructure().
     if (!(proxy->inlineTypeFlags() & ImplementsDefaultHasInstance))
         return isEngines;
+    // As forwardProxyCallToTarget(): the target is called in place of the proxy, and no frame stands for the proxy.
+    if (JSObject* forwardedTo = proxy->callTargetIfKnownToHaveNoApplyTrap())
+        return makeUGPRPair(0, std::bit_cast<UCPURegister>(forwardedTo));
     JSObject* target = proxy->target();
     JSObject* handler = asObject(handlerValue);
     JSGlobalObject* globalObject = instance->globalObject;
     const Identifier& name = vm.aotState().runtimeTable->nameOfApplyTrap(vm);
+    // The lookup has run no code of the program, so this one runs none. The proxy remembers the answer, as in performProxyCall(), which it only can below Object.prototype.
+    auto callTargetAndRemember = [&] {
+        if (handler->getPrototypeDirect().inherits<ObjectPrototype>()) {
+            CallData callData;
+            proxy->getHandlerTrap(globalObject, handler, callData, name, ProxyObject::HandlerTrap::Apply);
+        }
+        return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+    };
     JSValue trap = Object::tryGetOwnDataProperty(vm, handler, name);
     if (!trap) {
         PropertySlot slot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
@@ -352,13 +364,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
         if (vm.exceptionForInspection() || slot.isTaintedByOpaqueObject()) [[unlikely]]
             return isEngines;
         if (!isPresent)
-            return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+            return callTargetAndRemember();
         if (!slot.isValue())
             return isEngines;
         trap = slot.getValue(globalObject, name);
     }
     if (trap.isUndefinedOrNull())
-        return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+        return callTargetAndRemember();
     if (!trap.isCell())
         return isEngines;
     JSType typeOfTrap = trap.asCell()->type();
