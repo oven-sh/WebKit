@@ -363,9 +363,19 @@ static void registerStackMirror(Instance* instance, VM& vm)
         makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
 #if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
+    // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.
+    decltype(loopPollPages.pages) pages;
+    size_t numberOfPages;
+    {
+        Locker locker { loopPollPages.lock };
+        numberOfPages = loopPollPages.pages.size();
+    }
+    pages.reserveInitialCapacity(numberOfPages + 1);
     Locker locker { loopPollPages.lock };
     void* page = loopPollPage(instance);
-    loopPollPages.pages.append(page);
+    pages.appendVector(loopPollPages.pages);
+    pages.append(page);
+    loopPollPages.pages.swap(pages);
     if (vm.traps().stopsAtEveryPoll() || vm.traps().needsOutOfMemoryError())
         RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), PROT_NONE));
 #endif
@@ -464,13 +474,17 @@ void Instance::captureCellHeaders()
 static thread_local VM* t_vmOfThread;
 static VM* s_vmOfFirstThread;
 
-static void didUseAddressSpaceBallastOnThisThread(bool wasWhole)
+static void didUseAddressSpaceBallastOnThisThread(bmalloc::api::UseOfAddressSpaceBallast use)
 {
+    using Use = bmalloc::api::UseOfAddressSpaceBallast;
     static thread_local bool isTellingVM;
     if (!t_vmOfThread || isTellingVM)
         return;
     // An error in the first thread ends the program. An error in a Worker ends the Worker, which gives back what it held. Where another thread was the first to find no room, the first thread is not told.
-    if (!wasWhole && t_vmOfThread == s_vmOfFirstThread)
+    if (use != Use::LetGoOfFirstPiece && t_vmOfThread == s_vmOfFirstThread)
+        return;
+    // A thread that owes its error has heard, and has let go of nothing since.
+    if (use == Use::TakesWhatPiecesLeft && t_vmOfThread->traps().needsOutOfMemoryError())
         return;
     SetForScope scope { isTellingVM, true };
     MarkedBlockCage::didUseAddressSpaceBallast(*t_vmOfThread);
@@ -789,6 +803,45 @@ static void fillOperations(void** entries)
 #undef AOT_FILL_OPERATION
 }
 
+#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+// Stores that leave the stubs' own roads may add a property, and what the engine then asks of malloc may not fail. While pieces of the ballast are missing such work would live on the rest of it.
+// So the thread gets its error ahead of the operation, where nothing has been changed yet. Only the table of a process under a limit on address space has these, and the operations have no test for it.
+template<Entry entry, auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
+struct CallWithWholeBallast;
+
+template<Entry entry, auto operation, typename Result, typename... Rest, bool isNoexcept>
+struct CallWithWholeBallast<entry, operation, Result(Instance*, Rest...) noexcept(isNoexcept)> {
+    static Result JIT_OPERATION_ATTRIBUTES call(Instance* instance, Rest... rest) noexcept(isNoexcept)
+    {
+        if (!bmalloc::api::hasWholeAddressSpaceBallast()) [[unlikely]] {
+            if constexpr (std::is_same_v<Result, size_t>) {
+                // The operation that can throw decides.
+                return static_cast<size_t>(LeafAnswer::TakeSlowPath);
+            } else {
+                AOT_OPERATION_BEGIN(instance, entry);
+                if (MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(vm, globalObject, scope))
+                    OPERATION_RETURN(scope);
+            }
+        }
+        MUST_TAIL_CALL return operation(instance, rest...);
+    }
+};
+
+static void callStoresWithWholeBallast(void** entries)
+{
+#define AOT_CALL_WITH_WHOLE_BALLAST(name) \
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, CallWithWholeBallast<Entry::name, functionInTable<Entry::name, &name>>::call>();
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValGeneric)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByVal)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCache)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCacheSloppy)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdAndCache)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutById)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdSloppy)
+#undef AOT_CALL_WITH_WHOLE_BALLAST
+}
+#endif
+
 static void fillThunkAndPointers(void** entries, const Image& image)
 {
     auto set = [&](Entry entry, void* pointer) {
@@ -855,6 +908,10 @@ RuntimeTable::RuntimeTable(VM& vm)
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
+#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+    if (hasAddressSpaceLimit() && !m_countsCalls)
+        callStoresWithWholeBallast(m_entries);
+#endif
     fillThunkAndPointers(m_entries, image);
     installOperationFrontEnds(m_entries, image);
     trapUnusedEntries(m_entries, image);

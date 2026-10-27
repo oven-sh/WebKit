@@ -226,12 +226,9 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     classes.didChangePrototypeLink(*layout, side);
 }
 
-enum class ChainObjectChange : bool { MayChangeWhatNamesFind, KeepsWhatNamesFind };
-
-static void tellDependentsOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChainObjectChange change)
+void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    // What says that a name is absent above an object, or that nothing above stops a store, says so of an object that is made flat as it did before.
-    if (vm.aotState().propertyCaches && change == ChainObjectChange::MayChangeWhatNamesFind)
+    if (vm.aotState().propertyCaches)
         vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
     JSGlobalObject* realm = changed->structure()->realm();
     // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
@@ -243,19 +240,9 @@ static void tellDependentsOfChainObject(VM& vm, JSObject* changed, UniquedString
             continue;
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
-        if (state->objects && change == ChainObjectChange::MayChangeWhatNamesFind)
+        if (state->objects)
             didChangeClassHolder(vm, *state, changed, uidOrNull);
     }
-}
-
-void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
-{
-    tellDependentsOfChainObject(vm, changed, uidOrNull, ChainObjectChange::MayChangeWhatNamesFind);
-}
-
-void RuntimeHooks::didFlattenObjectOnPrototypeChain(VM& vm, JSObject* flattened)
-{
-    tellDependentsOfChainObject(vm, flattened, nullptr, ChainObjectChange::KeepsWhatNamesFind);
 }
 
 void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
@@ -399,9 +386,10 @@ static bool canWalkThrough(Structure* structure)
 }
 
 // What walkChain() answers where every object above is an ordinary one or a class prototype without members yet, and none has the name. Nothing of the walk is kept, so nothing is listed.
-static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid)
+static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid, StoredName name)
 {
-    if (parseIndex(PropertyName(uid)))
+    bool mayBeDeclared = name == StoredName::MayBeSpelledByProgram;
+    if (mayBeDeclared && parseIndex(PropertyName(uid)))
         return false;
     Instance* instance = Instance::of(globalObject);
     for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
@@ -410,7 +398,7 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
             return true;
         Structure* structure = object->structure();
         if (object->classInfo() == ClassPrototype::info()) {
-            if (Instance::of(structure->realm()) != instance || object->butterfly() || ClassPrototype::hasMember(object, uid))
+            if (Instance::of(structure->realm()) != instance || object->butterfly() || (mayBeDeclared && ClassPrototype::hasMember(object, uid)))
                 return false;
         } else {
             TypeInfo typeInfo = structure->typeInfo();
@@ -426,9 +414,10 @@ static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverS
     return false;
 }
 
-bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, StoredName name)
 {
-    if (findsNothingAbove(globalObject, receiverStructure, uid)) [[likely]]
+    ASSERT(name == StoredName::MayBeSpelledByProgram || (!parseIndex(PropertyName(uid)) && !globalObject->vm().aotState().identifiers->numberOf(uid)));
+    if (findsNothingAbove(globalObject, receiverStructure, uid, name)) [[likely]]
         return true;
     return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
 }

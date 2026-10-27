@@ -31,6 +31,8 @@ struct RegisterPolicy {
     AIR_POLICY_OF_CLIENT(bool, hintsTwoAddressOperands, false);
     AIR_POLICY_OF_CLIENT(bool, usesSecondPreferredRegister, false);
     AIR_POLICY_OF_CLIENT(bool, evictsHolderOfPreferredRegister, false);
+    // What a patchpoint runs keeps at most the lower 64 bits of a vector register that the patchpoint does not clobber.
+    AIR_POLICY_OF_CLIENT(bool, patchpointsKeepOnlyLowerHalvesOfVectors, false);
 
     RegisterSet unsavedCalleeSaves;
     RegisterSet savedByCallee;

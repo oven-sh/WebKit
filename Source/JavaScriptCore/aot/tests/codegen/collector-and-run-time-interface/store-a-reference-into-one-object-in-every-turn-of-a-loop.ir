@@ -115,7 +115,7 @@ function f1 name="pointAtLast" module=m0 position=57 flags=[IsChecked, HasExplic
 # CHECK-NEXT: Patchpoint({{*}}isLoopPoll
 # CHECK-NOT: Reads:collectorState
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[owner]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK: Patchpoint(b@[[owner]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-LABEL: end of loop
 # X64: loop #{{*}}, instructions: 5, patchpoints: 1
 # ARM64: loop #{{*}}, instructions: 6, patchpoints: 1

@@ -42,9 +42,10 @@ struct ValidationPolicy {
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool keepsOriginsOfAccessesThatTakeTraps { false };
-    // These two break a phase on purpose, for the tests of the checks.
+    // These break a phase on purpose, for the tests of the checks.
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
+    bool omitsStridedLimitGuard { false };
 };
 
 enum class RedundancyElimination : uint8_t {

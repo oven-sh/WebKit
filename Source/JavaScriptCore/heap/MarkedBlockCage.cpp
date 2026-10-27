@@ -8,6 +8,7 @@
 
 #include "AOTCellFormat.h"
 #include "AddressSpaceBudget.h"
+#include "DeferGCInlines.h"
 #include "MarkedBlock.h"
 #include "Options.h"
 #include "OwedOutOfMemoryError.h"
@@ -775,6 +776,23 @@ void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
     cage.addExhaustedHeap(ExhaustedHeap::Storage);
     cage.didFindNoRoomWhereNothingCollects();
     vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+bool MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
+{
+#if USE(MIMALLOC)
+    if (bmalloc::api::isThisThreadExemptFromAddressSpaceBallast() || vm.heap.cage().tryKeepBallastAgain())
+        return false;
+    if (!vm.traps().needsOutOfMemoryError())
+        didUseAddressSpaceBallast(vm);
+    DeferGCForAWhile deferGC(vm);
+    return throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(scope);
+    return false;
+#endif
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

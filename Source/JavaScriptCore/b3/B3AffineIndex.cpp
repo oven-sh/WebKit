@@ -8,264 +8,267 @@
 
 #if ENABLE(B3_JIT)
 
-#include "B3Limits.h"
 #include "B3ProcedureInlines.h"
 #include "B3ValueInlines.h"
 #include <algorithm>
+#include <wtf/CheckedArithmetic.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace B3 {
-
-static CheckedRange checkedRange(Int128 min, Int128 max)
-{
-    IntegerInterval range { min, max };
-    if (!fullInterval(Int64, Signedness::Signed).contains(range))
-        return std::nullopt;
-    return range;
-}
 
 CheckedRange checkedAdd(const CheckedRange& left, const CheckedRange& right)
 {
     if (!left || !right)
         return std::nullopt;
-    return checkedRange(left->min + right->min, left->max + right->max);
+    CheckedInt64 min = CheckedInt64(left->min()) + right->min();
+    CheckedInt64 max = CheckedInt64(left->max()) + right->max();
+    if (min.hasOverflowed() || max.hasOverflowed())
+        return std::nullopt;
+    return IntRange(min.value(), max.value());
 }
 
 CheckedRange checkedMultiply(const CheckedRange& left, const CheckedRange& right)
 {
     if (!left || !right)
         return std::nullopt;
-    auto [min, max] = std::minmax({ left->min * right->min, left->min * right->max, left->max * right->min, left->max * right->max });
-    return checkedRange(min, max);
+    int64_t min = std::numeric_limits<int64_t>::max();
+    int64_t max = std::numeric_limits<int64_t>::min();
+    for (int64_t leftEnd : { left->min(), left->max() }) {
+        for (int64_t rightEnd : { right->min(), right->max() }) {
+            CheckedInt64 product = CheckedInt64(leftEnd) * rightEnd;
+            if (product.hasOverflowed())
+                return std::nullopt;
+            min = std::min(min, product.value());
+            max = std::max(max, product.value());
+        }
+    }
+    return IntRange(min, max);
+}
+
+CheckedRange checkedRangeOf(const Procedure& proc, Value* value, Signedness signedness)
+{
+    if (signedness == Signedness::Signed)
+        return rangeFor(proc, value);
+    IntegerInterval interval = intervalFor(proc, value, signedness);
+    if (interval.max > std::numeric_limits<int64_t>::max())
+        return std::nullopt;
+    return IntRange(static_cast<int64_t>(interval.min), static_cast<int64_t>(interval.max));
 }
 
 CheckedRange checkedRangeOf(const Procedure& proc, const InvariantSum& sum)
 {
-    CheckedRange result = checkedConstant(0);
-    for (const InvariantTerm& term : sum.terms) {
-        CheckedRange product = intervalFor(proc, term.first, Signedness::Signed);
+    CheckedRange result = IntRange(sum.constant, sum.constant);
+#pragma clang loop unroll(disable)
+    for (const InvariantTerm& term : sum.usedTerms()) {
+        CheckedRange product = IntRange(term.coefficient, term.coefficient);
+        product = checkedMultiply(product, rangeFor(proc, term.first));
         if (term.second)
-            product = checkedMultiply(product, intervalFor(proc, term.second, Signedness::Signed));
-        result = checkedAdd(result, checkedMultiply(product, checkedConstant(term.coefficient)));
+            product = checkedMultiply(product, rangeFor(proc, term.second));
+        result = checkedAdd(result, product);
     }
-    return checkedAdd(result, checkedConstant(sum.constant));
+    return result;
+}
+
+static NEVER_INLINE bool hasSameTerms(const InvariantSum& left, const InvariantSum& right)
+{
+    return equalSpans(left.usedTerms(), right.usedTerms());
+}
+
+bool isSameExceptConstantOffset(const AffineIndex& left, const AffineIndex& right)
+{
+    return left.scale.constant == right.scale.constant && hasSameTerms(left.scale, right.scale) && hasSameTerms(left.offset, right.offset);
 }
 
 namespace {
 
-std::optional<int64_t> toInt64(Int128 value)
+bool multiplyBy(int64_t& value, int64_t factor)
 {
-    if (value < std::numeric_limits<int64_t>::min() || value > std::numeric_limits<int64_t>::max())
-        return std::nullopt;
-    return static_cast<int64_t>(value);
-}
-
-bool hasSameFactors(const InvariantTerm& left, const InvariantTerm& right)
-{
-    return left.first == right.first && left.second == right.second;
-}
-
-bool isOrderedBefore(const InvariantTerm& left, const InvariantTerm& right)
-{
-    if (left.first != right.first)
-        return left.first->index() < right.first->index();
-    if (!left.second || !right.second)
-        return !left.second && right.second;
-    return left.second->index() < right.second->index();
-}
-
-bool addTerm(InvariantSum& sum, InvariantTerm term)
-{
-    if (!term.coefficient)
-        return true;
-    if (term.second && term.second->index() < term.first->index())
-        std::swap(term.first, term.second);
-    size_t index = 0;
-    while (index < sum.terms.size() && isOrderedBefore(sum.terms[index], term))
-        ++index;
-    if (index == sum.terms.size() || !hasSameFactors(sum.terms[index], term)) {
-        if (sum.terms.size() == Limits::maxTermsPerInvariantSum)
-            return false;
-        sum.terms.insert(index, term);
-        return true;
-    }
-    auto coefficient = toInt64(Int128 { sum.terms[index].coefficient } + term.coefficient);
-    if (!coefficient)
+    CheckedInt64 product = CheckedInt64(value) * factor;
+    if (product.hasOverflowed())
         return false;
-    if (*coefficient)
-        sum.terms[index].coefficient = *coefficient;
-    else
-        sum.terms.removeAt(index);
+    value = product.value();
     return true;
 }
 
-bool isZero(const InvariantSum& sum)
+bool increaseBy(int64_t& value, int64_t addend)
 {
-    return sum.isConstant() && !sum.constant;
+    CheckedInt64 sum = CheckedInt64(value) + addend;
+    if (sum.hasOverflowed())
+        return false;
+    value = sum.value();
+    return true;
 }
 
-InvariantSum constantSum(int64_t constant)
+bool addTerm(InvariantSum& sum, int64_t coefficient, Value* first, Value* second)
 {
-    InvariantSum sum;
-    sum.constant = constant;
-    return sum;
-}
-
-std::optional<InvariantSum> add(const InvariantSum& left, const InvariantSum& right)
-{
-    InvariantSum result = left;
-    auto constant = toInt64(Int128 { left.constant } + right.constant);
-    if (!constant)
-        return std::nullopt;
-    result.constant = *constant;
-    for (const InvariantTerm& term : right.terms) {
-        if (!addTerm(result, term))
-            return std::nullopt;
-    }
-    return result;
-}
-
-std::optional<InvariantSum> multiply(const InvariantSum& left, const InvariantSum& right)
-{
-    InvariantSum result;
-    auto constant = toInt64(Int128 { left.constant } * right.constant);
-    if (!constant)
-        return std::nullopt;
-    result.constant = *constant;
-    auto addScaled = [&](const InvariantSum& sum, int64_t factor) {
-        for (const InvariantTerm& term : sum.terms) {
-            auto coefficient = toInt64(Int128 { term.coefficient } * factor);
-            if (!coefficient || !addTerm(result, { *coefficient, term.first, term.second }))
-                return false;
-        }
+    if (!first)
+        std::swap(first, second);
+    if (!first)
+        return increaseBy(sum.constant, coefficient);
+    if (!coefficient)
         return true;
+    if (second && second->index() < first->index())
+        std::swap(first, second);
+    auto rank = [](Value* first, Value* second) {
+        return static_cast<uint64_t>(first->index()) << 32 | (second ? second->index() + 1 : 0);
     };
-    if (!addScaled(left, right.constant) || !addScaled(right, left.constant))
-        return std::nullopt;
-    for (const InvariantTerm& leftTerm : left.terms) {
-        for (const InvariantTerm& rightTerm : right.terms) {
-            if (leftTerm.second || rightTerm.second)
-                return std::nullopt;
-            auto coefficient = toInt64(Int128 { leftTerm.coefficient } * rightTerm.coefficient);
-            if (!coefficient || !addTerm(result, { *coefficient, leftTerm.first, rightTerm.first }))
-                return std::nullopt;
-        }
+    unsigned index = 0;
+#pragma clang loop unroll(disable)
+    while (index < sum.numberOfTerms && rank(sum.terms[index].first, sum.terms[index].second) < rank(first, second))
+        ++index;
+    auto& terms = sum.terms;
+    if (index < sum.numberOfTerms && terms[index].first == first && terms[index].second == second) {
+        if (!increaseBy(terms[index].coefficient, coefficient))
+            return false;
+        if (terms[index].coefficient)
+            return true;
+        memmoveSpan(std::span { terms }.subspan(index), sum.usedTerms().subspan(index + 1));
+        --sum.numberOfTerms;
+        return true;
     }
-    return result;
+    if (sum.numberOfTerms == terms.size())
+        return false;
+    memmoveSpan(std::span { terms }.subspan(index + 1), sum.usedTerms().subspan(index));
+    terms[index] = { coefficient, first, second };
+    ++sum.numberOfTerms;
+    return true;
 }
 
-std::optional<AffineIndex> makeIndex(std::optional<InvariantSum>&& scale, std::optional<InvariantSum>&& offset)
+bool addScaled(InvariantSum& result, const InvariantSum& sum, int64_t coefficient, Value* factor)
 {
-    if (!scale || !offset)
-        return std::nullopt;
-    return AffineIndex { WTF::move(*scale), WTF::move(*offset) };
-}
-
-std::optional<AffineIndex> add(const AffineIndex& left, const AffineIndex& right)
-{
-    return makeIndex(add(left.scale, right.scale), add(left.offset, right.offset));
-}
-
-std::optional<AffineIndex> multiply(const AffineIndex& left, const AffineIndex& right)
-{
-    if (!isZero(left.scale) && !isZero(right.scale))
-        return std::nullopt;
-    const AffineIndex& variant = isZero(left.scale) ? right : left;
-    const AffineIndex& invariant = isZero(left.scale) ? left : right;
-    return makeIndex(multiply(variant.scale, invariant.offset), multiply(variant.offset, invariant.offset));
-}
-
-std::optional<AffineIndex> multiply(const AffineIndex& index, int64_t factor)
-{
-    return multiply(index, AffineIndex { { }, constantSum(factor) });
+    int64_t constant = sum.constant;
+    if (!multiplyBy(constant, coefficient) || !addTerm(result, constant, factor, nullptr))
+        return false;
+#pragma clang loop unroll(disable)
+    for (InvariantTerm term : sum.usedTerms()) {
+        if ((term.second && factor) || !multiplyBy(term.coefficient, coefficient) || !addTerm(result, term.coefficient, term.first, term.second ? term.second : factor))
+            return false;
+    }
+    return true;
 }
 
 class AffineIndexFinder {
 public:
     explicit AffineIndexFinder(const AffineIndexInputs& inputs)
         : m_inputs(inputs)
-        , m_counterRange(checkedRange(inputs.counterRange.min, inputs.counterRange.max))
     {
     }
 
-    std::optional<AffineIndex> find(Value* value, uint64_t depth)
+    // Adds coefficient * factor * value to the result.
+    bool add(AffineIndex& result, Value* value, int64_t coefficient, Value* factor, uint64_t depth)
     {
         value = value->foldIdentity();
         if (!value->type().isInt())
-            return std::nullopt;
+            return false;
         if (value == m_inputs.counter)
-            return AffineIndex { constantSum(1), { } };
+            return addTerm(result.scale, coefficient, factor, nullptr);
         if (value->hasInt())
-            return AffineIndex { { }, constantSum(value->asInt()) };
-        if (value->opcode() == SExt32 || value->opcode() == ZExt32) {
-            if (auto result = findInOperands(value, depth))
-                return result;
+            return multiplyBy(coefficient, value->asInt()) && addTerm(result.offset, coefficient, factor, nullptr);
+        if (isExtension(value)) {
+            AffineIndex saved = result;
+            if (addOperands(result, value, coefficient, factor, depth))
+                return true;
+            result = saved;
         }
-        if (Value* invariant = m_inputs.canonicalInvariant(value)) {
-            AffineIndex result;
-            result.offset.terms.append(InvariantTerm { 1, invariant, nullptr });
-            return result;
-        }
-        return findInOperands(value, depth);
+        if (Value* invariant = m_inputs.canonicalInvariant(value))
+            return addTerm(result.offset, coefficient, invariant, factor);
+        return addOperands(result, value, coefficient, factor, depth);
     }
 
 private:
-    std::optional<AffineIndex> findInOperands(Value* value, uint64_t depth)
+    static bool isExtension(Value* value) { return value->opcode() == SExt32 || value->opcode() == ZExt32; }
+
+    NEVER_INLINE Value* invariantFactor(Value* value)
     {
-        if (depth == m_inputs.proc.limit(Limit::MaxRangeAnalysisDepth)) {
-            m_inputs.proc.didReachLimit(Limit::MaxRangeAnalysisDepth, value->origin());
-            return std::nullopt;
+        value = value->foldIdentity();
+        if (isExtension(value)) {
+            Value* operand = m_inputs.canonicalInvariant(value->child(0)->foldIdentity());
+            if (operand && (value->opcode() == SExt32 || rangeFor(m_inputs.proc, operand).min() >= 0))
+                return operand;
         }
+        return m_inputs.canonicalInvariant(value);
+    }
+
+    bool addOperands(AffineIndex& result, Value* value, int64_t coefficient, Value* factor, uint64_t depth)
+    {
+        const Procedure& proc = m_inputs.proc;
+        if (depth == proc.limit(Limit::MaxRangeAnalysisDepth)) {
+            proc.didReachLimit(Limit::MaxRangeAnalysisDepth, value->origin());
+            return false;
+        }
+        ++depth;
+        if (!value->numChildren() || value->numChildren() > 2)
+            return false;
+        Value* operand = value->child(0);
+        Value* right = value->numChildren() == 2 ? value->child(1) : nullptr;
+        int64_t multiplier = 1;
         switch (value->opcode()) {
         case Add:
         case Sub:
-        case Mul: {
-            auto left = find(value->child(0), depth + 1);
-            auto right = left ? find(value->child(1), depth + 1) : std::nullopt;
-            if (!right)
-                return std::nullopt;
-            if (value->opcode() == Mul)
-                return multiply(*left, *right);
+            if (!add(result, operand, coefficient, factor, depth))
+                return false;
+            operand = right;
             if (value->opcode() == Sub)
-                right = multiply(*right, -1);
-            return right ? add(*left, *right) : std::nullopt;
-        }
-        case Neg: {
-            auto operand = find(value->child(0), depth + 1);
-            return operand ? multiply(*operand, -1) : std::nullopt;
-        }
-        case Shl: {
-            if (!value->child(1)->hasInt32())
-                return std::nullopt;
-            unsigned shift = value->child(1)->asInt32() & (value->type() == Int32 ? 31 : 63);
-            auto operand = shift < 63 ? find(value->child(0), depth + 1) : std::nullopt;
-            return operand ? multiply(*operand, int64_t { 1 } << shift) : std::nullopt;
-        }
+                multiplier = -1;
+            break;
+        case Neg:
+            multiplier = -1;
+            break;
         case Trunc:
-            return find(value->child(0), depth + 1);
+            break;
+        case Shl: {
+            if (!right->hasInt32())
+                return false;
+            unsigned shift = right->asInt32() & (value->type() == Int32 ? 31 : 63);
+            if (shift == 63)
+                return false;
+            multiplier = int64_t { 1 } << shift;
+            break;
+        }
+        case Mul: {
+            if (operand->foldIdentity()->hasInt())
+                std::swap(operand, right);
+            if (Value* constant = right->foldIdentity(); constant->hasInt()) {
+                multiplier = constant->asInt();
+                break;
+            }
+            if (factor)
+                return false;
+            factor = invariantFactor(operand);
+            if (factor)
+                operand = right;
+            else
+                factor = invariantFactor(right);
+            if (!factor)
+                return false;
+            break;
+        }
         case SExt32:
         case ZExt32: {
-            auto operand = find(value->child(0), depth + 1);
-            if (!operand)
-                return std::nullopt;
-            CheckedRange range = checkedAdd(checkedMultiply(checkedRangeOf(m_inputs.proc, operand->scale), m_counterRange), checkedRangeOf(m_inputs.proc, operand->offset));
-            if (!range || !fullInterval(Int32, value->opcode() == SExt32 ? Signedness::Signed : Signedness::Unsigned).contains(*range))
-                return std::nullopt;
-            return operand;
+            AffineIndex inner;
+            if (!add(inner, operand, 1, nullptr, depth))
+                return false;
+            CheckedRange range = checkedAdd(checkedMultiply(checkedRangeOf(proc, inner.scale), m_inputs.counterRange), checkedRangeOf(proc, inner.offset));
+            bool isSigned = value->opcode() == SExt32;
+            if (!range || range->min() < (isSigned ? std::numeric_limits<int32_t>::min() : 0) || range->max() > (isSigned ? std::numeric_limits<int32_t>::max() : std::numeric_limits<uint32_t>::max()))
+                return false;
+            return addScaled(result.scale, inner.scale, coefficient, factor) && addScaled(result.offset, inner.offset, coefficient, factor);
         }
         default:
-            return std::nullopt;
+            return false;
         }
+        return multiplyBy(coefficient, multiplier) && add(result, operand, coefficient, factor, depth);
     }
 
     const AffineIndexInputs& m_inputs;
-    CheckedRange m_counterRange;
 };
 
 } // anonymous namespace
 
-std::optional<AffineIndex> affineIndexOf(const AffineIndexInputs& inputs, Value* value)
+bool findAffineIndex(const AffineIndexInputs& inputs, Value* value, AffineIndex& result)
 {
-    return AffineIndexFinder(inputs).find(value, 0);
+    result = { };
+    return AffineIndexFinder(inputs).add(result, value, 1, nullptr, 0);
 }
 
 } } // namespace JSC::B3

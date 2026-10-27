@@ -293,7 +293,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     Effects effects = value.effects().onAnyEdge();
     RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
     // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program.
-    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None);
+    emitter<RuntimeCallEmitter>().applyEffects(patchpoint, effects, ArgumentBufferAccess::None, false, RuntimeCallEmitter::CellConversions::None, RuntimeCallEmitter::SlotsOfSites::StayAsTheyAre);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     uint32_t site = emitter<RuntimeCallEmitter>().addSite(value);
 

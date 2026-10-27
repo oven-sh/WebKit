@@ -212,9 +212,26 @@ Value* FastPreHeader::appendIntConstant(Origin origin, Type type, int64_t value)
     return m_last->appendIntConstant(m_proc, origin, type, value);
 }
 
+Value* FastPreHeader::append(Origin origin, Opcode opcode, Value* left, Value* right)
+{
+    return m_last->appendNew<Value>(m_proc, opcode, origin, left, right);
+}
+
+Value* FastPreHeader::appendAddConstant(Origin origin, Value* value, int64_t addend)
+{
+    return addend ? append(origin, Add, value, appendIntConstant(origin, value->type(), addend)) : value;
+}
+
+Value* FastPreHeader::appendWidened(Origin origin, Value* value, Signedness signedness)
+{
+    if (value->type() == Int64)
+        return value;
+    return m_last->appendNew<Value>(m_proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
+}
+
 void FastPreHeader::appendGuard(Origin origin, Opcode relation, Value* left, Value* right)
 {
-    m_last->appendNew<Value>(m_proc, Branch, origin, m_last->appendNew<Value>(m_proc, relation, origin, left, right));
+    m_last->appendNew<Value>(m_proc, Branch, origin, append(origin, relation, left, right));
     BasicBlock* closed = startNextBlock();
     closed->setSuccessors(FrequentedBlock(m_last), FrequentedBlock(m_slowLoopHeader, FrequencyClass::Rare));
 }

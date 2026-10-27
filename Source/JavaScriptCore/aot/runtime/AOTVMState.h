@@ -18,6 +18,7 @@
 namespace JSC {
 
 class CallFrame;
+class JSGlobalObject;
 class Structure;
 class VM;
 
@@ -76,6 +77,8 @@ public:
     bool validatesRuntime { false };
     // Some object has become a dictionary for the names that it is being given.
     bool hasObjectsBeingFilled { false };
+    // Its Date.prototype has the members that JSON.stringify reads on a date, and keeps them. Only compared with, never read through: a realm may be gone.
+    JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
     // They run the CommonJS files of a graph in front of the jobs in which the loader of `bun run` would.
     Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
     uintptr_t structureIDBase { 0 };

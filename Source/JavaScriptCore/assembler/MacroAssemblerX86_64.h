@@ -6712,17 +6712,8 @@ public:
     }
 
     // Without AVX an operation on vectors overwrites its left operand.
-    template<typename Functor>
-    void emitVectorOperationOverLeft(FPRegisterID left, FPRegisterID right, FPRegisterID dest, const Functor& emit)
-    {
-        if (dest == right && dest != left) {
-            moveVector(right, fpTempRegister);
-            right = fpTempRegister;
-        }
-        if (dest != left)
-            moveVector(left, dest);
-        emit(right, dest);
-    }
+    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, And, Or, Xor, Swizzle };
+    JS_EXPORT_PRIVATE void emitVectorOperationWithoutAVX(VectorOperationWithoutAVX, SIMDLane, FPRegisterID left, FPRegisterID right, FPRegisterID dest);
 
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
     {
@@ -8470,33 +8461,8 @@ public:
 
     void vectorAdd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                switch (simdInfo.lane) {
-                case SIMDLane::f32x4:
-                    m_assembler.addps_rr(right, dest);
-                    break;
-                case SIMDLane::f64x2:
-                    m_assembler.addpd_rr(right, dest);
-                    break;
-                case SIMDLane::i8x16:
-                    m_assembler.paddb_rr(right, dest);
-                    break;
-                case SIMDLane::i16x8:
-                    m_assembler.paddw_rr(right, dest);
-                    break;
-                case SIMDLane::i32x4:
-                    m_assembler.paddd_rr(right, dest);
-                    break;
-                case SIMDLane::i64x2:
-                    m_assembler.paddq_rr(right, dest);
-                    break;
-                default:
-                    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid SIMD lane for vector add.");
-                }
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Add, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8524,33 +8490,8 @@ public:
 
     void vectorSub(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                switch (simdInfo.lane) {
-                case SIMDLane::f32x4:
-                    m_assembler.subps_rr(right, dest);
-                    break;
-                case SIMDLane::f64x2:
-                    m_assembler.subpd_rr(right, dest);
-                    break;
-                case SIMDLane::i8x16:
-                    m_assembler.psubb_rr(right, dest);
-                    break;
-                case SIMDLane::i16x8:
-                    m_assembler.psubw_rr(right, dest);
-                    break;
-                case SIMDLane::i32x4:
-                    m_assembler.psubd_rr(right, dest);
-                    break;
-                case SIMDLane::i64x2:
-                    m_assembler.psubq_rr(right, dest);
-                    break;
-                default:
-                    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid SIMD lane for vector subtract.");
-                }
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Sub, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8578,28 +8519,8 @@ public:
 
     void vectorMul(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                switch (simdInfo.lane) {
-                case SIMDLane::f32x4:
-                    m_assembler.mulps_rr(right, dest);
-                    break;
-                case SIMDLane::f64x2:
-                    m_assembler.mulpd_rr(right, dest);
-                    break;
-                case SIMDLane::i16x8:
-                    m_assembler.pmullw_rr(right, dest);
-                    break;
-                case SIMDLane::i32x4:
-                    RELEASE_ASSERT(supportsSSE4_1());
-                    m_assembler.pmulld_rr(right, dest);
-                    break;
-                default:
-                    RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid SIMD lane for vector multiply.");
-                }
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Mul, simdInfo.lane, left, right, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
@@ -8804,15 +8725,8 @@ public:
     void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         ASSERT(scalarTypeIsFloatingPoint(simdInfo.lane));
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                if (simdInfo.lane == SIMDLane::f32x4)
-                    m_assembler.divps_rr(right, dest);
-                else
-                    m_assembler.divpd_rr(right, dest);
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Div, simdInfo.lane, left, right, dest);
         switch (simdInfo.lane) {
         case SIMDLane::f32x4:
             m_assembler.vdivps_rrr(right, left, dest);
@@ -8995,12 +8909,8 @@ public:
     void vectorAnd(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                m_assembler.andps_rr(right, dest);
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::And, simdInfo.lane, left, right, dest);
         m_assembler.vandps_rrr(right, left, dest);
     }
 
@@ -9017,24 +8927,16 @@ public:
     void vectorOr(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                m_assembler.orps_rr(right, dest);
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Or, simdInfo.lane, left, right, dest);
         m_assembler.vorps_rrr(right, left, dest);
     }
 
     void vectorXor(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
         RELEASE_ASSERT(simdInfo.lane == SIMDLane::v128);
-        if (!supportsAVX()) {
-            emitVectorOperationOverLeft(left, right, dest, [&](FPRegisterID right, FPRegisterID dest) {
-                m_assembler.xorps_rr(right, dest);
-            });
-            return;
-        }
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Xor, simdInfo.lane, left, right, dest);
         m_assembler.vxorps_rrr(right, left, dest);
     }
 
@@ -10112,11 +10014,8 @@ public:
     {
         if (supportsAVX())
             m_assembler.vpshufb_rrr(b, a, dest);
-        else {
-            if (a != dest)
-                m_assembler.movapd_rr(a, dest);
-            m_assembler.pshufb_rr(b, dest);
-        }
+        else
+            emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::Swizzle, SIMDLane::i8x16, a, b, dest);
     }
 
     void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest)

@@ -220,6 +220,11 @@ void exemptThisThreadFromAddressSpaceBallast()
     ballastStateOfThisThread().isExempt = true;
 }
 
+bool isThisThreadExemptFromAddressSpaceBallast()
+{
+    return ballastStateOfThisThread().isExempt;
+}
+
 bool hasWholeAddressSpaceBallast()
 {
     return !s_lacksPiecesOfBallast.load(std::memory_order_relaxed);
@@ -250,7 +255,7 @@ static void endRequestWithBallast()
     ballastStateOfThisThread().hasUsedBallast = false;
     bool wasWhole = std::exchange(ballastStateOfThisThread().hasUsedWholeBallast, false);
     if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
-        handler(wasWhole);
+        handler(wasWhole ? UseOfAddressSpaceBallast::LetGoOfFirstPiece : UseOfAddressSpaceBallast::LetGoOfPiece);
 }
 
 RequestWithBallast::RequestWithBallast()
@@ -327,6 +332,23 @@ static bool mayTakeAddressSpace(size_t size)
     size_t kept = s_numberOfBallastPieces.load(std::memory_order_relaxed);
     return wanted <= kept || (addressSpaceLeft >= size && addressSpaceLeft - size >= (wanted - kept) * sizeOfBallastPiece);
 }
+
+// A small page is refused to nobody. Many threads that make small blocks would take all that a piece has left while only the thread that let go of the piece has heard.
+static void willTakeSmallPage()
+{
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed) || ballastStateOfThisThread().isExempt)
+        return;
+    if (ballastStateOfThisThread().numberOfRequests) {
+        ballastStateOfThisThread().hasUsedBallast = true;
+        return;
+    }
+    if (AddressSpaceBallastKeeper keeper = s_ballastKeeper.load(std::memory_order_relaxed))
+        keeper();
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
+        return;
+    if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
+        handler(UseOfAddressSpaceBallast::TakesWhatPiecesLeft);
+}
 #endif
 
 bool RequestWithBallast::tryMakeRoom()
@@ -342,7 +364,7 @@ bool RequestWithBallast::tryMakeRoom()
 }
 
 #if BUSE(EXTERNAL_MIMALLOC)
-// patches/mimalloc/remember-the-request-that-found-no-memory.patch, ask-who-may-take-address-space.patch and new-uses-address-space-kept-aside.patch in oven-sh/bun. The vendored mimalloc does not have them, so they are declared here and not in mimalloc.h.
+// patches/mimalloc/remember-the-request-that-found-no-memory.patch, ask-who-may-take-address-space.patch, new-uses-address-space-kept-aside.patch and tell-who-takes-small-pages.patch in oven-sh/bun. The vendored mimalloc does not have them, so they are declared here and not in mimalloc.h.
 #if !defined(MI_REMEMBERS_FAILED_REQUEST)
 extern "C" {
 typedef struct mi_failed_request_s {
@@ -360,6 +382,7 @@ typedef struct mi_address_space_keeper_s {
     bool (*make_room)(size_t size, size_t attempt);
     void (*begin_request_that_cannot_fail)(void);
     void (*end_request_that_cannot_fail)(void);
+    void (*will_take_small_page)(void);
 } mi_address_space_keeper_t;
 void mi_register_address_space_keeper(const mi_address_space_keeper_t*) noexcept;
 }
@@ -374,7 +397,7 @@ void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addres
 #if BUSE(EXTERNAL_MIMALLOC)
     static bool hasRegistered;
     if (!hasRegistered) {
-        static constexpr mi_address_space_keeper_t keeper { mayTakeAddressSpace, makeRoomWithBallast, beginRequestWithBallast, endRequestWithBallast };
+        static constexpr mi_address_space_keeper_t keeper { mayTakeAddressSpace, makeRoomWithBallast, beginRequestWithBallast, endRequestWithBallast, willTakeSmallPage };
         mi_register_address_space_keeper(&keeper);
         hasRegistered = true;
     }

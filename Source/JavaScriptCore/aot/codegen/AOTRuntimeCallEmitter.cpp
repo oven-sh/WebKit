@@ -632,7 +632,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehind(request.effectsOfCallee));
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -732,7 +732,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
-    applyEffects(patchpoint, effects, request.argumentBufferAccess);
+    applyEffects(patchpoint, effects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay, slotsOfSitesBehind(request.effects));
     patchpoint->setRunsWithoutFrame(request.runsWithoutFrame);
     patchpoint->effects.terminal = request.neverReturns;
     return patchpoint;
@@ -830,7 +830,7 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
     return AOTHeaps::mayConvertCells(effects) && !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells);
 }
 
-void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
+void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)
 {
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
 
@@ -847,6 +847,8 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     B3HeapList writes;
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(effects.writes, writes);
+    if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
+        writes.append(&m_heaps.AOTInstance_siteCaches);
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes);
     if (effects.mayCollect)

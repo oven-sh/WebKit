@@ -109,7 +109,7 @@ function f1 name="fill" module=m0 position=55 flags=[IsChecked, HasExplicitName]
 # CHECK-NOT: collectorState
 # CHECK: Return(Terminal)
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[fork]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK: Patchpoint(b@[[fork]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-NOT: Patchpoint(
 # CHECK-LABEL: end of function
 # ARM64 stores both references with one instruction.

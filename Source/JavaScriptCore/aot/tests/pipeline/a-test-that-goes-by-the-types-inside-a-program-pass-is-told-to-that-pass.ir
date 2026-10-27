@@ -1,11 +1,11 @@
 # let manager = null, lastCount = 0   async function create() { return { count() { return 7 } } }   function stop() { manager = null }
 # async function start() { manager = await create(); return lastCount = manager.count() }   if ("abc".length > 10) await start()   stop()   return [manager, (await create()).count()]
 # Flow follows the call of `start`. Folding the comparison leaves `start` without a caller, so the Optimize schedule passes it by, and it is there until RemoveUnreachableFunctions.
-# Nobody reads `lastCount`: RemoveUnreadFields takes the store out of `start` and simplifies what it has edited. There the read of `manager` is answered by the store right in front of it,
+# Nobody reads `lastCount`: with RemoveUnreadExports off, RemoveUnreadFields takes the store out of `start` and simplifies what it has edited. There the read of `manager` is answered by the store right in front of it,
 # which stores an object: the test that `manager` is neither null nor undefined has nothing left to throw for, nobody uses what it hands on, and it goes.
 # Each of those runs is verified by itself. RemoveUnreadFields began to listen while the read was typed null or an object, and hears that the test went by the types of its operand.
 # RUN: pipeline RemoveUnreadFields
-# OPTIONS: check=VerifyEachPass
+# OPTIONS: check=VerifyEachPass disable=pass:RemoveUnreadExports
 # CHECK-LABEL: name="start" module=m0 role=CoroutineBody
 # CHECK: PutModuleVariable {{*}} variable=g0
 # CHECK-NOT: GetModuleVariable

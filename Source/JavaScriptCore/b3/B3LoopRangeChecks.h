@@ -13,7 +13,9 @@
 #include "B3NaturalLoops.h"
 #include "B3Origin.h"
 #include "B3Value.h"
+#include <array>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
@@ -27,6 +29,7 @@ class FastPreHeader;
 class LoopInvariance;
 class MemoryValue;
 class PhiChildren;
+class Variable;
 struct CountedLoop;
 struct HotRegion;
 
@@ -54,38 +57,52 @@ struct EntryGuard {
     int64_t addend { 0 };
 };
 
-// Checks of index + k against one limit, for constants k in [minOffset, maxOffset].
-struct StridedRangeCheck {
-    AffineIndex index;
-    Value* limit { nullptr };
+struct StridedGuards {
     int64_t minOffset { 0 };
     int64_t maxOffset { 0 };
     bool mustFitInt32 { false };
     bool isStrengthReduced { false };
-    bool isIncreasing { true };
+    bool isIncreasing { false };
     bool needsScaleGuard { false };
     bool needsLowerGuard { false };
     bool needsLimitGuard { false };
 };
 
-// The value equals the index of stridedChecks[checkIndex] plus offset.
+// Checks of index + k against one limit, for constants k in [minOffset, maxOffset].
+struct StridedRangeCheck : StridedGuards {
+    AffineIndex index;
+    Value* limit { nullptr };
+};
+
+// The value equals the index of checks[checkIndex] plus offset.
 struct ReducedIndex {
+    Value* value { nullptr };
     unsigned checkIndex { 0 };
     int64_t offset { 0 };
 };
 
-struct StridedIndexStart {
-    Value* first { nullptr };
+struct StridedRangeChecks {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StridedRangeChecks);
+
+    std::array<StridedRangeCheck, Limits::maxStridedRangeChecksPerLoop> checks { };
+    unsigned numberOfChecks { 0 };
+    // In the order of the region's blocks and of the values in each.
+    std::array<ReducedIndex, Limits::maxReducedIndicesPerLoop> reducedIndices { };
+    unsigned numberOfReducedIndices { 0 };
+    // Where the reduced indices advance. Null: on each back edge.
+    BasicBlock* indexStepBlock { nullptr };
+};
+
+struct StridedIndexVariable {
+    Variable* variable { nullptr };
     Value* stride { nullptr };
 };
+using StridedIndexVariables = std::array<StridedIndexVariable, Limits::maxStridedRangeChecksPerLoop>;
 
 struct RangeCheckPlan {
     UncheckedKeyHashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
-    Vector<StridedRangeCheck, 2> stridedChecks;
-    UncheckedKeyHashMap<Value*, ReducedIndex> reducedIndices;
-    // Where the reduced indices advance. Null: on each back edge.
-    BasicBlock* indexStepBlock { nullptr };
+    std::unique_ptr<StridedRangeChecks> strided;
     Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
     // The number of turns is at most each limit, and at most the bound of a counter that starts at zero or above. One of these is the length of a view, of the characters of a string
@@ -95,7 +112,7 @@ struct RangeCheckPlan {
     MemoryValue* lengthThatArrayMustHold { nullptr };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
-    bool dependsOnLoopTest() const { return clampsBound() || !stridedChecks.isEmpty(); }
+    bool dependsOnLoopTest() const { return clampsBound() || strided; }
 };
 
 struct RangeCheckInputs {
@@ -121,7 +138,7 @@ struct MeetingCountersInputs {
 // For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.
 RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
 void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
-Vector<StridedIndexStart, 2> appendStridedRangeCheckGuards(FastPreHeader&, std::span<const StridedRangeCheck>, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
+void appendStridedRangeCheckGuards(FastPreHeader&, const StridedRangeChecks&, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader, StridedIndexVariables&);
 void appendGuardThatArrayHoldsLength(FastPreHeader&, Origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)

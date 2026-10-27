@@ -11,6 +11,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3CountedLoops.h"
 #include "B3DominatingConditions.h"
+#include "B3Dominators.h"
 #include "B3FixSSA.h"
 #include "B3IntRange.h"
 #include "B3Limits.h"
@@ -26,8 +27,6 @@
 #include "B3ValueInlines.h"
 #include "B3VariableValue.h"
 #include <optional>
-#include <wtf/BitVector.h>
-#include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
 
 namespace JSC { namespace B3 {
@@ -35,6 +34,9 @@ namespace JSC { namespace B3 {
 namespace {
 
 static constexpr bool verbose = false;
+
+// The phase looks at few loops and changes fewer. Its own size counts for more than its speed.
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
 
 class VectorizeLoops {
 public:
@@ -55,15 +57,17 @@ public:
 
         m_proc.setUsesSIMD();
         IndexSet<Value*> valuesToDemote;
-        for (Plan& plan : m_plans) {
-            appendVectorLoop(plan);
-            valuesToDemote.add(plan.counter);
-            if (!plan.testsCounterBeforeStep)
-                valuesToDemote.add(plan.next);
+        for (auto& plan : m_plans) {
+            appendVectorLoop(*plan);
+            for (const Counter& counter : plan->counters()) {
+                valuesToDemote.add(counter.phi);
+                if (!plan->testsCounterBeforeStep)
+                    valuesToDemote.add(counter.next);
+            }
         }
         demoteValues(m_proc, valuesToDemote);
-        for (const Plan& plan : m_plans)
-            leaveVectorLoop(plan);
+        for (auto& plan : m_plans)
+            leaveVectorLoop(*plan);
         m_proc.resetReachability();
         m_proc.invalidateCFG();
         return true;
@@ -72,6 +76,16 @@ public:
 private:
     static constexpr unsigned bytesPerVector = 16;
 
+    // A Phi of the header that every turn moves on by the same distance.
+    struct Counter {
+        Value* phi { nullptr };
+        Value* start { nullptr };
+        Value* next { nullptr };
+        int64_t step { 0 };
+        Value* phiOfVectorLoop { nullptr };
+        Value* nextOfVectorLoop { nullptr };
+    };
+
     // factorOfCounter * counter + constant + the sum of factor * value over the terms, in arithmetic modulo 2^64. No term changes in the loop.
     struct LinearForm {
         struct Term {
@@ -79,31 +93,47 @@ private:
             int64_t factor { 0 };
         };
 
-        void add(const LinearForm& other, int64_t factor)
+        static int64_t times(int64_t left, int64_t right) { return static_cast<int64_t>(static_cast<uint64_t>(left) * static_cast<uint64_t>(right)); }
+        static int64_t plus(int64_t left, int64_t right) { return static_cast<int64_t>(static_cast<uint64_t>(left) + static_cast<uint64_t>(right)); }
+
+        bool addTerm(Value* value, int64_t factor)
         {
-            auto times = [&](int64_t value) {
-                return static_cast<int64_t>(static_cast<uint64_t>(value) * static_cast<uint64_t>(factor));
-            };
-            auto plus = [](int64_t left, int64_t right) {
-                return static_cast<int64_t>(static_cast<uint64_t>(left) + static_cast<uint64_t>(right));
-            };
-            factorOfCounter = plus(factorOfCounter, times(other.factorOfCounter));
-            constant = plus(constant, times(other.constant));
-            for (const Term& term : other.terms) {
-                size_t index = terms.findIf([&](const Term& own) {
-                    return own.value == term.value;
-                });
-                if (index == notFound) {
-                    terms.append({ term.value, times(term.factor) });
+            for (unsigned index = 0; index < numberOfTerms; ++index) {
+                if (terms[index].value != value)
                     continue;
-                }
-                terms[index].factor = plus(terms[index].factor, times(term.factor));
+                terms[index].factor = plus(terms[index].factor, factor);
                 if (!terms[index].factor)
-                    terms.removeAt(index);
+                    terms[index] = terms[--numberOfTerms];
+                return true;
             }
+            if (numberOfTerms == Limits::maxTermsOfAddressInVectorizedLoop)
+                return false;
+            terms[numberOfTerms++] = { value, factor };
+            return true;
         }
 
-        Vector<Term, 2> terms;
+        // False: the sum hangs on two counters or has too many terms.
+        bool add(const LinearForm& other, int64_t factor)
+        {
+            if (other.counter) {
+                if (counter && counter != other.counter)
+                    return false;
+                counter = other.counter;
+                factorOfCounter = plus(factorOfCounter, times(other.factorOfCounter, factor));
+                if (!factorOfCounter)
+                    counter = nullptr;
+            }
+            constant = plus(constant, times(other.constant, factor));
+            for (unsigned index = 0; index < other.numberOfTerms; ++index) {
+                if (!addTerm(other.terms[index].value, times(other.terms[index].factor, factor)))
+                    return false;
+            }
+            return true;
+        }
+
+        Term terms[Limits::maxTermsOfAddressInVectorizedLoop];
+        unsigned numberOfTerms { 0 };
+        Value* counter { nullptr };
         int64_t factorOfCounter { 0 };
         int64_t constant { 0 };
     };
@@ -111,49 +141,112 @@ private:
     struct Access {
         MemoryValue* memory { nullptr };
         LinearForm address;
+        // From turn to turn the address rises or falls by the size of an element.
+        bool falls { false };
     };
 
-    enum Role : uint8_t {
-        IsScalar = 1,
-        IsVector = 2,
+    // What the vector loop computes in the place of a value of the turn: the value of the first of its turns, or one lane for each.
+    struct Copy {
+        Value* original { nullptr };
+        Value* scalar { nullptr };
+        Value* vector { nullptr };
+        bool isScalar { false };
+        bool isVector { false };
     };
 
     struct Plan {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Plan);
+
         Vector<BasicBlock*, 8> blocks;
         IndexSet<BasicBlock*> blockSet;
         Vector<BasicBlock*, 4> blocksNeverEntered;
+        // Outside the loop: nothing leads to them but an edge that is never taken.
+        Vector<BasicBlock*, 4> blocksBehindEdgesNeverTaken;
         BasicBlock* preHeader { nullptr };
         BasicBlock* header { nullptr };
         BasicBlock* test { nullptr };
         unsigned stayingSuccessorIndex { 0 };
         Opcode relation { Oops };
-        Value* counter { nullptr };
-        Value* next { nullptr };
-        Value* start { nullptr };
+        // The first is the one that is tested.
+        Counter counterTable[Limits::maxCountersOfVectorizedLoop];
+        unsigned numberOfCounters { 0 };
+        // It is tested against a value that does not change in the loop, or against another counter.
         Value* bound { nullptr };
-        int64_t step { 0 };
+        unsigned indexOfBoundingCounter { 0 };
         bool testsCounterBeforeStep { false };
         bool startHasRoom { false };
         bool needsGuardOfFarBound { false };
         int64_t farthestBoundWithRoom { 0 };
         unsigned bytesPerLane { 0 };
-        Vector<Access, 4> accesses;
-        Vector<LinearForm, 2> distancesTestedAtEntry;
-        UncheckedKeyHashMap<Value*, uint8_t> roles;
+        Access accessTable[Limits::maxAccessesPerTurnOfVectorizedLoop];
+        unsigned numberOfAccesses { 0 };
+        // Each must not lie between 0 and the bytes of a vector.
+        LinearForm distancesTestedAtEntry[Limits::maxDistancesTestedInFrontOfVectorizedLoop];
+        unsigned numberOfDistancesTestedAtEntry { 0 };
+        // Lane 0 holds the last of the turns, where every address falls.
+        bool lanesRunBackward { false };
+        Copy copyTable[Limits::maxValuesPerTurnOfVectorizedLoop];
+        unsigned numberOfCopies { 0 };
         // Behind a test at the bottom: what the last turn hands to Phis behind the loop.
-        Vector<UpsilonValue*, 2> upsilonsForPhisBehindLoop;
+        Vector<Value*, 4> upsilonsForPhisBehindLoop;
 
+        BasicBlock* entered { nullptr };
+        BasicBlock* turn { nullptr };
         BasicBlock* again { nullptr };
         BasicBlock* left { nullptr };
         // The loop itself keeps one way in.
         BasicBlock* inFrontOfLoop { nullptr };
-        Value* nextBehindVectorLoop { nullptr };
+        Value* lanesInOppositeOrder { nullptr };
 
+        std::span<Counter> counters() { return std::span { counterTable, numberOfCounters }; }
+        std::span<const Counter> counters() const { return std::span { counterTable, numberOfCounters }; }
         unsigned lanes() const { return bytesPerVector / bytesPerLane; }
-        int64_t room() const { return step * static_cast<int64_t>(lanes() - 1); }
+        const Counter& tested() const { return counterTable[0]; }
+        const Counter* boundingCounter() const { return indexOfBoundingCounter ? &counterTable[indexOfBoundingCounter] : nullptr; }
+        // How much nearer the tested counter comes to what it is tested against in the turns behind the first that a turn of the vector loop stands for.
+        int64_t room() const { return (tested().step - (boundingCounter() ? boundingCounter()->step : 0)) * static_cast<int64_t>(lanes() - 1); }
         Signedness signedness() const { return isUnsignedRelation(relation) ? Signedness::Unsigned : Signedness::Signed; }
         bool includesEqual() const { return relation == LessEqual || relation == GreaterEqual || relation == BelowEqual || relation == AboveEqual; }
-        bool isInvariant(Value* value) const { return value->isConstant() || !blockSet.contains(value->owner); }
+        bool isInvariant(const Value* value) const { return value->isConstant() || !blockSet.contains(value->owner); }
+
+        const Counter* counterFor(const Value* value) const
+        {
+            for (const Counter& counter : counters()) {
+                if (counter.phi == value)
+                    return &counter;
+            }
+            return nullptr;
+        }
+
+        bool isCounterOrNext(const Value* value) const
+        {
+            for (const Counter& counter : counters()) {
+                if (counter.phi == value || counter.next == value)
+                    return true;
+            }
+            return false;
+        }
+
+        Copy* copyOf(const Value* value)
+        {
+            for (unsigned index = 0; index < numberOfCopies; ++index) {
+                if (copyTable[index].original == value)
+                    return &copyTable[index];
+            }
+            return nullptr;
+        }
+
+        // Null: more values than a turn may have, with those from outside that it spreads over lanes.
+        Copy* ensureCopyOf(Value* value)
+        {
+            if (Copy* copy = copyOf(value))
+                return copy;
+            if (numberOfCopies == Limits::maxValuesPerTurnOfVectorizedLoop)
+                return nullptr;
+            Copy* copy = &copyTable[numberOfCopies++];
+            copy->original = value;
+            return copy;
+        }
     };
 
     // One way leads through a turn, and one branch on it leaves the loop. A branch on a constant is a jump, so the blocks of the loop that are not on that way are never entered.
@@ -169,9 +262,12 @@ private:
             unsigned successorIndex = 0;
             if (last->opcode() == Branch) {
                 Value* condition = last->child(0)->foldIdentity();
-                if (condition->hasInt())
+                if (condition->hasInt()) {
                     successorIndex = condition->asInt() ? 0 : 1;
-                else {
+                    BasicBlock* other = block->successorBlock(1 - successorIndex);
+                    if (!loops.belongsTo(other, loop) && other->numPredecessors() == 1)
+                        plan.blocksBehindEdgesNeverTaken.append(other);
+                } else {
                     bool firstStays = loops.belongsTo(block->successorBlock(0), loop);
                     if (plan.test || firstStays == loops.belongsTo(block->successorBlock(1), loop)) {
                         dataLogLnIf(verbose, "   second branch: ", deepDump(last), " in ", *block);
@@ -216,27 +312,41 @@ private:
         return std::nullopt;
     }
 
-    static bool readCounter(PhiChildren& phiChildren, Value* phi, Plan& plan)
+    static bool readCounter(PhiChildren& phiChildren, const Plan& plan, Counter& counter)
     {
-        plan.start = nullptr;
-        plan.next = nullptr;
-        for (UpsilonValue* upsilon : phiChildren[phi]) {
+        for (UpsilonValue* upsilon : phiChildren[counter.phi]) {
             if (plan.blocksNeverEntered.contains(upsilon->owner))
                 continue;
             Value* input = upsilon->child(0)->foldIdentity();
-            Value*& place = upsilon->owner == plan.preHeader ? plan.start : plan.next;
+            Value*& place = upsilon->owner == plan.preHeader ? counter.start : counter.next;
             if (place || (upsilon->owner != plan.preHeader && !plan.blockSet.contains(upsilon->owner)))
                 return false;
             place = input;
         }
-        if (!plan.start || !plan.next)
+        if (!counter.start || !counter.next || !counter.phi->type().isInt())
             return false;
-        std::optional<int64_t> step = stepOf(plan.next, phi);
-        if (!step || (*step != 1 && *step != -1))
+        std::optional<int64_t> step = stepOf(counter.next, counter.phi);
+        if (!step || !*step || *step > Limits::maxCountedLoopStep || *step < -Limits::maxCountedLoopStep)
             return false;
-        plan.counter = phi;
-        plan.step = *step;
+        counter.step = *step;
         return true;
+    }
+
+    static bool findCounters(PhiChildren& phiChildren, Plan& plan)
+    {
+        for (Value* phi : *plan.header) {
+            if (phi->opcode() != Phi)
+                continue;
+            if (plan.numberOfCounters == Limits::maxCountersOfVectorizedLoop)
+                return false;
+            Counter& counter = plan.counterTable[plan.numberOfCounters++];
+            counter.phi = phi;
+            if (!readCounter(phiChildren, plan, counter)) {
+                dataLogLnIf(verbose, "   phi: ", deepDump(phi));
+                return false;
+            }
+        }
+        return plan.numberOfCounters;
     }
 
     // A test at the top has nothing in front of it that must not run once more. A test at the bottom has nothing behind it but what hands values to the next turn.
@@ -259,7 +369,16 @@ private:
         return true;
     }
 
-    static bool readTest(PhiChildren& phiChildren, Plan& plan)
+    static int indexOfCounter(const Plan& plan, Value* value, bool beforeStep)
+    {
+        for (unsigned index = 0; index < plan.numberOfCounters; ++index) {
+            if (value == (beforeStep ? plan.counterTable[index].phi : plan.counterTable[index].next))
+                return index;
+        }
+        return -1;
+    }
+
+    static bool readTest(Plan& plan)
     {
         DominatingCondition condition = stripNegations(plan.test->last()->child(0)->foldIdentity());
         Value* comparison = condition.value->foldIdentity();
@@ -268,176 +387,215 @@ private:
             return false;
         Opcode relation = !plan.stayingSuccessorIndex == condition.isNonZero ? comparison->opcode() : *inverted;
 
-        for (unsigned testedIndex = 0; testedIndex < 2; ++testedIndex) {
-            Value* tested = comparison->child(testedIndex)->foldIdentity();
+        for (unsigned form = 0; form < 4; ++form) {
+            bool beforeStep = form & 2;
+            unsigned testedIndex = form & 1;
             Value* bound = comparison->child(1 - testedIndex)->foldIdentity();
-            if (!plan.isInvariant(bound))
+            int tested = indexOfCounter(plan, comparison->child(testedIndex)->foldIdentity(), beforeStep);
+            int bounding = indexOfCounter(plan, bound, beforeStep);
+            if (tested < 0 || (bounding < 0 && !plan.isInvariant(bound)))
                 continue;
-            Value* phi = tested;
-            if (phi->opcode() != Phi) {
-                if (phi->numChildren() != 2)
-                    continue;
-                phi = phi->child(phi->child(0)->hasInt() ? 1 : 0);
-            }
-            if (phi->opcode() != Phi || phi->owner != plan.header || !readCounter(phiChildren, phi, plan) || (tested != phi && tested != plan.next))
-                continue;
+            int64_t approach = plan.counterTable[tested].step - (bounding < 0 ? 0 : plan.counterTable[bounding].step);
             plan.relation = testedIndex ? flippedRelation(relation) : relation;
-            if (isLessRelation(plan.relation) != (plan.step > 0))
+            if (!approach || isLessRelation(plan.relation) != (approach > 0))
                 continue;
-            plan.testsCounterBeforeStep = tested == phi;
-            plan.bound = bound;
+            std::swap(plan.counterTable[0], plan.counterTable[tested]);
+            if (bounding >= 0)
+                plan.indexOfBoundingCounter = bounding ? bounding : tested;
+            else
+                plan.bound = bound;
+            plan.testsCounterBeforeStep = beforeStep;
             return hasWholeTurnsBetweenTests(plan);
         }
         return false;
     }
 
-    // The counters of the turns that one turn of the vector loop stands for.
-    IntegerInterval intervalOfCounter(const Plan& plan, Signedness signedness)
+    // The values of a counter in the turns that the turns of the vector loop stand for.
+    IntegerInterval intervalOf(const Plan& plan, const Counter& counter, Signedness signedness)
     {
-        IntegerInterval start = intervalFor(m_proc, plan.start, plan.signedness());
-        IntegerInterval bound = intervalFor(m_proc, plan.bound, plan.signedness());
-        Int128 strict = plan.includesEqual() ? 0 : 1;
-        IntegerInterval result = plan.step > 0 ? IntegerInterval { start.min, bound.max - strict } : IntegerInterval { bound.min + strict, start.max };
-        IntegerInterval known = intervalFor(m_proc, plan.counter, plan.signedness());
-        result.min = std::max(result.min, known.min);
-        result.max = std::min(result.max, known.max);
-        if (signedness == plan.signedness() || (result.min >= 0 && result.max <= fullInterval(plan.counter->type(), Signedness::Signed).max))
+        IntegerInterval result = intervalFor(m_proc, counter.phi, plan.signedness());
+        if (&counter == &plan.tested() && plan.bound) {
+            IntegerInterval start = intervalFor(m_proc, counter.start, plan.signedness());
+            IntegerInterval bound = intervalFor(m_proc, plan.bound, plan.signedness());
+            Int128 strict = plan.includesEqual() ? 0 : 1;
+            result.min = std::max(result.min, counter.step > 0 ? start.min : bound.min + strict);
+            result.max = std::min(result.max, counter.step > 0 ? bound.max - strict : start.max);
+        }
+        if (signedness == plan.signedness() || (result.min >= 0 && result.max <= fullInterval(counter.phi->type(), Signedness::Signed).max))
             return result;
-        return intervalFor(m_proc, plan.counter, signedness);
+        return intervalFor(m_proc, counter.phi, signedness);
     }
 
-    std::optional<LinearForm> linearFormOf(const Plan& plan, Value* value, unsigned timeToLive)
+    bool readLinearForm(const Plan& plan, Value* value, unsigned timeToLive, LinearForm& form)
     {
         value = value->foldIdentity();
         if (value->type() != Int64)
-            return std::nullopt;
-        LinearForm form;
-        if (value == plan.counter) {
+            return false;
+        if (plan.counterFor(value)) {
+            form.counter = value;
             form.factorOfCounter = 1;
-            return form;
+            return true;
         }
         if (value->hasInt64()) {
             form.constant = value->asInt64();
-            return form;
+            return true;
         }
-        if (plan.isInvariant(value)) {
-            form.terms.append({ value, 1 });
-            return form;
-        }
+        if (plan.isInvariant(value))
+            return form.addTerm(value, 1);
         if (!timeToLive)
-            return std::nullopt;
+            return false;
         switch (value->opcode()) {
         case Add:
         case Sub: {
-            std::optional<LinearForm> left = linearFormOf(plan, value->child(0), timeToLive - 1);
-            std::optional<LinearForm> right = linearFormOf(plan, value->child(1), timeToLive - 1);
-            if (!left || !right)
-                return std::nullopt;
-            left->add(*right, value->opcode() == Add ? 1 : -1);
-            return left;
+            LinearForm right;
+            return readLinearForm(plan, value->child(0), timeToLive - 1, form) && readLinearForm(plan, value->child(1), timeToLive - 1, right) && form.add(right, value->opcode() == Add ? 1 : -1);
         }
         case Shl: {
-            if (!value->child(1)->hasInt32())
-                return std::nullopt;
-            std::optional<LinearForm> shifted = linearFormOf(plan, value->child(0), timeToLive - 1);
-            if (!shifted)
-                return std::nullopt;
-            form.add(*shifted, static_cast<int64_t>(1ull << (value->child(1)->asInt32() & 63)));
-            return form;
+            LinearForm shifted;
+            return value->child(1)->hasInt32() && readLinearForm(plan, value->child(0), timeToLive - 1, shifted) && form.add(shifted, static_cast<int64_t>(1ull << (value->child(1)->asInt32() & 63)));
         }
         case ZExt32:
         case SExt32: {
             Signedness signedness = value->opcode() == ZExt32 ? Signedness::Unsigned : Signedness::Signed;
-            auto affine = affineFormOf(m_proc, value, plan.counter, signedness);
-            if (!affine || !affine->exactBaseRange.contains(intervalOfCounter(plan, signedness)))
-                return std::nullopt;
-            form.factorOfCounter = 1;
-            form.constant = affine->offset;
-            return form;
+            for (const Counter& counter : plan.counters()) {
+                auto affine = affineFormOf(m_proc, value, counter.phi, signedness);
+                if (!affine)
+                    continue;
+                form.counter = counter.phi;
+                form.factorOfCounter = 1;
+                form.constant = affine->offset;
+                return affine->exactBaseRange.contains(intervalOf(plan, counter, signedness));
+            }
+            return false;
         }
         default:
-            return std::nullopt;
+            return false;
         }
     }
 
     bool findAccesses(Plan& plan)
     {
+        bool stores = false;
+        plan.lanesRunBackward = true;
         for (BasicBlock* block : plan.blocks) {
             for (Value* value : *block) {
                 MemoryValue* memory = value->as<MemoryValue>();
                 if (!memory)
                     continue;
-                if ((!memory->isLoad() && !memory->isStore()) || memory->hasFence() || plan.accesses.size() == Limits::maxAccessesPerTurnOfVectorizedLoop)
+                if ((!memory->isLoad() && !memory->isStore()) || memory->hasFence() || plan.numberOfAccesses == Limits::maxAccessesPerTurnOfVectorizedLoop)
                     return false;
-                std::optional<LinearForm> address = linearFormOf(plan, memory->lastChild(), Limits::maxDepthOfAddressInVectorizedLoop);
-                if (!address) {
+                Access& access = plan.accessTable[plan.numberOfAccesses++];
+                access.memory = memory;
+                if (!readLinearForm(plan, memory->lastChild(), Limits::maxDepthOfAddressInVectorizedLoop, access.address)) {
                     dataLogLnIf(verbose, "   address: ", deepDump(memory));
                     return false;
                 }
-                LinearForm offset;
-                offset.constant = memory->offset();
-                address->add(offset, 1);
-                unsigned bytes = memory->accessByteSize();
+                access.address.constant = LinearForm::plus(access.address.constant, memory->offset());
+                int64_t bytes = memory->accessByteSize();
                 if (!plan.bytesPerLane)
                     plan.bytesPerLane = bytes;
-                // From turn to turn every access goes on to the next element.
-                if (bytes != plan.bytesPerLane || bytes > 8 || address->factorOfCounter * plan.step != static_cast<int64_t>(bytes)) {
-                    dataLogLnIf(verbose, "   stride: ", deepDump(memory), " factor ", address->factorOfCounter, " step ", plan.step);
+                // From turn to turn every access goes on to the element beside.
+                int64_t stride = access.address.counter ? LinearForm::times(access.address.factorOfCounter, plan.counterFor(access.address.counter)->step) : 0;
+                if (bytes != plan.bytesPerLane || bytes > 8 || (stride != bytes && stride != -bytes)) {
+                    dataLogLnIf(verbose, "   stride: ", deepDump(memory), " goes on by ", stride);
                     return false;
                 }
-                plan.accesses.append({ memory, WTF::move(*address) });
+                access.falls = stride < 0;
+                plan.lanesRunBackward &= access.falls;
+                stores |= memory->isStore();
             }
         }
-        return plan.accesses.containsIf([](const Access& access) {
-            return access.memory->isStore();
-        });
+        return stores;
+    }
+
+    // The address in the first turn.
+    static bool putStartInPlaceOfCounter(const Plan& plan, LinearForm& address)
+    {
+        Value* start = plan.counterFor(address.counter)->start;
+        address.counter = nullptr;
+        if (start->hasInt()) {
+            address.constant = LinearForm::plus(address.constant, LinearForm::times(address.factorOfCounter, start->asInt()));
+            return true;
+        }
+        return start->type() == Int64 && address.addTerm(start, address.factorOfCounter);
+    }
+
+    // Two counters that go towards each other by one, and the loop goes on while the lower is less than the higher. Whatever is indexed by the lower lies below whatever is indexed by the higher.
+    static bool liesBelowInEveryTurn(const Plan& plan, const Access& lower, const Access& higher)
+    {
+        const Counter* bounding = plan.boundingCounter();
+        if (!bounding || plan.includesEqual() || plan.tested().step != (isLessRelation(plan.relation) ? 1 : -1) || bounding->step != -plan.tested().step)
+            return false;
+        const Counter& low = isLessRelation(plan.relation) ? plan.tested() : *bounding;
+        const Counter& high = isLessRelation(plan.relation) ? *bounding : plan.tested();
+        if (lower.address.counter != low.phi || higher.address.counter != high.phi || lower.address.factorOfCounter != higher.address.factorOfCounter || lower.address.factorOfCounter <= 0)
+            return false;
+        LinearForm distance = higher.address;
+        distance.counter = nullptr;
+        LinearForm other = lower.address;
+        other.counter = nullptr;
+        return distance.add(other, -1) && !distance.numberOfTerms && distance.constant >= 0;
+    }
+
+    // How far the later access lies ahead of the earlier, in the direction both go.
+    static bool readDistance(const Plan& plan, const Access& later, const Access& earlier, LinearForm& distance)
+    {
+        LinearForm first = later.address;
+        LinearForm second = earlier.address;
+        if (first.counter != second.counter && (!putStartInPlaceOfCounter(plan, first) || !putStartInPlaceOfCounter(plan, second)))
+            return false;
+        int64_t sign = later.falls ? -1 : 1;
+        return distance.add(first, sign) && distance.add(second, -sign);
     }
 
     // The vector loop makes an access for all of its turns before it makes the next access for any. That changes nothing unless a later access of an earlier turn meets an earlier access of a later turn.
-    bool keepsOrderOfAccesses(Plan& plan)
+    static bool keepsOrderOfAccesses(Plan& plan)
     {
-        for (unsigned laterIndex = 0; laterIndex < plan.accesses.size(); ++laterIndex) {
-            const Access& later = plan.accesses[laterIndex];
+        for (unsigned laterIndex = 0; laterIndex < plan.numberOfAccesses; ++laterIndex) {
+            const Access& later = plan.accessTable[laterIndex];
             for (unsigned earlierIndex = 0; earlierIndex < laterIndex; ++earlierIndex) {
-                const Access& earlier = plan.accesses[earlierIndex];
+                const Access& earlier = plan.accessTable[earlierIndex];
                 if ((!later.memory->isStore() && !earlier.memory->isStore()) || !later.memory->range().overlaps(earlier.memory->range()))
                     continue;
-                LinearForm distance = later.address;
-                distance.add(earlier.address, -1);
-                RELEASE_ASSERT(!distance.factorOfCounter);
-                if (distance.terms.isEmpty()) {
+                if (later.falls != earlier.falls) {
+                    if (!liesBelowInEveryTurn(plan, later, earlier) && !liesBelowInEveryTurn(plan, earlier, later))
+                        return false;
+                    continue;
+                }
+                LinearForm distance;
+                if (!readDistance(plan, later, earlier, distance))
+                    return false;
+                RELEASE_ASSERT(!distance.counter);
+                if (!distance.numberOfTerms) {
                     if (distance.constant > 0 && distance.constant < static_cast<int64_t>(bytesPerVector))
                         return false;
                     continue;
                 }
-                bool isKnown = plan.distancesTestedAtEntry.containsIf([&](const LinearForm& other) {
+                bool isKnown = false;
+                for (unsigned index = 0; index < plan.numberOfDistancesTestedAtEntry; ++index) {
                     LinearForm difference = distance;
-                    difference.add(other, -1);
-                    return difference.terms.isEmpty() && !difference.constant;
-                });
+                    isKnown |= difference.add(plan.distancesTestedAtEntry[index], -1) && !difference.numberOfTerms && !difference.constant;
+                }
                 if (isKnown)
                     continue;
-                if (plan.distancesTestedAtEntry.size() == Limits::maxDistancesTestedInFrontOfVectorizedLoop)
+                if (plan.numberOfDistancesTestedAtEntry == Limits::maxDistancesTestedInFrontOfVectorizedLoop)
                     return false;
-                plan.distancesTestedAtEntry.append(WTF::move(distance));
+                plan.distancesTestedAtEntry[plan.numberOfDistancesTestedAtEntry++] = distance;
             }
         }
         return true;
     }
 
-    static unsigned bytesOf(Type type)
-    {
-        return sizeofType(type);
-    }
-
     bool needScalar(Plan& plan, Value* value)
     {
-        if (value == plan.counter || plan.isInvariant(value))
+        if (plan.counterFor(value) || plan.isInvariant(value))
             return true;
-        uint8_t& role = plan.roles.add(value, 0).iterator->value;
-        if (role & IsScalar)
+        Copy* copy = plan.ensureCopyOf(value);
+        if (!copy)
+            return false;
+        if (copy->isScalar)
             return true;
-        role |= IsScalar;
+        copy->isScalar = true;
         switch (value->opcode()) {
         case Identity:
         case Add:
@@ -462,19 +620,17 @@ private:
     bool needVector(Plan& plan, Value* value)
     {
         Type type = value->type();
-        if (type.isFloat()) {
-            if (bytesOf(type) != plan.bytesPerLane)
-                return false;
-        } else if (!type.isInt() || bytesOf(type) < plan.bytesPerLane)
+        if (type.isFloat() ? sizeofType(type) != plan.bytesPerLane : !type.isInt() || sizeofType(type) < plan.bytesPerLane)
             return false;
-        if (plan.isInvariant(value))
-            return true;
-        if (value == plan.counter)
+        if (plan.counterFor(value))
             return false;
-        uint8_t& role = plan.roles.add(value, 0).iterator->value;
-        if (role & IsVector)
+        Copy* copy = plan.ensureCopyOf(value);
+        if (!copy)
+            return false;
+        if (copy->isVector || plan.isInvariant(value))
             return true;
-        role |= IsVector;
+        copy->isVector = true;
+        bool isSupported = false;
         switch (value->opcode()) {
         case Load8Z:
         case Load8S:
@@ -489,24 +645,25 @@ private:
         case BitAnd:
         case BitOr:
         case BitXor:
+            isSupported = true;
             break;
         case Mul:
-            if (!type.isFloat() && plan.bytesPerLane != 2 && plan.bytesPerLane != 4)
-                return false;
+            isSupported = type.isFloat() || plan.bytesPerLane == 2 || plan.bytesPerLane == 4;
             break;
         case Div:
         case Abs:
         case Sqrt:
-            if (!type.isFloat())
-                return false;
+            isSupported = type.isFloat();
             break;
         case Trunc:
         case ZExt32:
         case SExt32:
-            if (plan.bytesPerLane > 4)
-                return false;
+            isSupported = plan.bytesPerLane <= 4;
             break;
         default:
+            break;
+        }
+        if (!isSupported) {
             dataLogLnIf(verbose, "   vector: ", deepDump(value));
             return false;
         }
@@ -534,26 +691,22 @@ private:
                     continue;
                 }
                 if (value->opcode() == Phi) {
-                    if (value != plan.counter) {
-                        dataLogLnIf(verbose, "   phi: ", deepDump(value));
+                    if (!plan.counterFor(value))
                         return false;
-                    }
                     continue;
                 }
                 if (auto* upsilon = value->as<UpsilonValue>()) {
-                    if (upsilon->phi() == plan.counter)
+                    if (plan.counterFor(upsilon->phi()))
                         continue;
                     if (plan.blockSet.contains(upsilon->phi()->owner))
                         return false;
                     Value* input = upsilon->child(0);
-                    if (!plan.testsCounterBeforeStep && !plan.isInvariant(input) && input != plan.counter && input != plan.next)
+                    if (!plan.testsCounterBeforeStep && !plan.isInvariant(input) && !plan.isCounterOrNext(input))
                         return false;
                     plan.upsilonsForPhisBehindLoop.append(upsilon);
                     continue;
                 }
-                if (value == block->last())
-                    continue;
-                if (value->effects().mustExecute()) {
+                if (value != block->last() && value->effects().mustExecute()) {
                     dataLogLnIf(verbose, "   effects: ", deepDump(value));
                     return false;
                 }
@@ -567,10 +720,23 @@ private:
     {
         Signedness signedness = plan.signedness();
         Int128 room = plan.room();
-        IntegerInterval full = fullInterval(plan.bound->type(), signedness);
+        const Counter& tested = plan.tested();
+        IntegerInterval full = fullInterval(tested.phi->type(), signedness);
+        if (const Counter* bounding = plan.boundingCounter()) {
+            // Every sum that the vector loop computes lies within so many steps of a value that the counter has in the loop itself.
+            for (const Counter* counter : { &tested, bounding }) {
+                IntegerInterval values = intervalFor(m_proc, counter->phi, signedness).join(intervalFor(m_proc, counter->start, signedness));
+                Int128 reach = (room < 0 ? -room : room) + Int128 { counter->step < 0 ? -counter->step : counter->step } * plan.lanes();
+                if (values.min - reach < full.min || values.max + reach > full.max)
+                    return false;
+            }
+            plan.startHasRoom = true;
+            return true;
+        }
         IntegerInterval bound = intervalFor(m_proc, plan.bound, signedness);
         // The counter behind the last turn is computed.
-        if (plan.includesEqual() && (plan.step > 0 ? bound.max == full.max : bound.min == full.min))
+        Int128 beyond = Int128 { tested.step } - (plan.includesEqual() ? 0 : tested.step > 0 ? 1 : -1);
+        if (bound.max + beyond > full.max || bound.min + beyond < full.min)
             return false;
         Int128 farthest = room > 0 ? full.min + room : full.max + room;
         plan.needsGuardOfFarBound = room > 0 ? bound.min < farthest : bound.max > farthest;
@@ -578,7 +744,7 @@ private:
         if (room > 0 ? bound.max < farthest : bound.min > farthest)
             return false;
         IntegerInterval farBound { std::max(bound.min - room, full.min), std::min(bound.max - room, full.max) };
-        IntegerInterval start = intervalFor(m_proc, plan.start, signedness);
+        IntegerInterval start = intervalFor(m_proc, tested.start, signedness);
         plan.startHasRoom = start.min + room >= full.min && start.max + room <= full.max;
         return evaluateComparison(plan.relation, start, farBound) != TriState::False;
     }
@@ -586,6 +752,7 @@ private:
     PhiChildren& prepareToReadCounters()
     {
         if (!m_phiChildren) {
+            m_proc.updateFrequencies();
             m_proc.resetValueOwners();
             m_phiChildren.emplace(m_proc);
         }
@@ -596,67 +763,86 @@ private:
     {
         if (!isInnermostLoop(loops, loop))
             return;
-        Plan plan;
-        plan.header = loop.header();
-        plan.preHeader = findPreHeader(loops, loop);
-        if (!plan.preHeader || !findTurn(loops, loop, plan)) {
-            dataLogLnIf(verbose, "vectorizeLoops: ", *plan.header, ": no pre-header or no single way through a turn");
+        BasicBlock* preHeader = findPreHeader(loops, loop);
+        if (!preHeader)
+            return;
+        auto plan = makeUnique<Plan>();
+        plan->header = loop.header();
+        plan->preHeader = preHeader;
+        if (!findTurn(loops, loop, *plan)) {
+            dataLogLnIf(verbose, "vectorizeLoops: ", *plan->header, ": no single way through a turn");
             return;
         }
         unsigned numberOfValues = 0;
         bool stores = false;
-        for (BasicBlock* block : plan.blocks) {
+        for (BasicBlock* block : plan->blocks) {
             numberOfValues += block->size();
             for (Value* value : *block) {
                 MemoryValue* memory = value->as<MemoryValue>();
-                stores |= memory && memory->isStore();
+                if (!memory || !memory->isStore())
+                    continue;
+                // A word of 64 bits in memory is a pointer or a value of any type. Lists of those are mostly short.
+                if (memory->child(0)->type() == Int64)
+                    return;
+                stores = true;
             }
         }
         if (!stores || numberOfValues > Limits::maxValuesPerTurnOfVectorizedLoop)
             return;
         PhiChildren& phiChildren = prepareToReadCounters();
-        const char* reason = !readTest(phiChildren, plan) ? "test" : !findAccesses(plan) ? "accesses" : !keepsOrderOfAccesses(plan) ? "order" : !findRoles(plan) ? "roles" : !planFarBound(plan) ? "far bound" : nullptr;
-        dataLogLnIf(verbose, "vectorizeLoops: ", *plan.header, ": ", reason ? reason : "planned");
-        if (reason)
+        // The loop in front takes room, which pays where the loop is run often.
+        if (plan->header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
-        m_plans.append(WTF::move(plan));
+        const char* reason = !findCounters(phiChildren, *plan) ? "counters" : !readTest(*plan) ? "test" : !findAccesses(*plan) ? "accesses" : !keepsOrderOfAccesses(*plan) ? "order" : !findRoles(*plan) ? "roles" : !planFarBound(*plan) ? "far bound" : nullptr;
+        dataLogLnIf(verbose, "vectorizeLoops: ", *plan->header, ": ", reason ? reason : "planned");
+        if (!reason)
+            m_plans.append(WTF::move(plan));
     }
 
-    // Behind a test at the bottom the loop may be left without one more turn of its own. Then nothing tells what its last turn would have computed, but for the counter.
+    bool isNeverEntered(const Plan& plan, BasicBlock* block)
+    {
+        for (BasicBlock* root : plan.blocksBehindEdgesNeverTaken) {
+            if (m_proc.dominators().dominates(root, block))
+                return true;
+        }
+        return false;
+    }
+
+    // Behind a test at the bottom the loop may be left without one more turn of its own. Then nothing tells what its last turn would have computed, but for the counters.
     void dropPlansWhoseTurnsAreReadBehindLoop()
     {
-        UncheckedKeyHashMap<BasicBlock*, unsigned> planOfBlock;
+        Vector<unsigned> planOfBlock;
         for (unsigned index = 0; index < m_plans.size(); ++index) {
-            if (m_plans[index].testsCounterBeforeStep)
+            Plan& plan = *m_plans[index];
+            if (plan.testsCounterBeforeStep)
                 continue;
-            for (BasicBlock* block : m_plans[index].blocks)
-                planOfBlock.add(block, index);
-            for (BasicBlock* block : m_plans[index].blocksNeverEntered)
-                planOfBlock.add(block, index);
+            if (planOfBlock.isEmpty())
+                planOfBlock.fill(0, m_proc.size());
+            for (BasicBlock* block : plan.blocks)
+                planOfBlock[block->index()] = index + 1;
+            for (BasicBlock* block : plan.blocksNeverEntered)
+                planOfBlock[block->index()] = index + 1;
         }
         if (planOfBlock.isEmpty())
             return;
-        BitVector dropped;
         for (BasicBlock* block : m_proc) {
-            auto own = planOfBlock.find(block);
             for (Value* value : *block) {
                 for (Value* child : value->children()) {
-                    auto found = planOfBlock.find(child->owner);
-                    if (found == planOfBlock.end() || (own != planOfBlock.end() && own->value == found->value) || child->isConstant())
+                    unsigned found = planOfBlock[child->owner->index()];
+                    if (!found || found == planOfBlock[block->index()] || !m_plans[found - 1] || child->isConstant())
                         continue;
-                    const Plan& plan = m_plans[found->value];
-                    if (child != plan.counter && child != plan.next)
-                        dropped.set(found->value);
+                    const Plan& plan = *m_plans[found - 1];
+                    if (plan.isCounterOrNext(child) || isNeverEntered(plan, block))
+                        continue;
+                    dataLogLnIf(verbose, "vectorizeLoops: ", *plan.header, ": read behind the loop: ", deepDump(child), " by ", deepDump(value), " in ", *block);
+                    m_plans[found - 1] = nullptr;
                 }
             }
         }
-        for (unsigned index = m_plans.size(); index--;) {
-            if (dropped.get(index))
-                m_plans.removeAt(index);
-        }
+        m_plans.removeAll(nullptr);
     }
 
-    SIMDLane laneFor(const Plan& plan, Type type)
+    static SIMDLane laneFor(const Plan& plan, Type type)
     {
         if (type == Float)
             return SIMDLane::f32x4;
@@ -669,158 +855,211 @@ private:
             return SIMDLane::i16x8;
         case 4:
             return SIMDLane::i32x4;
-        case 8:
+        default:
             return SIMDLane::i64x2;
         }
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
-    static Opcode vectorOpcodeFor(Opcode opcode)
+    NEVER_INLINE Value* append(BasicBlock* block, Opcode opcode, Origin origin, Value* first = nullptr, Value* second = nullptr)
     {
-        switch (opcode) {
-        case Add:
-            return VectorAdd;
-        case Sub:
-            return VectorSub;
-        case Mul:
-            return VectorMul;
-        case Div:
-            return VectorDiv;
-        case BitAnd:
-            return VectorAnd;
-        case BitOr:
-            return VectorOr;
-        case BitXor:
-            return VectorXor;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+        if (second)
+            return block->appendNew<Value>(m_proc, opcode, origin, first, second);
+        if (first)
+            return block->appendNew<Value>(m_proc, opcode, origin, first);
+        return block->appendNew<Value>(m_proc, opcode, origin);
     }
 
-    struct Copies {
-        BasicBlock* entered { nullptr };
-        BasicBlock* turn { nullptr };
-        Value* counter { nullptr };
-        UncheckedKeyHashMap<Value*, Value*> scalars;
-        UncheckedKeyHashMap<Value*, Value*> vectors;
-    };
-
-    Value* scalarFor(const Plan& plan, Copies& copies, Value* value)
+    NEVER_INLINE Value* appendInteger(BasicBlock* block, Origin origin, Type type, int64_t value)
     {
-        if (value == plan.counter)
-            return copies.counter;
-        if (value->isConstant()) {
-            Value* copy = m_proc.clone(value);
-            copies.turn->append(copy);
-            return copy;
-        }
-        if (plan.isInvariant(value))
-            return value;
-        Value* copy = copies.scalars.get(value);
-        RELEASE_ASSERT(copy);
+        return block->appendIntConstant(m_proc, origin, type, value);
+    }
+
+    NEVER_INLINE Value* appendVector(BasicBlock* block, Opcode opcode, Origin origin, SIMDLane lane, Value* first, Value* second = nullptr, uint8_t immediate = 0)
+    {
+        if (second)
+            return block->appendNew<SIMDValue>(m_proc, origin, opcode, V128, lane, SIMDSignMode::None, immediate, first, second);
+        return block->appendNew<SIMDValue>(m_proc, origin, opcode, V128, lane, SIMDSignMode::None, immediate, first);
+    }
+
+    NEVER_INLINE Value* appendCopy(BasicBlock* block, Value* value)
+    {
+        Value* copy = m_proc.clone(value);
+        block->append(copy);
         return copy;
     }
 
-    Value* vectorFor(const Plan& plan, Copies& copies, Value* value)
+    NEVER_INLINE void appendSet(BasicBlock* block, Origin origin, Variable* variable, Value* value)
     {
-        if (Value* vector = copies.vectors.get(value))
-            return vector;
+        block->appendNew<VariableValue>(m_proc, Set, origin, variable, value);
+    }
+
+    NEVER_INLINE void appendUpsilon(BasicBlock* block, Origin origin, Value* value, Value* phi)
+    {
+        block->appendNew<UpsilonValue>(m_proc, origin, value, phi);
+    }
+
+    NEVER_INLINE void appendJump(BasicBlock* block, Origin origin, BasicBlock* target)
+    {
+        append(block, Jump, origin);
+        block->setSuccessors(FrequentedBlock(target));
+    }
+
+    NEVER_INLINE void appendBranch(BasicBlock* block, Origin origin, Value* condition, FrequentedBlock taken, FrequentedBlock notTaken)
+    {
+        append(block, Branch, origin, condition);
+        block->setSuccessors(taken, notTaken);
+    }
+
+    Value* scalarFor(Plan& plan, Value* value)
+    {
+        if (const Counter* counter = plan.counterFor(value))
+            return counter->phiOfVectorLoop;
+        if (value->isConstant())
+            return appendCopy(plan.turn, value);
+        if (plan.isInvariant(value))
+            return value;
+        return plan.copyOf(value)->scalar;
+    }
+
+    Value* vectorFor(Plan& plan, Value* value)
+    {
+        Copy* copy = plan.copyOf(value);
+        if (copy->vector)
+            return copy->vector;
         RELEASE_ASSERT(plan.isInvariant(value));
-        Value* lane = value;
-        if (value->isConstant()) {
-            lane = m_proc.clone(value);
-            copies.entered->append(lane);
-        }
+        Value* lane = value->isConstant() ? appendCopy(plan.entered, value) : value;
         if (lane->type() == Int64 && plan.bytesPerLane <= 4)
-            lane = copies.entered->appendNew<Value>(m_proc, Trunc, value->origin(), lane);
-        Value* vector = copies.entered->appendNew<SIMDValue>(m_proc, value->origin(), VectorSplat, V128, laneFor(plan, value->type()), SIMDSignMode::None, lane);
-        copies.vectors.add(value, vector);
-        return vector;
+            lane = append(plan.entered, Trunc, value->origin(), lane);
+        copy->vector = appendVector(plan.entered, VectorSplat, value->origin(), laneFor(plan, value->type()), lane);
+        return copy->vector;
     }
 
     // Every lane holds the same bits. They are laid out in front of the loop.
-    Value* appendLanesOf(const Plan& plan, Copies& copies, Origin origin, uint64_t bits)
+    Value* appendLanesOf(Plan& plan, Origin origin, uint64_t bits)
     {
-        BasicBlock* entered = copies.entered;
-        Value* lane = plan.bytesPerLane == 8 ? entered->appendIntConstant(m_proc, origin, Int64, static_cast<int64_t>(bits)) : entered->appendIntConstant(m_proc, origin, Int32, static_cast<int32_t>(bits));
-        return entered->appendNew<SIMDValue>(m_proc, origin, VectorSplat, V128, laneFor(plan, lane->type()), SIMDSignMode::None, lane);
+        Type type = plan.bytesPerLane == 8 ? Int64 : Int32;
+        return appendVector(plan.entered, VectorSplat, origin, laneFor(plan, type), appendInteger(plan.entered, origin, type, type == Int64 ? static_cast<int64_t>(bits) : static_cast<int32_t>(bits)));
     }
 
-    Value* appendUnaryOperation(const Plan& plan, Copies& copies, Value* value)
+    // An access whose address goes the other way than the lanes has its first turn in the last lane.
+    Value* appendInOppositeOrder(Plan& plan, Origin origin, Value* vector)
     {
-        Value* operand = vectorFor(plan, copies, value->child(0));
+        if (!plan.lanesInOppositeOrder) {
+            uint64_t halves[2] = { 0, 0 };
+            for (unsigned byte = 0; byte < bytesPerVector; ++byte) {
+                uint64_t source = (plan.lanes() - 1 - byte / plan.bytesPerLane) * plan.bytesPerLane + byte % plan.bytesPerLane;
+                halves[byte / 8] |= source << (byte % 8 * 8);
+            }
+            Value* low = appendVector(plan.entered, VectorSplat, origin, SIMDLane::i64x2, appendInteger(plan.entered, origin, Int64, static_cast<int64_t>(halves[0])));
+            plan.lanesInOppositeOrder = appendVector(plan.entered, VectorReplaceLane, origin, SIMDLane::i64x2, low, appendInteger(plan.entered, origin, Int64, static_cast<int64_t>(halves[1])), 1);
+        }
+        return appendVector(plan.turn, VectorSwizzle, origin, SIMDLane::i8x16, vector, plan.lanesInOppositeOrder);
+    }
+
+    Value* appendOperation(Plan& plan, Value* value)
+    {
         Origin origin = value->origin();
         SIMDLane lane = laneFor(plan, value->type());
+        bool isNumber = value->type().isFloat();
         uint64_t signBit = 1ull << (plan.bytesPerLane * 8 - 1);
-        auto append = [&](Opcode opcode, SIMDLane lane, auto... operands) {
-            return copies.turn->appendNew<SIMDValue>(m_proc, origin, opcode, V128, lane, SIMDSignMode::None, operands...);
-        };
+        Value* first = vectorFor(plan, value->child(0));
+        Value* second = value->numChildren() > 1 ? vectorFor(plan, value->child(1)) : nullptr;
+        Opcode opcode = Oops;
         switch (value->opcode()) {
-        case Neg:
-            if (isARM64())
-                return append(VectorNeg, lane, operand);
-            if (value->type().isFloat())
-                return append(VectorXor, SIMDLane::v128, operand, appendLanesOf(plan, copies, origin, signBit));
-            return append(VectorSub, lane, appendLanesOf(plan, copies, origin, 0), operand);
-        case Abs:
-            if (isARM64())
-                return append(VectorAbs, lane, operand);
-            return append(VectorAnd, SIMDLane::v128, operand, appendLanesOf(plan, copies, origin, signBit - 1));
+        case Add:
+            opcode = VectorAdd;
+            break;
+        case Sub:
+            opcode = VectorSub;
+            break;
+        case Mul:
+            opcode = VectorMul;
+            break;
+        case Div:
+            opcode = VectorDiv;
+            break;
         case Sqrt:
-            return append(VectorSqrt, lane, operand);
+            opcode = VectorSqrt;
+            break;
+        case BitAnd:
+            opcode = VectorAnd;
+            break;
+        case BitOr:
+            opcode = VectorOr;
+            break;
+        case BitXor:
+            opcode = VectorXor;
+            break;
+        case Neg:
+            opcode = VectorNeg;
+            if (isARM64())
+                break;
+            opcode = isNumber ? VectorXor : VectorSub;
+            second = isNumber ? appendLanesOf(plan, origin, signBit) : first;
+            if (!isNumber)
+                first = appendLanesOf(plan, origin, 0);
+            break;
+        case Abs:
+            opcode = VectorAbs;
+            if (isARM64())
+                break;
+            opcode = VectorAnd;
+            second = appendLanesOf(plan, origin, signBit - 1);
+            break;
         default:
-            return operand;
+            return first;
         }
+        if (opcode == VectorAnd || opcode == VectorOr || opcode == VectorXor)
+            lane = SIMDLane::v128;
+        return appendVector(plan.turn, opcode, origin, lane, first, second);
     }
 
-    void appendTurn(const Plan& plan, Copies& copies)
+    void appendTurn(Plan& plan)
     {
-        BasicBlock* turn = copies.turn;
+        BasicBlock* turn = plan.turn;
+        unsigned indexOfAccess = 0;
         for (BasicBlock* block : plan.blocks) {
             for (Value* value : *block) {
-                uint8_t role = plan.roles.get(value);
-                if (role & IsScalar) {
-                    Value* copy = m_proc.clone(value);
-                    for (Value*& child : copy->children())
-                        child = scalarFor(plan, copies, child);
-                    turn->append(copy);
-                    copies.scalars.add(value, copy);
-                }
-                MemoryValue* memory = value->as<MemoryValue>();
-                if (role & IsVector) {
-                    Value* vector = nullptr;
-                    if (memory)
-                        vector = turn->appendNew<MemoryValue>(m_proc, Load, V128, value->origin(), scalarFor(plan, copies, memory->lastChild()), memory->offset(), memory->range());
-                    else if (value->numChildren() == 1)
-                        vector = appendUnaryOperation(plan, copies, value);
-                    else {
-                        Value* left = vectorFor(plan, copies, value->child(0));
-                        Value* right = vectorFor(plan, copies, value->child(1));
-                        Opcode opcode = vectorOpcodeFor(value->opcode());
-                        bool namesNoLane = opcode == VectorAnd || opcode == VectorOr || opcode == VectorXor;
-                        vector = turn->appendNew<SIMDValue>(m_proc, value->origin(), opcode, V128, namesNoLane ? SIMDLane::v128 : laneFor(plan, value->type()), SIMDSignMode::None, left, right);
-                    }
-                    copies.vectors.add(value, vector);
-                }
-                if (memory && memory->isStore()) {
-                    Value* stored = vectorFor(plan, copies, memory->child(0));
-                    turn->appendNew<MemoryValue>(m_proc, Store, value->origin(), stored, scalarFor(plan, copies, memory->lastChild()), memory->offset(), memory->range());
+                Copy* copy = plan.copyOf(value);
+                if (copy && copy->isScalar) {
+                    copy->scalar = m_proc.clone(value);
+                    for (Value*& child : copy->scalar->children())
+                        child = scalarFor(plan, child);
+                    turn->append(copy->scalar);
                 }
                 if (onlyKeepsValuesAlive(value))
-                    turn->append(m_proc.clone(value));
+                    appendCopy(turn, value);
+                MemoryValue* memory = value->as<MemoryValue>();
+                if (!memory) {
+                    if (copy && copy->isVector)
+                        copy->vector = appendOperation(plan, value);
+                    continue;
+                }
+                // The address is that of the first turn. Where addresses fall, the last turn has the lowest.
+                bool falls = plan.accessTable[indexOfAccess++].falls;
+                int32_t offset = memory->offset() - (falls ? static_cast<int32_t>(bytesPerVector - plan.bytesPerLane) : 0);
+                bool isInOppositeOrder = falls != plan.lanesRunBackward;
+                if (memory->isStore()) {
+                    Value* stored = vectorFor(plan, memory->child(0));
+                    if (isInOppositeOrder && !plan.isInvariant(memory->child(0)))
+                        stored = appendInOppositeOrder(plan, value->origin(), stored);
+                    turn->appendNew<MemoryValue>(m_proc, Store, value->origin(), stored, scalarFor(plan, memory->lastChild()), offset, memory->range());
+                } else if (copy && copy->isVector) {
+                    copy->vector = turn->appendNew<MemoryValue>(m_proc, Load, V128, value->origin(), scalarFor(plan, memory->lastChild()), offset, memory->range());
+                    if (isInOppositeOrder)
+                        copy->vector = appendInOppositeOrder(plan, value->origin(), copy->vector);
+                }
             }
         }
     }
 
     Value* appendSum(BasicBlock* block, Origin origin, const LinearForm& form, int64_t addend)
     {
-        Value* sum = block->appendIntConstant(m_proc, origin, Int64, static_cast<int64_t>(static_cast<uint64_t>(form.constant) + static_cast<uint64_t>(addend)));
-        for (const LinearForm::Term& term : form.terms) {
-            if (term.factor == 1 || term.factor == -1) {
-                sum = block->appendNew<Value>(m_proc, term.factor == 1 ? Add : Sub, origin, sum, term.value);
-                continue;
-            }
-            sum = block->appendNew<Value>(m_proc, Add, origin, sum, block->appendNew<Value>(m_proc, Mul, origin, term.value, block->appendIntConstant(m_proc, origin, Int64, term.factor)));
+        Value* sum = appendInteger(block, origin, Int64, LinearForm::plus(form.constant, addend));
+        for (unsigned index = 0; index < form.numberOfTerms; ++index) {
+            const LinearForm::Term& term = form.terms[index];
+            Value* product = term.factor == 1 || term.factor == -1 ? term.value : append(block, Mul, origin, term.value, appendInteger(block, origin, Int64, term.factor));
+            sum = append(block, term.factor == -1 ? Sub : Add, origin, sum, product);
         }
         return sum;
     }
@@ -829,73 +1068,71 @@ private:
     {
         Origin origin = plan.test->last()->origin();
         m_proc.addRemark({ RemarkKind::LoopVectorized, GaveUpReason::None, origin, std::nullopt });
-        Type type = plan.bound->type();
-        BasicBlock* preHeader = plan.preHeader;
-        Copies copies;
-        copies.entered = m_proc.addBlock(preHeader->frequency());
-        copies.turn = m_proc.addBlock(plan.header->frequency());
-        plan.again = m_proc.addBlock(preHeader->frequency());
-        plan.inFrontOfLoop = m_proc.addBlock(preHeader->frequency());
-        plan.inFrontOfLoop->appendNew<Value>(m_proc, Jump, origin);
-        plan.inFrontOfLoop->setSuccessors(FrequentedBlock(plan.header));
-        BasicBlock* entered = copies.entered;
-        BasicBlock* turn = copies.turn;
+        Type type = plan.tested().phi->type();
+        double frequency = plan.preHeader->frequency();
+        BasicBlock* first = m_proc.addBlock(frequency);
+        BasicBlock* entered = plan.entered = m_proc.addBlock(frequency);
+        BasicBlock* turn = plan.turn = m_proc.addBlock(plan.header->frequency());
+        plan.again = m_proc.addBlock(frequency);
+        plan.inFrontOfLoop = m_proc.addBlock(frequency);
+        appendJump(plan.inFrontOfLoop, origin, plan.header);
+        plan.preHeader->setSuccessors(FrequentedBlock(first));
 
-        auto append = [&](Value* value) {
-            preHeader->appendNonTerminal(value);
-            return value;
-        };
-        auto constant = [&](int64_t value) {
-            return append(m_proc.addIntConstant(origin, type, value));
-        };
-        Value* bound = plan.bound->hasInt() ? constant(plan.bound->asInt()) : plan.bound;
-        Value* start = plan.start->hasInt() ? constant(plan.start->asInt()) : plan.start;
+        const Counter* bounding = plan.boundingCounter();
+        Value* starts[Limits::maxCountersOfVectorizedLoop];
+        for (unsigned index = 0; index < plan.numberOfCounters; ++index) {
+            Value* start = plan.counterTable[index].start;
+            starts[index] = start->isConstant() ? appendCopy(first, start) : start;
+        }
+        Value* bound = bounding ? starts[plan.indexOfBoundingCounter] : plan.bound->isConstant() ? appendCopy(first, plan.bound) : plan.bound;
         int64_t room = plan.room();
         Value* enters = nullptr;
         if (plan.startHasRoom)
-            enters = append(m_proc.add<Value>(plan.relation, origin, append(m_proc.add<Value>(Add, origin, start, constant(room))), bound));
+            enters = append(first, plan.relation, origin, append(first, Add, origin, starts[0], appendInteger(first, origin, type, room)), bound);
         else {
-            enters = append(m_proc.add<Value>(plan.relation, origin, start, append(m_proc.add<Value>(Sub, origin, bound, constant(room)))));
+            enters = append(first, plan.relation, origin, starts[0], append(first, Sub, origin, bound, appendInteger(first, origin, type, room)));
             if (plan.needsGuardOfFarBound) {
-                Opcode hasRoom = plan.step > 0 ? (isUnsignedRelation(plan.relation) ? AboveEqual : GreaterEqual) : (isUnsignedRelation(plan.relation) ? BelowEqual : LessEqual);
-                enters = append(m_proc.add<Value>(BitAnd, origin, enters, append(m_proc.add<Value>(hasRoom, origin, bound, constant(plan.farthestBoundWithRoom)))));
+                Opcode hasRoom = room > 0 ? (isUnsignedRelation(plan.relation) ? AboveEqual : GreaterEqual) : (isUnsignedRelation(plan.relation) ? BelowEqual : LessEqual);
+                enters = append(first, BitAnd, origin, enters, append(first, hasRoom, origin, bound, appendInteger(first, origin, type, plan.farthestBoundWithRoom)));
             }
         }
         BasicBlock* behindFirstTest = entered;
-        if (!plan.distancesTestedAtEntry.isEmpty()) {
-            behindFirstTest = m_proc.addBlock(preHeader->frequency());
+        if (plan.numberOfDistancesTestedAtEntry) {
+            behindFirstTest = m_proc.addBlock(frequency);
             Value* liesApart = nullptr;
-            for (const LinearForm& distance : plan.distancesTestedAtEntry) {
-                Value* isFar = behindFirstTest->appendNew<Value>(m_proc, AboveEqual, origin, appendSum(behindFirstTest, origin, distance, -1), behindFirstTest->appendIntConstant(m_proc, origin, Int64, bytesPerVector - 1));
-                liesApart = liesApart ? behindFirstTest->appendNew<Value>(m_proc, BitAnd, origin, liesApart, isFar) : isFar;
+            for (unsigned index = 0; index < plan.numberOfDistancesTestedAtEntry; ++index) {
+                Value* isFar = append(behindFirstTest, AboveEqual, origin, appendSum(behindFirstTest, origin, plan.distancesTestedAtEntry[index], -1), appendInteger(behindFirstTest, origin, Int64, bytesPerVector - 1));
+                liesApart = liesApart ? append(behindFirstTest, BitAnd, origin, liesApart, isFar) : isFar;
             }
-            behindFirstTest->appendNew<Value>(m_proc, Branch, origin, liesApart);
-            behindFirstTest->setSuccessors(FrequentedBlock(entered), FrequentedBlock(plan.inFrontOfLoop, FrequencyClass::Rare));
+            appendBranch(behindFirstTest, origin, liesApart, FrequentedBlock(entered), FrequentedBlock(plan.inFrontOfLoop, FrequencyClass::Rare));
         }
-        preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
-        preHeader->setSuccessors(FrequentedBlock(behindFirstTest), FrequentedBlock(plan.inFrontOfLoop));
+        appendBranch(first, origin, enters, FrequentedBlock(behindFirstTest), FrequentedBlock(plan.inFrontOfLoop));
 
-        copies.counter = turn->appendNew<Value>(m_proc, Phi, type, plan.counter->origin());
-        m_proc.knownProperties().copy(plan.counter, copies.counter);
-        appendTurn(plan, copies);
-        Value* next = turn->appendNew<Value>(m_proc, Add, origin, copies.counter, turn->appendIntConstant(m_proc, origin, type, plan.step * static_cast<int64_t>(plan.lanes())));
-        plan.nextBehindVectorLoop = next;
-        turn->appendNew<UpsilonValue>(m_proc, origin, next, copies.counter);
-
-        Value* farBound = entered->appendNew<Value>(m_proc, Sub, origin, bound, entered->appendIntConstant(m_proc, origin, type, room));
-        entered->appendNew<UpsilonValue>(m_proc, origin, start, copies.counter);
-        entered->appendNew<Value>(m_proc, Jump, origin);
-        entered->setSuccessors(FrequentedBlock(turn));
+        for (Counter& counter : plan.counters()) {
+            counter.phiOfVectorLoop = turn->appendNew<Value>(m_proc, Phi, counter.phi->type(), counter.phi->origin());
+            m_proc.knownProperties().copy(counter.phi, counter.phiOfVectorLoop);
+        }
+        appendTurn(plan);
+        for (unsigned index = 0; index < plan.numberOfCounters; ++index) {
+            Counter& counter = plan.counterTable[index];
+            counter.nextOfVectorLoop = append(turn, Add, origin, counter.phiOfVectorLoop, appendInteger(turn, origin, counter.phi->type(), counter.step * static_cast<int64_t>(plan.lanes())));
+            appendUpsilon(turn, origin, counter.nextOfVectorLoop, counter.phiOfVectorLoop);
+            appendUpsilon(entered, origin, starts[index], counter.phiOfVectorLoop);
+        }
+        Value* next = plan.tested().nextOfVectorLoop;
+        Value* roomInLoop = appendInteger(bounding ? turn : entered, origin, type, room);
+        Value* goesOn = bounding
+            ? append(turn, plan.relation, origin, append(turn, Add, origin, next, roomInLoop), bounding->nextOfVectorLoop)
+            : append(turn, plan.relation, origin, next, append(entered, Sub, origin, bound, roomInLoop));
+        appendJump(entered, origin, turn);
 
         BasicBlock* rest = plan.again;
         if (!plan.testsCounterBeforeStep) {
-            rest = m_proc.addBlock(preHeader->frequency());
-            plan.left = m_proc.addBlock(preHeader->frequency());
-            rest->appendNew<Value>(m_proc, Branch, origin, rest->appendNew<Value>(m_proc, plan.relation, origin, next, bound));
-            rest->setSuccessors(FrequentedBlock(plan.again), FrequentedBlock(plan.left));
+            rest = m_proc.addBlock(frequency);
+            plan.left = m_proc.addBlock(frequency);
+            appendBranch(rest, origin, append(rest, plan.relation, origin, next, bounding ? bounding->nextOfVectorLoop : bound), FrequentedBlock(plan.again), FrequentedBlock(plan.left));
         }
-        turn->appendNew<Value>(m_proc, Branch, origin, turn->appendNew<Value>(m_proc, plan.relation, origin, next, farBound));
-        turn->setSuccessors(FrequentedBlock(turn, plan.test->successor(plan.stayingSuccessorIndex).frequency()), FrequentedBlock(rest, plan.test->successor(1 - plan.stayingSuccessorIndex).frequency()));
+        appendBranch(turn, origin, goesOn, FrequentedBlock(turn, plan.test->successor(plan.stayingSuccessorIndex).frequency()), FrequentedBlock(rest, plan.test->successor(1 - plan.stayingSuccessorIndex).frequency()));
     }
 
     static Variable* variableOf(Value* value)
@@ -908,42 +1145,37 @@ private:
         return set->as<VariableValue>()->variable();
     }
 
-    void leaveVectorLoop(const Plan& plan)
+    void leaveVectorLoop(Plan& plan)
     {
         Origin origin = plan.test->last()->origin();
-        Value* next = plan.nextBehindVectorLoop;
-        RELEASE_ASSERT(plan.counter->opcode() == Identity && plan.counter->child(0)->opcode() == Get);
-        plan.again->appendNew<VariableValue>(m_proc, Set, origin, plan.counter->child(0)->as<VariableValue>()->variable(), next);
-        plan.again->appendNew<Value>(m_proc, Jump, origin);
-        plan.again->setSuccessors(FrequentedBlock(plan.inFrontOfLoop));
-        if (!plan.left)
-            return;
-
         BasicBlock* left = plan.left;
-        Value* last = left->appendNew<Value>(m_proc, Sub, origin, next, left->appendIntConstant(m_proc, origin, next->type(), plan.step));
-        left->appendNew<VariableValue>(m_proc, Set, origin, variableOf(plan.counter), last);
-        left->appendNew<VariableValue>(m_proc, Set, origin, variableOf(plan.next), next);
-        for (UpsilonValue* upsilon : plan.upsilonsForPhisBehindLoop) {
-            Value* copy = m_proc.clone(upsilon);
-            Value* input = upsilon->child(0);
-            if (input->isConstant()) {
-                input = m_proc.clone(input);
-                left->append(input);
-            } else if (input->opcode() == Get) {
-                input = m_proc.clone(input);
-                left->append(input);
-            }
-            copy->child(0) = input;
-            left->append(copy);
+        for (const Counter& counter : plan.counters()) {
+            Value* next = counter.nextOfVectorLoop;
+            RELEASE_ASSERT(counter.phi->opcode() == Identity && counter.phi->child(0)->opcode() == Get);
+            appendSet(plan.again, origin, counter.phi->child(0)->as<VariableValue>()->variable(), next);
+            if (!left)
+                continue;
+            appendSet(left, origin, variableOf(counter.phi), append(left, Sub, origin, next, appendInteger(left, origin, next->type(), counter.step)));
+            appendSet(left, origin, variableOf(counter.next), next);
         }
-        left->appendNew<Value>(m_proc, Jump, origin);
-        left->setSuccessors(FrequentedBlock(plan.test->successorBlock(1 - plan.stayingSuccessorIndex)));
+        appendJump(plan.again, origin, plan.inFrontOfLoop);
+        if (!left)
+            return;
+        for (Value* upsilon : plan.upsilonsForPhisBehindLoop) {
+            Value* input = upsilon->child(0);
+            if (input->isConstant() || input->opcode() == Get)
+                input = appendCopy(left, input);
+            appendCopy(left, upsilon)->child(0) = input;
+        }
+        appendJump(left, origin, plan.test->successorBlock(1 - plan.stayingSuccessorIndex));
     }
 
     Procedure& m_proc;
     std::optional<PhiChildren> m_phiChildren;
-    Vector<Plan> m_plans;
+    Vector<std::unique_ptr<Plan>> m_plans;
 };
+
+#pragma clang attribute pop
 
 } // anonymous namespace
 

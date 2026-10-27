@@ -1633,6 +1633,29 @@ bool isKeyOperand(const Program& program, const Function& function, const Use& u
     return builtin && familyOf(*builtin) == InlineBuiltinFamily::HashTableBuiltin;
 }
 
+bool isOnlyKeyOfProperties(const Function& function, const UseLists& useLists, ValueID string)
+{
+    BitVector visitedValues;
+    visitedValues.set(string.index());
+    Vector<ValueID, 8> worklist { string };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : useLists.usesOf(worklist.takeLast())) {
+            ValueID sameString;
+            if (use.kind == Use::Kind::EdgeArgument)
+                sameString = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+            else if (use.kind == Use::Kind::Operand && OperandPosition::property(function.at(use.user).opcode) == use.operandIndex)
+                continue;
+            else if (use.kind == Use::Kind::Operand && isCast(function.at(use.user).opcode))
+                sameString = use.user;
+            else if (function.at(use.block).frequency.predicted() == BlockFrequency::Normal)
+                return false;
+            if (sameString && !visitedValues.set(sameString.index()))
+                worklist.append(sameString);
+        }
+    }
+    return true;
+}
+
 static bool markLikelyKeys(FunctionPassContext& context)
 {
     Function& function = context.function;

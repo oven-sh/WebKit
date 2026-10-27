@@ -125,7 +125,7 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#[[done]]:
 # CHECK: Return(Terminal)
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[environment]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutEnvironmentField)
+# CHECK: Patchpoint(b@[[environment]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutEnvironmentField)
 # CHECK-LABEL: end of function
 # X64: instructions: 4, patchpoints: 0
 # ARM64: instructions: 5, patchpoints: 0

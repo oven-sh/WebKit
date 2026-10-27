@@ -293,8 +293,10 @@ static JSValue readSparseElement(JSObject* object, uint32_t index)
 static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization atomization)
 {
     bool wasAtom = atomOfKey(key);
+    StringImpl* textBefore = key->isString() ? asString(key)->tryGetValueImpl() : nullptr;
     KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, atomization);
-    if (!wasAtom && name.kind == KeyNameKind::Name)
+    // A text that became the name itself is the first of its characters. The stubs look for the name of a text that comes again.
+    if (!wasAtom && name.kind == KeyNameKind::Name && name.uid != textBefore)
         instance->state->propertyCaches->tables().rememberNameOfText(name.uid);
     return name;
 }
@@ -390,7 +392,8 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
     // Every field has a name that the program spells.
-    const FieldData* field = vm.aotState().identifiers->numberOf(uid) ? object->fieldNamed(object->state(), uid) : nullptr;
+    bool isSpelledByProgram = vm.aotState().identifiers->numberOf(uid).has_value();
+    const FieldData* field = isSpelledByProgram ? object->fieldNamed(object->state(), uid) : nullptr;
     if (!field) {
         using Flag = Object::ExtraPropertyStoreFlag;
         JSObject* extra = object->extraProperties();
@@ -404,7 +407,13 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
         }
         if (canHaveSlot && !caches.findByKey(structure, uid, SlotAccess::Store))
             return LeafAnswer::TakeSlowPath;
-        auto stored = object->tryStoreExtraProperty(vm, uid, value, isKnownToBeAbsent ? OptionSet<Flag> { Flag::IsKnownNotToBeField, Flag::IsKnownToBeAbsent } : OptionSet<Flag> { Flag::IsKnownNotToBeField });
+        OptionSet<Flag> flags { Flag::IsKnownNotToBeField };
+        if (isKnownToBeAbsent)
+            flags.add(Flag::IsKnownToBeAbsent);
+        // The caller has told indexes and "__proto__" from names, and takes no private name.
+        if (!isSpelledByProgram)
+            flags.add(Flag::IsMadeAtRunTime);
+        auto stored = object->tryStoreExtraProperty(vm, uid, value, flags);
         return stored.kind == Object::ExtraPropertyStore::NotHandled ? LeafAnswer::TakeSlowPath : LeafAnswer::Yes;
     }
     if (field->flags & (fieldIsReadOnly | fieldIsAccessor) || field->slot.representation() == SlotRepresentation::DeferredClosure || value.isObject() || object->hasFlagsInOrderWord() || !object->readInline(*field) || !object->tryStore(vm, *field, value))

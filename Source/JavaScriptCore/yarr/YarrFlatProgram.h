@@ -241,9 +241,18 @@ public:
     uint8_t stepsPerCharacterBeforeStoppingOnFullMachine { 0 };
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
+    // All rows: first those of memoRowsByPosition, then those of memoRowsOfRestsOfRuns, then those of memoRowsBesideReferences.
     unsigned memoRows { 0 };
-    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too. The table has an entry for each set of their bounds.
-    // The first of each group's two places in the output.
+    // From these the search depends on the position alone.
+    unsigned memoRowsByPosition { 0 };
+    // Behind a run without an upper bound the search goes on from one place of a stretch of members after another. Once it has failed from a place and from every place of the stretch behind it,
+    // a row beside the run's own says so at that place, and holds the turns of all those searches: a run that comes to stand there has failed. So a stretch in which a run begins at many places
+    // is walked once, not once from each of them. These rows are the first to go where the subject is too long for the table.
+    unsigned memoRowsOfRestsOfRuns { 0 };
+    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too, as far as a reference can read that before it is set again:
+    // AroundMemoRow::boundsStillRead. For a row that has such bounds the table has an entry for each set of them.
+    unsigned memoRowsBesideReferences { 0 };
+    // The groups that have such bounds: the first of each group's two places in the output.
     Vector<uint32_t> referencedGroups;
     static constexpr unsigned maxReferencedGroups = 8;
     unsigned memoSlotSizeBesideReferences() const { return 2 + 2 * referencedGroups.size(); }
@@ -264,10 +273,15 @@ public:
     Vector<LoopThatCountsTurns> loopsThatCountTurns;
     // Inside a lookahead a search ends in a third way: the lookahead is through, and what is left of the search is dropped. So a place there is entered in the table when the search from it
     // has failed, not when it begins.
+    // Every row of an op has the same.
     struct AroundMemoRow {
-        uint16_t turnThatMayTakeNothing;
-        uint16_t loopThatCountsTurns;
-        bool isInsideLookahead;
+        uint16_t turnThatMayTakeNothing { 0 };
+        uint16_t loopThatCountsTurns { 0 };
+        bool isInsideLookahead { false };
+        // Bit 2 i: the first bound of referencedGroups[i]. Bit 2 i + 1: its second.
+        uint16_t boundsStillRead { 0 };
+        // How far behind this row the row of memoRowsOfRestsOfRuns is that belongs to it. 0: it has none.
+        uint16_t rowsToRestOfRun { 0 };
     };
     Vector<AroundMemoRow> aroundMemoRow;
     unsigned recordFailureOp { 0 };

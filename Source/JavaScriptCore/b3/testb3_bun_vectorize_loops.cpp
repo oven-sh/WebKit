@@ -32,7 +32,6 @@ const ElementKind elementKinds[] = {
     { Load16Z, Store16, Int32, 2 },
     { Load16S, Store16, Int32, 2 },
     { Load, Store, Int32, 4 },
-    { Load, Store, Int64, 8 },
     { Load, Store, Float, 4 },
     { Load, Store, Double, 8 },
 };
@@ -198,7 +197,7 @@ static void testVectorizeLoopsFillsElements()
                 filler = loop.proc.add<Value>(opcode, Origin(), filler);
                 loop.loop.root->appendNonTerminal(filler);
             };
-            if (kind.type == Int32 || kind.type == Float)
+            if (kind.bytes <= 4)
                 convert(Trunc);
             if (kind.type.isFloat())
                 convert(BitwiseCast);
@@ -279,7 +278,6 @@ static void testVectorizeLoopsComputesWithIntegersOfEveryWidth()
             checkArithmetic<uint16_t>(features, elementKinds[2], opcode);
             checkArithmetic<uint16_t>(features, elementKinds[3], opcode);
             checkArithmetic<uint32_t>(features, elementKinds[4], opcode);
-            checkArithmetic<uint64_t>(features, elementKinds[5], opcode);
         }
         checkArithmetic<uint16_t>(features, elementKinds[2], Mul);
         checkArithmetic<uint16_t>(features, elementKinds[3], Mul);
@@ -377,8 +375,8 @@ static void testVectorizeLoopsComputesWithNumbersBitForBit()
     for (CPUFeatureSet features : featureSets()) {
         for (B3::Opcode opcode : { Add, Sub, Mul, Div, Neg, Abs, Sqrt }) {
             for (bool ordinaryIsOnLeft : { false, true }) {
-                checkArithmeticOnNumbers<float, uint32_t>(features, elementKinds[6], opcode, ordinaryIsOnLeft);
-                checkArithmeticOnNumbers<double, uint64_t>(features, elementKinds[7], opcode, ordinaryIsOnLeft);
+                checkArithmeticOnNumbers<float, uint32_t>(features, elementKinds[5], opcode, ordinaryIsOnLeft);
+                checkArithmeticOnNumbers<double, uint64_t>(features, elementKinds[6], opcode, ordinaryIsOnLeft);
             }
         }
     }
@@ -451,6 +449,223 @@ static void testVectorizeLoopsEveryRelationAndStart()
     }
 }
 
+static void testVectorizeLoopsWalksDownward()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (const ElementKind& kind : elementKinds) {
+                for (B3::Opcode relation : { GreaterEqual, GreaterThan }) {
+                    // for (index = 69; index REL bound; --index) to[index] = from[index]
+                    LoopOverElements loop { vectorPolicy(features), relation, -1, 69 };
+                    loop.setElement(loop.to(), kind, loop.index(), loop.element(loop.from(), kind, loop.index()));
+                    loop.finish(place);
+                    loop.proc.setKnownRange(loop.loop.bound, IntRange(-2, 1ll << 40));
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    // Every address falls, so the lanes are stored in the order they were loaded in.
+                    CHECK(!numberOfValues(loop.proc, VectorSwizzle));
+                    auto code = compileForTarget(loop.proc);
+                    for (int distance = -40; distance <= 40; ++distance) {
+                        for (int64_t bound = -1; bound <= 71; ++bound) {
+                            alignas(16) uint8_t found[bytesOfBuffer];
+                            alignas(16) uint8_t expected[bytesOfBuffer];
+                            fillWithBytes(found, distance * 73 + bound);
+                            fillWithBytes(expected, distance * 73 + bound);
+                            size_t toOffset = (41 + distance) * kind.bytes;
+                            size_t fromOffset = 41 * kind.bytes;
+                            int64_t index = 69;
+                            for (; relation == GreaterEqual ? index >= bound : index > bound; --index)
+                                memmove(expected + toOffset + index * kind.bytes, expected + fromOffset + index * kind.bytes, kind.bytes);
+                            CHECK_EQ(invoke<int64_t>(*code, bound, found + toOffset, found + fromOffset), index);
+                            CHECK(!memcmp(found, expected, bytesOfBuffer));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+namespace {
+
+// for (low = 0, high = length - 1; low REL high; ++low, --high) { .. }. The second and third arguments are the addresses of two arrays. low + high behind the loop is returned.
+struct LoopOverBothEnds {
+    explicit LoopOverBothEnds(const Policy& policy, B3::Opcode relation = LessThan)
+        : proc(policy)
+        , root(proc.addBlock())
+        , header(proc.addBlock())
+        , body(proc.addBlock())
+        , exit(proc.addBlock())
+        , low(proc.addVariable(Int64))
+        , high(proc.addVariable(Int64))
+    {
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        first = arguments[1];
+        second = arguments[2];
+        proc.setKnownRange(arguments[0], IntRange(0, 1ll << 40));
+        graph.set(root, low, graph.int64(root, 0));
+        graph.set(root, high, graph.make(root, Add, arguments[0], graph.int64(root, -1)));
+        graph.jump(root, header);
+        graph.branch(header, graph.make(header, relation, graph.get(header, low), graph.get(header, high)), body, exit);
+        graph.ret(exit, graph.make(exit, Add, graph.make(exit, Shl, graph.get(exit, low), graph.int32(exit, 16)), graph.get(exit, high)));
+    }
+
+    Value* addressOf(Value* array, const ElementKind& kind, Variable* index)
+    {
+        return graph.make(body, Add, array, graph.make(body, Shl, graph.get(body, index), graph.int32(body, WTF::fastLog2(kind.bytes))));
+    }
+
+    Value* element(Value* array, const ElementKind& kind, Variable* index)
+    {
+        if (kind.load == Load)
+            return body->appendNew<MemoryValue>(proc, Load, kind.type, Origin(), addressOf(array, kind, index), 0, firstHeap);
+        return body->appendNew<MemoryValue>(proc, kind.load, Origin(), addressOf(array, kind, index), 0, firstHeap);
+    }
+
+    void setElement(Value* array, const ElementKind& kind, Variable* index, Value* value)
+    {
+        body->appendNew<MemoryValue>(proc, kind.store, Origin(), value, addressOf(array, kind, index), 0, firstHeap);
+    }
+
+    void finish(TestPlace place)
+    {
+        graph.increase(body, low, 1);
+        graph.increase(body, high, -1);
+        graph.jump(body, header);
+        proc.resetReachability();
+        fixSSA(proc);
+        if (place == TestPlace::Bottom) {
+            CHECK(rotateLoops(proc));
+            fixSSA(proc);
+        }
+        for (Value* value : proc.values()) {
+            if (value->opcode() == Phi)
+                proc.setKnownRange(value, IntRange(-2, 1ll << 40));
+        }
+        validate(proc);
+    }
+
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root;
+    BasicBlock* header;
+    BasicBlock* body;
+    BasicBlock* exit;
+    Variable* low;
+    Variable* high;
+    Value* first { nullptr };
+    Value* second { nullptr };
+};
+
+} // anonymous namespace
+
+static void testVectorizeLoopsReversesInPlace()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (const ElementKind& kind : elementKinds) {
+                LoopOverBothEnds loop { vectorPolicy(features) };
+                Value* kept = loop.element(loop.first, kind, loop.low);
+                loop.setElement(loop.first, kind, loop.low, loop.element(loop.first, kind, loop.high));
+                loop.setElement(loop.first, kind, loop.high, kept);
+                loop.finish(place);
+                CHECK(vectorizeLoopsAndValidate(loop.proc));
+                CHECK_EQ(numberOfVectorAccesses(loop.proc), 4u);
+                CHECK_EQ(numberOfValues(loop.proc, VectorSwizzle), 2u);
+                auto code = compileForTarget(loop.proc);
+                for (int64_t length = 0; length <= 150; ++length) {
+                    alignas(16) uint8_t found[bytesOfBuffer];
+                    alignas(16) uint8_t expected[bytesOfBuffer];
+                    fillWithBytes(found, length);
+                    fillWithBytes(expected, length);
+                    uint8_t* list = expected + 5 * kind.bytes;
+                    int64_t low = 0;
+                    int64_t high = length - 1;
+                    for (; low < high; ++low, --high) {
+                        for (unsigned byte = 0; byte < kind.bytes; ++byte)
+                            std::swap(list[low * kind.bytes + byte], list[high * kind.bytes + byte]);
+                    }
+                    CHECK_EQ(invoke<int64_t>(*code, length, found + 5 * kind.bytes, 0), (low << 16) + high);
+                    CHECK(!memcmp(found, expected, bytesOfBuffer));
+                }
+            }
+        }
+    }
+}
+
+static void testVectorizeLoopsSkipsEndsThatAreNotKnownToLieApart()
+{
+    const ElementKind& kind = elementKinds[4];
+    // Two arrays, of which nothing says where they lie.
+    {
+        LoopOverBothEnds loop { vectorPolicy() };
+        loop.setElement(loop.first, kind, loop.low, loop.element(loop.second, kind, loop.high));
+        loop.finish(TestPlace::Top);
+        CHECK(!vectorizeLoopsAndValidate(loop.proc));
+    }
+    // The two ends may be one element.
+    {
+        LoopOverBothEnds loop { vectorPolicy(), LessEqual };
+        Value* kept = loop.element(loop.first, kind, loop.low);
+        loop.setElement(loop.first, kind, loop.low, loop.element(loop.first, kind, loop.high));
+        loop.setElement(loop.first, kind, loop.high, kept);
+        loop.finish(TestPlace::Top);
+        CHECK(!vectorizeLoopsAndValidate(loop.proc));
+    }
+}
+
+static void testVectorizeLoopsCopiesInOppositeOrderBetweenArraysThatLieApart()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (const ElementKind& kind : elementKinds) {
+            LoopOverBothEnds loop { vectorPolicy(features) };
+            Value* element = kind.load == Load
+                ? loop.body->appendNew<MemoryValue>(loop.proc, Load, kind.type, Origin(), loop.addressOf(loop.second, kind, loop.high), 0, secondHeap)
+                : loop.body->appendNew<MemoryValue>(loop.proc, kind.load, Origin(), loop.addressOf(loop.second, kind, loop.high), 0, secondHeap);
+            loop.setElement(loop.first, kind, loop.low, element);
+            loop.finish(TestPlace::Top);
+            CHECK(vectorizeLoopsAndValidate(loop.proc));
+            CHECK_EQ(numberOfValues(loop.proc, VectorSwizzle), 1u);
+            auto code = compileForTarget(loop.proc);
+            for (int64_t length = 0; length <= 100; ++length) {
+                alignas(16) uint8_t found[bytesOfBuffer];
+                alignas(16) uint8_t expected[bytesOfBuffer];
+                fillWithBytes(found, length);
+                fillWithBytes(expected, length);
+                for (int64_t low = 0, high = length - 1; low < high; ++low, --high)
+                    memcpy(expected + (3 + low) * kind.bytes, expected + 1024 + high * kind.bytes, kind.bytes);
+                invoke<int64_t>(*code, length, found + 3 * kind.bytes, found + 1024);
+                CHECK(!memcmp(found, expected, bytesOfBuffer));
+            }
+        }
+    }
+}
+
+static void testVectorizeLoopsCountsBytes()
+{
+    // for (at = 0; at < bound; at += 4) *(to + at) = *(from + at)
+    const ElementKind& kind = elementKinds[4];
+    LoopOverElements loop { vectorPolicy(), LessThan, 4 };
+    Value* element = loop.graph.load(loop.loop.body, Int32, loop.graph.make(loop.loop.body, Add, loop.from(), loop.index()), 0, firstHeap);
+    loop.graph.store(loop.loop.body, element, loop.graph.make(loop.loop.body, Add, loop.to(), loop.index()), 0, firstHeap);
+    loop.finish();
+    loop.proc.setKnownRange(loop.loop.bound, IntRange(0, 1ll << 40));
+    CHECK(vectorizeLoopsAndValidate(loop.proc));
+    auto code = compileForTarget(loop.proc);
+    for (int distance = -10; distance <= 10; ++distance) {
+        for (int64_t bound = 0; bound <= 300; ++bound) {
+            alignas(16) uint8_t found[bytesOfBuffer];
+            alignas(16) uint8_t expected[bytesOfBuffer];
+            fillWithBytes(found, bound);
+            fillWithBytes(expected, bound);
+            int64_t at = 0;
+            for (; at < bound; at += 4)
+                memmove(expected + (100 + distance) * kind.bytes + at, expected + 100 * kind.bytes + at, 4);
+            CHECK_EQ(invoke<int64_t>(*code, bound, found + (100 + distance) * kind.bytes, found + 100 * kind.bytes), at);
+            CHECK(!memcmp(found, expected, bytesOfBuffer));
+        }
+    }
+}
+
 template<typename Functor>
 static void checkIsNotVectorized(const Functor& fillBody, const Policy& policy = vectorPolicy(), int64_t step = 1)
 {
@@ -493,7 +708,13 @@ static void testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike()
     });
     // The counter itself is stored.
     checkIsNotVectorized([&](LoopOverElements& loop) {
-        loop.setElement(loop.to(), elementKinds[5], loop.index(), loop.index());
+        loop.setElement(loop.to(), words, loop.index(), loop.graph.make(loop.loop.body, Trunc, loop.index()));
+    });
+    // Words of 64 bits are stored.
+    checkIsNotVectorized([&](LoopOverElements& loop) {
+        Value* address = loop.graph.make(loop.loop.body, Shl, loop.index(), loop.graph.int32(loop.loop.body, 3));
+        Value* word = loop.graph.load(loop.loop.body, Int64, loop.graph.make(loop.loop.body, Add, loop.from(), address), 0, firstHeap);
+        loop.graph.store(loop.loop.body, word, loop.graph.make(loop.loop.body, Add, loop.to(), address), 0, firstHeap);
     });
     // An operation that has no form on vectors here.
     checkIsNotVectorized([&](LoopOverElements& loop) {
@@ -600,6 +821,41 @@ static void testVectorizeLoopsCountsWithIntegersOf32Bits()
     }
 }
 
+static void testVectorLivesAcrossPatchpointThatKeepsLowerHalves()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        Policy policy = optimizingPolicy();
+        policy.upstream.allowsSIMD = true;
+        policy.targetFeatures = features;
+        policy.air.registers.patchpointsKeepOnlyLowerHalvesOfVectors = true;
+        Procedure proc { policy, nullptr, true };
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        Vector<Value*> vectors;
+        for (unsigned index = 0; index < 4; ++index)
+            vectors.append(graph.load(root, V128, arguments[1], index * 16, firstHeap));
+        // As a stub does that saves and restores the registers it uses as numbers.
+        PatchpointValue* patchpoint = graph.emptyPatchpoint(root);
+        patchpoint->effects.writesLocalState = true;
+        patchpoint->numGPScratchRegisters = 1;
+        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            RegisterSet::allFPRs().forEach([&](Reg reg) {
+                jit.moveDoubleTo64(reg.fpr(), params.gpScratch(0));
+                jit.move64ToDouble(params.gpScratch(0), reg.fpr());
+            });
+        });
+        for (unsigned index = 0; index < 4; ++index)
+            graph.store(root, vectors[index], arguments[1], 64 + index * 16, firstHeap);
+        graph.ret(root, graph.int64(root, 0));
+        auto code = compileForTarget(proc);
+        alignas(16) uint8_t bytes[128];
+        fillWithBytes(bytes, 1);
+        invoke<int64_t>(*code, 0, bytes, 0);
+        CHECK(!memcmp(bytes, bytes + 64, 64));
+    }
+}
+
 static void testPipelineVectorizesLoopOverElements()
 {
     const ElementKind& kind = elementKinds[0];
@@ -649,11 +905,17 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsKeepsLoopWhoseTurnReadsWhatTurnShortlyBeforeStored());
     RUN(testVectorizeLoopsTestsNoDistanceOfArraysThatAreKnownToLieApart());
     RUN(testVectorizeLoopsEveryRelationAndStart());
+    RUN(testVectorizeLoopsWalksDownward());
+    RUN(testVectorizeLoopsReversesInPlace());
+    RUN(testVectorizeLoopsSkipsEndsThatAreNotKnownToLieApart());
+    RUN(testVectorizeLoopsCopiesInOppositeOrderBetweenArraysThatLieApart());
+    RUN(testVectorizeLoopsCountsBytes());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());
     RUN(testVectorizeLoopsTakesBranchOnConstantForJump());
     RUN(testVectorizeLoopsKeepsWhatHoldsValuesAlive());
     RUN(testVectorizeLoopsCountsWithIntegersOf32Bits());
+    RUN(testVectorLivesAcrossPatchpointThatKeepsLowerHalves());
     RUN(testPipelineVectorizesLoopOverElements());
     RUN(testPipelineVectorizesNothingUnlessAsked());
 }

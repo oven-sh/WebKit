@@ -19,6 +19,7 @@
 #include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
+#include "B3VariableValue.h"
 #include "B3ValueInlines.h"
 #include <algorithm>
 
@@ -181,107 +182,108 @@ struct CounterEnd {
 
 } // anonymous namespace
 
-static CounterEnd minCounter(const CountedLoop& loop)
+static CounterEnd counterEnd(const CountedLoop& loop, bool isMax)
 {
-    if (loop.increases())
+    if (isMax != loop.increases())
         return { loop.start, 0 };
-    return { loop.bound, loop.includesEqual() ? 0 : 1 };
-}
-
-static CounterEnd maxCounter(const CountedLoop& loop)
-{
-    if (!loop.increases())
-        return { loop.start, 0 };
-    return { loop.bound, loop.includesEqual() ? 0 : -1 };
+    if (loop.includesEqual())
+        return { loop.bound, 0 };
+    return { loop.bound, isMax ? -1 : 1 };
 }
 
 static CheckedRange rangeOf(const Procedure& proc, const CountedLoop& loop, CounterEnd end)
 {
-    return checkedAdd(intervalFor(proc, end.value, loop.signedness()), checkedConstant(end.addend));
+    return checkedAdd(checkedRangeOf(proc, end.value, loop.signedness()), IntRange(end.addend, end.addend));
 }
 
-static bool planStridedGuards(const Procedure& proc, const CountedLoop& loop, StridedRangeCheck& check)
+static bool planStridedGuards(const Procedure& proc, const CountedLoop& loop, const AffineIndex& index, Value* limit, StridedGuards& guards)
 {
-    CheckedRange scale = checkedRangeOf(proc, check.index.scale);
-    CheckedRange offset = checkedRangeOf(proc, check.index.offset);
-    if (!scale || (!scale->min && !scale->max))
+    CheckedRange scale = checkedRangeOf(proc, index.scale);
+    if (!scale || (!scale->min() && !scale->max()))
         return false;
-    check.isIncreasing = scale->max > 0;
-    check.needsScaleGuard = check.isIncreasing ? scale->min <= 0 : !scale->max;
-    if (check.isIncreasing)
-        scale->min = std::max<Int128>(scale->min, 1);
-    else
-        scale->max = std::min<Int128>(scale->max, -1);
+    guards.isIncreasing = scale->max() > 0;
+    guards.needsScaleGuard = guards.isIncreasing ? scale->min() <= 0 : !scale->max();
+    scale = guards.isIncreasing ? IntRange(std::max<int64_t>(scale->min(), 1), scale->max()) : IntRange(scale->min(), std::min<int64_t>(scale->max(), -1));
 
-    auto indexAt = [&](CounterEnd end, int64_t constant) {
-        return checkedAdd(checkedAdd(checkedMultiply(scale, rangeOf(proc, loop, end)), offset), checkedConstant(constant));
-    };
-    CheckedRange lowest = indexAt(check.isIncreasing ? minCounter(loop) : maxCounter(loop), check.minOffset);
-    CheckedRange highest = indexAt(check.isIncreasing ? maxCounter(loop) : minCounter(loop), check.maxOffset);
-    if (!lowest || !highest || lowest->max < 0)
+    CheckedRange offset = checkedRangeOf(proc, index.offset);
+    CheckedRange ends[2];
+#pragma clang loop unroll(disable)
+    for (unsigned isHighest = 0; isHighest < 2; ++isHighest) {
+        int64_t constant = isHighest ? guards.maxOffset : guards.minOffset;
+        CheckedRange counter = rangeOf(proc, loop, counterEnd(loop, guards.isIncreasing == !!isHighest));
+        ends[isHighest] = checkedAdd(checkedAdd(checkedMultiply(scale, counter), offset), IntRange(constant, constant));
+        if (!ends[isHighest])
+            return false;
+    }
+    if (ends[0]->max() < 0)
         return false;
-    check.needsLowerGuard = lowest->min < 0;
+    guards.needsLowerGuard = ends[0]->min() < 0;
     int64_t maxInt32Limit = maxLimitForRangeChecks(Int32);
-    check.needsLimitGuard = check.mustFitInt32 && highest->max > maxInt32Limit && intervalFor(proc, check.limit, Signedness::Unsigned).max > maxInt32Limit;
+    guards.needsLimitGuard = guards.mustFitInt32 && ends[1]->max() > maxInt32Limit && intervalFor(proc, limit, Signedness::Unsigned).max > maxInt32Limit;
     return true;
 }
 
-static std::optional<AffineIndex> affineIndexInLoop(const RangeCheckInputs& inputs, Value* value)
+static bool findAffineIndexInLoop(const RangeCheckInputs& inputs, Value* value, AffineIndex& result)
 {
     const Procedure& proc = inputs.proc;
     const CountedLoop& loop = inputs.loop;
     const LoopInvariance& invariance = inputs.invariance;
-    CheckedRange lowestCounter = rangeOf(proc, loop, minCounter(loop));
-    CheckedRange highestCounter = rangeOf(proc, loop, maxCounter(loop));
-    if (!lowestCounter || !highestCounter || lowestCounter->min > highestCounter->max)
-        return std::nullopt;
-    return affineIndexOf({ proc, loop.inductionVariable, { lowestCounter->min, highestCounter->max }, [&](Value* value) -> Value* {
+    CheckedRange lowestCounter = rangeOf(proc, loop, counterEnd(loop, false));
+    CheckedRange highestCounter = rangeOf(proc, loop, counterEnd(loop, true));
+    if (!lowestCounter || !highestCounter || lowestCounter->min() > highestCounter->max())
+        return false;
+    if (value->opcode() == SExt32 || value->opcode() == ZExt32)
+        value = value->child(0);
+    return findAffineIndex({ proc, loop.inductionVariable, IntRange(lowestCounter->min(), highestCounter->max()), [&](Value* value) -> Value* {
         if (!invariance.isInvariant(value))
             return nullptr;
         Value* canonical = invariance.canonicalValue(value);
         if (!invariance.isAvailableInPreHeader(canonical) || isStoredInLoop(*inputs.region.loop, canonical))
             return nullptr;
         return canonical;
-    } }, value);
+    } }, value, result);
 }
 
 static void planStridedRangeCheck(const RangeCheckInputs& inputs, RangeCheckPlan& plan, Value* comparison, const RangeCheck& rangeCheck, Value* limit)
 {
     const Procedure& proc = inputs.proc;
-    const CountedLoop& loop = inputs.loop;
-    const LoopInvariance& invariance = inputs.invariance;
-    Value* index = rangeCheck.index->foldIdentity();
-    bool isSignExtended = index->opcode() == SExt32;
-    if (isSignExtended || index->opcode() == ZExt32)
-        index = index->child(0);
-    auto affineIndex = affineIndexInLoop(inputs, index);
-    if (!affineIndex)
+    Value* value = rangeCheck.index->foldIdentity();
+    AffineIndex index;
+    if (!findAffineIndexInLoop(inputs, value, index))
         return;
-    int64_t offset = std::exchange(affineIndex->offset.constant, 0);
+    int64_t offset = std::exchange(index.offset.constant, 0);
 
-    size_t found = plan.stridedChecks.findIf([&](auto& check) {
-        return isSameValueInPreHeader(invariance, check.limit, limit) && check.index.scale == affineIndex->scale && check.index.offset == affineIndex->offset;
-    });
-    StridedRangeCheck check;
-    if (found != notFound)
-        check = plan.stridedChecks[found];
-    else {
-        if (plan.bounds.size() + plan.stridedChecks.size() >= proc.limit(Limit::MaxRangeCheckBoundsPerLoop)) {
+    if (!plan.strided)
+        plan.strided = makeUnique<StridedRangeChecks>();
+    StridedRangeChecks& strided = *plan.strided;
+    unsigned found = 0;
+#pragma clang loop unroll(disable)
+    for (; found < strided.numberOfChecks; ++found) {
+        const StridedRangeCheck& other = strided.checks[found];
+        if (isSameValueInPreHeader(inputs.invariance, other.limit, limit) && isSameExceptConstantOffset(other.index, index))
+            break;
+    }
+    StridedRangeCheck& check = strided.checks[found < strided.checks.size() ? found : 0];
+    bool isNew = found == strided.numberOfChecks;
+    StridedGuards guards = check;
+    if (isNew) {
+        if (plan.bounds.size() + found >= std::min<uint64_t>(proc.limit(Limit::MaxRangeCheckBoundsPerLoop), strided.checks.size())) {
             proc.didReachLimit(Limit::MaxRangeCheckBoundsPerLoop, comparison->origin());
             return;
         }
-        check = { WTF::move(*affineIndex), limit, offset, offset };
+        guards = { offset, offset };
     }
-    check.minOffset = std::min(check.minOffset, offset);
-    check.maxOffset = std::max(check.maxOffset, offset);
-    check.mustFitInt32 |= isSignExtended;
-    if (!planStridedGuards(proc, loop, check))
+    guards.minOffset = std::min(guards.minOffset, offset);
+    guards.maxOffset = std::max(guards.maxOffset, offset);
+    guards.mustFitInt32 |= value->opcode() == SExt32;
+    if (!planStridedGuards(proc, inputs.loop, index, limit, guards))
         return;
 
-    if (found != notFound)
-        plan.stridedChecks[found] = WTF::move(check);
-    else {
-        plan.stridedChecks.append(WTF::move(check));
+    static_cast<StridedGuards&>(check) = guards;
+    if (isNew) {
+        check.index = index;
+        check.limit = limit;
+        ++strided.numberOfChecks;
         noteWhatBoundsTurns(proc, limit, plan);
     }
     plan.decidedComparisons.add(comparison, rangeCheck.isTrueInBounds);
@@ -297,7 +299,7 @@ static bool isFoldedIntoAddress(const AffineIndex& index, unsigned shift, Type c
         return false;
     if (isX86())
         return bytesPerStep <= 8;
-    return counterType == Int64 && index.offset.terms.isEmpty();
+    return counterType == Int64 && index.offset.isConstant();
 }
 
 static bool isEmptyBehindBottomTest(const RangeCheckInputs& inputs)
@@ -315,7 +317,19 @@ static bool isEmptyBehindBottomTest(const RangeCheckInputs& inputs)
     return true;
 }
 
-static void planStrengthReduction(const RangeCheckInputs& inputs, RangeCheckPlan& plan)
+static unsigned shiftOfUserInRegion(const HotRegion& region, Value* index)
+{
+    unsigned shift = 0;
+    for (BasicBlock* block : region.blocks) {
+        for (Value* value : *block) {
+            if (value->opcode() == Shl && value->child(0) == index && value->child(1)->hasInt32())
+                shift = value->child(1)->asInt32() & 63;
+        }
+    }
+    return shift;
+}
+
+static void planStrengthReduction(const RangeCheckInputs& inputs, StridedRangeChecks& strided)
 {
     const CountedLoop& loop = inputs.loop;
     if (loop.isTopTested) {
@@ -326,40 +340,38 @@ static void planStrengthReduction(const RangeCheckInputs& inputs, RangeCheckPlan
     } else {
         if (!isEmptyBehindBottomTest(inputs))
             return;
-        plan.indexStepBlock = loop.test;
-    }
-    UncheckedKeyHashMap<Value*, unsigned> shifts;
-    for (BasicBlock* block : inputs.region.blocks) {
-        for (Value* value : *block) {
-            if (value->opcode() == Shl && value->child(1)->hasInt32())
-                shifts.add(value->child(0), 0).iterator->value = value->child(1)->asInt32() & 63;
-        }
+        strided.indexStepBlock = loop.test;
     }
     for (BasicBlock* block : inputs.region.blocks) {
         if (loop.isTopTested && inputs.blocksBeforeTopTest.contains(block))
             continue;
         for (Value* value : *block) {
-            if (value->type() != Int64)
+            if (value->type() != Int64 || strided.numberOfReducedIndices == strided.reducedIndices.size())
                 continue;
             bool isExtension = value->opcode() == SExt32 || value->opcode() == ZExt32;
             if (!isExtension && value->opcode() != Add && value->opcode() != Sub && value->opcode() != Mul && value->opcode() != Shl)
                 continue;
-            auto affineIndex = affineIndexInLoop(inputs, isExtension ? value->child(0) : value);
-            if (!affineIndex)
+            AffineIndex index;
+            if (!findAffineIndexInLoop(inputs, value, index))
                 continue;
-            int64_t offset = std::exchange(affineIndex->offset.constant, 0);
-            size_t found = plan.stridedChecks.findIf([&](auto& check) {
-                return check.index.scale == affineIndex->scale && check.index.offset == affineIndex->offset && offset >= check.minOffset && offset <= check.maxOffset;
-            });
-            if (found == notFound || isFoldedIntoAddress(*affineIndex, shifts.get(value), loop.inductionVariable->type()))
+            int64_t offset = index.offset.constant;
+            unsigned found = 0;
+#pragma clang loop unroll(disable)
+            for (; found < strided.numberOfChecks; ++found) {
+                const StridedRangeCheck& check = strided.checks[found];
+                if (isSameExceptConstantOffset(check.index, index) && offset >= check.minOffset && offset <= check.maxOffset)
+                    break;
+            }
+            if (found == strided.numberOfChecks || isFoldedIntoAddress(index, shiftOfUserInRegion(inputs.region, value), loop.inductionVariable->type()))
                 continue;
-            StridedRangeCheck check = plan.stridedChecks[found];
-            check.mustFitInt32 |= isExtension;
-            check.isStrengthReduced = true;
-            if (!planStridedGuards(inputs.proc, loop, check))
+            StridedRangeCheck& check = strided.checks[found];
+            StridedGuards guards = check;
+            guards.mustFitInt32 |= isExtension;
+            guards.isStrengthReduced = true;
+            if (!planStridedGuards(inputs.proc, loop, check.index, check.limit, guards))
                 continue;
-            plan.stridedChecks[found] = WTF::move(check);
-            plan.reducedIndices.add(value, ReducedIndex { static_cast<unsigned>(found), offset });
+            static_cast<StridedGuards&>(check) = guards;
+            strided.reducedIndices[strided.numberOfReducedIndices++] = { value, found, offset };
         }
     }
 }
@@ -419,9 +431,13 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
         }
     }
 
-    if (plan.stridedChecks.isEmpty())
+    if (!plan.strided)
         return;
-    planStrengthReduction(inputs, plan);
+    if (!plan.strided->numberOfChecks) {
+        plan.strided = nullptr;
+        return;
+    }
+    planStrengthReduction(inputs, *plan.strided);
     if (plan.clampsBound())
         return;
     Signedness signedness = loop.signedness();
@@ -596,75 +612,78 @@ RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs& inp
 
 void appendEntryGuards(FastPreHeader& front, Origin origin, std::span<const EntryGuard> guards, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
 {
-    Procedure& proc = front.procedure();
-    auto widen = [&](Value* value, Signedness signedness) -> Value* {
-        value = valueInPreHeader(value);
-        if (value->type() == Int64)
-            return value;
-        return front.last()->appendNew<Value>(proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
-    };
     for (const EntryGuard& guard : guards) {
-        Value* left = widen(guard.left, guard.leftSignedness);
+        Value* left = front.appendWidened(origin, valueInPreHeader(guard.left), guard.leftSignedness);
         Value* right = front.appendIntConstant(origin, Int64, guard.addend);
         if (guard.right)
-            right = front.last()->appendNew<Value>(proc, Add, origin, widen(guard.right, guard.rightSignedness), right);
+            right = front.append(origin, Add, front.appendWidened(origin, valueInPreHeader(guard.right), guard.rightSignedness), right);
         front.appendGuard(origin, guard.relation, left, right);
     }
 }
 
-Vector<StridedIndexStart, 2> appendStridedRangeCheckGuards(FastPreHeader& front, std::span<const StridedRangeCheck> checks, const CountedLoop& loop, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
+static Value* appendSum(FastPreHeader& front, Origin origin, const InvariantSum& sum, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
+{
+    Value* result = nullptr;
+#pragma clang loop unroll(disable)
+    for (const InvariantTerm& term : sum.usedTerms()) {
+        Value* product = front.appendWidened(origin, valueInPreHeader(term.first), Signedness::Signed);
+        if (term.second)
+            product = front.append(origin, Mul, product, front.appendWidened(origin, valueInPreHeader(term.second), Signedness::Signed));
+        product = front.append(origin, Mul, product, front.appendIntConstant(origin, Int64, term.coefficient));
+        result = result ? front.append(origin, Add, result, product) : product;
+    }
+    return result ? front.appendAddConstant(origin, result, sum.constant) : front.appendIntConstant(origin, Int64, sum.constant);
+}
+
+namespace {
+
+struct StridedIndexAppender {
+    NEVER_INLINE Value* indexAt(CounterEnd end, int64_t addend) const
+    {
+        Value* counter = front.appendAddConstant(origin, front.appendWidened(origin, valueInPreHeader(end.value), signedness), end.addend);
+        return front.appendAddConstant(origin, front.append(origin, Add, front.append(origin, Mul, scale, counter), offset), addend);
+    }
+
+    FastPreHeader& front;
+    Origin origin;
+    Signedness signedness;
+    const ScopedLambda<Value*(Value*)>& valueInPreHeader;
+    Value* scale;
+    Value* offset;
+};
+
+} // anonymous namespace
+
+void appendStridedRangeCheckGuards(FastPreHeader& front, const StridedRangeChecks& strided, const CountedLoop& loop, const ScopedLambda<Value*(Value*)>& valueInPreHeader, StridedIndexVariables& variables)
 {
     Procedure& proc = front.procedure();
     Origin origin = loop.test->last()->origin();
-    auto constant = [&](int64_t value) {
-        return front.appendIntConstant(origin, Int64, value);
-    };
-    auto append = [&](Opcode opcode, Value* left, Value* right) -> Value* {
-        return front.last()->appendNew<Value>(proc, opcode, origin, left, right);
-    };
-    auto addConstant = [&](Value* value, int64_t addend) {
-        return addend ? append(Add, value, constant(addend)) : value;
-    };
-    auto widen = [&](Value* value, Signedness signedness) -> Value* {
-        value = valueInPreHeader(value);
-        if (value->type() == Int64)
-            return value;
-        return front.last()->appendNew<Value>(proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
-    };
-    auto appendSum = [&](const InvariantSum& sum) -> Value* {
-        Value* result = nullptr;
-        for (const InvariantTerm& term : sum.terms) {
-            Value* product = widen(term.first, Signedness::Signed);
-            if (term.second)
-                product = append(Mul, product, widen(term.second, Signedness::Signed));
-            product = append(Mul, product, constant(term.coefficient));
-            result = result ? append(Add, result, product) : product;
-        }
-        return result ? addConstant(result, sum.constant) : constant(sum.constant);
-    };
-
-    Vector<StridedIndexStart, 2> starts;
-    for (const StridedRangeCheck& check : checks) {
-        Value* scale = appendSum(check.index.scale);
+    std::array<Value*, Limits::maxStridedRangeChecksPerLoop> firstIndices { };
+    for (unsigned i = 0; i < strided.numberOfChecks; ++i) {
+        const StridedRangeCheck& check = strided.checks[i];
+        Value* scale = appendSum(front, origin, check.index.scale, valueInPreHeader);
         if (check.needsScaleGuard)
-            front.appendGuard(origin, check.isIncreasing ? GreaterThan : LessThan, scale, constant(0));
-        Value* offset = appendSum(check.index.offset);
-        auto indexAt = [&](CounterEnd end, int64_t addend) {
-            Value* counter = addConstant(widen(end.value, loop.signedness()), end.addend);
-            return addConstant(append(Add, append(Mul, scale, counter), offset), addend);
-        };
+            front.appendGuard(origin, check.isIncreasing ? GreaterThan : LessThan, scale, front.appendIntConstant(origin, Int64, 0));
+        StridedIndexAppender appender { front, origin, loop.signedness(), valueInPreHeader, scale, appendSum(front, origin, check.index.offset, valueInPreHeader) };
         if (check.needsLowerGuard)
-            front.appendGuard(origin, GreaterEqual, indexAt(check.isIncreasing ? minCounter(loop) : maxCounter(loop), check.minOffset), constant(0));
-        Value* limit = widen(check.limit, Signedness::Unsigned);
+            front.appendGuard(origin, GreaterEqual, appender.indexAt(counterEnd(loop, !check.isIncreasing), check.minOffset), front.appendIntConstant(origin, Int64, 0));
+        Value* limit = front.appendWidened(origin, valueInPreHeader(check.limit), Signedness::Unsigned);
         if (check.needsLimitGuard)
-            front.appendGuard(origin, BelowEqual, limit, constant(maxLimitForRangeChecks(Int32)));
-        front.appendGuard(origin, LessThan, indexAt(check.isIncreasing ? maxCounter(loop) : minCounter(loop), check.maxOffset), limit);
-        if (check.isStrengthReduced)
-            starts.append({ indexAt({ loop.start, 0 }, 0), append(Mul, scale, constant(loop.step)) });
-        else
-            starts.append({ });
+            front.appendGuard(origin, BelowEqual, limit, front.appendIntConstant(origin, Int64, maxLimitForRangeChecks(Int32)));
+        if (!proc.policy().validation.omitsStridedLimitGuard)
+            front.appendGuard(origin, LessThan, appender.indexAt(counterEnd(loop, check.isIncreasing), check.maxOffset), limit);
+        if (!check.isStrengthReduced)
+            continue;
+        firstIndices[i] = appender.indexAt({ loop.start, 0 }, 0);
+        variables[i].stride = front.append(origin, Mul, scale, front.appendIntConstant(origin, Int64, loop.step));
     }
-    return starts;
+#pragma clang loop unroll(disable)
+    for (unsigned i = 0; i < strided.numberOfChecks; ++i) {
+        if (!firstIndices[i])
+            continue;
+        variables[i].variable = proc.addVariable(Int64);
+        front.last()->appendNew<VariableValue>(proc, Set, origin, variables[i].variable, firstIndices[i]);
+    }
 }
 
 void appendGuardThatArrayHoldsLength(FastPreHeader& front, Origin origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
@@ -684,10 +703,11 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
     auto constant = [&](int64_t value) {
         return front.appendIntConstant(origin, Int64, value);
     };
-    auto widen = [&](Value* value, Signedness signedness) -> Value* {
-        if (value->type() == Int64)
-            return value;
-        return front.last()->appendNew<Value>(proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
+    auto widen = [&](Value* value, Signedness signedness) {
+        return front.appendWidened(origin, value, signedness);
+    };
+    auto select = [&](Opcode relation, Value* candidate, Value* other) -> Value* {
+        return front.last()->appendNew<Value>(proc, Select, origin, front.append(origin, relation, candidate, other), candidate, other);
     };
 
     Value* clamped = widen(bound, loop.signedness());
@@ -699,16 +719,15 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
         Value* limit = widen(valueInPreHeader(rangeCheckBound.limit), Signedness::Unsigned);
         if (!loop.increases()) {
             front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
-            front.appendGuard(origin, LessThan, start, front.last()->appendNew<Value>(proc, Sub, origin, limit, constant(rangeCheckBound.maxOffset)));
-            Value* first = constant(-rangeCheckBound.minOffset - !loop.includesEqual());
-            clamped = front.last()->appendNew<Value>(proc, Select, origin, front.last()->appendNew<Value>(proc, GreaterThan, origin, first, clamped), first, clamped);
+            front.appendGuard(origin, LessThan, start, front.append(origin, Sub, limit, constant(rangeCheckBound.maxOffset)));
+            clamped = select(GreaterThan, constant(-rangeCheckBound.minOffset - !loop.includesEqual()), clamped);
             continue;
         }
         front.appendGuard(origin, GreaterEqual, start, constant(-rangeCheckBound.minOffset));
         front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
-        Value* last = front.last()->appendNew<Value>(proc, Sub, origin, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
+        Value* last = front.append(origin, Sub, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
         front.appendGuard(origin, GreaterEqual, last, constant(0));
-        clamped = front.last()->appendNew<Value>(proc, Select, origin, front.last()->appendNew<Value>(proc, LessThan, origin, last, clamped), last, clamped);
+        clamped = select(LessThan, last, clamped);
     }
     if (!loop.isTopTested)
         front.appendGuard(origin, loop.relation, widen(startInPreHeader, loop.signedness()), clamped);

@@ -82,7 +82,7 @@ function f1 name="link" module=m0 flags=[HasExplicitName] length=2 thisType={typ
 # CHECK-NEXT: BB#[[done]]:
 # CHECK: Return(Terminal)
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-LABEL: end of function
 # X64: instructions: 4, patchpoints: 0
 # ARM64: instructions: 5, patchpoints: 0

@@ -116,7 +116,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
     AOT_TEST_CHECK(policy.loops.omitsPollsFromLoopsThatEndWithinData);
-    AOT_TEST_CHECK(policy.loops.vectorizes);
+    AOT_TEST_CHECK(!policy.loops.vectorizes);
     AOT_TEST_CHECK(!policy.loops.unrolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
@@ -137,6 +137,7 @@ static void checkRegisterAndSplitPolicy(const B3::Air::Policy& air)
     AOT_TEST_CHECK(air.registers.hintsTwoAddressOperands);
     AOT_TEST_CHECK(air.registers.usesSecondPreferredRegister);
     AOT_TEST_CHECK(air.registers.evictsHolderOfPreferredRegister);
+    AOT_TEST_CHECK(!air.registers.patchpointsKeepOnlyLowerHalvesOfVectors);
     AOT_TEST_CHECK(air.registers.unsavedCalleeSaves == unsavedCalleeSaves());
     AOT_TEST_CHECK(air.registers.savedByCallee.isEmpty());
     AOT_TEST_CHECK(air.registers.calleeSavesClobberedAtSuspensions.isEmpty());
@@ -299,7 +300,7 @@ static void testFunctionTraits()
     traits = traitsFor(7);
     traits.leastFrequencyOfWarmCode = 10;
     B3::Policy policyWithWarmLoops = policyWith({ }, traits, lowering);
-    AOT_TEST_CHECK(policyWithWarmLoops.loops.unrolls && policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop == 10);
+    AOT_TEST_CHECK(!policyWithWarmLoops.loops.vectorizes && policyWithWarmLoops.loops.unrolls && policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop == 10);
     policyWithWarmLoops.loops.unrolls = false;
     policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop = warmPolicy.loops.minFrequencyOfUnrolledLoop;
     AOT_TEST_CHECK(WTF::toString(policyWithWarmLoops) == description);

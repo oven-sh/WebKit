@@ -1824,12 +1824,9 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
         AOT::RuntimeHooks::didFlattenStructure(vm, this);
-        if (mayBePrototype()) {
-            if (isUncacheableDictionary())
-                AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
-            else
-                AOT::RuntimeHooks::didFlattenObjectOnPrototypeChain(vm, object);
-        }
+        // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays. Nothing that was learnt about it is out of date.
+        if (mayBePrototype() && isUncacheableDictionary())
+            AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
     }
 #endif
 

@@ -1001,7 +1001,7 @@ static void listExportsReadByName(const ValueFlowResultInputs& inputs, const Loc
 {
     const Program& program = inputs.program;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        if (modules[index].namespaceUse != NamespaceUse::NamedReadsOnly)
+        if (modules[index].namespaceUse == NamespaceUse::Unknown)
             continue;
         Vector<VariableID> listed;
         for (const ModuleExport& entry : program.modules[index].exports) {

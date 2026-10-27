@@ -1,0 +1,39 @@
+# An export that other files read by its name alone is a location like any other: once every read of it has become the constant, its store goes. One that a namespace object shows under a key nobody knows keeps its store.
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: UnreadVariableStoresRemoved = 1
+# CHECK: variable g0 name="named"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g1 name="shown"{{*}}stores=AtMostOnce
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/named.js" displayPath="named.js" body=f1 exports=[{name="named" variable=g0}]
+module m2 path="/shown.js" displayPath="shown.js" body=f2 exports=[{name="shown" variable=g1}]
+entry module=m0
+variable g0 name="named" module=m1 declared={type=123} flags=[IsImmutable]
+variable g1 name="shown" module=m2 declared={type=456} flags=[IsImmutable]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = ModuleNamespace module=m2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+# CHECK-NOT: ModuleVariable variable=g0
+# CHECK-NOT: PutModuleVariable {{*}} variable=g0
+
+function f1 name="named" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=123
+    PutModuleVariable v0 variable=g0
+    Return
+}
+
+function f2 name="shown" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=456
+    PutModuleVariable v0 variable=g1
+    Return
+# CHECK: PutModuleVariable {{*}} variable=g1
+}

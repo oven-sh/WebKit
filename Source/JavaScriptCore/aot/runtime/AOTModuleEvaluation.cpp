@@ -23,9 +23,11 @@
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
+#include "JSMicrotask.h"
 #include "JSModuleLoader.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoadingContext.h"
+#include "ModuleRegistryEntry.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
@@ -620,13 +622,20 @@ bool Modules::beginModuleInRecord(ModuleID module)
 
 void Modules::forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto& functor) const
 {
+    forEachFileOrFaceEvaluatedByLoader([&](ModuleID fileOrFace) {
+        functor(fileOf(fileOrFace));
+    });
+}
+
+void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto& functor) const
+{
     auto isBeingEvaluated = [&](ModuleID fileOrFace) {
         return status(fileOrFace) == ModuleStatus::Evaluating || status(fileOf(fileOrFace)) == ModuleStatus::Evaluating;
     };
     for (const FilesBeingRun* load = m_innermostFilesBeingRun; load; load = load->outer) {
         if (load->fileOrFace) {
             if (isBeingEvaluated(*load->fileOrFace))
-                functor(fileOf(*load->fileOrFace));
+                functor(*load->fileOrFace);
             continue;
         }
         // The start calls the files in order, so any later file that is being evaluated was required by the first one.
@@ -640,7 +649,7 @@ void Modules::forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&
                 break;
             }
             if (isBeingEvaluated(imported)) {
-                functor(fileOf(imported));
+                functor(imported);
                 break;
             }
         }
@@ -693,7 +702,7 @@ std::optional<ModuleID> Modules::fileToWaitFor(const Identifier& key)
         return std::nullopt;
     std::optional<ModuleID> found;
     forEachFileEvaluatedByLoader([&](ModuleID file) {
-        if (hasKey(file, key))
+        if (file != m_fileBeingHandedToLoader && hasKey(file, key))
             found = file;
     });
     return found;
@@ -842,7 +851,7 @@ void Modules::resumeDeferredLoadsOfFinishedFiles()
 }
 
 // `bun run` runs an imported CommonJS file while it loads the graph of the importer. No ES module of that graph has begun by then, so a require() in the file that leads back to one evaluates it there and then.
-bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error)
+bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -863,7 +872,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
 
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader };
+    FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
@@ -872,6 +881,23 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
+            if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
+                ModuleID file = *filesBeingRun.fileHandedToLoader;
+                if (Exception* exception = scope.exception()) {
+                    if (vm.isTerminationException(exception))
+                        return true;
+                    TRY_CLEAR_EXCEPTION(scope, true);
+                }
+                JSValue errorOfFile;
+                if (status(file) == ModuleStatus::Failed) {
+                    if (wasImportedWhileItRan(fileOf(file)))
+                        dropErrorOfFile(file);
+                    else
+                        errorOfFile = recordIfExists(file)->evaluationError();
+                }
+                finishStepInWhichFileRan(file, errorOfFile);
+                return true;
+            }
             if (Exception* exception = scope.exception()) [[unlikely]] {
                 if (vm.isTerminationException(exception))
                     return true;
@@ -929,12 +955,27 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         didRunFile |= statusAtStart != ModuleStatus::Failed;
         size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
         filesBeingRun.fileOrFace = imported;
+        filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
         // As the start of the root would call it.
         if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
             evaluateByCallingBody(imported);
         else
             evaluateModuleInRecord(imported);
         Exception* exception = scope.exception();
+        if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
+            JSValue errorOfFile;
+            if (exception) {
+                if (vm.isTerminationException(exception))
+                    return didRunFile;
+                TRY_CLEAR_EXCEPTION(scope, didRunFile);
+                if (wasImportedWhileItRan(fileOf(imported)))
+                    dropErrorOfFile(imported);
+                else
+                    errorOfFile = exception->value();
+            }
+            finishStepInWhichFileRan(imported, errorOfFile);
+            return didRunFile;
+        }
         bool hasDeferredLoads = this->hasDeferredLoads(imported);
         if (hasDeferredLoads) [[unlikely]] {
             // The file drained the queue.
@@ -1003,18 +1044,122 @@ size_t Modules::numberOfJobsThatWouldWait(JobsOfImportedFiles jobs) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// One of the files has the waiting jobs run. Under `bun run` the first of them run the files behind it.
-void Modules::runFilesThatWaitInLoader()
+// A file that runs ahead of the loader has the waiting jobs run, or asks the loader for a graph. Under `bun run` the file runs in a step of the loader, which has the graph of the root in its hands by then.
+void Modules::handGraphsToLoader()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    Vector<ModuleID, 2> roots;
-    for (const FilesBeingRun* load = m_innermostFilesBeingRun; load; load = load->outer) {
-        if (load->isAheadOfJobsOfLoader)
-            roots.append(load->root);
+    Vector<FilesBeingRun*, 2> ahead;
+    for (FilesBeingRun* files = m_innermostFilesBeingRun; files; files = files->outer) {
+        if (files->isAheadOfJobsOfLoader)
+            ahead.append(files);
     }
-    for (ModuleID root : roots | std::views::reverse) {
-        evaluateImportedCommonJSFiles(root, JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsLeftToLoader);
+    for (FilesBeingRun* files : ahead | std::views::reverse) {
+        handGraphToLoader(*files);
         RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// The loader goes through the graph as it would have behind the end of the file, and takes its steps as far as the one in which the file runs. They run no code of the program: what stands in front of the file has run.
+// From here on the registry and the queue are those of `bun run`, and the loader runs what is left of the files.
+void Modules::handGraphToLoader(FilesBeingRun& files)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    files.isAheadOfJobsOfLoader = false;
+    std::optional<ModuleID> running;
+    {
+        SetForScope onlyTheseFiles(m_innermostFilesBeingRun, &files);
+        SetForScope noneOutside(files.outer, nullptr);
+        forEachFileOrFaceEvaluatedByLoader([&](ModuleID fileOrFace) {
+            running = fileOrFace;
+        });
+    }
+    CountedImport* counted = !files.load && m_innermostCountedImportInOwnJob && m_innermostCountedImportInOwnJob->module == files.root ? m_innermostCountedImportInOwnJob : nullptr;
+    if (!running || (!files.load && !counted))
+        return;
+
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    Ref<MicrotaskQueue> jobsOfFile = MicrotaskQueue::create(vm);
+    queue.moveTasksBehind(files.numberOfJobsInFrontOfFile, jobsOfFile.get());
+    m_rootWhoseFilesRanAhead = files.root;
+    files.fileHandedToLoader = running;
+    {
+        // A termination requested meanwhile is thrown at the caller's exception check.
+        DeferTerminationForAWhile deferTermination(vm);
+        SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
+        // The steps were due before any require() of the file began.
+        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
+        if (files.load) {
+            ModuleRecord* record = recordIfExists(files.root);
+            files.load->forgetVisited(record);
+            files.load->setDrainingInnerLoad(false);
+            loader()->innerModuleLoading(m_instance.globalObject, files.load, record);
+            record->didGoOnWithLoadWhileRequestsWereListed(*files.load);
+        } else {
+            handCountedImportsToLoader();
+            if (!scope.exception())
+                runJobsThatAreDue(vm, *counted->jobsOfLoader);
+        }
+        scope.assertNoException();
+        runStepsOfLoaderInFrontOf(fileOf(*running));
+    }
+    jobsOfFile->moveTasksBehind(0, queue);
+}
+
+void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A termination requested meanwhile is thrown at the exception check of whoever handed the graph over.
+    DeferTerminationForAWhile deferTermination(vm);
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    Ref<MicrotaskQueue> turn = MicrotaskQueue::create(vm);
+    while (!queue.isEmpty()) {
+        queue.moveTasksBehind(0, turn.get());
+        size_t stepsTaken = 0;
+        bool hasComeToFile = !turn->allOf([&](const QueuedTask& job) {
+            auto arguments = job.arguments();
+            if (job.job() == InternalMicrotask::ModuleRegistryFetchSettled && hasKey(file, uncheckedDowncast<ModuleRegistryEntry>(arguments[2])->key()))
+                return false;
+            ++stepsTaken;
+            runInternalMicrotask(job.globalObject(), vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
+            scope.assertNoException();
+            return true;
+        });
+        if (hasComeToFile) {
+            // What stood behind that step stands in front of what the steps of this turn have queued.
+            Ref<MicrotaskQueue> queuedInThisTurn = MicrotaskQueue::create(vm);
+            queue.moveTasksBehind(0, queuedInThisTurn.get());
+            turn->moveTasksBehind(stepsTaken + 1, queue);
+            queuedInThisTurn->moveTasksBehind(0, queue);
+        }
+        turn->clear();
+        if (hasComeToFile)
+            return;
+    }
+}
+
+// As behind JSModuleLoader::makeModule() in the step in which the loader has fetched a module.
+void Modules::finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error)
+{
+    VM& vm = *m_instance.vm;
+    ModuleID file = fileOf(fileOrFace);
+    for (ModuleID requested : { m_table.faceOfFile(file).value_or(file), file }) {
+        ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(requested));
+        if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
+            continue;
+        JSPromise* fetched = entry->ensureFetchPromise(m_instance.globalObject);
+        JSPromise* modulePromise = entry->ensureModulePromise(m_instance.globalObject);
+        if (fetched->status() != JSPromise::Status::Fulfilled || modulePromise->status() != JSPromise::Status::Pending)
+            continue;
+        JSPromise* made = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
+        made->markAsHandled();
+        if (error)
+            made->reject(vm, error);
+        else
+            made->fulfill(vm, fetched->result());
+        made->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryModuleSettled, modulePromise, entry);
+        return;
     }
 }
 
@@ -1022,7 +1167,7 @@ void Modules::runFilesThatWaitInLoader()
 void RuntimeHooks::runFilesThatWaitInLoader(VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    vm.aotState().modulesWhoseFilesRunAheadOfLoader->runFilesThatWaitInLoader();
+    vm.aotState().modulesWhoseFilesRunAheadOfLoader->handGraphsToLoader();
     static_cast<void>(scope.exception());
 }
 
@@ -1030,6 +1175,9 @@ bool Modules::stopLoadingBehindFile(ModuleID file)
 {
     if (!m_rootWhoseFilesRun)
         return false;
+    // The jobs that wait are those of the loader, and what the file queued stands among them.
+    if (m_innermostFilesBeingRun && m_innermostFilesBeingRun->fileHandedToLoader)
+        return true;
     holdJobsBehind(0, file);
     return true;
 }

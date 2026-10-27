@@ -113,10 +113,12 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     RELEASE_ASSERT(m_step == Step::Copying);
     RELEASE_ASSERT(m_phiTreatment == PhiTreatment::Demote);
 
+    MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
     BlockMap copies;
     for (BasicBlock* block : blocks) {
         auto result = copies.add(block, m_proc.addBlock());
         RELEASE_ASSERT(result.isNewEntry);
+        m_proc.movedLoadLog().didCopy(block, result.iterator->value);
     }
     for (BasicBlock* block : blocks) {
         BasicBlock* copy = copies.get(block);

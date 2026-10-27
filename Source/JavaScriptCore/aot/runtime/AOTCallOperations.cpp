@@ -430,10 +430,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
     JSValue function = JSValue::decode(callee);
-    if (!function.isCallable()) {
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, function, nameOfForwardedCallee(vm)));
-        OPERATION_RETURN(scope, nullptr);
-    }
+    // The call that follows throws. Its call site has the name of the callee.
+    if (!function.isCallable())
+        OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
         OPERATION_RETURN(scope, list);
     MarkedArgumentBuffer arguments;
@@ -592,6 +591,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* 
         StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
         throwException(globalObject, scope, nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, name)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
     }
+    OPERATION_RETURN(scope);
+}
+
+static bool forwardsCallToReceiver(JSValue callee)
+{
+    std::optional<FunctionID> function = functionOf(callee.asCell());
+    if (!function)
+        return false;
+    std::optional<uint32_t> builtin = Image::current()->programTables().builtinImplementedBy(sourceFunctionOf(*function).index());
+    return builtin && (BuiltinID(*builtin) == Builtins::FunctionPrototypeCall || BuiltinID(*builtin) == Builtins::FunctionPrototypeApply);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessForwardedCalleeIsCallable);
+    DeferGCForAWhile deferGC(vm);
+    JSValue value = calleeOfDecodedReference(instance, callee);
+    if (value.isCallable() && forwardsCallToReceiver(value))
+        value = calleeOfDecodedReference(instance, receiver);
+    if (!value.isCallable())
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
     OPERATION_RETURN(scope);
 }
 

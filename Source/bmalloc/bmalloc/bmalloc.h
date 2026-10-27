@@ -112,15 +112,23 @@ BEXPORT void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_
 BEXPORT size_t sizeOfAddressSpaceBallastKept();
 // No piece that a request has used is missing.
 BEXPORT bool hasWholeAddressSpaceBallast();
-// Called on the thread whose request let go of a piece, behind the request, and told whether the ballast was whole until then.
-using AddressSpaceBallastHandler = void (*)(bool wasWhole);
+enum class UseOfAddressSpaceBallast : uint8_t {
+    // A request that may not fail has let go of a piece. The ballast was whole until then.
+    LetGoOfFirstPiece,
+    LetGoOfPiece,
+    // While pieces are missing, a request that lets go of none takes a fresh page of small blocks out of what they have left.
+    TakesWhatPiecesLeft,
+};
+// Called on the thread that uses the ballast: behind the request that let go of a piece, or inside the request that takes what pieces have left, where nothing may be asked of malloc.
+using AddressSpaceBallastHandler = void (*)(UseOfAddressSpaceBallast);
 BEXPORT void setAddressSpaceBallastHandler(AddressSpaceBallastHandler);
 // Called where a large request that may fail asks while pieces are missing. It keeps them again if there is room by now, and returns the address space that is left.
 using AddressSpaceBallastKeeper = size_t (*)();
 BEXPORT void setAddressSpaceBallastKeeper(AddressSpaceBallastKeeper);
 
-// No request of this thread is refused because pieces are missing.
+// No request of this thread is refused because pieces are missing, and the thread is not told that it takes what they have left.
 BEXPORT void exemptThisThreadFromAddressSpaceBallast();
+BEXPORT bool isThisThreadExemptFromAddressSpaceBallast();
 
 // A request that may not fail and has found no memory. While one lives, all that its thread asks of malloc may use the ballast.
 class RequestWithBallast {

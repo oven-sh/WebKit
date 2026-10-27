@@ -91,8 +91,8 @@ private:
         RegionCloner::BlockMap excursionCopies;
         Value* testedCopy { nullptr };
         Value* testedCopyInExcursion { nullptr };
-        Vector<StridedIndexStart, 2> stridedIndexStarts;
-        Vector<Variable*, 2> stridedIndexVariables;
+        StridedIndexVariables stridedIndexVariables { };
+        unsigned numberOfReducedIndicesCopied { 0 };
     };
 
     void findSingleDefinitions()
@@ -211,16 +211,10 @@ private:
         appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
-        if (!plan.rangeChecks.stridedChecks.isEmpty()) {
-            version.stridedIndexStarts = appendStridedRangeCheckGuards(*version.front, plan.rangeChecks.stridedChecks.span(), *plan.countedLoop, [&](Value* value) {
+        if (plan.rangeChecks.strided) {
+            appendStridedRangeCheckGuards(*version.front, *plan.rangeChecks.strided, *plan.countedLoop, [&](Value* value) {
                 return hoistedValueOrSelf(version, value);
-            });
-            for (const StridedIndexStart& start : version.stridedIndexStarts) {
-                Variable* variable = start.first ? m_proc.addVariable(Int64) : nullptr;
-                version.stridedIndexVariables.append(variable);
-                if (variable)
-                    version.front->last()->appendNew<VariableValue>(m_proc, Set, start.first->origin(), variable, start.first);
-            }
+            }, version.stridedIndexVariables);
         }
         if (omitsPollBehindGuard(plan)) {
             appendGuardThatArrayHoldsLength(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.lengthThatArrayMustHold, [&](Value* value) {
@@ -329,10 +323,13 @@ private:
                 m_cloner.substitute(map, value, copy->appendNew<Const32Value>(m_proc, value->origin(), outcome->value));
                 return;
             }
-            if (auto reduced = plan.rangeChecks.reducedIndices.find(value); reduced != plan.rangeChecks.reducedIndices.end()) {
-                Value* index = copy->appendNew<VariableValue>(m_proc, Get, value->origin(), version.stridedIndexVariables[reduced->value.checkIndex]);
-                m_cloner.substitute(map, value, copy->appendNew<Value>(m_proc, Add, value->origin(), index, copy->appendNew<Const64Value>(m_proc, value->origin(), reduced->value.offset)));
-                return;
+            if (const StridedRangeChecks* strided = plan.rangeChecks.strided.get(); strided && version.numberOfReducedIndicesCopied < strided->numberOfReducedIndices) {
+                const ReducedIndex& reduced = strided->reducedIndices[version.numberOfReducedIndicesCopied];
+                if (reduced.value == value) {
+                    ++version.numberOfReducedIndicesCopied;
+                    m_cloner.substitute(map, value, appendStridedIndexPlus(copy, value->origin(), version.stridedIndexVariables[reduced.checkIndex].variable, copy->appendNew<Const64Value>(m_proc, value->origin(), reduced.offset)));
+                    return;
+                }
             }
         }
         Value* clone = m_cloner.appendClone(value, copy, map);
@@ -346,30 +343,36 @@ private:
             version.testedCopyInExcursion = clone;
     }
 
+    Value* appendStridedIndexPlus(BasicBlock* block, Origin origin, Variable* variable, Value* addend)
+    {
+        return block->appendNew<Value>(m_proc, Add, origin, block->appendNew<VariableValue>(m_proc, Get, origin, variable), addend);
+    }
+
     void appendStridedIndexSteps(Version& version, BasicBlock* block)
     {
-        for (unsigned i = 0; i < version.stridedIndexVariables.size(); ++i) {
-            Variable* variable = version.stridedIndexVariables[i];
-            if (!variable)
-                continue;
-            Value* stride = version.stridedIndexStarts[i].stride;
-            Value* index = block->appendNew<VariableValue>(m_proc, Get, stride->origin(), variable);
-            block->appendNew<VariableValue>(m_proc, Set, stride->origin(), variable, block->appendNew<Value>(m_proc, Add, stride->origin(), index, stride));
+#pragma clang loop unroll(disable)
+        for (auto [variable, stride] : version.stridedIndexVariables) {
+            if (variable)
+                block->appendNew<VariableValue>(m_proc, Set, stride->origin(), variable, appendStridedIndexPlus(block, stride->origin(), variable, stride));
         }
     }
 
     static bool stepsStridedIndices(const LoopVersionPlan& plan, BasicBlock* block)
     {
-        if (plan.rangeChecks.indexStepBlock)
-            return block == plan.rangeChecks.indexStepBlock;
+        if (!plan.rangeChecks.strided)
+            return false;
+        if (BasicBlock* stepBlock = plan.rangeChecks.strided->indexStepBlock)
+            return block == stepBlock;
         return block->last()->opcode() == Jump && block->successorBlock(0) == plan.region.header;
     }
 
     void fillCopies(Version& version, const Vector<BasicBlock*, 8>& blocks, const RegionCloner::BlockMap& copies, BasicBlock* nextIterationHeader, const RegionCloner::BlockMap* otherCopies, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
+        MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
         for (BasicBlock* block : blocks) {
             BasicBlock* copy = copies.get(block);
+            m_proc.movedLoadLog().didCopy(block, copy);
             Value* terminal = block->last();
             RegionCloner::ValueMap map;
             for (Value* value : *block) {

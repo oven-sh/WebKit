@@ -273,6 +273,12 @@ struct IterationExpansion {
     ValueID appendIncrement(ValueID integer, int64_t amount) { return builder.append(Opcode::Add, { integer, builder.appendInteger(amount) }); }
     ValueID appendIsEqualToInteger(ValueID value, auto constant) { return builder.append(Opcode::StrictEq, { value, builder.appendInteger(static_cast<int64_t>(constant)) }); }
     ValueID appendBuiltin(BuiltinID id) { return builder.append(makeWith(Opcode::Builtin, { }, &Value::setBuiltin, id)); }
+    // The protocol reads the method here. An arm that needs no method still leaves what the read does to the holder.
+    void appendFirstReadOf(BuiltinID method)
+    {
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), *builder.context().flow, method))
+            builder.append(WTF::move(*initialization));
+    }
     ValueID appendPropGet(ValueID object, auto name) { return builder.append(makeWith(Opcode::PropGet, { object }, &Value::setKey, keyOf(name))); }
     ValueID appendLength(ValueID object) { return builder.append(Opcode::ToLength, { appendPropGet(object, BuiltinNames::length) }); }
     ValueID appendElement(const ArmState& state, ValueID index)
@@ -1398,6 +1404,8 @@ static ValueID appendStepGenerator(IterationExpansion& expansion, const ArmState
 
 static void emitGeneratorStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
+    if (request.mode != ResumeMode::Next)
+        expansion.appendFirstReadOf(request.mode == ResumeMode::Throw ? Builtins::GeneratorPrototypeThrow : Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, request.mode, request.sent ? request.sent : expansion.builder.appendUndefined());
     ValueID value = expansion.appendResultAt(step, StepGeneratorResult::Value);
     ValueID status = expansion.appendResultAt(step, StepGeneratorResult::Status);
@@ -1432,6 +1440,7 @@ static void emitGeneratorClose(IterationExpansion& expansion, const ArmState& st
         builder.moveToEndOf(attempt);
     }
 
+    expansion.appendFirstReadOf(Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, ResumeMode::Return, builder.appendUndefined());
     IRBuilder::BranchBlocks blocks = expansion.branchOnNotStepped(expansion.appendResultAt(step, StepGeneratorResult::Status));
     emitProtocolClose(expansion, protocolStateOf(expansion, state), IteratorKind::Sync, completion);
@@ -2238,6 +2247,8 @@ struct ArmDispatcher {
             state.position = expansion.addVariable(builder.appendInteger(0));
             break;
         case IterationForm::Generator:
+            expansion.appendFirstReadOf(Builtins::GeneratorPrototypeNext);
+            break;
         case IterationForm::AsyncGenerator:
             break;
         case IterationForm::Protocol:

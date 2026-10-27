@@ -185,21 +185,57 @@ void MovedLoadLog::didClone(Value* original, Value* clone)
     auto found = m_entriesNaming.find(original);
     if (found == m_entriesNaming.end())
         return;
-    Vector<unsigned, 2> entries = found->value;
-    for (unsigned index : entries) {
+    if (m_depthOfRegionCopies) {
+        m_copiesInRegion.set(original, clone);
+        return;
+    }
+    // Where there are two of a value, its users may be handed a Phi of the two, and the log does not hear of that.
+    for (unsigned index : found->value) {
+        Entry& entry = m_entries[index];
+        if (entry.address == original || entry.givenToUsers == original)
+            drop(entry);
+    }
+}
+
+void MovedLoadLog::willCopyRegion()
+{
+    if (!m_depthOfRegionCopies++)
+        m_numberOfEntriesBeforeRegionCopy = m_entries.size();
+}
+
+void MovedLoadLog::didCopy(BasicBlock* original, BasicBlock* copy)
+{
+    RELEASE_ASSERT(m_depthOfRegionCopies);
+    if (!isEmpty())
+        m_blockCopiesInRegion.set(original, copy);
+}
+
+void MovedLoadLog::didCopyRegion()
+{
+    RELEASE_ASSERT(m_depthOfRegionCopies);
+    if (--m_depthOfRegionCopies)
+        return;
+    auto copies = std::exchange(m_copiesInRegion, { });
+    auto blockCopies = std::exchange(m_blockCopiesInRegion, { });
+    auto copyOf = [&](Value* value) {
+        Value* copy = value ? copies.get(value) : nullptr;
+        return copy ? copy : value;
+    };
+    for (unsigned index = 0; index < m_numberOfEntriesBeforeRegionCopy; ++index) {
         Entry copy = m_entries[index];
         if (!copy.address)
             continue;
-        // Where there are two of a value, its users may be handed a Phi of the two, and the log does not hear of that.
-        if (copy.address == original || copy.givenToUsers == original) {
-            drop(m_entries[index]);
+        if (!(copy.before ? copies.contains(copy.before) : blockCopies.contains(copy.block))) {
+            if (copies.contains(copy.address) || copies.contains(copy.givenToUsers))
+                drop(m_entries[index]);
             continue;
         }
-        if (copy.before != original)
-            continue;
-        copy.before = clone;
-        if (copy.store == original)
-            copy.store = clone;
+        copy.address = copyOf(copy.address);
+        copy.givenToUsers = copyOf(copy.givenToUsers);
+        copy.store = copyOf(copy.store);
+        copy.before = copyOf(copy.before);
+        if (BasicBlock* block = blockCopies.get(copy.block))
+            copy.block = block;
         unsigned entry = m_entries.size();
         m_entries.append(copy);
         for (Value* value : { copy.address, copy.givenToUsers, copy.store, copy.before })
@@ -223,6 +259,11 @@ void MovedLoadLog::willDelete(Value* value)
     if (isEmpty())
         return;
     dropEntriesWrittenBy(value);
+    if (m_depthOfRegionCopies) {
+        m_copiesInRegion.removeIf([&](auto& pair) {
+            return pair.value == value;
+        });
+    }
     Vector<unsigned, 2> entries = m_entriesNaming.take(value);
     Value* standsFor = value->opcode() == Identity ? value->child(0) : nullptr;
     for (unsigned index : entries) {

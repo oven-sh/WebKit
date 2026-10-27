@@ -14,7 +14,7 @@ v(GetByIdBehindFieldTable, InternalEntry, (), CallerFrameAxis | StubFrameAxis, 0
 v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, InById)
 
 // AOTStubsPropertyReadHandlers.cpp
-v(ReadSlot, SlotHandler, (ById, ByIdPacked, ByVal, FreeName, FreeNameForTypeOf), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
+v(ReadSlot, Handler, (ById, ByIdPacked, ByVal, FreeName, FreeNameForTypeOf), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
 v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached, FreeNameMiss, FreeNameUncached, FreeNameForTypeOfMiss, FreeNameForTypeOfUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
 v(ThroughProxy, InternalEntry, (Get, Has, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThroughProxy)
 
@@ -62,7 +62,7 @@ v(PutByIdHashed, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs
 v(PutByIdBehindFieldTable, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
 
 // AOTStubsPropertyStoreHandlers.cpp
-v(StoreSlot, SlotHandler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName, SloppyById, SloppyByIdPacked, SloppyByVal, SloppyFreeName, DefineById, DefineByIdPacked, DefineByVal), FormAxis | CountAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlot)
+v(StoreSlot, Handler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName, SloppyById, SloppyByIdPacked, SloppyByVal, SloppyFreeName, DefineById, DefineByIdPacked, DefineByVal), FormAxis | CountAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlot)
 v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByValMiss, StrictByValUncached, StrictFreeNameMiss, StrictFreeNameUncached, SloppyByIdMiss, SloppyByIdUncached, SloppyByValMiss, SloppyByValUncached, SloppyFreeNameMiss, SloppyFreeNameUncached, DefineByIdMiss, DefineByIdUncached, DefineByValMiss, DefineByValUncached), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlotExit)
 
 // AOTStubsObjectCopy.cpp

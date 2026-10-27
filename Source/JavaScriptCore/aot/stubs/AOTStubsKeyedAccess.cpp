@@ -618,7 +618,7 @@ void generateGetSuperByVal(StubAssembler& jit)
 
     jit.move(base, start);
     Jump startsAtNoCell = jit.branchIfNotCell(base);
-    whatIsFiledDoesNotAnswer.append(jit.branchIfNotCell(key));
+    Jump keyIsNoCell = jit.branchIfNotCell(key);
     Label hasHolder = jit.label();
     const KeyedValueRead read = returnValueOfKey(jit, registers, nothingIsFiled, nothingIsFiled, &whatIsFiledDoesNotAnswer);
     auto slotOf = [&](Slot::Kind kind) {
@@ -678,6 +678,7 @@ void generateGetSuperByVal(StubAssembler& jit)
         const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
         const FPRReg numberScratch = jit.allocateScratch(FPRInfo::fpRegT1);
         loadIndexOfText(jit, registers, leafAnswers);
+        Label hasIndex = jit.label();
         jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
         jit.and32(TrustedImm32(IndexingShapeMask), shape);
         Jump isDouble = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
@@ -690,6 +691,12 @@ void generateGetSuperByVal(StubAssembler& jit)
         leafAnswers.append(jit.branchTest64(CCallHelpers::Zero, storage));
         jit.move(storage, jit.result());
         jit.returnToCaller();
+
+        // The index itself for a key. One below zero is above every length.
+        keyIsNoCell.link(&jit);
+        whatIsFiledDoesNotAnswer.append(jit.branchIfNotInt32(key));
+        jit.zeroExtend32ToWord(key, index);
+        jit.jump().linkTo(hasIndex, &jit);
 
         isDouble.link(&jit);
         JumpList isNotInt32;
@@ -705,6 +712,7 @@ void generateGetSuperByVal(StubAssembler& jit)
         jit.returnToCaller();
     }
     leafAnswers.link(&jit);
+    whatIsFiledDoesNotAnswer.append(jit.branchIfNotCell(key));
     callLeafLookup(jit, Entry::operationAOTGetByValGeneric, key, receiver, registers.header);
     Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, base);
     jit.returnToCaller();

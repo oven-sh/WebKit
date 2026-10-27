@@ -306,6 +306,11 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
     ASSERT(length <= bytesWritten);
     if (bytesWritten <= m_limit - m_position)
         return true;
+    return tryMakeRoom(length, bytesWritten, 0);
+}
+
+NEVER_INLINE bool StringBuilderStorage::tryMakeRoom(size_t length, size_t bytesWritten, size_t roomForMore)
+{
     if (!canGrowBy(length))
         return false;
     size_t needed = m_position + bytesWritten;
@@ -319,13 +324,13 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
     if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders))
         return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
-    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength));
+    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>({ grownCapacity, m_limits.minCapacity, needed + roomForMore }), String::MaxLength));
     size_t expectedCapacity = std::exchange(m_capacityOfNextBuffer, 0);
     if (needed > m_limits.minCapacity)
         expectedCapacity = std::max<size_t>(expectedCapacity, std::exchange(m_words.capacityOfLastLargeBuffer, 0));
     if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
         return true;
-    return tryReplaceBuffer(newCapacity);
+    return tryReplaceBuffer(newCapacity) || (roomForMore && tryReplaceBuffer(needed));
 }
 
 NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
@@ -508,10 +513,29 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
 }
 
 // Compiled code writes whole words.
+Latin1Character* StringBuilderStorage::tryReserve(size_t length)
+{
+    return tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length)) ? m_characters + m_position : nullptr;
+}
+
 Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t length)
 {
-    if (tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length))) [[likely]]
-        return m_characters + m_position;
+    if (Latin1Character* cursor = tryReserve(length)) [[likely]]
+        return cursor;
+    throwOutOfMemory(globalObject);
+    return nullptr;
+}
+
+Latin1Character* StringBuilderStorage::tryReserve(size_t length, size_t roomForMore)
+{
+    size_t bytesWritten = roundUpToMultipleOf<sizeof(uint64_t)>(length);
+    return bytesWritten <= m_limit - m_position || tryMakeRoom(length, bytesWritten, roomForMore) ? m_characters + m_position : nullptr;
+}
+
+Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t length, size_t roomForMore)
+{
+    if (Latin1Character* cursor = tryReserve(length, roomForMore)) [[likely]]
+        return cursor;
     throwOutOfMemory(globalObject);
     return nullptr;
 }
@@ -668,7 +692,7 @@ JSString* StringBuilderStorage::createStringFromBuffer(JSGlobalObject* globalObj
     std::span<const Latin1Character> characters { m_characters, m_position };
     if (m_position == 1)
         return jsSingleCharacterString(vm, characters[0]);
-    if (use == StringUse::LikelyKey) {
+    if (use != StringUse::Unknown) {
         if (JSString* key = tryCreateKey(vm, instance, characters))
             return key;
     }
@@ -688,7 +712,7 @@ JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& ins
     std::span<const Latin1Character> characters = charactersOnStack(cursor);
     if (characters.size() <= 1)
         return characters.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, characters[0]);
-    if (use == StringBuilderStorage::StringUse::LikelyKey) {
+    if (use != StringBuilderStorage::StringUse::Unknown) {
         if (JSString* key = tryCreateKey(vm, instance, characters))
             return key;
     }
@@ -997,7 +1021,7 @@ static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<co
 JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instance& instance, std::span<const EncodedJSValue> primitives, StringUse use)
 {
     VM& vm = globalObject->vm();
-    if (use == StringUse::LikelyKey) {
+    if (use != StringUse::Unknown) {
         if (JSString* key = tryConcatenateShortKey(vm, instance, primitives))
             return key;
     }
@@ -1031,7 +1055,8 @@ JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instan
 
 static ALWAYS_INLINE StringBuilderStorage::StringUse stringUse(uint32_t isLikelyKey)
 {
-    return isLikelyKey ? StringBuilderStorage::StringUse::LikelyKey : StringBuilderStorage::StringUse::Unknown;
+    ASSERT(isLikelyKey <= static_cast<uint32_t>(StringBuilderStorage::StringUse::LikelyName));
+    return static_cast<StringBuilderStorage::StringUse>(isLikelyKey);
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilder(Instance* instance, JSCell* builder, uint32_t isLikelyKey)
@@ -1159,7 +1184,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         case StringKeyCache::Lookup::Absent: {
             AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
-            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts()), nullptr };
+            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName), nullptr };
         }
         case StringKeyCache::Lookup::AbsentIndex:
             break;

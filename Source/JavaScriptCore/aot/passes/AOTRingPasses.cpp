@@ -3200,9 +3200,45 @@ static void testNarrowerTypeFirst(Rewrite& rewrite, BlockID id, const Block& blo
 
 static constexpr Rule narrowerTestRules[] { { TerminatorKindSet { TerminatorKind::Branch }, testNarrowerTypeFirst } };
 
+static bool handOnWhatComparisonsWithTextsDoNotNarrow(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    bool changed = false;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID id(blockIndex);
+        if (function.at(id).terminator.kind != TerminatorKind::Branch)
+            continue;
+        const Value& test = function.at(function.at(id).terminator.conditionOperand());
+        if (test.opcode != Opcode::StrictEq || (function.at(test.leftOperand()).opcode != Opcode::String && function.at(test.rightOperand()).opcode != Opcode::String))
+            continue;
+        for (uint32_t targetIndex = 0; targetIndex < 2; ++targetIndex) {
+            const Target& target = function.at(id).terminator.targets[targetIndex];
+            if (target.proofs.isEmpty())
+                continue;
+            uint32_t firstParameter = firstEdgeResultParameter(function, id, targetIndex);
+            Vector<ValueID, 2> handedOn;
+            for (uint32_t index = 0; index < target.proofs.size(); ++index) {
+                ValueID narrowed = operandNarrowedOnEdge(function, { id, targetIndex, index });
+                if (!narrowed || function.at(function.at(target.block).parameters[firstParameter + index]).type != function.at(narrowed).type)
+                    break;
+                handedOn.append(narrowed);
+            }
+            if (handedOn.size() != target.proofs.size())
+                continue;
+            Target& edited = function.edit(id, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[targetIndex];
+            edited.arguments.appendVector(handedOn);
+            edited.proofs.clear();
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 PassOutcome testNarrowerTypesFirst(FunctionPassContext& context)
 {
-    return runRules<narrowerTestRules>(context);
+    bool changed = handOnWhatComparisonsWithTextsDoNotNarrow(context);
+    PassOutcome outcome = runRules<narrowerTestRules>(context);
+    return changed ? PassOutcome::Changed : outcome;
 }
 
 } } } // namespace JSC::AOT::Typed

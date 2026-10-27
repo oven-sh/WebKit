@@ -12,6 +12,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTOperatorForms.h"
+#include "AOTStringBuilderAnalysis.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsValues.h"
 #include "AOTTruthinessEmitter.h"
@@ -257,8 +258,11 @@ CellPointer OperatorEmitter::concatenationOfParts(const ValueContext& value)
         bool conversionIsObservable = type.hasObjects() || type.primitives & Primitive::AnySymbol;
         primitives.append(conversionIsObservable ? boxCell(toString(value, get(part), type)) : in<Boxed>(part));
     }
+    auto keyUse = isOnlyKeyOfProperties(m_function, analyses().useLists(), value.id()) ? StringEmitter::KeyUse::NameOfProperty : StringEmitter::KeyUse::AnyKey;
+    if (keyUse == StringEmitter::KeyUse::NameOfProperty)
+        build().statistics().count(StatisticID::KeysMadeAsNames);
     auto concatenateAll = [&] {
-        return emitter<StringEmitter>().concatenateValues(value, primitives.span(), value->isLikelyKey());
+        return emitter<StringEmitter>().concatenateKey(value, primitives.span(), keyUse);
     };
     for (unsigned index : { 1u, 0u }) {
         if (parts.size() != 2 || !typeOf(parts[index]).isString())

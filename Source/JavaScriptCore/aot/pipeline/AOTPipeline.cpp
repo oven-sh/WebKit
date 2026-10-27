@@ -1625,6 +1625,8 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::PromoteAggregateParameters);
     stage.run(PassID::SplitFreshResults);
     stage.run(PassID::SplitCoroutines);
+    // A file whose stores all go has nothing to run, and a function that nobody reads needs no way in.
+    stage.run(PassID::RemoveUnreadExports);
     stage.run(PassID::CallModules);
     m_analyses.estimateHeatFor(HeatFor::Everything);
     stage.run(PassID::CreateEntrypoints);

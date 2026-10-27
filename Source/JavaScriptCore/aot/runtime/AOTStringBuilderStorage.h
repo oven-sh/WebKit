@@ -108,6 +108,10 @@ public:
     }
 
     Latin1Character* reserve(JSGlobalObject*, size_t size);
+    Latin1Character* tryReserve(size_t size);
+    // A buffer that has to be replaced is made larger by roomForMore, if that can be had.
+    Latin1Character* reserve(JSGlobalObject*, size_t size, size_t roomForMore);
+    Latin1Character* tryReserve(size_t size, size_t roomForMore);
     void commit(const Latin1Character* cursor);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {
@@ -126,6 +130,8 @@ public:
     enum class StringUse : uint8_t {
         Unknown,
         LikelyKey,
+        // A key of properties alone. What is made for it is a name at once, and is not made one by the first access.
+        LikelyName,
     };
 
     JSString* toString(JSGlobalObject*, Instance&, StringUse);
@@ -189,6 +195,7 @@ private:
 
     bool tryEnsureRoom(size_t size) { return tryEnsureRoom(size, size); }
     bool tryEnsureRoom(size_t length, size_t bytesWritten);
+    bool tryMakeRoom(size_t length, size_t bytesWritten, size_t roomForMore);
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
     void dropLargeBuffer(size_t longestTextInBuffer);

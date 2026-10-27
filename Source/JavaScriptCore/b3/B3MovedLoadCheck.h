@@ -16,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
@@ -75,7 +76,22 @@ public:
     // For a load that has left a loop: none of what stays in the loop writes what it reads.
     void addBehindEachValueThatStaysIn(BasicBlock*, const MovedLoad&, Value* address, Value* givenToUsers);
 
-    // A copy of the value in front of a load's place has such a place behind it, if the address and what the users are given are there too.
+    // While blocks are copied with what is in them. At its end an entry whose place was copied has a copy that names the copies.
+    class RegionCopy {
+        WTF_MAKE_NONCOPYABLE(RegionCopy);
+    public:
+        explicit RegionCopy(MovedLoadLog& log)
+            : m_log(log)
+        {
+            m_log.willCopyRegion();
+        }
+        ~RegionCopy() { m_log.didCopyRegion(); }
+
+    private:
+        MovedLoadLog& m_log;
+    };
+    void didCopy(BasicBlock* original, BasicBlock* copy);
+    // A copy that is made by itself may be put anywhere.
     void didClone(Value* original, Value* clone);
     void willDelete(Value*);
     // What stood in front of the split is in `head` now.
@@ -100,12 +116,18 @@ private:
         BasicBlock* block;
     };
 
+    void willCopyRegion();
+    void didCopyRegion();
     void name(Value*, unsigned entry);
     void drop(Entry& entry) { entry.address = nullptr; }
     void dropEntriesWrittenBy(const Value*);
 
     Vector<Entry> m_entries;
     UncheckedKeyHashMap<Value*, Vector<unsigned, 2>> m_entriesNaming;
+    unsigned m_depthOfRegionCopies { 0 };
+    unsigned m_numberOfEntriesBeforeRegionCopy { 0 };
+    UncheckedKeyHashMap<Value*, Value*> m_copiesInRegion;
+    UncheckedKeyHashMap<BasicBlock*, BasicBlock*> m_blockCopiesInRegion;
 };
 
 } } // namespace JSC::B3

@@ -940,11 +940,12 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
 
     unsigned numberOfModulesWithoutState = 0;
     for (size_t index : plan.hasNoState) {
-        if (!plan.startsItself.quickGet(index))
+        if (!hasCode(program, modules[index]))
             continue;
         ++numberOfModulesWithoutState;
-        editor.at(modules[index].body).capabilities.add(calledByCodeAlone);
-        // For the loader it is a module that has nothing to run.
+        if (plan.startsItself.quickGet(index))
+            editor.at(modules[index].body).capabilities.add(calledByCodeAlone);
+        // For the loader it is a module that has nothing to run. One that does not start itself has nothing to run for anybody, and nothing calls its body.
         editor.at(ModuleID(static_cast<uint32_t>(index))).body = FunctionID();
     }
 

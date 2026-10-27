@@ -248,6 +248,8 @@ public:
         IsDefinition = 2,
         NamesExtraPropertiesStructure = 4,
         IsKnownToBeAbsent = 8,
+        // The name is no index, no private name and not "__proto__", and the program does not spell it: it names no field and no member of a class.
+        IsMadeAtRunTime = 16,
     };
     struct ExtraPropertyStoreResult {
         ExtraPropertyStore kind { ExtraPropertyStore::NotHandled };
@@ -256,7 +258,7 @@ public:
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
     // False for the first object that gets this property after the extra properties it has. Most such objects stay the only one.
     bool repeatsExtraPropertyStore(VM&, PropertyName) const;
-    void willAddExtraProperty(VM&, PropertyName);
+    void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
     using KeyOrderStorage = Vector<uint16_t, 16>;
     std::span<const uint16_t> keyOrder(State&, KeyOrderStorage&) const;

@@ -75,7 +75,7 @@ struct ModuleHost {
     JSObject* (*createAsyncModuleRequiredError)(JSGlobalObject*, const String& path);
     JSObject* (*createEmptyJSONBodyError)(JSGlobalObject*);
     // What loading the file as code throws before any of it runs. Empty where the host finds nothing wrong with the file. Null in a host that reads no code at run time.
-    JSValue (*createLoadError)(JSGlobalObject*, const String& path, bool isForRequire);
+    JSValue (*createLoadError)(JSGlobalObject*, const String& path);
     // A require() in the file of the module object has returned a CommonJS file: for the first time, and forEachNewChild() names the file, or once more.
     void (*showChildren)(JSGlobalObject*, JSObject* module, JSObject* requiredAgain);
     // The module of the image that an import of the path with these attributes gets. The build has named each module by the rules of the host. Null in a host where attributes choose nothing.

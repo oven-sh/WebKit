@@ -156,7 +156,6 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.versions = true;
     loops.clampsLoopBounds = true;
     loops.omitsPollsFromLoopsThatEndWithinData = true;
-    loops.vectorizes = true;
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
@@ -175,6 +174,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
         validation.level = lowestValidationLevel;
     validation.checksKnownPropertiesAtRunTime = build.validates();
     validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
+    validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     return validation;
 }
 

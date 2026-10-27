@@ -4941,6 +4941,9 @@ private:
                     if (Value* input = onlyInputOf(child))
                         child = input;
                     m_hasUserThatKeepsSum->quickSet(child->index());
+                    // An extension goes only into the sums that take its constant out. Whatever else uses it, a comparison with a length for one, keeps it and the sum behind it.
+                    if (child->opcode() == ZExt32 && user->opcode() != Add)
+                        m_hasUserThatKeepsSum->quickSet(child->child(0)->foldIdentity()->index());
                 }
             }
         }

@@ -8,9 +8,11 @@
 #if ENABLE(B3_JIT)
 
 #include "B3IntRange.h"
+#include "B3Limits.h"
+#include <array>
 #include <optional>
+#include <span>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
 
 namespace JSC { namespace B3 {
 
@@ -27,12 +29,12 @@ struct InvariantTerm {
 };
 
 struct InvariantSum {
-    Vector<InvariantTerm, 2> terms;
+    std::array<InvariantTerm, Limits::maxTermsPerInvariantSum> terms { };
+    unsigned numberOfTerms { 0 };
     int64_t constant { 0 };
 
-    bool isConstant() const { return terms.isEmpty(); }
-
-    friend bool operator==(const InvariantSum&, const InvariantSum&) = default;
+    bool isConstant() const { return !numberOfTerms; }
+    std::span<const InvariantTerm> usedTerms() const { return std::span { terms }.first(numberOfTerms); }
 };
 
 // scale * counter + offset over the integers. The described value equals this modulo 2^width.
@@ -41,22 +43,24 @@ struct AffineIndex {
     InvariantSum offset;
 };
 
+JS_EXPORT_PRIVATE bool isSameExceptConstantOffset(const AffineIndex&, const AffineIndex&);
+
+// Ranges of Int64 arithmetic; nullopt if it can overflow.
+using CheckedRange = std::optional<IntRange>;
+
 struct AffineIndexInputs {
     const Procedure& proc;
     Value* counter;
-    IntegerInterval counterRange;
+    CheckedRange counterRange;
     const ScopedLambda<Value*(Value*)>& canonicalInvariant;
 };
 
-JS_EXPORT_PRIVATE std::optional<AffineIndex> affineIndexOf(const AffineIndexInputs&, Value*);
-
-// Ranges of Int64 arithmetic; nullopt if it can overflow.
-using CheckedRange = std::optional<IntegerInterval>;
+JS_EXPORT_PRIVATE bool findAffineIndex(const AffineIndexInputs&, Value*, AffineIndex&);
 
 JS_EXPORT_PRIVATE CheckedRange checkedAdd(const CheckedRange&, const CheckedRange&);
 JS_EXPORT_PRIVATE CheckedRange checkedMultiply(const CheckedRange&, const CheckedRange&);
-inline CheckedRange checkedConstant(int64_t constant) { return IntegerInterval { constant, constant }; }
 JS_EXPORT_PRIVATE CheckedRange checkedRangeOf(const Procedure&, const InvariantSum&);
+JS_EXPORT_PRIVATE CheckedRange checkedRangeOf(const Procedure&, Value*, Signedness);
 
 } } // namespace JSC::B3
 

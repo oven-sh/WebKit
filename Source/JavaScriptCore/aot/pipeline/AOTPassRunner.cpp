@@ -114,7 +114,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::RemoveTrivialParameters, { .traits = BodyTrait::BlockParameters } },
     { PassID::PropagateBranchConditions, { .opcodes = { Opcode::ToBoolean }, .terminators = { TerminatorKind::Branch } } },
     { PassID::HoistTestsIntoPredecessors, { .opcodes = operationsHoistedIntoPredecessors }, { { .traits = BodyTrait::BlockParameters } } },
-    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest } } },
+    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },

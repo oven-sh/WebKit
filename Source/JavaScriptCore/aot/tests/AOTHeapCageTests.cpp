@@ -571,7 +571,7 @@ static void checkRequestsThatMayNotFailUseBallast()
     static unsigned timesToldOfUse;
     keepAddressSpaceBallast();
     AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
-    bmalloc::api::setAddressSpaceBallastHandler([](bool) { ++timesToldOfUse; });
+    bmalloc::api::setAddressSpaceBallastHandler([](bmalloc::api::UseOfAddressSpaceBallast) { ++timesToldOfUse; });
 
     struct Mapping {
         void* pages;
@@ -683,16 +683,17 @@ static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
     AOT_TEST_CHECK(!served || !bmalloc::api::hasWholeAddressSpaceBallast());
     size_t leftBehindServedRequest = addressSpaceLeft();
     bool found = largeRequestFindsMemory();
+    size_t leftBehindLargeRequest = addressSpaceLeft();
+    mayAsk.signal();
+    otherThread->waitForCompletion();
+    if (!served)
+        return;
     if (found) {
-        dataLogLn("Address space left behind the mappings: ", leftBehindMappings, ", behind the pieces: ", leftBehindPieces, ", behind the request that was served: ", leftBehindServedRequest, ", now: ", addressSpaceLeft(),
+        dataLogLn("Address space left behind the mappings: ", leftBehindMappings, ", behind the pieces: ", leftBehindPieces, ", behind the request that was served: ", leftBehindServedRequest, ", behind the large request: ", leftBehindLargeRequest,
             ". Ballast kept: ", bmalloc::api::sizeOfAddressSpaceBallastKept(), ". Served: ", RawPointer(served), ". ", mappings.size(), " mappings, ", pieces.size(), " pieces.");
     }
     AOT_TEST_CHECK(!found);
-    mayAsk.signal();
-    otherThread->waitForCompletion();
     AOT_TEST_CHECK(!foundOnOtherThread);
-    if (!served)
-        return;
     // Wherever the memory of further requests that may not fail lies, they open nothing to a large request that may fail.
     std::array<void*, 64> more;
     for (void*& memory : more)
@@ -713,6 +714,95 @@ static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
     AOT_TEST_CHECK(largeRequestFindsMemory() && bmalloc::api::hasWholeAddressSpaceBallast());
     for (void* piece : pieces)
         fastFree(piece);
+    bmalloc::api::setAddressSpaceBallastKeeper(nullptr);
+}
+
+// All the address space is taken, and a request that may not fail has let go of a piece. Another thread that makes small blocks is served, and is told that it takes what the piece has left. A thread that is exempt is served and not told.
+static void checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold()
+{
+    using Use = bmalloc::api::UseOfAddressSpaceBallast;
+    static std::atomic<unsigned> timesToldOfSmallPage;
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+    bmalloc::api::setAddressSpaceBallastKeeper([] {
+        keepAddressSpaceBallast();
+        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
+    });
+    bmalloc::api::setAddressSpaceBallastHandler([](Use use) {
+        if (use == Use::TakesWhatPiecesLeft)
+            ++timesToldOfSmallPage;
+    });
+
+    struct MakerOfSmallBlocks {
+        BinarySemaphore isReady;
+        BinarySemaphore mayAsk;
+        unsigned numberServed { 0 };
+        RefPtr<Thread> thread;
+    };
+    // There will be no room for the stack of a thread, nor for what the allocator keeps for one.
+    std::array<MakerOfSmallBlocks, 2> makers;
+    for (auto& maker : makers) {
+        bool isExempt = &maker == &makers[1];
+        maker.thread = Thread::create("small blocks"_s, [&maker, isExempt] {
+            fastFree(fastMalloc(48));
+            if (isExempt)
+                bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
+            maker.isReady.signal();
+            maker.mayAsk.wait();
+            std::array<void*, 16> blocks;
+            for (void*& block : blocks) {
+                if (!tryFastMalloc(8 * KB).getValue(block))
+                    block = nullptr;
+                maker.numberServed += !!block;
+            }
+            for (void* block : blocks)
+                fastFree(block);
+        });
+        maker.isReady.wait();
+    }
+
+    struct Mapping {
+        void* pages;
+        size_t size;
+    };
+    Vector<Mapping, 64> mappings;
+    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
+        while (void* pages = OSAllocator::tryReserveUncommitted(size))
+            mappings.append({ pages, size });
+    }
+    Vector<void*> pieces;
+    pieces.reserveInitialCapacity(256 * KB);
+    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
+        pieces.append(piece);
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+    for (size_t size = 8 * KB; size >= 16; size /= 2) {
+        void* piece;
+        while (pieces.size() < pieces.capacity() && tryFastMalloc(size).getValue(piece))
+            pieces.append(piece);
+    }
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && !timesToldOfSmallPage);
+
+    // An allocator that does not remember what it refused cannot be asked again.
+    void* served = bmalloc::api::mallocAgainWithBallast();
+    AOT_TEST_CHECK(!served || !bmalloc::api::hasWholeAddressSpaceBallast());
+    std::array<unsigned, 2> timesTold;
+    for (size_t i = 0; i < makers.size(); ++i) {
+        makers[i].mayAsk.signal();
+        makers[i].thread->waitForCompletion();
+        timesTold[i] = timesToldOfSmallPage;
+    }
+    if (served) {
+        AOT_TEST_CHECK(makers[0].numberServed && timesTold[0]);
+        AOT_TEST_CHECK(makers[1].numberServed && timesTold[1] == timesTold[0]);
+        fastFree(served);
+    }
+
+    for (void* piece : pieces)
+        fastFree(piece);
+    for (auto [pages, size] : mappings)
+        OSAllocator::releaseDecommitted(pages, size, 0);
+    bmalloc::api::setAddressSpaceBallastHandler(nullptr);
     bmalloc::api::setAddressSpaceBallastKeeper(nullptr);
 }
 #endif
@@ -1284,6 +1374,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
         { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
         { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
+        { "heap-cage/ballast/a-thread-that-takes-small-pages-of-what-it-let-go-of-is-told"_s, runInProcessWithSharedRange<checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold> },
         { "heap-cage/cage/error-owed-for-structures-then-storage-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Structures>> },
         { "heap-cage/cage/error-owed-for-storage-then-structures-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Storage>> },
 #endif

@@ -35,6 +35,7 @@ runtime SuperConstruct : EncodedJSValue (EncodedJSValue parent, EncodedJSValue n
 runtime SuperConstructList : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list) ; unknownCode
 runtime ThrowUnlessCallable : void (EncodedJSValue callee) ; reads(all) throws
 runtime ThrowUnlessCallableNamed : void (EncodedJSValue callee, uint32_t name) ; reads(all) throws
+runtime ThrowUnlessForwardedCalleeIsCallable : void (EncodedJSValue callee, EncodedJSValue receiver) ; reads(all) throws
 runtime CreateThis : JSCell* (JSCell* constructor, JSCell* newTarget) ; unknownCode
 
 runtime ResolveHeritage : EncodedJSValue (EncodedJSValue heritage) ; unknownCode

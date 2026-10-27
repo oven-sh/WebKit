@@ -703,7 +703,7 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
     }
     RETURN_IF_EXCEPTION(scope, void());
     if (host().createLoadError) {
-        JSValue error = host().createLoadError(realm, key.string(), isForRequire);
+        JSValue error = host().createLoadError(realm, key.string());
         RETURN_IF_EXCEPTION(scope, void());
         if (error) {
             throwException(realm, scope, error);
@@ -849,6 +849,10 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    if (m_innermostFilesBeingRun) [[unlikely]] {
+        handGraphsToLoader();
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     bool isFile = isImportedByLoader(module);
     bool isBuiltinModule = !isFile && isBuiltinModuleOfLoader(module);
     noteRequestByLoader(module);
@@ -1008,7 +1012,7 @@ void Modules::noteOrderAndModulesOfOnlyCountedImport()
     });
 }
 
-static void runJobsThatAreDue(VM& vm, MicrotaskQueue& jobs)
+void Modules::runJobsThatAreDue(VM& vm, MicrotaskQueue& jobs)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // What they queue goes to the queue of the realm. As in MicrotaskQueue::drain(), only a termination stops the remaining jobs.
@@ -1674,8 +1678,11 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         bool isWalked = mustWaitForFile || canTellHowGraphIsLoaded(module);
         if (!isWalked) {
             // Nobody sees in which step a file runs, until one of them queues a job or throws.
-            evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
+            evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader, &load);
             RETURN_IF_EXCEPTION(scope, void());
+            // One of the files had the loader go on from here.
+            if (!record->requestedModules().isEmpty())
+                return;
             isWalked = m_rootWhoseFilesRanAhead == module;
         }
         if (!isWalked) {
@@ -2178,8 +2185,6 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
     if (!modules->isAskingHost()) {
         modules->handCountedImportsToLoader();
         RETURN_IF_EXCEPTION(scope, nullptr);
-        modules->evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     if (modules->isCommonJSFileOrFace(module))
         RELEASE_AND_RETURN(scope, modules->recordOfCommonJSFile(module));
@@ -2401,6 +2406,12 @@ void ModuleRecord::takeStatus()
 bool ModuleRecord::isRunningCommonJSFile()
 {
     return modules().isCommonJSFileOrFace(m_module) && modules().isImportedByLoader(m_module) && modules().status(m_module) == ModuleStatus::Evaluating;
+}
+
+bool ModuleRecord::setIsAskingHost(JSGlobalObject* globalObject, bool isAskingHost)
+{
+    Modules* modules = modulesOf(globalObject);
+    return modules && modules->setIsAskingHost(isAskingHost);
 }
 
 uint8_t ModuleRecord::willAskHostForRequest()

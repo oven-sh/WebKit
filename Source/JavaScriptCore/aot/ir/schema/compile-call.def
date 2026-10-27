@@ -141,6 +141,8 @@ enum Sabotage {
     StoredValuesAreNeverRead
     WhatIsGivenTakesThePlaceOfWhatComes
     MergedLoadsOutlastWritesOnUnlikelyPaths
+    StridedIndexesStayInRange
+    SlotsOfSitesStayAsTheyAre
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

@@ -167,9 +167,9 @@ public:
     }
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
-    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts)
+    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName = false)
     {
-        JSString* key = jsNontrivialString(vm, String(StringImpl::create(characters, hash)));
+        JSString* key = jsNontrivialString(vm, isName ? nameWith(characters, hash) : String(StringImpl::create(characters, hash)));
         if (!canEncode(key)) [[unlikely]]
             return key;
         addCachedKey(key, hash);
@@ -252,6 +252,11 @@ private:
     AOT_CLASS_THRESHOLD(size_t, maxKeysByPartsTableSize, 1 << 14);
 
     static size_t firstIndex(unsigned hash, size_t tableSize) { return hash & (tableSize - 1) & ~static_cast<size_t>(1); }
+    static String nameWith(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        WTF::HashTranslatorCharBuffer<Latin1Character> buffer { characters, hash };
+        return String(AtomStringImpl::add(buffer));
+    }
     bool canEncode(const JSCell* cell) const { return std::bit_cast<uintptr_t>(cell) - m_cageBase < m_cageSize; }
     uint32_t encode(const JSCell* cell) const { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(cell) >> MarkedBlockCage::shift); }
     ALWAYS_INLINE void addCachedKey(JSString* key, unsigned hash)

@@ -26,7 +26,9 @@ namespace JSC {
 
 class HeapCell;
 class JSCell;
+class JSGlobalObject;
 class ReservedRangeHeap;
+class ThrowScope;
 class VM;
 
 // An allocation that may not fail and has found no room. It lives until the allocation has what it asked for.
@@ -149,6 +151,8 @@ public:
     static void willUseLastReserve(VM&);
     // Called on the thread of the VM when a request of that thread to malloc that may not fail has used the ballast (bmalloc::api::keepAddressSpaceBallast()).
     JS_EXPORT_PRIVATE static void didUseAddressSpaceBallast(VM&);
+    // Called on the thread of the VM while pieces of the ballast are missing, ahead of work whose requests to malloc may not fail. Throws if there is no room to keep them again, unless the thread is exempt.
+    JS_EXPORT_PRIVATE static bool throwErrorForMissingAddressSpaceBallast(VM&, JSGlobalObject*, ThrowScope&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 

@@ -68,7 +68,10 @@ public:
     B3::PatchpointValue* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
-    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
+    // The slot of a site is filled, emptied and filled again by the stubs and the run time. No operation of the IR says so: only generated code reads the slots. What the callee says of itself counts.
+    enum class SlotsOfSites : uint8_t { MayChange, StayAsTheyAre };
+    static SlotsOfSites slotsOfSitesBehind(const Effects& effectsOfCallee) { return effectsOfCallee.writes.contains(AbstractHeap::RuntimeState) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre; }
+    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;

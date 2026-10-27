@@ -550,12 +550,12 @@ private:
     Vector<uint32_t> m_numberOfExitsInFront;
 };
 
-static bool mayHaveNamespaceObject(NamespaceUse use)
+static bool mayBeReadByUnknownKey(NamespaceUse use)
 {
     switch (use) {
     case NamespaceUse::Unknown:
-    case NamespaceUse::NamedReadsOnly:
         return true;
+    case NamespaceUse::NamedReadsOnly:
     case NamespaceUse::NeverCreated:
         return false;
     }
@@ -603,6 +603,51 @@ static BitVector findUsedValues(const Function& function)
     return isUsed;
 }
 
+// Only GetModuleVariable reads a variable that no module, eval scope or class object shows to anybody else, so a scan of the bodies sees every read of it.
+static BitVector findVariablesThatOnlyBodiesRead(const Program& program, const FlowResults& flow)
+{
+    BitVector variables;
+    if (!flow.hasResults())
+        return variables;
+
+    BitVector isReadOutsideBodies(program.variables.size());
+    auto add = [&](VariableID variable) {
+        if (variable)
+            isReadOutsideBodies.quickSet(variable.index());
+    };
+    BitVector isReadByHost(program.modules.size());
+    for (const Entry& entry : program.entries) {
+        if (!entry.hostReads.isEmpty())
+            isReadByHost.quickSet(entry.module.index());
+    }
+    for (unsigned index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        const ModuleFlow& moduleFlow = flow.module(ModuleID(index));
+        bool isEveryExportRead = isReadByHost.quickGet(index) || mayBeReadByUnknownKey(moduleFlow.namespaceUse);
+        for (const ModuleExport& entry : module.exports) {
+            if (entry.variable && (isEveryExportRead || std::ranges::binary_search(moduleFlow.exportsReadByName, entry.variable)))
+                add(entry.variable);
+        }
+        for (const SyntheticExport& entry : module.syntheticExports)
+            add(entry.variable);
+        // The run time reads the variable that holds `module.exports` for whoever asks for the value of the module, takes its names from that value, or holds its module object.
+        if (module.exportsVariable && program.at(module.exportsVariable).flow.reads == ReadState::Unknown)
+            add(module.exportsVariable);
+    }
+    for (const EvalScope& scope : program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings)
+            add(binding.variable);
+    }
+
+    variables.ensureSize(program.variables.size());
+    for (unsigned index = 0; index < program.variables.size(); ++index) {
+        const Variable& variable = program.variables[index];
+        if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !isReadOutsideBodies.quickGet(index))
+            variables.quickSet(index);
+    }
+    return variables;
+}
+
 void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     const Program& program = editor.program();
@@ -624,43 +669,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 fields.append(FieldReference { LayoutID(layoutIndex), field });
         }
     }
-    // Only GetModuleVariable reads a variable that no module, eval scope or class object names, so the scan sees every read of it.
-    if (inputs.flow.hasResults()) {
-        BitVector isReadOutsideBodies(program.variables.size());
-        auto add = [&](VariableID variable) {
-            if (variable)
-                isReadOutsideBodies.quickSet(variable.index());
-        };
-        BitVector isReadByHost(program.modules.size());
-        for (const Entry& entry : program.entries) {
-            if (!entry.hostReads.isEmpty())
-                isReadByHost.quickSet(entry.module.index());
-        }
-        for (unsigned index = 0; index < program.modules.size(); ++index) {
-            const Module& module = program.modules[index];
-            bool isEveryExportRead = isReadByHost.quickGet(index) || mayHaveNamespaceObject(inputs.flow.module(ModuleID(index)).namespaceUse);
-            for (const ModuleExport& entry : module.exports) {
-                if (entry.variable && (isEveryExportRead || program.at(entry.variable).flow.reads == ReadState::Unknown))
-                    add(entry.variable);
-            }
-            for (const SyntheticExport& entry : module.syntheticExports)
-                add(entry.variable);
-            // The run time reads the variable that holds `module.exports` for whoever asks for the value of the module, takes its names from that value, or holds its module object.
-            if (module.exportsVariable && program.at(module.exportsVariable).flow.reads == ReadState::Unknown)
-                add(module.exportsVariable);
-        }
-        for (const EvalScope& scope : program.evalScopes) {
-            for (const EvalBinding& binding : scope.bindings)
-                add(binding.variable);
-        }
-
-        variables.ensureSize(program.variables.size());
-        for (unsigned index = 0; index < program.variables.size(); ++index) {
-            const Variable& variable = program.variables[index];
-            if (!variable.owner && variable.flow.writers == WriterState::AllKnown && !isReadOutsideBodies.quickGet(index))
-                variables.quickSet(index);
-        }
-    }
+    variables = findVariablesThatOnlyBodiesRead(program, inputs.flow);
     if (fields.isEmpty() && variables.isEmpty())
         return;
 
@@ -996,18 +1005,6 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     });
 }
 
-static bool mayBeReadByUnknownKey(NamespaceUse use)
-{
-    switch (use) {
-    case NamespaceUse::Unknown:
-        return true;
-    case NamespaceUse::NamedReadsOnly:
-    case NamespaceUse::NeverCreated:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
 {
     if (!flow.hasResults())
@@ -1033,10 +1030,26 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
         if (variable.flow.reads == ReadState::NeverRead && variable.flow.writers == WriterState::AllKnown && !variable.owner && !mayBeReadThroughNamespace)
             unreadVariables.set(index);
     }
+
+    // Flow saw the reads that have become constants since.
+    const ParallelLoops& loops = build.parallelLoops();
+    BitVector variablesToLookFor = findVariablesThatOnlyBodiesRead(program, flow);
+    variablesToLookFor.exclude(unreadVariables);
+    if (!variablesToLookFor.isEmpty()) {
+        Vector<uint8_t> isRead(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
+        forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+            forEachListedValue(program, FunctionID(index), { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
+                WTF::atomicStore(&isRead[value.variable().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+            });
+        });
+        for (size_t index : variablesToLookFor) {
+            if (!isRead[index])
+                unreadVariables.set(index);
+        }
+    }
     if (unreadVariables.isEmpty())
         return;
 
-    const ParallelLoops& loops = build.parallelLoops();
     using FunctionStores = std::pair<FunctionID, Vector<VariableID, 4>>;
     Vector<uint8_t> mayHoldObjects(FillWith { }, program.variables.size(), static_cast<uint8_t>(0));
     EffectSummaries unknownSummaries;
@@ -1093,7 +1106,7 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
                 didRemove |= !!block.values.removeAllMatching([&](ValueID id) {
                     const Value& value = function.at(id);
                     bool isAnnotatedPure = (value.opcode == Opcode::Call || value.opcode == Opcode::Construct) && value.isAnnotatedPure();
-                    return (isAnnotatedPure || isCastWithoutTest(value.opcode)) && !usedValues.quickGet(id.index());
+                    return (isAnnotatedPure || isCastWithoutTest(value.opcode) || resultRuleOf(value.opcode) == ResultRule::Constant) && !usedValues.quickGet(id.index());
                 });
             }
         }
@@ -1102,6 +1115,8 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
     variablesWithRemovedStores.exclude(variablesWithRemainingStores);
     for (size_t index : variablesWithRemovedStores)
         editor.at(VariableID(index)).flow.stores = StoreCount::Never;
+    for (size_t index : unreadVariables)
+        editor.at(VariableID(index)).flow.reads = ReadState::NeverRead;
     build.statistics().count(StatisticID::UnreadVariableStoresRemoved, numberOfRemovedStores);
 }
 

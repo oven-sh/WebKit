@@ -164,9 +164,9 @@ public:
     // Says whether the start that asks goes on to run the module.
     bool beginModuleInRecord(ModuleID);
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
     void queueJobsThatWaitForLoader();
-    void runFilesThatWaitInLoader();
+    void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
@@ -454,7 +454,17 @@ private:
         FilesBeingRun* outer;
         // The loader of `bun run` has asked for every file of the root by now, in jobs that stand in front of whatever the files queue.
         bool isAheadOfJobsOfLoader { false };
+        // In which the loader asks the root for its requests. Without one, the jobs of an import() are counted.
+        ModuleGraphLoadingState* load { nullptr };
+        size_t numberOfJobsInFrontOfFile { 0 };
+        // The loader has gone through the graph as far as the step in which this file runs.
+        std::optional<ModuleID> fileHandedToLoader { };
     };
+    void handGraphToLoader(FilesBeingRun&);
+    static void runJobsThatAreDue(VM&, MicrotaskQueue&);
+    void runStepsOfLoaderInFrontOf(ModuleID file);
+    void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
+    std::optional<ModuleID> m_fileBeingHandedToLoader;
     FilesBeingRun* m_innermostFilesBeingRun { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
@@ -621,6 +631,7 @@ private:
     Vector<DeferredImport> m_deferredImports;
     ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
     void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
+    void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
     bool isEvaluatedByLoader(ModuleID file) const;
     bool hasDeferredLoads(ModuleID fileOrFace) const;
     void resumeDeferredRequests(ModuleID file);

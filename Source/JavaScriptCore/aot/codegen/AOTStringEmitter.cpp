@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
 #include "B3MemoryValue.h"
@@ -510,9 +511,11 @@ CellPointer StringEmitter::concatenate(const OperationContext& context, std::spa
     return result;
 }
 
-CellPointer StringEmitter::concatenateValues(const OperationContext& context, std::span<const Boxed> primitives, bool isLikelyKey)
+CellPointer StringEmitter::concatenateKey(const OperationContext& context, std::span<const Boxed> primitives, KeyUse keyUse)
 {
-    return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(isLikelyKey) });
+    using StringUse = StringBuilderStorage::StringUse;
+    StringUse use = keyUse == KeyUse::NameOfProperty ? StringUse::LikelyName : StringUse::LikelyKey;
+    return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives), word32(static_cast<int32_t>(use)) });
 }
 
 CellPointer StringEmitter::integerToString(const OperationContext& context, Integer value)

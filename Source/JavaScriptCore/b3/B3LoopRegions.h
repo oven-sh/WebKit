@@ -8,6 +8,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlock.h"
+#include "B3IntRange.h"
 #include "B3Limits.h"
 #include "B3NaturalLoops.h"
 #include "B3Opcode.h"
@@ -85,6 +86,9 @@ public:
 
     BasicBlock* startNextBlock();
     Value* appendIntConstant(Origin, Type, int64_t);
+    Value* append(Origin, Opcode, Value* left, Value* right);
+    Value* appendAddConstant(Origin, Value*, int64_t);
+    Value* appendWidened(Origin, Value*, Signedness);
     void appendGuard(Origin, Opcode relation, Value* left, Value* right);
 
 private:

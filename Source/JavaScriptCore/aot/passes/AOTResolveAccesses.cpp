@@ -33,6 +33,7 @@
 #include "AOTObservableOperations.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
@@ -1239,6 +1240,9 @@ static std::optional<TestsOfAbsentTrap> createTestsOfAbsentTrap(FunctionPassCont
 
 enum class ReceiverOfAccess : bool { MayBeProxy, IsProxy };
 
+// A key of one of these kinds becomes the name that a trap is handed without running any code.
+static constexpr uint16_t keysThatBecomeNamesWithoutCode = Primitive::AnyString | Primitive::AnySymbol | Primitive::Integer;
+
 // As ProxyObject.cpp performProxyGet(), performHasProperty(), performPut(), performDelete() and performInternalMethodGetOwnProperty(). The trap is read off the handler and called as the program would read and call it, so what is known of the handler and of the target is known here.
 static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& builder, ProgramPoint point, const std::optional<ProxyInSight>& proxyInSight, const FlowProxiesSeenAtSite* proxiesSeen, ReceiverOfAccess receiver)
 {
@@ -1296,14 +1300,18 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         return builder.append(WTF::move(read));
     };
 
-    // A key that is a text or a symbol is what the trap is handed. Any other is first made one, which may run code: that is left to the access as it is written.
+    // A key that is a text or a symbol is what the trap is handed, and an integer is handed as its text. Any other is first made a name in a way that may run code: that is left to the access as it is written.
+    // The target is asked under the key itself.
     ValueID name;
+    ValueID key;
     if (isByName) {
         Value nameOfAccess = IRBuilder::make(Opcode::String);
         nameOfAccess.setString(program.at(access.key()).text);
         name = builder.append(WTF::move(nameOfAccess));
-    } else
-        name = goOnWhere(access.propertyOperand(), context.types.intern(Type::fromPrimitives(Primitive::AnyString | Primitive::AnySymbol)), unlikely);
+    } else {
+        key = goOnWhere(access.propertyOperand(), context.types.intern(Type::fromPrimitives(keysThatBecomeNamesWithoutCode)), unlikely);
+        name = program.typeOf(function, access.propertyOperand()).primitives & Primitive::Integer ? builder.append(Opcode::ToPropertyKey, { key }) : key;
+    }
     ValueID target;
     BlockID withoutTrap = builder.addBlock(frequency);
 
@@ -1452,7 +1460,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         if (isByName)
             read.setKey(access.key());
         else
-            read.setComputedKeyOperand(name);
+            read.setComputedKeyOperand(key);
         finishWith(builder.append(WTF::move(read)));
     } else if (stores) {
         Value store = IRBuilder::make(Opcode::SuperSet);
@@ -1463,7 +1471,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         if (isByName)
             store.setKey(access.key());
         else
-            store.setComputedKeyOperand(name);
+            store.setComputedKeyOperand(key);
         builder.append(WTF::move(store));
         finishWith({ });
     } else if (deletes) {
@@ -1473,7 +1481,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         if (isByName)
             deletion.setKey(access.key());
         else
-            deletion.setPropertyOperand(name);
+            deletion.setPropertyOperand(key);
         finishWith(builder.append(WTF::move(deletion)));
     } else if (asksForOwnProperty) {
         Value test = IRBuilder::make(Opcode::PropHasOwn, { target });
@@ -1485,7 +1493,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         test.setKey(access.key());
         finishWith(builder.append(WTF::move(test)));
     } else
-        finishWith(builder.append(Opcode::ElemHas, { target, name }));
+        finishWith(builder.append(Opcode::ElemHas, { target, key }));
 
     if (asWritten) {
         builder.moveToEndOf(asWritten);
@@ -1526,7 +1534,7 @@ static bool standsBehindFailedTestOfExpansion(FunctionPassContext& context, cons
             return part && part->builtinClass == BuiltinClasses::Proxy;
         }
         if (tested == key)
-            return !type.anyObject && !type.singleBuiltinClass() && type.primitives == (Primitive::AnyString | Primitive::AnySymbol);
+            return !type.anyObject && !type.singleBuiltinClass() && type.primitives == keysThatBecomeNamesWithoutCode;
         const Value& definition = function.at(tested);
         return definition.opcode == Opcode::GetInternalField && identities.identityOf(definition.operand(0)) == receiver;
     };
@@ -1573,7 +1581,7 @@ static bool expandAccessesThroughProxies(FunctionPassContext& context, IRBuilder
         const Value& access = function.at(site.value);
         if (found || !findFunctionOfReflectFor(access.opcode) || (FlagMask::isFreeName(access.opcode) && access.isFreeName()) || (PayloadWord::key(access.opcode) && program.at(access.key()).kind != PropertyKeyKind::Text))
             return;
-        if (!PayloadWord::key(access.opcode) && !(program.typeOf(function, access.propertyOperand()).primitives & (Primitive::AnyString | Primitive::AnySymbol)))
+        if (!PayloadWord::key(access.opcode) && !(program.typeOf(function, access.propertyOperand()).primitives & keysThatBecomeNamesWithoutCode))
             return;
         const Type& typeOfReceiver = program.typeOf(function, access.objectOperand());
         const ClassPart* part = typeOfReceiver.singleBuiltinClass();
@@ -1620,6 +1628,40 @@ static bool forwardReadsOutOfProxiesInSight(FunctionPassContext& context)
     });
     for (auto [read, held] : found)
         becomeUpcast(function, read, held);
+    return !found.isEmpty();
+}
+
+// The operand that an access holds a key in that is worked out, if it has one.
+static ValueID findOperandOfKey(const Value& access)
+{
+    if (access.opcode == Opcode::SuperGet)
+        return access.computedKeyOperand();
+    if (elementAccessOf(access.opcode) || access.opcode == Opcode::GetByValWithThis)
+        return access.propertyOperand();
+    return { };
+}
+
+// What is asked under the text of an integer is asked under the integer: a trap is handed the text, and hands it on to its target.
+static bool askUnderIntegersThemselves(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<std::pair<ValueID, ValueID>, 4> found;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        ValueID key = findOperandOfKey(function.at(site.value));
+        if (!key)
+            return;
+        const Value& definition = function.at(definitionThroughUpcasts(function, key));
+        if (definition.opcode == Opcode::ToPropertyKey && program.typeOf(function, definition.valueOperand()).isInteger())
+            found.append({ site.value, definition.valueOperand() });
+    });
+    for (auto [id, integer] : found) {
+        Value& access = function.edit(id);
+        if (access.opcode == Opcode::SuperGet)
+            access.setComputedKeyOperand(integer);
+        else
+            access.setPropertyOperand(integer);
+    }
     return !found.isEmpty();
 }
 
@@ -1756,6 +1798,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
         return !context.opcodesWhereRunBegins || context.opcodesWhereRunBegins->contains(opcode);
     };
     bool didExpand = holds(Opcode::GetByValWithThis) && readByNameWhereReceiverIsTheObject(context);
+    didExpand |= holds(Opcode::ToPropertyKey) && askUnderIntegersThemselves(context);
     didExpand |= makesProxies && holds(Opcode::GetInternalField) && forwardReadsOutOfProxiesInSight(context);
     while ((makesProxies && expandAccessesThroughProxies(context, builder)) || expandReadForAnotherReceiver(context, builder))
         didExpand = true;

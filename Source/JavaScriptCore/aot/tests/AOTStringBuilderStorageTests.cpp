@@ -1264,6 +1264,23 @@ static JSString* concatenate(LoadedProgram& program, std::initializer_list<JSVal
     return result;
 }
 
+static void testKeyOfPropertiesIsMadeAsName(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    StringKeyCache& keys = *program.state().stringKeys;
+    auto make = [&](ASCIILiteral text, bool isName) {
+        std::span<const Latin1Character> characters = text.span8();
+        unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
+        JSString* key = keys.makeKey(vm, characters, hash, { }, isName);
+        AOT_TEST_CHECK(keys.tryFindCachedKey(characters, hash) == key && WTF::equal(key->tryGetValueImpl(), characters));
+        return key;
+    };
+    AOT_TEST_CHECK(make("name-nobody-has-seen"_s, true)->tryGetValueImpl()->isAtom());
+    AOT_TEST_CHECK(!make("key-of-a-table"_s, false)->tryGetValueImpl()->isAtom());
+    Identifier known = Identifier::fromString(vm, "name-seen-before"_s);
+    AOT_TEST_CHECK(make("name-seen-before"_s, true)->tryGetValueImpl() == known.impl());
+}
+
 static void testConcatenatedKeys(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1547,6 +1564,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/short-text-built-on-stack-is-found-again"_s, withInstance<testShortTextBuiltOnStackIsFoundAgain> },
         { "string-builder-storage/keys-up-to-the-cached-length"_s, withInstance<testKeysUpToTheCachedLength> },
         { "string-builder-storage/concatenated-keys"_s, withInstance<testConcatenatedKeys> },
+        { "string-builder-storage/key-of-properties-is-made-as-a-name"_s, withInstance<testKeyOfPropertiesIsMadeAsName> },
         { "string-builder-storage/keys-found-by-their-parts"_s, withInstance<testKeysFoundByTheirParts> },
         { collectorTest, testCollector },
     };

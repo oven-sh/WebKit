@@ -445,10 +445,6 @@ static void testReachability()
     for (StubKey key : { getByValCached(), getByValCachedCells(), getByVal(false), getByVal(true) })
         AOT_TEST_CHECK(keyedReadBlob.offsetOf(key));
     AOT_TEST_CHECK(!keyedReadBlob.offsetOf(newPromise()));
-    for (StubKey handler : slotHandlerKeys(SlotHandlerTable::ReadByVal))
-        AOT_TEST_CHECK(keyedReadBlob.offsetOf(handler));
-    for (StubKey handler : slotHandlerKeys(SlotHandlerTable::StoreStrictByVal))
-        AOT_TEST_CHECK(!keyedReadBlob.offsetOf(handler));
 
     StubBlob promiseBlob = buildBlob(catalog, std::array { newPromise() }, EntrySet { });
     AOT_TEST_CHECK(promiseBlob.offsetOf(newPromise()));
@@ -460,8 +456,6 @@ static void testReachability()
         for (StubKey key : stubKeysWithLinkage(linkage))
             AOT_TEST_CHECK(promiseBlob.offsetOf(key));
     }
-    for (StubKey handler : stubKeysWithLinkage(StubLinkage::SlotHandler))
-        AOT_TEST_CHECK(!promiseBlob.offsetOf(handler));
 }
 
 static void testMissingKeys()

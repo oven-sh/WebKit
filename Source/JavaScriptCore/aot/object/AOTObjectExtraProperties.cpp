@@ -682,13 +682,14 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
 {
     bool isDefinition = flags.contains(ExtraPropertyStoreFlag::IsDefinition);
     bool namesStructure = flags.contains(ExtraPropertyStoreFlag::NamesExtraPropertiesStructure);
-    if (!flags.contains(ExtraPropertyStoreFlag::IsKnownNotToBeField) && fieldNamed(state(), name))
+    bool isMadeAtRunTime = flags.contains(ExtraPropertyStoreFlag::IsMadeAtRunTime);
+    if (!isMadeAtRunTime && !flags.contains(ExtraPropertyStoreFlag::IsKnownNotToBeField) && fieldNamed(state(), name))
         return { };
     unsigned attributes = 0;
     JSObject* extra = extraProperties();
     ASSERT(!flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) || !extra || !isValidOffset(extra->structure()->get(vm, name)));
     PropertyOffset offset = extra && !flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) ? extra->structure()->get(vm, name, attributes) : invalidOffset;
-    if (!isValidOffset(offset) && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto))
+    if (!isValidOffset(offset) && !isMadeAtRunTime && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto))
         return { };
     if (isValidOffset(offset)) {
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
@@ -699,9 +700,9 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     if (isNotExtensible())
         return { };
     JSGlobalObject* realm = structure()->realm();
-    if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid()))
+    if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid(), isMadeAtRunTime ? StoredName::IsNotSpelledByProgram : StoredName::MayBeSpelledByProgram))
         return { };
-    willAddExtraProperty(vm, name);
+    willAddExtraProperty(vm, name, !isMadeAtRunTime);
     bool hadNone = !extra;
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
@@ -728,12 +729,13 @@ bool Object::repeatsExtraPropertyStore(VM& vm, PropertyName name) const
     return Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset);
 }
 
-void Object::willAddExtraProperty(VM& vm, PropertyName name)
+void Object::willAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)
 {
     validateMutation(vm, *this, name, ObjectMutation::AddProperty);
     ObjectModel& objects = *state().objects;
     objects.layouts.willAddProperty(vm, layout(), name.uid());
-    objects.classes.didShadowMember(layout(), name.uid());
+    if (isSpelledByProgram)
+        objects.classes.didShadowMember(layout(), name.uid());
 }
 
 } } // namespace JSC::AOT

@@ -41,8 +41,6 @@ String messageOfNameRefusedOnBuiltinFunction(PropertyName);
 String messageOfPrototypeRefusedOnBuiltinFunction();
 void didCreateRealm(JSGlobalObject*);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
-// A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
-void didFlattenObjectOnPrototypeChain(VM&, JSObject* flattened);
 void didFlattenStructure(VM&, Structure*);
 // No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.
 bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);

@@ -95,7 +95,7 @@ function f1 name="link" module=m0 position=57 flags=[IsChecked, HasExplicitName]
 # CHECK: Return(Terminal)
 # Only the rare edge leads to the call that remembers the owner.
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-LABEL: end of function
 # x86-64 compares the state byte with the threshold in memory. ARM64 loads the threshold first.
 # X64: instructions: 4, patchpoints: 0

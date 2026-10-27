@@ -70,6 +70,7 @@ public:
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
     void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
+    void requireCallableBeforeTailCall(const ValueContext&, Boxed callee, Boxed thisValue);
     void didEmitTailCall();
     // Says what the program calls the callee, where it calls it anything.
     static std::optional<ThrowSite> siteThatNamesCallee(const ValueContext&);
@@ -78,6 +79,8 @@ public:
     void returnMisfit(Boxed);
 
 private:
+    bool mayForwardCallToReceiver(const ValueContext&);
+
     enum class OmittedArguments : uint8_t { MustBePassed, MayBeOmitted };
     enum class TargetKind : uint8_t { Function, Address, Stub };
 

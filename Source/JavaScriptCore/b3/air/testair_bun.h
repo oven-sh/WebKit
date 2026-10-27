@@ -373,6 +373,7 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(registers, hintsTwoAddressOperands, true);
     CHECK_POLICY_DUMP_NAMES(registers, usesSecondPreferredRegister, true);
     CHECK_POLICY_DUMP_NAMES(registers, evictsHolderOfPreferredRegister, true);
+    CHECK_POLICY_DUMP_NAMES(registers, patchpointsKeepOnlyLowerHalvesOfVectors, true);
     CHECK_POLICY_DUMP_NAMES(registers, unsavedCalleeSaves, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(registers, savedByCallee, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(registers, calleeSavesClobberedAtSuspensions, calleeSaves);

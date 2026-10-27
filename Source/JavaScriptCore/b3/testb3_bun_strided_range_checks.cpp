@@ -365,8 +365,9 @@ static void testVersionLoopsSharesGuardsOfStridedNeighbors()
             loop.proc.resetValueOwners();
             auto plans = LoopVersionPlanner(loop.proc).plan(loop.proc.naturalLoops().loop(0));
             CHECK_EQ(plans.size(), 1u);
-            const auto& checks = plans[0].rangeChecks.stridedChecks;
-            CHECK_EQ(checks.size(), 1u);
+            CHECK(plans[0].rangeChecks.strided);
+            const auto& checks = plans[0].rangeChecks.strided->checks;
+            CHECK_EQ(plans[0].rangeChecks.strided->numberOfChecks, 1u);
             CHECK_EQ(checks[0].minOffset, -1);
             CHECK_EQ(checks[0].maxOffset, 3);
             CHECK_EQ(checks[0].isIncreasing, !constantScale || *constantScale > 0);
@@ -440,6 +441,22 @@ static void testVersionLoopsStrengthReducesStridedIndices()
     }
 }
 
+static void testVersionLoopsOmitsStridedLimitGuardOnlyWhenToldTo()
+{
+    unsigned numberOfGuards[2];
+    for (bool omitsLimitGuard : { false, true }) {
+        Policy policy = loopPolicy();
+        policy.validation.omitsStridedLimitGuard = omitsLimitGuard;
+        StridedLoop loop(policy, StridedLoopShape { });
+        CHECK(versionLoopsAndValidate(loop.proc));
+        CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+        numberOfGuards[omitsLimitGuard] = numberOfValues(loop.proc, Branch);
+        if (!omitsLimitGuard)
+            checkRuns(loop);
+    }
+    CHECK_EQ(numberOfGuards[0], numberOfGuards[1] + 1);
+}
+
 static void readLengthsFromViews(Procedure& proc)
 {
     AbstractHeapRepository& heaps = proc.heaps();
@@ -492,19 +509,22 @@ struct AffineIndexTest {
         column = graph.make(root, Trunc, arguments[2]);
     }
 
-    std::optional<AffineIndex> find(Value* value, IntegerInterval counterRange = { 0, 100 })
+    std::optional<AffineIndex> find(Value* value, IntRange counterRange = IntRange(0, 100))
     {
-        return affineIndexOf({ proc, counter, counterRange, [&](Value* candidate) -> Value* {
+        AffineIndex result;
+        if (!findAffineIndex({ proc, counter, counterRange, [&](Value* candidate) -> Value* {
             return candidate == width || candidate == column ? candidate : nullptr;
-        } }, value);
+        } }, value, result))
+            return std::nullopt;
+        return result;
     }
 
     Value* make(B3::Opcode opcode, Value* left, Value* right) { return graph.make(root, opcode, left, right); }
     Value* int32(int32_t value) { return graph.int32(root, value); }
 
-    static InvariantSum sum(int64_t constant, Vector<InvariantTerm, 2> terms = { })
+    static bool isSum(const InvariantSum& sum, int64_t constant, std::initializer_list<InvariantTerm> terms = { })
     {
-        return { WTF::move(terms), constant };
+        return sum.constant == constant && std::ranges::equal(sum.usedTerms(), terms);
     }
 
     Procedure proc;
@@ -525,22 +545,22 @@ static void testAffineIndexOf()
     Value* column = test.column;
 
     auto index = test.find(test.make(Add, test.make(Shl, counter, test.int32(2)), test.int32(3)));
-    CHECK(index && index->scale == AffineIndexTest::sum(4) && index->offset == AffineIndexTest::sum(3));
+    CHECK(index && AffineIndexTest::isSum(index->scale, 4) && AffineIndexTest::isSum(index->offset, 3));
 
     index = test.find(test.make(Add, test.make(Mul, counter, width), column));
-    CHECK(index && index->scale == AffineIndexTest::sum(0, { { 1, width, nullptr } }) && index->offset == AffineIndexTest::sum(0, { { 1, column, nullptr } }));
+    CHECK(index && AffineIndexTest::isSum(index->scale, 0, { { 1, width, nullptr } }) && AffineIndexTest::isSum(index->offset, 0, { { 1, column, nullptr } }));
 
     index = test.find(test.make(Mul, test.make(Add, counter, test.int32(1)), width));
-    CHECK(index && index->scale == AffineIndexTest::sum(0, { { 1, width, nullptr } }) && index->offset == AffineIndexTest::sum(0, { { 1, width, nullptr } }));
+    CHECK(index && AffineIndexTest::isSum(index->scale, 0, { { 1, width, nullptr } }) && AffineIndexTest::isSum(index->offset, 0, { { 1, width, nullptr } }));
 
     index = test.find(test.make(Sub, test.make(Mul, test.make(Add, counter, column), width), test.make(Mul, column, width)));
-    CHECK(index && index->scale == AffineIndexTest::sum(0, { { 1, width, nullptr } }) && index->offset == AffineIndexTest::sum(0));
+    CHECK(index && AffineIndexTest::isSum(index->scale, 0, { { 1, width, nullptr } }) && AffineIndexTest::isSum(index->offset, 0));
 
     index = test.find(test.make(Sub, test.make(Sub, width, test.int32(1)), counter));
-    CHECK(index && index->scale == AffineIndexTest::sum(-1) && index->offset == AffineIndexTest::sum(-1, { { 1, width, nullptr } }));
+    CHECK(index && AffineIndexTest::isSum(index->scale, -1) && AffineIndexTest::isSum(index->offset, -1, { { 1, width, nullptr } }));
 
     index = test.find(test.make(Sub, counter, counter));
-    CHECK(index && index->scale == AffineIndexTest::sum(0) && index->offset == AffineIndexTest::sum(0));
+    CHECK(index && AffineIndexTest::isSum(index->scale, 0) && AffineIndexTest::isSum(index->offset, 0));
 
     CHECK(!test.find(test.make(Mul, counter, counter)));
     CHECK(!test.find(test.make(Mul, test.make(Mul, test.make(Mul, counter, width), column), width)));
@@ -549,10 +569,10 @@ static void testAffineIndexOf()
 
     Value* extended = test.graph.make(test.root, ZExt32, test.make(Sub, counter, test.int32(1)));
     CHECK(!test.find(test.make(Add, extended, test.graph.int64(test.root, 1))));
-    CHECK(test.find(test.make(Add, extended, test.graph.int64(test.root, 1)), { 1, 100 }));
+    CHECK(test.find(test.make(Add, extended, test.graph.int64(test.root, 1)), IntRange(1, 100)));
     extended = test.graph.make(test.root, SExt32, test.make(Mul, counter, width));
     CHECK(!test.find(extended));
-    CHECK(test.find(extended, { 0, 1 }));
+    CHECK(test.find(extended, IntRange(0, 1)));
 }
 
 void addBunStridedRangeCheckTests(const TestConfig* config, BunTestTasks& tasks)
@@ -564,6 +584,7 @@ void addBunStridedRangeCheckTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsRemovesStridedRangeChecksUnderUnsignedRelation());
     RUN(testVersionLoopsSharesGuardsOfStridedNeighbors());
     RUN(testVersionLoopsStrengthReducesStridedIndices());
+    RUN(testVersionLoopsOmitsStridedLimitGuardOnlyWhenToldTo());
     RUN(testVersionLoopsKeepsStridedRangeCheckWhoseLimitIsStoredInLoop());
     RUN(testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered());
     RUN(testVersionLoopsStridedFastLoopWithinViewDoesNotPoll());

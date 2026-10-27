@@ -331,52 +331,141 @@ static NEVER_INLINE char32_t characterAtSurrogate(const char16_t* input, unsigne
     return at && U16_IS_LEAD(input[at - 1]) ? noCharacter : unit;
 }
 
-// Where the pattern has references, a search from one op and one position begins again and again with other bounds of the referenced groups: see FlatProgram::referencedGroups. So the table is one of
-// slots that are found by all three: the first word is the number of slots less one, a power of two less one, and a slot is one more than the index of op and position, the entry, and the bounds.
-// A slot that finds its few places taken takes the first of them: what was there is searched again.
-static NEVER_INLINE uint32_t* findSlotBesideReferences(const FlatProgram& program, uint32_t* memo, size_t index, const unsigned* output, bool makesSlot)
-{
-    constexpr unsigned placesTried = 8;
-    constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-    uint32_t key = static_cast<uint32_t>(index + 1);
-    uint64_t hash = key * multiplier;
-    for (unsigned group : program.referencedGroups) {
-        hash = (hash ^ output[group]) * multiplier;
-        hash = (hash ^ output[group + 1]) * multiplier;
+// Where a reference can still read what the referenced groups hold, a search from one op and one position begins again and again with other bounds of them: see FlatProgram::memoRowsBesideReferences.
+// So the table of such rows is one of slots that are found by all three. A slot is one more than the index of op and position, the entry, and the bounds. A bound that is not read any more counts as 0.
+// A slot that finds its few places taken takes the first of them: what was there is searched again. The table begins small, so that a search that enters little pays little, and grows as it fills.
+struct SlotsBesideReferences {
+    static constexpr unsigned placesTried = 8;
+    static constexpr size_t leastCount = 1024;
+
+    SlotsBesideReferences(unsigned boundCount, size_t greatestCount)
+        : boundCount(boundCount)
+        , greatestCount(greatestCount)
+    {
     }
-    size_t mask = memo[0];
-    size_t slotSize = program.memoSlotSizeBesideReferences();
-    auto slotAt = [&](size_t place) {
-        return memo + 1 + (place & mask) * slotSize;
-    };
-    size_t first = hash >> 32;
-    uint32_t* slot = nullptr;
-    for (unsigned i = 0; i < placesTried; ++i) {
-        slot = slotAt(first + i);
-        if (!slot[0])
-            break;
-        if (slot[0] != key)
-            continue;
-        const uint32_t* bounds = slot + 2;
-        bool isSame = true;
-        for (unsigned group : program.referencedGroups) {
-            isSame &= bounds[0] == output[group] && bounds[1] == output[group + 1];
-            bounds += 2;
+
+    size_t slotSize() const { return 2 + boundCount; }
+    uint32_t* slotAt(size_t place) { return words.mutableSpan().data() + (place & (count - 1)) * slotSize(); }
+
+    size_t firstPlaceOf(uint32_t key, const uint32_t* bounds) const
+    {
+        constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+        uint64_t hash = key * multiplier;
+        for (unsigned i = 0; i < boundCount; ++i)
+            hash = (hash ^ bounds[i]) * multiplier;
+        return hash >> 32;
+    }
+
+    // The slot of the key and the bounds, or else an empty one that they can take, or else nothing.
+    uint32_t* find(size_t first, uint32_t key, const uint32_t* bounds)
+    {
+        for (unsigned i = 0; i < placesTried; ++i) {
+            uint32_t* slot = slotAt(first + i);
+            if (!slot[0])
+                return slot;
+            if (slot[0] != key)
+                continue;
+            bool isSame = true;
+            for (unsigned bound = 0; bound < boundCount; ++bound)
+                isSame &= slot[2 + bound] == bounds[bound];
+            if (isSame)
+                return slot;
         }
-        if (isSame)
-            return slot;
-    }
-    if (!makesSlot)
         return nullptr;
-    if (slot[0])
-        slot = slotAt(first);
-    slot[0] = key;
-    uint32_t* bounds = slot + 2;
-    for (unsigned group : program.referencedGroups) {
-        *bounds++ = output[group];
-        *bounds++ = output[group + 1];
     }
-    return slot;
+
+    uint32_t* take(uint32_t key, const uint32_t* bounds)
+    {
+        size_t first = firstPlaceOf(key, bounds);
+        uint32_t* slot = find(first, key, bounds);
+        if (!slot)
+            slot = slotAt(first);
+        used += !slot[0];
+        slot[0] = key;
+        for (unsigned bound = 0; bound < boundCount; ++bound)
+            slot[2 + bound] = bounds[bound];
+        return slot;
+    }
+
+    bool tryResize(size_t newCount)
+    {
+        Vector<uint32_t> larger;
+        if (!larger.tryGrow(newCount * slotSize()))
+            return false;
+        zeroSpan(larger.mutableSpan());
+        Vector<uint32_t> smaller = std::exchange(words, WTF::move(larger));
+        size_t oldCount = std::exchange(count, newCount);
+        used = 0;
+        for (size_t i = 0; i < oldCount; ++i) {
+            const uint32_t* slot = smaller.span().data() + i * slotSize();
+            if (slot[0])
+                take(slot[0], slot + 2)[1] = slot[1];
+        }
+        return true;
+    }
+
+    Vector<uint32_t> words;
+    const unsigned boundCount;
+    size_t greatestCount; // A power of two, as count is.
+    size_t count { 0 };
+    size_t used { 0 };
+};
+
+static NEVER_INLINE uint32_t* findSlotBesideReferences(const FlatProgram& program, SlotsBesideReferences& slots, size_t index, const unsigned* output, unsigned boundsStillRead, bool makesSlot)
+{
+    uint32_t key = static_cast<uint32_t>(index + 1);
+    std::array<uint32_t, 2 * FlatProgram::maxReferencedGroups> bounds;
+    for (unsigned i = 0; i < slots.boundCount; ++i)
+        bounds[i] = boundsStillRead & (1u << i) ? output[program.referencedGroups[i >> 1] + (i & 1)] : 0;
+    if (!makesSlot) {
+        uint32_t* slot = slots.find(slots.firstPlaceOf(key, bounds.data()), key, bounds.data());
+        return slot && slot[0] ? slot : nullptr;
+    }
+    if (slots.used >= slots.count / 2 && slots.count < slots.greatestCount && !slots.tryResize(slots.count * 4 <= slots.greatestCount ? slots.count * 4 : slots.greatestCount))
+        slots.greatestCount = slots.count;
+    return slots.take(key, bounds.data());
+}
+
+// See FlatProgram::memoRowsOfRestsOfRuns. The search has failed from every place from `lowest` to `highest`, and the run cannot stand behind `highest`, or the rest has failed from there already.
+// failedSearches, failedRests: the run's row, and the one beside it.
+static NEVER_INLINE void recordFailedRestOfRun(const FlatProgram& program, const FlatOp& run, const uint32_t* registers, const uint32_t* failedSearches, uint32_t* failedRests, unsigned lowest, unsigned highest)
+{
+    auto turnBeganAt = [&](unsigned at) {
+        for (unsigned turn = program.aroundMemoRow[run.memoRow].turnThatMayTakeNothing; turn; turn = program.turnsThatMayTakeNothing[turn].enclosing) {
+            if (registers[program.turnsThatMayTakeNothing[turn].registerIndex] == at)
+                return true;
+        }
+        return false;
+    };
+    uint32_t turns = 0;
+    for (unsigned at = highest;; --at) {
+        if (failedRests[at])
+            turns = failedRests[at] - 1;
+        else {
+            // What the search from there does depends on more than the place.
+            if (turnBeganAt(at))
+                return;
+            if (failedSearches[at])
+                turns = std::min<uint32_t>(turns + (failedSearches[at] - 1), matchLimit);
+            failedRests[at] = turns + 1;
+        }
+        if (at == lowest)
+            return;
+    }
+}
+
+// Where a run without an upper bound that stands at `at` ends.
+template<typename CharType>
+static NEVER_INLINE unsigned findEndOfRun(const FlatProgram& program, const FlatOp& run, const CharType* input, unsigned length, unsigned at)
+{
+    const CharacterSetBits& set = program.characterSets[run.set];
+    auto wideRanges = program.wideRanges.span();
+    for (unsigned end = length - run.needed; at < end; ++at) {
+        bool isMember = input[at] > 0xff ? wideRangesContain(wideRanges, set, input[at]) : contains(set, wideRanges, static_cast<Latin1Character>(input[at]));
+        if (!isMember)
+            break;
+    }
+    return at;
 }
 
 // What a match seldom uses. Separate from Machine for the same reason as FrameStorage.
@@ -520,6 +609,12 @@ struct Enclosure {
     NO_UNIQUE_ADDRESS std::conditional_t<sizeof(CharType) == 1, Nothing, WideNeighbors> neighbors { };
 };
 
+// What a table of failed searches has beside its entries by position: see FlatProgram::memoRowsBesideReferences and FlatProgram::memoRowsOfRestsOfRuns.
+struct TableParts {
+    SlotsBesideReferences& slotsBesideReferences;
+    bool remembersRestsOfRuns;
+};
+
 template<typename CharType, bool isFull> static JSRegExpResult matchBehindLimit(const FlatProgram&, const CharType* input, const Enclosure<CharType>&, unsigned* output);
 
 // remembers: keeps the table of failed searches. See FlatMatchPolicy.
@@ -528,7 +623,7 @@ template<typename CharType, bool remembers, bool isFull = false>
 struct Machine {
     using Kind = FlatOp::Kind;
 
-    ALWAYS_INLINE Machine(const FlatProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output, Enclosure<CharType>& enclosure, uint32_t* memo = nullptr)
+    ALWAYS_INLINE Machine(const FlatProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output, Enclosure<CharType>& enclosure, uint32_t* memo = nullptr, const TableParts* tableParts = nullptr)
         : program(program)
         , ops(program.ops.span().data())
         , characterSets(program.characterSets.span().data())
@@ -545,6 +640,7 @@ struct Machine {
         , matchStart(start)
         , remainingSteps(enclosure.steps)
         , memo(memo)
+        , tableParts(tableParts)
     {
         ASSERT(isFull || remembers == !!memo);
     }
@@ -634,13 +730,13 @@ struct Machine {
         return static_cast<size_t>(row - 1) * (static_cast<size_t>(length) + 1) + at;
     }
 
-    // 0: the search from there has not begun while the referenced groups held what they hold now. Else one more than the turns that it began before it failed.
+    // 0: the search from there has not begun while the referenced groups held what a reference can still read of them now. Else one more than the turns that it began before it failed.
     ALWAYS_INLINE uint32_t findFailedSearch(unsigned row, unsigned at)
     {
         size_t index = memoIndex(row, at);
         if constexpr (isFull) {
-            if (!program.referencedGroups.isEmpty()) {
-                uint32_t* slot = findSlotBesideReferences(program, memo, index, output, false);
+            if (unsigned boundsStillRead = program.aroundMemoRow[row].boundsStillRead) {
+                uint32_t* slot = findSlotBesideReferences(program, tableParts->slotsBesideReferences, index, output, boundsStillRead, false);
                 return slot ? slot[1] : 0;
             }
         }
@@ -651,10 +747,10 @@ struct Machine {
     {
         size_t index = memoIndex(row, at);
         if constexpr (isFull) {
-            if (!program.referencedGroups.isEmpty()) {
+            if (unsigned boundsStillRead = program.aroundMemoRow[row].boundsStillRead) {
                 // Whoever enters 0 has just found nothing.
                 if (value)
-                    findSlotBesideReferences(program, memo, index, output, true)[1] = value;
+                    findSlotBesideReferences(program, tableParts->slotsBesideReferences, index, output, boundsStillRead, true)[1] = value;
                 return;
             }
         }
@@ -705,13 +801,48 @@ struct Machine {
         return at->memoRow + index;
     }
 
-    ALWAYS_INLINE bool turnsAroundHaveTakenSomething(unsigned row)
+    ALWAYS_INLINE bool turnsAroundHaveTakenSomething(unsigned row) { return turnsAroundHaveTakenSomething(row, position); }
+
+    ALWAYS_INLINE bool turnsAroundHaveTakenSomething(unsigned row, unsigned at)
     {
         for (unsigned turn = program.aroundMemoRow[row].turnThatMayTakeNothing; turn; turn = program.turnsThatMayTakeNothing[turn].enclosing) {
-            if (registers()[program.turnsThatMayTakeNothing[turn].registerIndex] == position)
+            if (registers()[program.turnsThatMayTakeNothing[turn].registerIndex] == at)
                 return false;
         }
         return true;
+    }
+
+    // See FlatProgram::memoRowsOfRestsOfRuns. 0: the run has no such row, or the table has none of them.
+    ALWAYS_INLINE unsigned rowsToRestOfRun(const FlatOp* from) const { return tableParts->remembersRestsOfRuns ? program.aroundMemoRow[from->memoRow].rowsToRestOfRun : 0; }
+
+    // 0: a run that comes to stand there has to be tried. Else one more than the turns that the searches from there and from behind there began before they failed.
+    ALWAYS_INLINE uint32_t findFailedRestOfRun(const FlatOp* from, unsigned row, unsigned at)
+    {
+        unsigned rowsToRest = rowsToRestOfRun(from);
+        return rowsToRest ? memo[memoIndex(row + rowsToRest, at)] : 0;
+    }
+
+    ALWAYS_INLINE void recordFailedRestOfRun(const FlatOp* from, unsigned row, unsigned lowest, unsigned highest)
+    {
+        if (unsigned rowsToRest = rowsToRestOfRun(from))
+            Yarr::recordFailedRestOfRun(program, *from, registers(), memo + memoIndex(row, 0), memo + memoIndex(row + rowsToRest, 0), lowest, highest);
+    }
+
+    // The top frame is the run's. There is no place left to go on from.
+    ALWAYS_INLINE Step failMemoizedGreedyRun(const FlatOp* from, unsigned row)
+    {
+        if (rowsToRestOfRun(from))
+            recordFailedRestOfRun(from, row, top[-1].limit, findEndOfRun(program, *from, input, length, top[-1].limit));
+        --top;
+        return Step::Failed;
+    }
+
+    // The top frame is the run's, which stands at position.
+    ALWAYS_INLINE Step failMemoizedLazyRun(const FlatOp* from, unsigned row)
+    {
+        recordFailedRestOfRun(from, row, position - (top[-1].limit - from->target), position);
+        --top;
+        return Step::Failed;
     }
 
     ALWAYS_INLINE Step pushChoice(uint32_t limit)
@@ -1081,13 +1212,20 @@ struct Machine {
         std::optional<unsigned> least = consumeGreedyRun();
         if (!least)
             return Step::Failed;
-        if (isMemoized(op)) [[unlikely]] {
-            push(position, *least, 0);
-            return goOnFromGreedyRun<false>(op);
-        }
+        if (isMemoized(op)) [[unlikely]]
+            return beginMemoizedGreedyRun<false>(*least);
         if (position > *least)
             push(position, *least, 0);
         return Step::Next;
+    }
+
+    template<bool knowsFollowingCharacters>
+    ALWAYS_INLINE Step beginMemoizedGreedyRun(unsigned least)
+    {
+        if (uint32_t rest = findFailedRestOfRun(op, memoRowOf(op), least); rest && turnsAroundHaveTakenSomething(op->memoRow, least))
+            return takeTurnsOfFailedSearch(rest) ? Step::Failed : Step::HitLimit;
+        push(position, least, 0);
+        return goOnFromGreedyRun<knowsFollowingCharacters>(op);
     }
 
     // The top frame is the run's. Goes down from position to the first place that the search has not gone on from before.
@@ -1112,10 +1250,8 @@ struct Machine {
                     if (!takeTurnsOfFailedSearch(entry))
                         return Step::HitLimit;
                 }
-                if (position == frame.limit) {
-                    --top;
-                    return Step::Failed;
-                }
+                if (position == frame.limit)
+                    return failMemoizedGreedyRun(from, row);
             }
             frame.position = position;
             op = from;
@@ -1138,10 +1274,8 @@ struct Machine {
                     if (!takeTurnsOfFailedSearch(entry))
                         return Step::HitLimit;
                 }
-                if (position == frame.limit) {
-                    --top;
-                    return Step::Failed;
-                }
+                if (position == frame.limit)
+                    return failMemoizedGreedyRun(from, row);
             }
             frame.position = position;
             op = from;
@@ -1154,20 +1288,18 @@ struct Machine {
     {
         if constexpr (isFull) {
             const FlatFrame& frame = top[-1];
-            recordFailedSearch(memoRowOf(from), frame);
-            if (frame.position == frame.limit) {
-                --top;
-                return Step::Failed;
-            }
+            unsigned row = memoRowOf(from);
+            recordFailedSearch(row, frame);
+            if (frame.position == frame.limit)
+                return failMemoizedGreedyRun(from, row);
             position = frame.position - widthBefore(frame.position);
             return goOnFromGreedyRun<knowsFollowingCharacters>(from);
         } else {
             const FlatFrame& frame = top[-1];
-            recordFailedSearch(memoRowOf(from), frame);
-            if (frame.position == frame.limit) {
-                --top;
-                return Step::Failed;
-            }
+            unsigned row = memoRowOf(from);
+            recordFailedSearch(row, frame);
+            if (frame.position == frame.limit)
+                return failMemoizedGreedyRun(from, row);
             position = frame.position - 1;
             return goOnFromGreedyRun<knowsFollowingCharacters>(from);
         }
@@ -1196,6 +1328,8 @@ struct Machine {
                         frame.extra = dependsOnWhereTurnBegan;
                         break;
                     }
+                    if (uint32_t rest = findFailedRestOfRun(from, row, position))
+                        return takeTurnsOfFailedSearch(rest) ? failMemoizedLazyRun(from, row) : Step::HitLimit;
                     uint32_t entry = findFailedSearch(row, position);
                     if (!entry) {
                         enterSearch(row, position, !isInsideLookahead(from));
@@ -1205,10 +1339,8 @@ struct Machine {
                     if (!takeTurnsOfFailedSearch(entry))
                         return Step::HitLimit;
                 }
-                if (!extendLazyRun(from, frame.limit, length - from->needed)) {
-                    --top;
-                    return Step::Failed;
-                }
+                if (!extendLazyRun(from, frame.limit, length - from->needed))
+                    return failMemoizedLazyRun(from, row);
                 ++frame.limit;
             }
             frame.position = position;
@@ -1223,6 +1355,8 @@ struct Machine {
                         frame.extra = dependsOnWhereTurnBegan;
                         break;
                     }
+                    if (uint32_t rest = findFailedRestOfRun(from, row, position))
+                        return takeTurnsOfFailedSearch(rest) ? failMemoizedLazyRun(from, row) : Step::HitLimit;
                     uint32_t& entry = memoEntry(row, position);
                     if (!entry) {
                         entry = !isInsideLookahead(from);
@@ -1232,10 +1366,8 @@ struct Machine {
                     if (!takeTurnsOfFailedSearch(entry))
                         return Step::HitLimit;
                 }
-                if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
-                    --top;
-                    return Step::Failed;
-                }
+                if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position]))
+                    return failMemoizedLazyRun(from, row);
                 ++frame.limit;
                 ++position;
             }
@@ -1250,22 +1382,20 @@ struct Machine {
     {
         if constexpr (isFull) {
             FlatFrame& frame = top[-1];
-            recordFailedSearch(memoRowOf(from), frame);
+            unsigned row = memoRowOf(from);
+            recordFailedSearch(row, frame);
             position = frame.position;
-            if (!extendLazyRun(from, frame.limit, length - from->needed)) {
-                --top;
-                return Step::Failed;
-            }
+            if (!extendLazyRun(from, frame.limit, length - from->needed))
+                return failMemoizedLazyRun(from, row);
             ++frame.limit;
             return goOnFromLazyRun<knowsFollowingCharacters>(from);
         } else {
             FlatFrame& frame = top[-1];
-            recordFailedSearch(memoRowOf(from), frame);
+            unsigned row = memoRowOf(from);
+            recordFailedSearch(row, frame);
             position = frame.position;
-            if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position])) {
-                --top;
-                return Step::Failed;
-            }
+            if (frame.limit == from->argument || position >= length - from->needed || !contains(characterSets[from->set], input[position]))
+                return failMemoizedLazyRun(from, row);
             ++frame.limit;
             ++position;
             return goOnFromLazyRun<knowsFollowingCharacters>(from);
@@ -1279,10 +1409,8 @@ struct Machine {
         std::optional<unsigned> least = consumeGreedyRun();
         if (!least)
             return Step::Failed;
-        if (isMemoized(op)) [[unlikely]] {
-            push(position, *least, 0);
-            return goOnFromGreedyRun<true>(op);
-        }
+        if (isMemoized(op)) [[unlikely]]
+            return beginMemoizedGreedyRun<true>(*least);
         const FirstSetBits& following = firstSets[op->firstSet];
         while (position > *least && !(position == length ? following.atEnd : contains(following, input[position])))
             --position;
@@ -1322,6 +1450,9 @@ struct Machine {
             if (!consumeLazyRunMinimum())
                 return Step::Failed;
             if (isMemoized(op)) [[unlikely]] {
+                // goOnFromLazyRun() asks only at the places that what follows can begin at.
+                if (uint32_t rest = findFailedRestOfRun(op, memoRowOf(op), position); rest && turnsAroundHaveTakenSomething(op->memoRow))
+                    return takeTurnsOfFailedSearch(rest) ? Step::Failed : Step::HitLimit;
                 push(position, op->target, 0);
                 return goOnFromLazyRun<true>(op);
             }
@@ -1353,6 +1484,9 @@ struct Machine {
             if (!consumeLazyRunMinimum())
                 return Step::Failed;
             if (isMemoized(op)) [[unlikely]] {
+                // goOnFromLazyRun() asks only at the places that what follows can begin at.
+                if (uint32_t rest = findFailedRestOfRun(op, memoRowOf(op), position); rest && turnsAroundHaveTakenSomething(op->memoRow))
+                    return takeTurnsOfFailedSearch(rest) ? Step::Failed : Step::HitLimit;
                 push(position, op->target, 0);
                 return goOnFromLazyRun<true>(op);
             }
@@ -2013,6 +2147,7 @@ struct Machine {
     unsigned matchStart;
     unsigned remainingSteps;
     uint32_t* const memo;
+    const TableParts* const tableParts;
     // Every character of [knownRunBegin, knownRunEnd) is in the set of this index.
     unsigned knownRunSet { std::numeric_limits<unsigned>::max() };
     unsigned knownRunBegin { 0 };
@@ -2029,9 +2164,9 @@ struct Machine {
 };
 
 template<typename CharType>
-static NEVER_INLINE JSRegExpResult runFullMachine(const FlatProgram& program, const CharType* input, Enclosure<CharType>& enclosure, unsigned* output, uint32_t* memo)
+static NEVER_INLINE JSRegExpResult runFullMachine(const FlatProgram& program, const CharType* input, Enclosure<CharType>& enclosure, unsigned* output, uint32_t* memo, const TableParts* tableParts)
 {
-    return Machine<CharType, true, true>(program, std::span { input, enclosure.length }, enclosure.startOffset, output, enclosure, memo).run();
+    return Machine<CharType, true, true>(program, std::span { input, enclosure.length }, enclosure.startOffset, output, enclosure, memo, tableParts).run();
 }
 
 template<typename CharType, bool isFull = false>
@@ -2039,7 +2174,7 @@ static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, c
 {
     Enclosure<CharType> enclosure { start, length, steps };
     if constexpr (isFull)
-        return runFullMachine(program, input, enclosure, output, nullptr);
+        return runFullMachine(program, input, enclosure, output, nullptr, nullptr);
     JSRegExpResult result = Machine<CharType, false>(program, std::span { input, length }, start, output, enclosure).run();
     return enclosure.resultUnlessGivenUp(program, result);
 }
@@ -2047,31 +2182,35 @@ static NEVER_INLINE JSRegExpResult matchForgetting(const FlatProgram& program, c
 template<typename CharType, bool isFull = false>
 static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, const CharType* input, unsigned length, unsigned start, unsigned* output)
 {
-    constexpr uint64_t maxMemoSize = 32 * MB;
-    uint64_t entries = static_cast<uint64_t>(program.memoRows) * (static_cast<uint64_t>(length) + 1);
-    uint64_t slots = 0;
-    if (isFull && entries && !program.referencedGroups.isEmpty()) {
-        // As many slots as there are ops, positions and places where one referenced group can begin, as far as there is room. An index has to fit a word.
-        constexpr uint64_t mostBeginsCounted = 64;
-        uint64_t slotSize = program.memoSlotSizeBesideReferences();
-        uint64_t wanted = entries * std::min<uint64_t>(static_cast<uint64_t>(length) + 1, mostBeginsCounted);
-        slots = std::bit_floor(std::min(wanted, (maxMemoSize / sizeof(uint32_t) - 1) / slotSize));
-        entries = entries < std::numeric_limits<uint32_t>::max() ? 1 + slots * slotSize : 0;
-    }
+    ASSERT(isFull || !program.memoRowsBesideReferences);
+    constexpr uint64_t maxEntries = 32 * MB / sizeof(uint32_t);
+    uint64_t places = static_cast<uint64_t>(length) + 1;
+    uint64_t entries = program.memoRowsByPosition * places;
+    // The places of the full machine are not one unit apart where it takes a surrogate pair as one character. Beside slots they get no more than half of the room.
+    uint64_t entriesWithRestsOfRuns = entries + program.memoRowsOfRestsOfRuns * places;
+    bool remembersRestsOfRuns = !(isFull && program.decodesSurrogatePairs) && entriesWithRestsOfRuns <= (program.memoRowsBesideReferences ? maxEntries / 2 : maxEntries);
+    if (remembersRestsOfRuns)
+        entries = entriesWithRestsOfRuns;
+    bool hasRoom = program.memoRows && entries <= maxEntries;
+    // At the most as many slots as there are ops, positions and places where one referenced group can begin, as far as there is room. An index has to fit a word.
+    constexpr uint64_t mostBeginsCounted = 64;
+    SlotsBesideReferences slots(2 * program.referencedGroups.size(), std::bit_floor(std::min(program.memoRowsBesideReferences * places * std::min(places, mostBeginsCounted), (maxEntries - std::min(entries, maxEntries)) / program.memoSlotSizeBesideReferences())));
+    if (program.memoRowsBesideReferences)
+        hasRoom = hasRoom && slots.greatestCount && program.memoRows * places < std::numeric_limits<uint32_t>::max() && slots.tryResize(std::min(slots.greatestCount, SlotsBesideReferences::leastCount));
+    // The full machine takes it that it has no table where it has no entries.
     Vector<uint32_t> memo;
-    if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries)) {
+    if (!hasRoom || !memo.tryGrow(std::max<uint64_t>(entries, 1))) {
         // The machine that keeps no table and is not the full one begins every attempt at the first op.
         if (program.laterAttemptsBeginAt)
             return matchForgetting<CharType, true>(program, input, length, start, output, matchLimit);
         return matchForgetting<CharType, isFull>(program, input, length, start, output, matchLimit);
     }
     zeroSpan(memo.mutableSpan());
-    if (slots)
-        memo[0] = static_cast<uint32_t>(slots - 1);
     Enclosure<CharType> enclosure { start, length, matchLimit };
+    TableParts tableParts { slots, remembersRestsOfRuns };
     if constexpr (isFull)
-        return runFullMachine(program, input, enclosure, output, memo.mutableSpan().data());
-    JSRegExpResult result = Machine<CharType, true>(program, std::span { input, length }, start, output, enclosure, memo.mutableSpan().data()).run();
+        return runFullMachine(program, input, enclosure, output, memo.mutableSpan().data(), &tableParts);
+    JSRegExpResult result = Machine<CharType, true>(program, std::span { input, length }, start, output, enclosure, memo.mutableSpan().data(), &tableParts).run();
     return enclosure.resultUnlessGivenUp(program, result);
 }
 
@@ -2080,7 +2219,7 @@ static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, 
 {
     if (enclosure.steps == matchLimit || program.jitCountsTurns)
         return JSRegExpResult::ErrorHitLimit;
-    if (isFull || !program.referencedGroups.isEmpty())
+    if (isFull || program.memoRowsBesideReferences)
         return matchRemembering<CharType, true>(program, input, enclosure.length, enclosure.startOffset, output);
     return matchRemembering(program, input, enclosure.length, enclosure.startOffset, output);
 }
@@ -2093,7 +2232,7 @@ static JSRegExpResult matchByPolicy(const FlatProgram& program, std::span<const 
     if (policy == FlatMatchPolicy::HandsOverEarly && stepsPerCharacter)
         return matchForgetting<CharType, isFull>(program, input.data(), length, start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, stepsPerCharacter * (static_cast<uint64_t>(length) + 32))));
     if (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart) {
-        if (isFull || !program.referencedGroups.isEmpty())
+        if (isFull || program.memoRowsBesideReferences)
             return matchRemembering<CharType, true>(program, input.data(), length, start, output);
         return matchRemembering(program, input.data(), length, start, output);
     }

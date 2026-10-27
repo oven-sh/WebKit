@@ -379,7 +379,15 @@ void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise*
     ASSERT(vm.m_synchronousModuleQueue);
     ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
 
+#if ENABLE(AOT)
+    // Whoever began the fetch was answered. A module of the image is found again as it was found then.
+    bool wasAskingHost = vm.hasCompiledCode() && AOT::ModuleRecord::setIsAskingHost(globalObject, true);
+#endif
     JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::ModuleRecord::setIsAskingHost(globalObject, wasAskingHost);
+#endif
     RETURN_IF_EXCEPTION(scope, void());
     if (promise->status() == JSPromise::Status::Fulfilled)
         fetchPromise->fulfillPromise(vm, promise->result());
@@ -1045,6 +1053,13 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                 if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
                     compiled->willLoadRequests(*state);
                     RETURN_IF_EXCEPTION(scope, void());
+                    // A file that the module imports ran meanwhile and had the loader go on from here.
+                    if (compiled->takeWentOnWhileRequestsWereListed(*state)) {
+                        if (state->isLoading())
+                            continue;
+                        state->setDrainingInnerLoad(false);
+                        RELEASE_AND_RETURN(scope, void());
+                    }
                 }
 #endif
                 // 2.b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].

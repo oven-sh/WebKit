@@ -13,6 +13,7 @@
 #include "B3EliminateDeadCode.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3MovedLoadCheck.h"
+#include "B3RegionCloner.h"
 #include "B3RegisterPressure.h"
 #include <wtf/WeakRandom.h>
 
@@ -515,6 +516,56 @@ static void testMovedLoadCheckLetsWordGetFilled()
     }
 }
 
+static void testMovedLoadLogFollowsCopiedBlocks()
+{
+    constexpr int64_t reported = 42;
+    enum class Copy : uint8_t { None, Block, StoreAlone };
+    for (Copy copied : { Copy::None, Copy::Block, Copy::StoreAlone }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* other = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* last = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root).eager();
+        graph.branch(root, arguments[2], other, body);
+        graph.jump(other, body);
+        Value* loaded = graph.load(body, Int64, arguments[0], 0, firstHeap);
+        graph.store(body, graph.make(body, Add, loaded, arguments[1]), arguments[0], 0, firstHeap);
+        Value* store = body->last();
+        proc.movedLoadLog().add(*MovedLoad::describe(loaded), body, body->size(), arguments[0], loaded);
+        graph.jump(body, last);
+        if (copied == Copy::StoreAlone)
+            last->append(proc.clone(store));
+        graph.ret(last, graph.int64(last, 0));
+        proc.resetReachability();
+
+        if (copied == Copy::Block) {
+            RegionCloner cloner(proc);
+            cloner.addBlock(body);
+            cloner.demoteEscapingValues();
+            other->replaceSuccessor(body, cloner.cloneBlocks(singleElementSpan(body)).get(body));
+            cloner.finish();
+            fixSSA(proc);
+        }
+        validate(proc);
+
+        CHECK(proc.movedLoadLog().insertChecks(proc, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        })));
+        CHECK_EQ(numberOfValues(proc, Patchpoint), copied == Copy::Block ? 2u : 1u);
+        auto code = compileProc(proc, 1);
+        for (int64_t addend : { 0, 1 }) {
+            for (int64_t takesOther : { 0, 1 }) {
+                int64_t word = 5;
+                CHECK_EQ(invoke<int64_t>(*code, &word, addend, takesOther), addend ? reported : 0);
+            }
+        }
+    }
+}
+
 static void testHoistFromLargeLoop()
 {
     Procedure proc(likelyPathsPolicy(true));
@@ -744,6 +795,7 @@ void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testHoistLoopInvariantValuesLimitsHoistedLoads());
     RUN(testHoistLoopInvariantValuesHoistsImmutableLoadPastStores());
     RUN(testMovedLoadCheckLetsWordGetFilled());
+    RUN(testMovedLoadLogFollowsCopiedBlocks());
     RUN(testHoistFromLargeLoop());
     RUN(testHoistWithEarlyLikelyExit());
     RUN(testHoistAcrossInnerLoop());
