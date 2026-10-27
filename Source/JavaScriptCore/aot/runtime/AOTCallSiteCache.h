@@ -58,6 +58,8 @@ public:
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
     // Nothing for an address that runs no compiled code.
     const Entry* resolve(const Image&, const void* returnAddress);
+    // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
+    const Entry* withMethodReadSite(const Image&, const Entry*);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
     // It remembers the inlined frames of the function that was asked for last.
     InlineFrameReader& inlineFrames() { return m_inlineFrames; }

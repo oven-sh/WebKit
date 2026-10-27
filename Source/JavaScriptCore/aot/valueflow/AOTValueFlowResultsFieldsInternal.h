@@ -66,12 +66,6 @@ inline LayoutID layoutExpectedAbove(const Program& program, LayoutID id)
     return layout.isDerived() ? layout.flow.base : predictedHeritageOf(layout);
 }
 
-inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
-{
-    const LayoutFlow& flow = application.layouts[id.index()].flow;
-    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
-}
-
 using SetsByNumber = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 inline ValueSetID unionOfDistinctSets(ValueSetMaker& maker, Vector<ValueSetID, 4>&& parts)

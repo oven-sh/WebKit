@@ -116,9 +116,10 @@ public:
         for (size_t next = 0; next < m_frames.size(); ++next) {
             FlowScopeFrame* caller = m_frames[next].get();
             for (const FlowFunctionMention& mention : m_index.mentionsIn(caller->function)) {
-                bool runsOnlyDuringCall = m_index.calls.soleCallSites[mention.function.index()] == FlowCallSite { caller->function, mention.value };
-                if (runsOnlyDuringCall && pointOf(*caller, mention.value))
-                    appendFrame(mention.function, caller, mention.value);
+                FlowCallSite site = m_index.calls.soleCallSites[mention.function.index()];
+                bool runsOnlyDuringCall = site.second && site.first == caller->function && (site.second == mention.value || mention.kind == FunctionReferenceKind::Closure);
+                if (runsOnlyDuringCall && pointOf(*caller, site.second))
+                    appendFrame(mention.function, caller, site.second);
             }
         }
     }

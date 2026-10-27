@@ -500,7 +500,7 @@ std::optional<uint32_t> indexOfAwaitedOperand(const Value& value)
     return std::nullopt;
 }
 
-static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Function& function, const UseLists& uses, ValueID call)
+static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Function& function, const UseLists& uses, ValueID call, Vector<PropertyKeyID, 4>& namesRead)
 {
     struct FollowedValue {
         ValueID value;
@@ -521,6 +521,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
     Vector<FollowedValue, 4> worklist { { call, form != TypedResultForm::ParsedText } };
     BitVector visited;
     visited.set(call.index());
+    Vector<PropertyKeyID, 4> namesReadBeforeAwait;
+    bool isAwaited = false;
 
     while (!worklist.isEmpty()) {
         FollowedValue followed = worklist.takeLast();
@@ -533,6 +535,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
                 continue;
 
             const Value& user = function.at(use.user);
+            if (user.opcode == Opcode::PropGet && use.operandIndex == OperandIndex::PropGet::object)
+                (followed.mayBePromise ? namesReadBeforeAwait : namesRead).append(user.key());
             // AddGenericVersion makes a test and a branch of a Check.
             if (user.opcode == Opcode::TypeTest && use.operandIndex == OperandIndex::TypeTest::value)
                 consider(user.testedType());
@@ -547,6 +551,7 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
             bool isResolvedValue = followed.mayBePromise && indexOfAwaitedOperand(user) == use.operandIndex;
             if (!isSameValue && !isResolvedValue)
                 continue;
+            isAwaited |= isResolvedValue;
             if (user.opcode == Opcode::Check)
                 consider(user.expectedType().predicted());
             consider(user.expected().predicted());
@@ -554,6 +559,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
                 worklist.append({ use.user, followed.mayBePromise && isSameValue });
         }
     }
+    if (!isAwaited)
+        namesRead.appendVector(namesReadBeforeAwait);
     return requestedTypes;
 }
 
@@ -581,9 +588,24 @@ static bool isDeepSubset(const Program& program, TypeID narrow, TypeID wide)
     return true;
 }
 
+static bool declaresNamesRead(const Program& program, const Type& type, std::span<const PropertyKeyID> namesRead)
+{
+    bool hasObjectType = false;
+    for (LayoutID member : membersOf(program, type)) {
+        const Layout& layout = program.at(member);
+        if (layout.kind != LayoutKind::Record)
+            continue;
+        hasObjectType = true;
+        if (std::ranges::all_of(namesRead, [&](PropertyKeyID name) { return !!layout.findField(name); }))
+            return true;
+    }
+    return !hasObjectType;
+}
+
 TypeID findTypeOfTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call)
 {
-    Vector<TypeID, 4> requestedTypes = collectRequestedTypes(program, function, uses, call);
+    Vector<PropertyKeyID, 4> namesRead;
+    Vector<TypeID, 4> requestedTypes = collectRequestedTypes(program, function, uses, call, namesRead);
     TypeID mostSpecific;
     for (TypeID requested : requestedTypes) {
         if (!mostSpecific || isDeepSubset(program, requested, mostSpecific))
@@ -593,6 +615,8 @@ TypeID findTypeOfTypedResultTarget(const Program& program, const Function& funct
         if (!isDeepSubset(program, mostSpecific, requested))
             return { };
     }
+    if (mostSpecific && !function.has(FunctionFlags::IsChecked) && !declaresNamesRead(program, program.at(mostSpecific), namesRead.span()))
+        return { };
     return mostSpecific;
 }
 

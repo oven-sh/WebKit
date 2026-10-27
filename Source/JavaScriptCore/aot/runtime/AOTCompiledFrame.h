@@ -319,6 +319,7 @@ private:
     static void enterFrame(Cursor&, const CallSiteCache::Entry&);
     static void leaveRun(Cursor&, Exit&);
     static bool passOverFrame(Cursor&, Exit&);
+    bool passOverMethodReadFrame(Cursor&, Exit&);
     Instance* findEnclosingAdapterInstance(Cursor) const;
     Instance* tryFindInstance() const;
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);

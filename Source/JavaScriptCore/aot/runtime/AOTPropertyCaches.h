@@ -325,6 +325,8 @@ public:
     // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
     bool shouldMakeStructureForAdditionByKey(Structure*, UniquedStringImpl*);
     void didMakeStructureForAdditionByKey(Structure* made) { m_structureMadeForAdditionByKey = made->id(); }
+    // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
+    bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
@@ -385,6 +387,7 @@ private:
     std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
     uint32_t m_evictionSeed { 0 };
     StructureID m_structureMadeForAdditionByKey;
+    StructureID m_structureOfLastFieldCreatedOutsideStubs;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

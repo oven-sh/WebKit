@@ -662,6 +662,15 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
     mayThrow();
 }
 
+// What an unobserved definition defines is chosen behind the solve, by the fields of the objects that come to it.
+void HeapRule::defineUndefinedOnObjectsNobodyKnows(const ValueFlowOperand& object, const ValueFlowOperand& value)
+{
+    if (m_program.at(m_statement.function).kind != FunctionKind::Initializer || !m_context.nodes().isValueOfUnobservedDefinitions(m_statement.function, value.node))
+        return;
+    if (m_context.meet(m_context.valueOf(object), m_universe.objectsThatMayBeAnything()))
+        add(value.node, m_universe.undefinedValue());
+}
+
 ClimbingSet HeapRule::allocateUnder(const ValueFlowOperand& prototype)
 {
     ValueFlowObjectID site = m_universe.siteObject(m_statement);
@@ -772,6 +781,7 @@ void HeapRule::runOperation()
         mayThrow();
         return;
     case Opcode::PropDefine:
+        defineUndefinedOnObjectsNobodyKnows(operand(At::PropDefine::object), operand(At::PropDefine::value));
         define(operand(At::PropDefine::object), keyNamed(operation().key()), HeapPropertyPart::Value, operand(At::PropDefine::value));
         return;
     case Opcode::ElemDefine:

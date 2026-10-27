@@ -156,6 +156,7 @@ function f7 name="sumOfElements" parameters=[{type=Float64Array}, {type=i32}] re
     Return v4
 }
 # CHECK-LABEL: function f7 name="sumOfElements"
+# CODE-LABEL: f7:
 # CHECK: b1(v4: number @ImpureDouble,
 # CHECK: v9: number @ImpureDouble = GetTypedArrayElement
 # CHECK-NEXT: v10: number @ImpureDouble = Add v4, v9 form=Numbers

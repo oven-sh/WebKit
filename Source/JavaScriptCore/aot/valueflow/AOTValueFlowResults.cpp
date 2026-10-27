@@ -514,6 +514,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         computeTypeResults(inputs, fieldContents, ledgerOfFieldsIn(*usesOfHeap), types, tables, setsOutsideTypes);
         timesOfStep.didFinish("types: positions"_s);
         computeLayoutsNeverStoredOtherTypes(inputs, fieldContents, types, tables);
+        replaceUnobservedDefinitions(inputs, types, tables);
         computeSymbolConstantResults(inputs, tables);
         timesOfStep.didFinish("types"_s);
         computeAccessResults(inputs, types, tables);

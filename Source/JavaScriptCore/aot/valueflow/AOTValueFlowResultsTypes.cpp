@@ -1303,15 +1303,50 @@ static std::optional<Value> findValueHeldAnyway(const Program& program, const Ty
     return std::nullopt;
 }
 
-using FieldsDefined = Vector<FieldReference, 2>;
-static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs)
+struct AppendedFieldReference {
+    LayoutID layout;
+    uint32_t field { 0 };
+
+    friend bool operator==(const AppendedFieldReference&, const AppendedFieldReference&) = default;
+};
+
+struct FieldsDefined {
+    Vector<FieldReference, 2> declared;
+    Vector<AppendedFieldReference, 1> appended;
+};
+
+static void addFieldsOfObjectsThatInitializerMeets(const ValueFlowResultInputs& inputs, const FlowApplication& application, const UnobservedFieldDefinition& definition, FieldsDefined& fields)
+{
+    const Program& program = inputs.program;
+    ValueFlowNodeID receiver = inputs.bodies().nodes().entryParameter(definition.initializer, *program.at(definition.initializer).thisParameterIndex());
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(receiver), [&](ValueFlowObjectID object) {
+        LayoutID current = inputs.universe().layoutOf(object);
+        for (size_t steps = 0; current && steps < program.layouts.size(); ++steps, current = provenBaseOf(application, current)) {
+            if (std::optional<uint32_t> field = program.at(current).findField(definition.key)) {
+                fields.declared.appendIfNotContains(declarationOf(program, { current, *field }));
+                return;
+            }
+            const Vector<FlowAppendedField>& appended = application.layouts[current.index()].appendedFields;
+            size_t field = appended.findIf([&](const FlowAppendedField& candidate) {
+                return candidate.key == definition.key;
+            });
+            if (field != notFound) {
+                fields.appended.appendIfNotContains(AppendedFieldReference { current, static_cast<uint32_t>(field) });
+                return;
+            }
+        }
+    });
+}
+
+static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const Program& program = inputs.program;
     std::span<const UnobservedFieldDefinition> definitions = inputs.bodies().unobservedDefinitions().all();
     Vector<FieldsDefined> fields(definitions.size());
     Vector<Vector<uint32_t, 2>> definitionsOfClass(definitions.empty() ? 0 : program.layouts.size());
     for (uint32_t index = 0; index < definitions.size(); ++index) {
-        fields[index].append(declarationOf(program, { definitions[index].classLayout, *program.at(definitions[index].classLayout).findField(definitions[index].key) }));
+        fields[index].declared.append(declarationOf(program, { definitions[index].classLayout, *program.at(definitions[index].classLayout).findField(definitions[index].key) }));
+        addFieldsOfObjectsThatInitializerMeets(inputs, application, definitions[index], fields[index]);
         definitionsOfClass[definitions[index].classLayout.index()].append(index);
     }
     if (definitions.empty())
@@ -1321,17 +1356,29 @@ static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultIn
         for (size_t steps = 0; base && steps < program.layouts.size(); ++steps, base = program.at(base).base) {
             for (uint32_t index : definitionsOfClass[base.index()]) {
                 if (std::optional<uint32_t> field = program.layouts[heir].findField(definitions[index].key))
-                    fields[index].appendIfNotContains(declarationOf(program, { LayoutID(heir), *field }));
+                    fields[index].declared.appendIfNotContains(declarationOf(program, { LayoutID(heir), *field }));
             }
         }
     }
     return fields;
 }
 
-static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, const Vector<FieldsDefined>& fieldsDefined, TypeTable& types, FlowApplication& application)
+void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
+    FlowApplication& application = *tables.application;
     std::span<const UnobservedFieldDefinition> definitions = inputs.bodies().unobservedDefinitions().all();
+    Vector<FieldsDefined> fieldsDefined = findFieldsDefinedUnobserved(inputs, application);
+    auto positionOfAppended = [&](AppendedFieldReference reference) -> FlowPositionUpdate& {
+        return application.layouts[reference.layout.index()].appendedFields[reference.field].position;
+    };
+    auto typeOfAppended = [&](AppendedFieldReference reference) {
+        const FlowPositionUpdate& position = positionOfAppended(reference);
+        return position.isProven && position.type ? position.type : TypeTable::anything;
+    };
+    auto appendedHoldsUndefined = [&](AppendedFieldReference reference) {
+        return !!(types.at(typeOfAppended(reference)).primitives & Primitive::Undefined);
+    };
     auto positionOf = [&](FieldReference reference) -> FlowPositionUpdate& {
         return application.layouts[reference.layout.index()].fields[reference.field].position;
     };
@@ -1346,22 +1393,28 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     };
     for (uint32_t index = 0; index < definitions.size(); ++index) {
         const UnobservedFieldDefinition& definition = definitions[index];
-        if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
+        if (!inputs.isReached(definition.initializer) || (std::ranges::all_of(fieldsDefined[index].declared, holdsUndefined) && std::ranges::all_of(fieldsDefined[index].appended, appendedHoldsUndefined)))
             continue;
         ValueFlowNodeID defined = inputs.bodies().nodes().valueOf(definition);
         if (defined && !inputs.sets().isEmpty(inputs.solver().possibleValuesOf(defined)))
             continue;
         ScratchTypeArena scratch(types);
-        Type common = types.at(typeOf(fieldsDefined[index].first()));
-        for (FieldReference reference : fieldsDefined[index].span().subspan(1))
+        Type common = types.at(typeOf(fieldsDefined[index].declared.first()));
+        for (FieldReference reference : fieldsDefined[index].declared.span().subspan(1))
             common = common.intersectWith(types.at(typeOf(reference)), scratch);
+        for (AppendedFieldReference reference : fieldsDefined[index].appended)
+            common = common.intersectWith(types.at(typeOfAppended(reference)), scratch);
         if (std::optional<Value> value = findValueHeldAnyway(program, common)) {
             application.bodies[definition.initializer.index()].definedValues.append({ definition.definition, WTF::move(*value) });
             continue;
         }
-        for (FieldReference reference : fieldsDefined[index]) {
+        for (FieldReference reference : fieldsDefined[index].declared) {
             if (positionOf(reference).isProven && !holdsUndefined(reference) && program.at(fieldAt(program, reference).declared.written()).primitives & Primitive::Undefined)
                 positionOf(reference).type = types.intern(types.at(typeOf(reference)).withPrimitives(Primitive::Undefined));
+        }
+        for (AppendedFieldReference reference : fieldsDefined[index].appended) {
+            if (!appendedHoldsUndefined(reference))
+                positionOfAppended(reference).type = types.intern(types.at(typeOfAppended(reference)).withPrimitives(Primitive::Undefined));
         }
     }
 }
@@ -1845,10 +1898,9 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
 
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     LocationsStoredUndefined storedUndefined = findLocationsStoredUndefined(inputs, application);
-    Vector<FieldsDefined> fieldsDefinedUnobserved = findFieldsDefinedUnobserved(inputs);
     Vector<BitVector> fieldsWithUnobservedDefinition(numberOfLayouts);
-    for (const FieldsDefined& defined : fieldsDefinedUnobserved) {
-        for (FieldReference field : defined)
+    for (const FieldsDefined& defined : findFieldsDefinedUnobserved(inputs, application)) {
+        for (FieldReference field : defined.declared)
             fieldsWithUnobservedDefinition[field.layout.index()].set(field.field);
     }
     RELEASE_ASSERT(inputs.numbersOfValues);
@@ -1921,7 +1973,6 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         remapTypes(application.bodies[task - firstFunctionTask], remap);
     });
     times.didFinish("types: remapped"_s);
-    replaceUnobservedDefinitions(inputs, fieldsDefinedUnobserved, types, application);
     proveReadsAfterInitialization(program, inputs.loops(), types, application);
 }
 

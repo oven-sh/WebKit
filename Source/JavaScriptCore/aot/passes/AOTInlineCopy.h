@@ -21,12 +21,6 @@ ValueID upcastToParameterType(IRBuilder&, const Value& parameter, ValueID argume
 
 // A read whose type holds from the entry of its function on names no fact there. In a frame of another function it names one that says where the frame begins.
 bool takesFactOfEntry(const Program&, const Value&, bool calleeIsPredicted);
-// Every such read in the blocks names the fact, or gives a word that may be anything to a cast that names it.
-void nameFactOfEntry(const Program&, Function&, TypeArena&, std::span<const BlockID>, ValueID fact, bool calleeIsPredicted);
-// For a pass that has put reads where the program looks at a variable, or at what was taken from it: in a frame of another function what the variable holds is known from there on, so each such read gets a fact of its own.
-void nameFactsWhereReadsStand(const Program&, Function&, TypeArena&);
-// The read gives a word that may be anything, and a cast that names the fact takes its place. Answers the read, which the caller puts in front of the cast or ahead of it.
-ValueID readWordAndAssumeInPlace(Function&, TypeArena&, ValueID read, ValueID fact);
 void cloneBlocksIntoInlineFrame(IRBuilder&, RegionCloner&, std::span<const BlockID> region, uint32_t firstFrame);
 // A function that is constructed stays on the stack until it has seen what its last call returns: no call of the frame counts as a tail call.
 void keepFrameBelowTailCalls(Function&, std::span<const BlockID>, uint32_t frame);

@@ -20,7 +20,7 @@
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 name="Data" module=m0 position=10 fields=[{key="name" declared={type=undefined|null|string}}]
-function f0 name="main" kind=Module results=[{type=anything}] {
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
     v0 = Builtin builtin=JSON
     v1 = Builtin builtin=JSONParse
     v2 = String string="{}"

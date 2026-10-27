@@ -878,6 +878,12 @@ void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
 void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
+inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
+{
+    const LayoutFlow& flow = application.layouts[id.index()].flow;
+    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+}
+
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);
 const LedgerPart& ledgerOfFieldsIn(const ValueFlowUsesOfHeap&);
 struct ValueFlowWritesToContainers;
@@ -891,6 +897,7 @@ void computeNumbersOfPositions(ValueFlowNumbersOfValues&, const FlowResultTables
 BuiltinClassID classOfFollowedContainer(const ValueFlowResultInputs&, ValueFlowObjectID);
 void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, const LedgerPart& ledgerOfFields, TypeTable&, FlowResultTables&, const ListenerForSetsOutsideTypes*);
 void computeLayoutsNeverStoredOtherTypes(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&);
+void replaceUnobservedDefinitions(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
 void computeAccessResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
 void computeStoreNamingResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, FlowResultTables&);
 void computeSymbolConstantResults(const ValueFlowResultInputs&, FlowResultTables&);

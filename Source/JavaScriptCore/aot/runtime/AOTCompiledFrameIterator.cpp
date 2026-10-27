@@ -11,11 +11,14 @@
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCoroutineWords.h"
+#include "AOTFaultTable.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
+#include "AOTImageFormat.h"
 #include "AOTInstance.h"
 #include "AOTModules.h"
+#include "AOTOperationData.h"
 #include "AOTSavedFrame.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTStackTrace.h"
@@ -25,6 +28,7 @@
 #include "SourceOrigin.h"
 #include "VM.h"
 #include "VMEntryRecord.h"
+#include <bit>
 #include <utility>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -405,6 +409,15 @@ bool CompiledFrameIterator::passOverFrame(Cursor& cursor, Exit& exit)
     return true;
 }
 
+NEVER_INLINE bool CompiledFrameIterator::passOverMethodReadFrame(Cursor& cursor, Exit& exit)
+{
+    cursor.isAtFirstReadSite = true;
+    if (!passOverFrame(cursor, exit))
+        return false;
+    m_cache->withMethodReadSite(*m_image, findReturnSiteInRun(*m_cache, *m_image, cursor));
+    return true;
+}
+
 const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cursor, Exit& exit, RunEnd& runEnd)
 {
     for (;;) {
@@ -425,6 +438,10 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::BelowSpilledArguments:
         case StubFrameKind::AtStubEntry:
             break;
+        case StubFrameKind::MethodRead:
+            if (!passOverMethodReadFrame(cursor, exit))
+                return nullptr;
+            continue;
         case StubFrameKind::FirstOfTwoReads:
             cursor.isAtFirstReadSite = true;
             break;
@@ -824,6 +841,19 @@ const CallSiteCache::Entry* CallSiteCache::resolve(const Image& image, const voi
     Entry& entry = slotForNewEntry(returnAddress);
     entry = location.kind == CodeKind::Stub ? createStubEntry(location, returnAddress) : createFunctionEntry(image, m_inlineFrames, location, returnAddress);
     return &entry;
+}
+
+const CallSiteCache::Entry* CallSiteCache::withMethodReadSite(const Image& image, const Entry* entry)
+{
+    if (!entry || entry->isStubReturnSite() || entry->site.firstReadSite)
+        return entry;
+    std::optional<FaultSite> throwSite = image.faultSiteAt(static_cast<const uint8_t*>(entry->address) - sizeOfNearCall);
+    if (!throwSite || throwSite->kind != FaultSiteKind::NullCheck)
+        return entry;
+    ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(throwSite->throwSite[0]);
+    if (word.isCallSite() && word.registerNumber)
+        const_cast<Entry*>(entry)->site.firstReadSite = methodReadSite(entry->site.callSite, word.registerNumber - 1);
+    return entry;
 }
 
 std::optional<SourcePosition> CallSiteCache::positionOf(const Image& image, CompiledFunctionID code, CallSiteIndex site)

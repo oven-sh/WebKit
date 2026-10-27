@@ -569,9 +569,6 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     });
 
     letUnknownCodeWrite(context);
-    // A proxy answers any name with what its trap returns.
-    if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
-        letWhateverHasEscapedBeCalled(context);
     callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID());
 }
 

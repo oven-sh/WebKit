@@ -27,6 +27,8 @@ enum class StubFrameKind : uint8_t {
     ArgumentList,
     // The caller's site has two positions, and the stub is at the first: the first of two reads, or the making of an Error that it then throws.
     FirstOfTwoReads,
+    // The stub reads the method that the caller's site calls.
+    MethodRead,
     // As Plain, in a frame whose stub has spilled the argument registers.
     BelowSpilledArguments,
     // In a stub that has no frame record and has pushed nothing: its return address is on top of the stack.
@@ -34,7 +36,7 @@ enum class StubFrameKind : uint8_t {
     // The frame is one that emitHostCallFrame() has made, and the stub does in it what the native callee would do. A run of compiled frames ends at it, as at a frame of the engine.
     InHostCallFrame,
 };
-inline constexpr unsigned numberOfStubFrameKinds = 14;
+inline constexpr unsigned numberOfStubFrameKinds = 15;
 static_assert(static_cast<unsigned>(StubFrameKind::InHostCallFrame) + 1 == numberOfStubFrameKinds);
 
 constexpr bool hasSingleReturnSite(StubFrameKind kind)
@@ -52,6 +54,7 @@ constexpr bool hasSingleReturnSite(StubFrameKind kind)
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
     case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
@@ -77,6 +80,7 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     case StubFrameKind::AsyncGeneratorBody:
     case StubFrameKind::ArgumentList:
     case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
     case StubFrameKind::AtStubEntry:
     case StubFrameKind::InHostCallFrame:
         return 0;

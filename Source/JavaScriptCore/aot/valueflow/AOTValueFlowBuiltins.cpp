@@ -27,6 +27,7 @@
 #include <array>
 #include <functional>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1497,7 +1498,7 @@ private:
         return m_context.restrict(iterated, everythingButUnknownObject(m_context));
     }
 
-    void forEachNodeAt(const BuiltinPlace& place, ValueSetID& constant, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
+    NEVER_INLINE void forEachNodeAt(const BuiltinPlace& place, ValueSetID& constant, const ScopedLambda<void(ValueFlowNodeID)>& functor)
     {
         auto readThrough = [&](ClimbingSet objects, ValueFlowName name) {
             forEachNodeReadThrough(objects, name, functor);
@@ -1784,7 +1785,7 @@ private:
         });
     }
 
-    void forEachOperandAt(const BuiltinPlace& place, NOESCAPE const Invocable<void(const ValueFlowOperand&)> auto& functor)
+    NEVER_INLINE void forEachOperandAt(const BuiltinPlace& place, const ScopedLambda<void(const ValueFlowOperand&)>& functor)
     {
         if (place.kind == BuiltinPlaceKind::None)
             return;

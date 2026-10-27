@@ -376,6 +376,7 @@ public:
         bool areObservedWhereObjectRefusesDefinition { false };
     };
     ValueFlowNodeID valueOf(const UnobservedFieldDefinition&) const;
+    bool isValueOfUnobservedDefinitions(FunctionID initializer, ValueFlowNodeID) const;
     std::span<const UnobservedDefinitions> unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const LIFETIME_BOUND;
 
     struct PassedParameter {

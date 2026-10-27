@@ -295,7 +295,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     const FieldData* field = object ? object->fieldNamed(object->state(), ident) : nullptr;
     if (field && access.caches().countsNames()) [[unlikely]]
         access.caches().countNamed(whyStubLeftFieldStore(access, *object, *field, value, mode), uid);
-    if (shouldFile && field && mode != PutMode::Define && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+    // The filter is for all the names of a Structure, so the second field that an object is given here lets the stubs create the ones behind it.
+    if (field && mode != PutMode::Define && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype) && (shouldFile || (!object->isInSlot(*field) && access.caches().createsFieldOutsideStubsAgain(cell->structureID()))))
         access.caches().tables().fileAbsenceFilterForStores(globalObject, object);
     if (object && !field && tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), access.site, value, mode, slot))
         return;

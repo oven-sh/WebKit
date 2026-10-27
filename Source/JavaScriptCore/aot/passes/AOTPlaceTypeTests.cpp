@@ -3083,9 +3083,15 @@ struct TestPlacer {
         return definitions[condition.index()].first();
     }
 
-    // SSARepair redirects every use of a definition, and an adopted proof has other uses: an allocation is also the object.
+    // SSARepair redirects every use of a definition, and an adopted proof has other uses: an allocation is also the object, and what had passed another test before is read as both tests say.
     void wrapAdoptedDefinitions()
     {
+        struct AdoptedDefinition {
+            ValueID* definition;
+            ProgramPoint pointAfter;
+            bool isNamedAsGuard;
+        };
+
         if (adoptedProofs.isEmpty())
             return;
         const UseLists& useLists = analyses.useLists();
@@ -3094,30 +3100,44 @@ struct TestPlacer {
             RELEASE_ASSERT(proof.index() < useLists.numberOfValues());
             isAdopted.quickSet(proof.index());
         }
-        Vector<std::pair<ValueID*, ProgramPoint>, 4> adoptedDefinitions;
-        for (size_t condition : plan.conditions->stretchConditions()) {
-            for (ValueID& proof : definitions[condition]) {
-                if (definitions[condition].size() >= 2 && isAdopted.get(proof.index()))
-                    adoptedDefinitions.append({ &proof, useLists.pointAfter(proof) });
+        // Where the proofs of a condition meet, the value has the type of all of them.
+        auto saysMoreThanWhereProofsMeet = [&](ValueID proof, const Definitions& proofs) {
+            TypeID typeOfAll = function.at(proof).type;
+            for (ValueID other : proofs)
+                typeOfAll = types.unionOf(typeOfAll, function.at(other).type);
+            return typeOfAll != function.at(proof).type;
+        };
+        Vector<AdoptedDefinition, 4> adoptedDefinitions;
+        for (size_t condition = 0; condition < definitions.size(); ++condition) {
+            Definitions& proofs = definitions[condition];
+            if (proofs.size() < 2)
+                continue;
+            bool isNamedAsGuard = plan.conditions->stretchConditions().get(condition);
+            for (ValueID& proof : proofs) {
+                if (isAdopted.get(proof.index()) && (isNamedAsGuard || saysMoreThanWhereProofsMeet(proof, proofs)))
+                    adoptedDefinitions.append({ &proof, useLists.pointAfter(proof), isNamedAsGuard });
             }
         }
         if (adoptedDefinitions.isEmpty())
             return;
 
         Vector<ValueID> wrappers(function.values.size());
-        for (auto [definition, pointAfter] : adoptedDefinitions) {
+        for (auto [definition, pointAfter, isNamedAsGuard] : adoptedDefinitions) {
             RELEASE_ASSERT(!wrappers[definition->index()]);
             builder.setOrigin(function.at(*definition).origin());
-            ValueID wrapper = builder.insertBefore(pointAfter, IRBuilder::make(Opcode::AllGuards, { *definition }));
-            wrappers[definition->index()] = wrapper;
-            *definition = wrapper;
-            isDefinition.set(wrapper.index());
+            Value wrapper = IRBuilder::make(isNamedAsGuard ? Opcode::AllGuards : Opcode::Upcast, { *definition });
+            if (!isNamedAsGuard)
+                wrapper.setCastType(function.at(*definition).type);
+            wrappers[definition->index()] = builder.insertBefore(pointAfter, WTF::move(wrapper));
+            *definition = wrappers[definition->index()];
+            isDefinition.set(definition->index());
         }
+        auto wrapperOf = [&](ValueID value) { return value.index() < wrappers.size() ? wrappers[value.index()] : ValueID(); };
         auto redirectGuardOperandsOf = [&](ValueID user) {
             Value& value = function.edit(user, ValueEdit::Definition);
             value.forEachOperand([&](ValueID& operand, uint32_t operandIndex) {
-                if (value.operandKind(operandIndex) == OperandKind::Guard && operand.index() < wrappers.size() && wrappers[operand.index()])
-                    operand = wrappers[operand.index()];
+                if (value.operandKind(operandIndex) == OperandKind::Guard && wrapperOf(operand))
+                    operand = wrapperOf(operand);
             });
         };
         for (const EmittedTest& emitted : emittedTests) {
@@ -3128,6 +3148,16 @@ struct TestPlacer {
                     redirectGuardOperandsOf(operand);
             });
             redirectGuardOperandsOf(test);
+            // See namePrerequisites().
+            forEachTestPrerequisite(plan.requirements.span(), *plan.conditions, plan.tests[emitted.plannedTest].requirement, [&](const TestPrerequisite& prerequisite) {
+                if (!prerequisite.narrowedOperand)
+                    return;
+                ValueID named = function.at(test).operand(*prerequisite.narrowedOperand);
+                if (ValueID wrapper = wrapperOf(named))
+                    function.edit(test, ValueEdit::Definition).setOperand(*prerequisite.narrowedOperand, wrapper);
+                else if (function.at(named).opcode == Opcode::AssumeType && wrapperOf(function.at(named).valueOperand()))
+                    function.edit(named, ValueEdit::Definition).setValueOperand(wrapperOf(function.at(named).valueOperand()));
+            });
         }
     }
 
@@ -3174,7 +3204,7 @@ struct TestPlacer {
     ValueID narrowToOperand(ValueID passed, ValueID operand, ProgramPoint point)
     {
         Type passedType = types.at(function.at(passed).type);
-        Type operandType = types.at(ownTypeOf(operand));
+        Type operandType = types.at(function.at(operand).type);
         if (passedType.isSubsetOf(operandType, context.program))
             return passed;
         // An intersection names an object as its second type does: as the test did.
@@ -3192,33 +3222,6 @@ struct TestPlacer {
         return builder.insertBefore(point, makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
     }
 
-    // While the uses are rewritten, a representative has the type of the join that it stands for.
-    TypeID ownTypeOf(ValueID value) const
-    {
-        auto representative = std::ranges::find(ownTypesOfRepresentatives, value, &std::pair<ValueID, TypeID>::first);
-        return representative != ownTypesOfRepresentatives.end() ? representative->second : function.at(value).type;
-    }
-
-    // A use that names a representative by itself was planned with the value's own type.
-    void keepOwnTypesOfOperands(ValueID use, uint32_t useIndex, ProgramPoint point)
-    {
-        if (ownTypesOfRepresentatives.isEmpty())
-            return;
-        auto replacedOperands = std::ranges::equal_range(subjectOperands, useIndex, { }, &SubjectOperand::use);
-        Vector<uint32_t, 2> operandsToCast;
-        function.at(use).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            OperandKind kind = function.at(use).operandKind(operandIndex);
-            if (mustBeDefinition(kind) || kind == OperandKind::Guard)
-                return;
-            if (ownTypeOf(operand) != function.at(operand).type && !std::ranges::contains(replacedOperands, operandIndex, &SubjectOperand::operandIndex))
-                operandsToCast.append(operandIndex);
-        });
-        for (uint32_t operandIndex : operandsToCast) {
-            ValueID operand = function.at(use).operand(operandIndex);
-            function.edit(use, ValueEdit::Definition).setOperand(operandIndex, castBefore(point, operand, ownTypeOf(operand)));
-        }
-    }
-
     void rewriteUse(const PlannedUse& planned, uint32_t useIndex, ProgramPoint point)
     {
         const TestSite& site = plan.sites.sites[planned.site];
@@ -3230,7 +3233,6 @@ struct TestPlacer {
         };
 
         builder.setOrigin(function.at(site.use).origin());
-        keepOwnTypesOfOperands(site.use, useIndex, point);
         for (const SubjectOperand& narrowed : std::ranges::equal_range(subjectOperands, useIndex, { }, &SubjectOperand::use)) {
             ValueID operand = function.at(site.use).operand(narrowed.operandIndex);
             ValueID replacement = narrowToOperand(representativeOf(plan.requirements[narrowed.requirement].condition), operand, point);

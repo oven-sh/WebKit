@@ -14,6 +14,7 @@
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTVector.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -165,7 +166,7 @@ private:
     HeapKey keyNamed(PropertyKeyID name) const { return !name ? unknownHeapKey : m_program.isIndexLike(name) ? indexHeapKey : HeapKey { HeapKeyClass::Name, name }; }
     HeapKeyReceivers receiversOfSymbolNobodyKnows(ClimbingSet keys, const HeapKeyUse&);
     ValueFlowOperand receiversUnder(const ValueFlowOperand& object, const HeapKey&);
-    void forEachKey(const ValueFlowOperand& property, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
+    void forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>&, HeapKeyUse = { });
     void forEachKeyOfOperation(uint32_t computedKeyIndex, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
     void forEachKeyOfAction(const BuiltinKey&, const ValueFlowOperand& keyOperand, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
 
@@ -303,6 +304,7 @@ private:
     void readAccessorFunctions(const ValueFlowOperand& object, const HeapKey&, HeapPropertyPart, PropertySearch);
     bool replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey&, PropertySearch, const ValueFlowOperand* value, bool isGivenAnyValue = false);
 
+    void defineUndefinedOnObjectsNobodyKnows(const ValueFlowOperand& object, const ValueFlowOperand& value);
     ClimbingSet allocateUnder(const ValueFlowOperand& prototype);
     void runCreateArguments(const ValueFlowOperand& count, const ValueFlowOperand& rest, std::span<const ValueFlowOperand> parameters, const ValueFlowOperand* callee);
 
@@ -320,7 +322,7 @@ private:
     ValueSetID m_holdersOfUndeclaredPropertiesUnderName;
 };
 
-void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invocable<void(const HeapKey&)> auto& functor, HeapKeyUse use)
+inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>& functor, HeapKeyUse use)
 {
     ClimbingSet keys = m_context.valueOf(property);
     connect(property, m_context.hub(m_universe.builtinTables().conversionToPrimitive()));

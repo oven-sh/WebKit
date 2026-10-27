@@ -10,6 +10,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTImageForward.h"
+#include "AOTLimits.h"
 #include "AOTSchemaPackedRecords.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
@@ -40,6 +41,11 @@ struct CallSiteRecord {
     std::optional<CallSiteIndex> firstReadSite { };
 };
 static_assert(sizeof(CallSiteRecord) == 20);
+
+// A method read without a site of its own is the site of the call and, above the bits of a site number, the columns between the two.
+inline constexpr unsigned siteNumberBits = 23;
+static_assert(defaultLimitValue(LimitID::SitesPerFunction, hostArchitecture()) < 1u << siteNumberBits);
+inline CallSiteIndex methodReadSite(CallSiteIndex call, unsigned columnDelta) { return CallSiteIndex(call.bits() | columnDelta << siteNumberBits); }
 
 struct InlineFrameRecord : InlineFrameRow {
     CallSiteIndex callSite;

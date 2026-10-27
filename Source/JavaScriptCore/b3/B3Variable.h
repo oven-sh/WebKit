@@ -28,6 +28,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3Bank.h"
+#include "B3Origin.h"
 #include "B3SparseCollection.h"
 #include "B3Type.h"
 #include "B3Width.h"
@@ -52,6 +53,10 @@ public:
     Bank bank() const { return bankForType(type()); }
     unsigned index() const { return m_index; }
 
+    // The origin of the value that the variable stands for, where the policy keeps it. A Phi that is made for the variable has it.
+    Origin origin() const { return m_origin; }
+    void setOrigin(Origin origin) { m_origin = origin; }
+
     void dump(PrintStream&) const;
     void deepDump(PrintStream&) const;
 
@@ -63,6 +68,7 @@ private:
     
     unsigned m_index;
     Type m_type;
+    Origin m_origin;
 };
 
 class DeepVariableDump {

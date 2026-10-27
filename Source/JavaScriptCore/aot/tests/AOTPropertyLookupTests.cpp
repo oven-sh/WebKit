@@ -672,7 +672,7 @@ static void testLeafOperationsAnswerByIndex(LoadedProgram& program)
     }
 
     JSObject* arrayWithHole = realms.object(program.realm(), "[10, , 12]"_s);
-    AOT_TEST_CHECK(isNumber(get(arrayWithHole, 0), 10) && !get(arrayWithHole, 1) && has(arrayWithHole, 1) == LeafPresence::TakeSlowPath);
+    AOT_TEST_CHECK(isNumber(get(arrayWithHole, 0), 10) && get(arrayWithHole, 1).isUndefined() && has(arrayWithHole, 1) == LeafPresence::Absent);
 
     struct RefusedStore {
         ASCIILiteral source;

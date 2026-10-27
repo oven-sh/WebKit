@@ -234,6 +234,8 @@ public:
     {
         if (m_site)
             m_site = m_cache.resolve(m_image, removeCodePtrTag(m_rawPC));
+        if (m_isAtFirstReadSite)
+            m_site = m_cache.withMethodReadSite(m_image, m_site);
     }
     const CompiledFrameExit& exit() const
     {
@@ -281,6 +283,15 @@ private:
         return true;
     }
 
+    NEVER_INLINE bool passOverMethodReadFrame()
+    {
+        m_isAtFirstReadSite = true;
+        if (!passOverFrame())
+            return false;
+        m_cache.withMethodReadSite(m_image, m_cache.find(removeCodePtrTag(m_rawPC)));
+        return true;
+    }
+
     bool passOverStubFrame(StubFrameKind kind)
     {
         switch (kind) {
@@ -292,6 +303,8 @@ private:
         case StubFrameKind::BelowSpilledArguments:
         case StubFrameKind::AtStubEntry:
             break;
+        case StubFrameKind::MethodRead:
+            return passOverMethodReadFrame();
         case StubFrameKind::FirstOfTwoReads:
             m_isAtFirstReadSite = true;
             break;
@@ -326,6 +339,8 @@ private:
             m_site = m_cache.find(pc);
             if (!m_site) [[unlikely]] {
                 m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
+                if (m_isAtFirstReadSite)
+                    m_cache.withMethodReadSite(m_image, m_site);
                 if (!m_site) {
                     m_exit = { m_framePointer, m_rawPC, m_entryFrame, false, m_callFrame };
                     return;
@@ -805,6 +820,8 @@ void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(
         auto flags = trace.flagsAt(i);
         const CallSiteCache::Entry* entry = cache.resolve(image, ReturnAddressTrace::decode(returnAddresses[i], codeStart));
         RELEASE_ASSERT(entry && !entry->isStubReturnSite());
+        if (flags.contains(ReturnAddressTrace::Flag::IsAtFirstReadSite)) [[unlikely]]
+            cache.withMethodReadSite(image, entry);
         if (!lister.addMachineFrame(*entry, flags.contains(ReturnAddressTrace::Flag::IsAtFirstReadSite), i || trace.calleeOfFirstFrameWasEntered))
             return;
         if (!lister.didFindCallerOfMachineFrame(flags.contains(ReturnAddressTrace::Flag::IsConstructCall)))

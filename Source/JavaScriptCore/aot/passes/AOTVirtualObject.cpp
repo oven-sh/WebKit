@@ -15,7 +15,6 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
 #include "AOTInlineBuiltinForms.h"
-#include "AOTMemoryLocation.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccess.h"
 #include "AOTTypeArena.h"
@@ -1238,12 +1237,9 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     const Program& program = context.program;
     bool isSafe = false;
     switch (description.kind) {
-    case VirtualObjectKind::Environment: {
-        // A variable has its type where the program reads it. Where nobody reads, the field may hold any word.
-        std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
-        isSafe = layoutField && !holdsDeclaredTypeOnlyBehindEntry(flowOf(program, { description.layout, *layoutField }).location);
+    case VirtualObjectKind::Environment:
+        isSafe = layoutFieldOf(program, description, field).has_value();
         break;
-    }
     case VirtualObjectKind::Closure:
         isSafe = field.kind == VirtualFieldKind::Capture && field.index < program.at(description.function).captures.size();
         break;

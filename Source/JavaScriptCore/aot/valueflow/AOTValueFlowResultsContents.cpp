@@ -582,7 +582,7 @@ private:
                 continue;
             ValueSetID value = m_heap.possibleValuesOf(walker.maker, operand);
             noteSetOfArrays(walker, value);
-            if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object)
+            if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object && sets().isSubset(m_heap.possibleValuesOf(walker.maker, operands[OperandIndex::ElemGet::property]), m_keysOfElements))
                 walker.elementReads.append({ function, statement.site, value });
             ValueSetID arrays = walker.maker.intersect(value, m_arrays);
             bool storesByName = (statement.opcode == Opcode::PropSet || statement.opcode == Opcode::PropDefine) && index == *receiverOf(statement.opcode);
@@ -721,6 +721,12 @@ private:
     {
         const ParallelLoops& loops = m_inputs.loops();
         m_kindsOfBoundedNumbers = maker().of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Integer), ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
+        Vector<ValueFlowObjectID> namesOfElements;
+        sets().forEachMember(universe().keys(), [&](ValueFlowObjectID constant) {
+            if (program().isIndexLike(universe().keyOf(constant)))
+                namesOfElements.append(constant);
+        });
+        m_keysOfElements = maker().unite(universe().builtinTables().heap().numberKinds(), maker().of(namesOfElements.span()));
         addToEachArray(maker(), m_inputs.solver().possibleValuesOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfEntries)), ArrayWrites::IsCreatedDense | ArrayWrites::IsPairOfEntries);
         forEachIndexInParallel(loops, m_containers.size(), [&](unsigned index) {
             ValueFlowObjectID object = m_containers[index].object;
@@ -1146,6 +1152,7 @@ private:
     ValueSetID m_otherArrays { ValueSets::nothing };
     Vector<ArrayWrites> m_arrayWrites;
     ValueSetID m_kindsOfBoundedNumbers { ValueSets::nothing };
+    ValueSetID m_keysOfElements { ValueSets::nothing };
     ValueSetID m_objectsWithReplacedContents { ValueSets::nothing };
     Vector<ValueFlowContainerFacts> m_facts;
     ValueFlowContainerResults m_results;

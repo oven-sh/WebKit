@@ -17,6 +17,7 @@
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"
 #include "B3EliminateDeadCode.h"
+#include "B3FixSSA.h"
 #include "B3Generate.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
@@ -593,6 +594,73 @@ static void testJoinedReferences()
     checkFindsNothing(swapped);
 }
 
+static B3::Policy policyThatKeepsOrigins()
+{
+    B3::Policy policy;
+    policy.optimization.keepsOriginsOfDemotedValues = true;
+    return policy;
+}
+
+static void makeJoinAnew(Graph& graph, B3::Value* phi)
+{
+    graph.proc.resetReachability();
+    IndexSet<B3::Value*> demoted;
+    demoted.add(phi);
+    B3::demoteValues(graph.proc, demoted);
+    B3::fixSSA(graph.proc);
+}
+
+// The join that the back end makes in the place of another one says what that one said, whatever its block begins with.
+static void testJoinOfIntegersMadeAnew()
+{
+    Graph graph(policyThatKeepsOrigins());
+    B3::BasicBlock* loop = graph.proc.addBlock();
+    B3::BasicBlock* exit = graph.proc.addBlock();
+    B3::Value* sum = graph.proc.add<B3::Value>(B3::Phi, B3::Int32, Graph::originOf(otherOrigin));
+    graph.block->appendNew<B3::UpsilonValue>(graph.proc, Graph::originOf(otherOrigin), graph.int32(0), sum);
+    graph.jumpTo(loop);
+    graph.store(graph.loadThrough(graph.decode(graph.loadReference())));
+    loop->append(sum);
+    B3::Value* next = graph.binary(B3::Add, sum, graph.loadReference(otherOrigin, 40));
+    graph.safepoint();
+    loop->appendNew<B3::UpsilonValue>(graph.proc, Graph::originOf(otherOrigin), next, sum);
+    graph.branchTo(graph.loadReference(otherOrigin, 48), loop, exit);
+    graph.block = exit;
+    graph.store(next);
+    graph.finish();
+
+    makeJoinAnew(graph, sum);
+    checkFindsNothing(graph);
+    AOT_TEST_CHECK(!graph.insertGuards());
+}
+
+static void testJoinOfReferencesMadeAnew()
+{
+    Graph graph(policyThatKeepsOrigins());
+    B3::BasicBlock* left = graph.proc.addBlock();
+    B3::BasicBlock* right = graph.proc.addBlock();
+    B3::BasicBlock* join = graph.proc.addBlock();
+    graph.branchTo(graph.loadReference(otherOrigin, 48), left, right);
+    graph.block = join;
+    graph.int32(7);
+    B3::Value* reference = join->appendNew<B3::Value>(graph.proc, B3::Phi, B3::Int32, Graph::originOf(referenceOrigin));
+    for (auto [block, offset] : { std::pair { left, 16 }, std::pair { right, 32 } }) {
+        graph.block = block;
+        block->appendNew<B3::UpsilonValue>(graph.proc, Graph::originOf(otherOrigin), graph.loadReference(otherReferenceOrigin, offset), reference);
+        block->appendNew<B3::Value>(graph.proc, B3::Jump, Graph::originOf(otherOrigin));
+        block->setSuccessors(B3::FrequentedBlock(join));
+    }
+    graph.block = join;
+    graph.safepoint();
+    graph.store(reference);
+    graph.finish();
+
+    makeJoinAnew(graph, reference);
+    checkFindsOne(graph);
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    checkFindsNothing(graph);
+}
+
 static void testDisplacedReference()
 {
     auto build = [](Graph& graph, bool isGuarded) {
@@ -769,6 +837,8 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-in-argument-register"_s, testReferenceInArgumentRegister },
         { "narrow-reference-returned-by-call-that-ends-its-block"_s, testReferenceReturnedByCallThatEndsItsBlock },
         { "narrow-reference-joined"_s, testJoinedReferences },
+        { "narrow-reference-join-of-integers-made-anew"_s, testJoinOfIntegersMadeAnew },
+        { "narrow-reference-join-of-references-made-anew"_s, testJoinOfReferencesMadeAnew },
         { "narrow-reference-displaced"_s, testDisplacedReference },
         { "narrow-reference-suspension"_s, testSuspension },
         { "narrow-reference-needs-no-pointer"_s, testWhatNeedsNoPointer },

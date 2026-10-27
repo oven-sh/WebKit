@@ -207,7 +207,7 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     jit.move(thisGPR, R0);
     jit.callStub(getById());
     // Whatever the read throws or runs is shown where the read is written. The call comes behind.
-    jit.bindReturnLabel(StubFrameKind::FirstOfTwoReads);
+    jit.bindReturnLabel(StubFrameKind::MethodRead);
     Jump notCell = jit.branchIfNotCell(R0);
     jit.move(R0, calleeGPR);
     jit.load64(Address(sp, sizeof(EncodedJSValue)), thisGPR);

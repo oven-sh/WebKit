@@ -1124,80 +1124,7 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
 
 bool takesFactOfEntry(const Program& program, const Value& value, bool calleeIsPredicted)
 {
-    const LocationFlow* flow = flowOfVariableReadBy(program, value);
-    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, calleeIsPredicted) && !namesFactOrGivesWordThatMayBeAnything(value);
-}
-
-ValueID readWordAndAssumeInPlace(Function& function, TypeArena& types, ValueID id, ValueID fact)
-{
-    Value word = function.at(id);
-    word.setMayPrecedeItsStore(true);
-    word.type = types.intern(types.at(word.type).withPrimitives(Primitive::Unspecified));
-    word.setExpected({ });
-    ValueID read = function.add(WTF::move(word));
-
-    Value& value = function.edit(id, ValueEdit::Definition);
-    value.becomeAssumeType(read, Proven::behindFact(value.type));
-    value.setFactOperand(fact);
-    return read;
-}
-
-void nameFactOfEntry(const Program& program, Function& function, TypeArena& types, std::span<const BlockID> blocks, ValueID fact, bool calleeIsPredicted)
-{
-    for (BlockID block : blocks) {
-        bool readsEnvironment = false;
-        for (ValueID id : function.at(block).values) {
-            if (!takesFactOfEntry(program, function.at(id), calleeIsPredicted))
-                continue;
-            if (function.at(id).opcode == Opcode::GetModuleVariable)
-                function.edit(id).setFactOperand(fact);
-            else
-                readsEnvironment = true;
-        }
-        if (!readsEnvironment)
-            continue;
-        BlockValues values;
-        values.reserveInitialCapacity(function.at(block).values.size() + 1);
-        for (ValueID id : function.at(block).values) {
-            if (takesFactOfEntry(program, function.at(id), calleeIsPredicted))
-                values.append(readWordAndAssumeInPlace(function, types, id, fact));
-            values.append(id);
-        }
-        function.edit(block, BlockEdit::Values).values = WTF::move(values);
-    }
-}
-
-void nameFactsWhereReadsStand(const Program& program, Function& function, TypeArena& types)
-{
-    if (function.inlineFrames.size() <= 1)
-        return;
-    auto needsFact = [&](ValueID id) {
-        const Value& value = function.at(id);
-        return value.inlineFrame && holdsDeclaredTypeOnlyBehindEntry(program, function, value) && !namesFactOrGivesWordThatMayBeAnything(value);
-    };
-    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
-        BlockID block(index);
-        if (std::ranges::none_of(function.at(block).values, needsFact))
-            continue;
-        BlockValues values;
-        values.reserveInitialCapacity(function.at(block).values.size() + 2);
-        for (ValueID id : function.at(block).values) {
-            if (needsFact(id)) {
-                Value fact = IRBuilder::make(Opcode::Entered);
-                fact.setFunction(function.inlineFrames[function.at(id).inlineFrame].callee);
-                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
-                fact.setOrigin(function.at(id).origin());
-                ValueID entered = function.add(WTF::move(fact));
-                values.append(entered);
-                if (function.at(id).opcode == Opcode::GetModuleVariable)
-                    function.edit(id).setFactOperand(entered);
-                else
-                    values.append(readWordAndAssumeInPlace(function, types, id, entered));
-            }
-            values.append(id);
-        }
-        function.edit(block, BlockEdit::Values).values = WTF::move(values);
-    }
+    return value.opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(program.at(value.variable()).flow, calleeIsPredicted) && !value.factOperand() && !value.mayPrecedeItsStore();
 }
 
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
@@ -1218,11 +1145,11 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
     }
     cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
         clone.inlineFrame += firstFrame;
+        if (entered && takesFactOfEntry(program, clone, calleeIsPredicted))
+            clone.setFactOperand(entered);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
-    if (entered)
-        nameFactOfEntry(program, builder.function(), builder.types(), cloner.clonedBlocks(), entered, calleeIsPredicted);
 }
 
 // No program writes a construction in tail position. One that stands there begins the construction of the frame again, in place of the frame.

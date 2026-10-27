@@ -209,15 +209,12 @@ private:
         auto& order = *static_cast<OrderedSteps*>(erasedOrder);
         T* first = static_cast<T*>(erasedFirst);
         T* last = static_cast<T*>(erasedLast);
-        T* a = first + 1;
-        T* b = first + (last - first) / 2;
+        T* lesser = first + 1;
+        T* greater = first + (last - first) / 2;
         T* c = last - 1;
-        T* median;
-        if (isLessOutOfLine(erasedOrder, a, b))
-            median = isLessOutOfLine(erasedOrder, b, c) ? b : isLessOutOfLine(erasedOrder, a, c) ? c : a;
-        else
-            median = isLessOutOfLine(erasedOrder, a, c) ? a : isLessOutOfLine(erasedOrder, b, c) ? c : b;
-        swap(first, median);
+        if (!order.isLess(*lesser, *greater))
+            std::swap(lesser, greater);
+        swap(first, order.isLess(*greater, *c) ? greater : order.isLess(*lesser, *c) ? c : lesser);
         T* low = first + 1;
         T* high = last;
         while (true) {

@@ -1367,7 +1367,6 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
-// A member of a built-in object that has been added to its holder stays there, whatever runs in between.
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
@@ -1392,7 +1391,6 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
             if (value.opcode != Opcode::InitializeBuiltin)
                 continue;
             BuiltinID builtin = builtins.canonicalID(value.builtin());
-            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
             bool isDone = std::ranges::any_of(done, [&](const Initialization& earlier) {
                 return earlier.builtin == builtin && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
             });
@@ -1587,15 +1585,9 @@ struct VariableCarrier : LoopEditor {
     bool isReadBy(const CarriedVariable& variable, Opcode opcode)
     {
         const UseLists& uses = m_analyses.useLists();
-        auto isUsedBy = [&](ValueID value) {
-            return std::ranges::any_of(uses.usesOf(value), [&](const Use& use) {
-                return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == opcode;
-            });
-        };
-        // A read that gives a word which may be anything is looked at through the cast that names the fact.
         return std::ranges::any_of(variable.reads, [&](ValueID read) {
-            return isUsedBy(read) || std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
-                return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == Opcode::AssumeType && m_function.at(use.user).factOperand() && isUsedBy(use.user);
+            return std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
+                return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == opcode;
             });
         });
     }
@@ -1961,9 +1953,8 @@ struct VariableCarrier : LoopEditor {
     // The variable has its declared type ahead of the loop where a fact that one of the reads names is defined there, where one of them needs none, or where the first turn is sure to get to one of them.
     FactAheadOfLoop findFactAheadOfLoop(const CarriedVariable& variable, ProgramPoint aheadOfLoop)
     {
-        // A read of an environment field names no fact: the copy of it ahead of the loop says what the read says.
         bool someReadLeansOnFact = std::ranges::any_of(variable.reads, [&](ValueID id) {
-            return m_function.at(id).opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
+            return holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
         });
         if (!someReadLeansOnFact)
             return { };

@@ -226,7 +226,7 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         }
     }
 
-    if (holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, value) && value.inlineFrame && !namesFactOrGivesWordThatMayBeAnything(value)) {
+    if (holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, value) && value.inlineFrame && !value.factOperand() && !value.mayPrecedeItsStore()) {
         fail(InternalErrorKind::InvalidGuard, block, id);
         return;
     }
@@ -240,8 +240,7 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         if (hasFailed())
             return;
         // A cast hands the word on. Everything else would look at it, or put it where somebody may. The variable that it came from may get it back, and a validating build compares words.
-        bool goesBackIntoVariable = (value.opcode == Opcode::PutModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program.at(value.variable()).flow))
-            || (value.opcode == Opcode::PutEnvironmentField && operandIndex == OperandIndex::PutEnvironmentField::value && holdsDeclaredTypeOnlyBehindEntry(flowOf(m_program, { value.layout(), value.field() }).location));
+        bool goesBackIntoVariable = value.opcode == Opcode::PutModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program.at(value.variable()).flow);
         bool handsWordOn = value.operandUses(operandIndex) == OperandUses { OperandUse::Returns } || goesBackIntoVariable || value.opcode == Opcode::ValidateSameValue;
         if (typeOf(operand).mayBeUnspecified() && !handsWordOn) {
             fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
@@ -346,7 +345,7 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         TypeID required = requiredTypeOfOperand(context, value, operandIndex);
         if (!required)
             return;
-        if ((value.opcode == Opcode::PutModuleVariable || value.opcode == Opcode::PutEnvironmentField) && typeOf(operand).mayBeUnspecified())
+        if (value.opcode == Opcode::PutModuleVariable && typeOf(operand).mayBeUnspecified())
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required).withPrimitives(Primitive::Unspecified));
         else
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));

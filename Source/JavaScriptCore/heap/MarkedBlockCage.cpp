@@ -45,10 +45,12 @@ static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 // Kept beside the reserve, in one piece, for one cell that is larger than a block.
 static constexpr size_t largeCellReserveSize = MB;
 static constexpr size_t lastReserveDivisor = 4;
-// A VM takes at most this many blocks until the first statement of a small program runs. It keeps no reserve of its own beside them.
+// A VM takes at most this many pieces of the size of a block until the first statement of a small program runs: its blocks, and the chunks it keeps beside them.
 static constexpr unsigned numberOfBlocksOfNewVM = 24;
-// Any of the VMs that share a range can fill it, however few cells another has and wherever they lie.
-// What a thread takes until it has ended alone is kept once, for all of them. It is as large as the last of the smallest reserve of a VM.
+// Any of the VMs that share a range can fill it, however few cells another has and wherever they lie. Then all of them find no room at about the same time.
+// So each keeps, from its first blocks on, what a thread usually takes until it has ended alone. They lie in the pages that its first blocks have taken from the range anyway.
+static constexpr unsigned numberOfChunksOfNewVM = 3;
+// What a thread takes beyond that is kept once, for all of them. It is as large as the last of the smallest reserve of a VM.
 static constexpr size_t sharedReserveSize = smallestReserveSize / lastReserveDivisor;
 // A full collection is barren if the program can allocate less than 1/64 of the heap before there is no room again.
 static constexpr size_t barrenCollectionDivisor = 64;
@@ -322,12 +324,14 @@ size_t MarkedBlockCage::reserveSize() const
 void MarkedBlockCage::keepReserveOnceHalfFull()
 {
 #if CPU(X86_64) || CPU(ARM64)
-    if (!m_range || m_hasReleasedReserve || m_numberOfBlocksTaken.load(std::memory_order_relaxed) <= numberOfBlocksOfNewVM)
+    if (!m_range || m_hasReleasedReserve)
         return;
     size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
-    if (m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)
-        return;
-    if (!m_largeCellReserve && std::exchange(m_shouldKeepLargeCellReserve, false))
+    if (m_numberOfBlocksTaken.load(std::memory_order_relaxed) <= numberOfBlocksOfNewVM || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2) {
+        if (!s_isGrowable && !m_sharesRange)
+            return;
+        size = numberOfChunksOfNewVM * reserveChunkSize;
+    } else if (!m_largeCellReserve && std::exchange(m_shouldKeepLargeCellReserve, false))
         m_largeCellReserve = m_range->tryAllocateAligned(MarkedBlock::blockSize, largeCellReserveSize);
     if (reserveSize() >= size)
         return;

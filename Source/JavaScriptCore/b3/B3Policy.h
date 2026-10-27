@@ -103,6 +103,8 @@ struct OptimizationPolicy {
     bool sinksValues { false };
     bool placesConstantsByFrequency { false };
     bool mergesBlocksAfterForwardingJumps { false };
+    // A Phi that is made for a demoted value has the origin of that value, for a client whose phases tell values apart by their origins.
+    bool keepsOriginsOfDemotedValues { false };
 };
 
 struct SelectionPolicy {

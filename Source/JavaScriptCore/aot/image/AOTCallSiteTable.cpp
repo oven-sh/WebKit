@@ -728,7 +728,10 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
             return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers };
     }
-    std::optional<SourcePosition> position = findPosition(*this, function, site);
+    unsigned methodReadColumnDelta = site.bits() >> siteNumberBits;
+    std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
+    if (position && methodReadColumnDelta)
+        position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - methodReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
         remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers };

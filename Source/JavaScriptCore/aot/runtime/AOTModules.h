@@ -13,6 +13,7 @@
 #include "AOTModuleWords.h"
 #include "JSPromise.h"
 #include "MicrotaskQueue.h"
+#include "ModuleMap.h"
 #include "RememberedSlot.h"
 #include "ScriptFetcher.h"
 #include "SourceOrigin.h"
@@ -363,7 +364,7 @@ private:
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
-    std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*) const;
+    std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     bool isAnythingBeingLoaded() const;
@@ -379,6 +380,11 @@ private:
     std::span<uint8_t> m_storedStatuses;
     UncheckedKeyHashMap<ModuleID, ModuleRecord*> m_records;
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
+    struct FormAnsweredFirst {
+        Identifier name;
+        ModuleID module;
+    };
+    ModuleMap<FormAnsweredFirst> m_formsAnsweredFirst;
     // Whoever asks for one asks for it several times in a row. None is ever removed.
     mutable LoadedModule* m_loadedFoundLast { nullptr };
     mutable ModuleID m_moduleOfLoadedFoundLast;

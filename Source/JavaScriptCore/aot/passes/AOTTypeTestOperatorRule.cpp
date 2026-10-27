@@ -52,6 +52,9 @@ static constexpr std::array<TestedOperands, 3> testedOperandSets { { { true, fal
 
 static TypeID testedTypeContaining(const Type& expected)
 {
+    // Of an integer of which only its kind is known, few are beyond int32, and an operator on int32 needs no test of its result.
+    if (expected.isInteger() && expected.integers == Range::full())
+        return TypeTable::int32;
     if (expected.isNumber())
         return testedNumberTypeContaining(expected);
     if (expected.isAnyString())

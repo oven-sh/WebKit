@@ -143,6 +143,7 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
     optimization.mergesBlocksAfterForwardingJumps = true;
+    optimization.keepsOriginsOfDemotedValues = true;
     return optimization;
 }
 

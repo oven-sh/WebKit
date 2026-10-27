@@ -776,7 +776,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
 }
 
-std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters) const
+std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
         return std::nullopt;
@@ -785,7 +785,16 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
         return module;
     if (!host().findModuleWithAttributes)
         return std::nullopt;
-    return host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
+    // The loader of `bun run` keeps one module for a name and a kind of type, and every type of the host's own is of one kind: whichever is asked for first answers for all of them.
+    ModuleMapKey keyOfLoader { key.impl(), fetchParameters->type() };
+    if (loader()->moduleMap().contains(keyOfLoader))
+        return std::nullopt;
+    if (auto first = m_formsAnsweredFirst.find(keyOfLoader); first != m_formsAnsweredFirst.end())
+        return first->value.module;
+    std::optional<ModuleID> module = host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
+    if (module)
+        m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, *module });
+    return module;
 }
 
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder)

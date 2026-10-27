@@ -1,5 +1,3 @@
-# The first read of a member of a built-in object may add the member to its holder. It stays there, whatever runs in between: the same read again, behind the first on every way, has nothing left to do.
-# A read of another member stays, and so does one that the first stands in front of on one way only, or in a block whose handler it is read in.
 # FORM: Prepared
 # RUN: pass EliminateRedundantReads
 

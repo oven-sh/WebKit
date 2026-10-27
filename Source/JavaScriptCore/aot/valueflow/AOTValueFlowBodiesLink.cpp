@@ -510,6 +510,13 @@ ValueFlowNodeID ValueFlowProgramNodes::valueOf(const UnobservedFieldDefinition& 
     return { };
 }
 
+bool ValueFlowProgramNodes::isValueOfUnobservedDefinitions(FunctionID initializer, ValueFlowNodeID node) const
+{
+    return std::ranges::any_of(std::ranges::equal_range(m_unobservedDefinitionsByInitializer, initializer, { }, &UnobservedDefinitions::initializer), [&](const UnobservedDefinitions& entry) {
+        return entry.value == node;
+    });
+}
+
 std::span<const ValueFlowProgramNodes::UnobservedDefinitions> ValueFlowProgramNodes::unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const
 {
     auto found = std::ranges::equal_range(m_unobservedDefinitionsByClass, classCallingSuper, { }, &UnobservedDefinitions::classCallingSuper);
