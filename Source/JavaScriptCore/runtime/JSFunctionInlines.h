@@ -265,6 +265,26 @@ inline bool JSFunction::mayHaveNonReifiedPrototype()
     return !isHostOrBuiltinFunction() && jsExecutable()->hasPrototypeProperty();
 }
 
+inline bool JSFunction::canPerformFastEnumerablePropertyEnumeration(VM& vm)
+{
+#if ENABLE(AOT)
+    // Listing the own properties of a compiled closure makes its class object and its static fields first
+    // (AOT::Closure::getOwnSpecialPropertyNames). A walk of its Structure would not see them.
+    if (isCompiledClosure()) [[unlikely]]
+        return false;
+#endif
+    if (!canAssumeNameAndLengthAreOriginal(vm))
+        return false;
+    Structure* structure = this->structure();
+    if (structure->hasAnyKindOfGetterSetterProperties())
+        return false;
+    if (structure->isUncacheableDictionary())
+        return false;
+    if (structure->hasUnderscoreProtoPropertyExcludingOriginalProto())
+        return false;
+    return true;
+}
+
 inline bool JSFunction::canUseAllocationProfiles()
 {
     if (isHostOrBuiltinFunction()) {

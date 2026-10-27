@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 125 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -48,9 +48,10 @@ Rules for an edit to an upstream test:
 
 - Upstream prints three lines (`function f() {\n    [native code]\n}`).
 - Fork code: `runtime/JSFunction.cpp:251`, `runtime/FunctionExecutable.cpp:206` (commit 3ad19d9e49d5).
-- Files (10): `ChakraCore/test/` `Array/protoLookup`, `Error/ErrorCtorProps_v3`, `Function/prototype`,
+- Files (11): `ChakraCore/test/` `Array/protoLookup`, `Error/ErrorCtorProps_v3`, `Function/prototype`,
   `Function/toString`, `Lib/toString` (163 functions), `es6/letconst_global_shadow_builtins`, `strict/05.arguments_sm`,
-  `typedarray/set` (baselines); `LayoutTests/js/basic-strict-mode` (script and expected text).
+  `typedarray/set` (baselines); `LayoutTests/js/basic-strict-mode` (script and expected text);
+  `stress/proxy-revocable-result-and-revoke-function.js` (the revoke function).
 
 ### A3. Module link errors are worded differently
 

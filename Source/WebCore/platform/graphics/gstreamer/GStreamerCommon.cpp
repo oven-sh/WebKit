@@ -576,7 +576,7 @@ void registerWebKitGStreamerElements()
         // We don't want autoaudiosink to autoplug our sink.
         gst_element_register(0, "webkitaudiosink", GST_RANK_NONE, WEBKIT_TYPE_AUDIO_SINK);
 
-        // Prevent decodebin(3) from auto-plugging hlsdemux if it was disabled. UAs should be able
+        // Prevent decodebin2 from auto-plugging hlsdemux if it was disabled. UAs should be able
         // to fallback to MSE when this happens.
         auto hlsSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_HLS_SUPPORT"));
         if (!hlsSupport || hlsSupport == "0"_s) {
@@ -584,11 +584,19 @@ void registerWebKitGStreamerElements()
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
         }
 
-        // Prevent decodebin(3) from auto-plugging dashdemux if it was disabled. UAs should be able
+        // Prevent decodebin2 from auto-plugging dashdemux if it was disabled. UAs should be able
         // to fallback to MSE when this happens.
         auto dashSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_DASH_SUPPORT"));
         if (!dashSupport || dashSupport == "0"_s) {
             if (GRefPtr factory = adoptGRef(gst_element_factory_find("dashdemux")))
+                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
+        }
+
+        // Prevent decodebin2 from auto-plugging mssdemux if it was disabled. UAs should be able
+        // to fallback to MSE when this happens.
+        auto mssSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_MSS_SUPPORT"));
+        if (!mssSupport || mssSupport == "0"_s) {
+            if (GRefPtr factory = adoptGRef(gst_element_factory_find("mssdemux")))
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
         }
 
@@ -1944,6 +1952,27 @@ bool gstElementMatchesFactoryAndHasProperty(GstElement* element, ASCIILiteral fa
         return false;
 
     return gstObjectHasProperty(element, propertyName);
+}
+
+GRefPtr<GstElement> gstElementFindInnermostSink(GstElement* element)
+{
+    GRefPtr<GstElement> sink = element;
+    while (GST_IS_BIN(sink.get())) {
+        GUniquePtr<GstIterator> iterator(gst_bin_iterate_sinks(GST_BIN_CAST(sink.get())));
+        GValue value = G_VALUE_INIT;
+        auto result = gst_iterator_next(iterator.get(), &value);
+        while (result == GST_ITERATOR_RESYNC) {
+            gst_iterator_resync(iterator.get());
+            result = gst_iterator_next(iterator.get(), &value);
+        }
+        if (result != GST_ITERATOR_OK) {
+            g_value_unset(&value);
+            return sink;
+        }
+        sink = GST_ELEMENT_CAST(g_value_get_object(&value));
+        g_value_unset(&value);
+    }
+    return sink;
 }
 
 GRefPtr<GstBuffer> wrapSpanData(const std::span<const uint8_t>& span)

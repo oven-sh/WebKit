@@ -216,7 +216,6 @@ export default b.declarations(
     "crossRealmThrow",
     "defaultAsyncFromAsyncArrayLike",
     "defaultAsyncFromAsyncIterator",
-    "defaultAsyncFromAsyncIteratorWithNext",
   ]),
 
   operation("CollectionTable", "collectionTable"),

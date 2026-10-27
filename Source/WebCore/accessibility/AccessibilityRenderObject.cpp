@@ -605,8 +605,7 @@ String AccessibilityRenderObject::stringValue() const
 
         // As fallback, gather the static text under this.
         String value;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST Accessibility::enumerateUnignoredDescendants(*const_cast<AccessibilityRenderObject*>(this), false, [&value](const auto& object) {
+        Accessibility::enumerateUnignoredDescendants(*const_cast<AccessibilityRenderObject*>(this), false, [&value](const auto& object) {
             if (object.isStaticText())
                 value = makeString(value, object.stringValue());
         });
@@ -632,8 +631,7 @@ bool AccessibilityRenderObject::canHavePlainText() const
 // within the parent page, otherwise they are in relative coordinates only.
 void AccessibilityRenderObject::offsetBoundingBoxForRemoteSVGElement(LayoutRect& rect) const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST for (RefPtr<AccessibilityObject> parent = const_cast<AccessibilityRenderObject*>(this); parent; parent = parent->parentObject()) {
+    for (RefPtr<AccessibilityObject> parent = const_cast<AccessibilityRenderObject*>(this); parent; parent = parent->parentObject()) {
         if (parent->isAccessibilitySVGRoot()) {
             rect.moveBy(parent->parentObject()->boundingBoxRect().location());
             break;
@@ -716,14 +714,23 @@ bool AccessibilityRenderObject::isNonLayerSVGObject() const
     return renderer ? is<RenderSVGInlineText>(renderer.get()) || is<LegacyRenderSVGModelObject>(renderer.get()) : false;
 }
 
+// Maps a path in the renderer's local coordinates to absolute document coordinates, including any transforms
+// of the renderer and its ancestors, so that, for example, the path of an element inside a scaled container is
+// scaled like its bounding box is.
+static void mapLocalPathToAbsolute(Path& path, const RenderObject& renderer)
+{
+    path.transform(localToAbsoluteLinearTransform(renderer));
+    auto absoluteOrigin = flooredLayoutPoint(renderer.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
+    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+}
+
 static Path computePathForRenderBox(const RenderBox& renderBox)
 {
     auto borderShape = BorderShape::shapeForBorderRect(renderBox.usedStyle(), renderBox.borderBoxRect());
     auto path = borderShape.pathForOuterShape(protect(renderBox.document())->deviceScaleFactor());
-    // borderBoxRect() is in local coordinates. Offset it to absolute document coordinates
+    // borderBoxRect() is in local coordinates. Map it to absolute document coordinates
     // to match the coordinate system used by SVG, RenderText, and inline box paths.
-    auto absoluteOrigin = flooredLayoutPoint(renderBox.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
-    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+    mapLocalPathToAbsolute(path, renderBox);
     return path;
 }
 
@@ -847,8 +854,7 @@ Path AccessibilityRenderObject::elementPath() const
                     // FIXME: Remove suppression once rdar://189998444 is fixed.
                     SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(renderBox->borderBoxRect());
                     auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
-                    auto absoluteOrigin = flooredLayoutPoint(renderBox->localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
-                    path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
+                    mapLocalPathToAbsolute(path, *renderBox);
                     clipPathResult = WTF::move(path);
                 },
                 [](const auto&) { }
@@ -2329,8 +2335,7 @@ RefPtr<AccessibilityObject> AccessibilityRenderObject::elementAccessibilityHitTe
             LayoutRect parentRect = boundingBoxRect();
 
             RefPtr<AccessibilityObject> listBoxOption;
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const auto& children = const_cast<AccessibilityRenderObject*>(this)->unignoredChildren();
+            const auto& children = const_cast<AccessibilityRenderObject*>(this)->unignoredChildren();
             unsigned length = children.size();
             for (unsigned i = 0; i < length; ++i) {
                 LayoutRect rect = renderListBox->itemBoundingBoxRect(parentRect.location(), i);

@@ -252,6 +252,8 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     // right now. This is an optimization that prevents the collector thread from ever starting in most
     // cases.
     ASSERT(m_lastServedTicket <= m_lastGrantedTicket);
+    ASSERT(requester.hasHeapAccess());
+    ASSERT(!(requester.m_worldState.load() & Heap::stoppedBit));
     // It's okay for a heap to request a GC while its membership is pending, but it can't be the conductor yet.
     if ((m_lastServedTicket == m_lastGrantedTicket) && !m_threadIsWorking && hasHeap(requester)) {
         dataLogLnIf(CollectorInternal::verbose, "Taking the conn.");
@@ -506,6 +508,8 @@ void Collector::beginCollectionInEachHeap(CollectionScope scope, MonotonicTime s
 #endif
         if (!Options::seedOfVMRandomForFuzzer())
             heap.vm().random().setSeed(cryptographicallyRandomNumber<uint32_t>());
+        // The previous collection's epilogue must have run before starting the next collection.
+        RELEASE_ASSERT(!heap.needCollectionEpilogue());
         heap.willStartCollection(scope);
         heap.beginMarking();
     });
@@ -820,6 +824,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
     if (suspendedBefore != suspendedAfter) {
         if (suspendedBefore) {
             RELEASE_ASSERT(!suspendedAfter);
+            // End sets the epilogue bit just before resuming into NotRunning, and nothing else sets it during a collection.
+            RELEASE_ASSERT(heap().needCollectionEpilogue() == (m_currentPhase == CollectorPhase::End));
 
             resumeThePeriphery();
             if (conn == GCConductor::Collector)
@@ -840,7 +846,8 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
                 }
             } else {
                 sanitizeStackForVM(heap().vm());
-                heap().handleNeedCollectionEpilogue();
+                // A mutator runs any pending epilogue before it starts conducting, and only End sets the bit.
+                RELEASE_ASSERT(!heap().needCollectionEpilogue());
             }
             stopThePeriphery();
         }
@@ -853,7 +860,12 @@ NEVER_INLINE bool Collector::finishChangingPhase(GCConductor conn)
 void Collector::stopThePeriphery()
 {
     m_isCompilerThreadsSuspended = suspendCompilerThreads();
-    forEachHeap([](Heap& heap) {
+    forEachHeap([&](Heap& heap) {
+        unsigned worldState = heap.m_worldState.load();
+        if (&heap == m_conductingHeap)
+            RELEASE_ASSERT(worldState & Heap::mutatorHasConnBit, worldState);
+        else
+            RELEASE_ASSERT(worldState & Heap::stoppedBit, worldState);
         heap.stopThePeriphery();
     });
     m_collectorSlotVisitor->setMutatorsAreStopped(true);

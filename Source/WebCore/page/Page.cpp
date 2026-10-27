@@ -206,6 +206,7 @@
 #include "SubframeLoader.h"
 #include "SubresourceLoader.h"
 #include "TextExtraction.h"
+#include "TextIndicator.h"
 #include "TextIterator.h"
 #include "TextRecognitionResult.h"
 #include "TextResourceDecoder.h"
@@ -1624,12 +1625,11 @@ void Page::setEditableRegionEnabled(bool enabled)
     if (m_isEditableRegionEnabled == enabled)
         return;
     m_isEditableRegionEnabled = enabled;
-    RefPtr localMainFrame = this->localMainFrame();
-    RefPtr frameView = localMainFrame ? localMainFrame->view() : nullptr;
-    if (!frameView)
-        return;
-    if (CheckedPtr renderView = frameView->renderView())
-        protect(renderView->compositor())->invalidateEventRegionForAllLayers();
+    forEachLocalFrame([](LocalFrame& frame) {
+        if (CheckedPtr renderView = frame.contentRenderer())
+            protect(renderView->compositor())->invalidateEventRegionForAllLayers();
+    });
+    scheduleRenderingUpdate(RenderingUpdateStep::EventRegionUpdate);
 }
 
 #endif
@@ -2332,7 +2332,10 @@ std::optional<MonotonicTime> Page::nextRenderingUpdateTimestamp() const
         return std::nullopt;
     if (!m_renderingUpdateIsScheduled)
         return std::nullopt;
-    auto interval = preferredRenderingUpdateInterval();
+    auto framesPerSecond = preferredRenderingUpdateFramesPerSecond();
+    if (!framesPerSecond)
+        framesPerSecond = 60;
+    Seconds interval = Seconds { 1.0 / *framesPerSecond };
     auto now = MonotonicTime::now();
     ASSERT(now > m_lastRenderingUpdateTimestamp);
     return m_lastRenderingUpdateTimestamp + std::floor((now + interval - m_lastRenderingUpdateTimestamp) / interval) * interval;
@@ -2402,7 +2405,7 @@ void Page::enumerateLocalFrameGeometry(NOESCAPE const Function<void(LocalFrame&,
 #if PLATFORM(IOS_FAMILY)
         auto exposedContentRect = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
             if (!rect)
-                rect = LayoutRect { frameView->exposedContentRect() };
+                rect = LayoutRect { frameView->exposedContentRect().raw() };
             return *rect;
         };
 #endif
@@ -3190,7 +3193,7 @@ const String& Page::userStyleSheet() const
     if (!data)
         return m_userStyleSheet;
 
-    m_userStyleSheet = TextResourceDecoder::create(cssContentTypeAtom())->decodeAndFlush(data->span());
+    m_userStyleSheet = TextResourceDecoder::create(TextResourceDecoder::ContentType::CSS)->decodeAndFlush(data->span());
 
     return m_userStyleSheet;
 }

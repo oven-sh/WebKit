@@ -1776,6 +1776,12 @@ void FrameLoader::loadURL(FrameLoadRequest&& frameLoadRequest, const String& ref
         request.setHTTPReferrer(referrer);
 
     auto willOpenInNewWindow = !targetFrame && !effectiveFrameName.isEmpty() ? WillOpenInNewWindow::Yes : WillOpenInNewWindow::No;
+
+    if (willOpenInNewWindow == WillOpenInNewWindow::No && newLoadType == FrameLoadType::Standard && frame->tree().parent() && documentLoader() && documentLoader()->isInitialAboutBlank() == IsInitialAboutBlank::Yes) {
+        newLoadType = FrameLoadType::RedirectWithLockedBackForwardList;
+        frameLoadRequest.setLockBackForwardList(LockBackForwardList::Yes);
+    }
+
     updateRequestAndAddExtraFields(request, IsMainResource::Yes, newLoadType, ShouldUpdateAppInitiatedValue::Yes, FrameLoader::IsServiceWorkerNavigationLoad::No, willOpenInNewWindow, protect(frameLoadRequest.requester()).ptr());
 
     ASSERT(newLoadType != FrameLoadType::Same);
@@ -3220,7 +3226,7 @@ void FrameLoader::checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess
         // Check all children first.
         RefPtr<HistoryItem> item;
         if (RefPtr page = m_frame->page()) {
-            if (isBackForwardLoadType(loadType())) {
+            if (isBackForwardLoadType(loadType()) && !page->settings().useUIProcessForBackForwardItemLoading()) {
                 // Reset the back forward list to the last committed history item at the top level.
                 if (RefPtr localMainFrame = page->localMainFrame())
                     item = localMainFrame->loader().history().currentItem();
@@ -4494,7 +4500,7 @@ void FrameLoader::continueLoadAfterNavigationPolicy(const ResourceRequest& reque
         // problem that we have optimistically moved the b/f cursor already, so move it back. For sanity,
         // we only do this when punting a navigation for the target frame or top-level frame.
         if ((isTargetItem || frame->isMainFrame()) && isBackForwardLoadType(policyChecker().loadType())) {
-            if (RefPtr page = frame->page()) {
+            if (RefPtr page = frame->page(); page && !page->settings().useUIProcessForBackForwardItemLoading()) {
                 if (RefPtr localMainFrame = frame->localMainFrame()) {
                     if (RefPtr resetItem = localMainFrame->loader().history().currentItem())
                         protect(page->backForward())->setCurrentItem(*resetItem);

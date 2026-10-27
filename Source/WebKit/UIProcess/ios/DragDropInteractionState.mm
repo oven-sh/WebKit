@@ -29,9 +29,9 @@
 #if PLATFORM(IOS_FAMILY) && ENABLE(DRAG_SUPPORT)
 
 #import "Logging.h"
+#import <WebCore/BitmapImage.h>
 #import <WebCore/ColorCocoa.h>
 #import <WebCore/DragItem.h>
-#import <WebCore/Image.h>
 #import <WebCore/LocalCurrentTraitCollection.h>
 #import <WebCore/NativeImage.h>
 #import <wtf/cocoa/VectorCocoa.h>
@@ -111,16 +111,12 @@ static RetainPtr<UITargetedDragPreview> createTargetedDragPreview(UIImage *image
     return adoptNS([[UITargetedDragPreview alloc] initWithView:imageView.get() parameters:parameters.get() target:target.get()]);
 }
 
-static RetainPtr<UIImage> uiImageForImage(Image* image)
+static RetainPtr<UIImage> uiImageForImage(NativeImage* image)
 {
     if (!image)
         return nullptr;
 
-    auto nativeImage = image->nativeImage(ConcreteObjectSize::fixed(image->size()));
-    if (!nativeImage)
-        return nullptr;
-
-    return adoptNS([[UIImage alloc] initWithCGImage:nativeImage->platformImage().get()]);
+    return adoptNS([[UIImage alloc] initWithCGImage:image->platformImage().get()]);
 }
 
 static bool shouldUseDragImageToCreatePreviewForDragSource(const DragSourceState& source)
@@ -384,8 +380,8 @@ void DragDropInteractionState::stageDragItem(const DragItem& item, DragSourceSta
         item.sourceAction,
         item.dragPreviewFrameInRootViewCoordinates,
         dragPreviewContent,
-        item.image.textIndicator(),
-        item.image.visiblePath(),
+        item.textIndicator,
+        item.visiblePath,
         item.title.isEmpty() ? nil : item.title.createNSString().get(),
         item.url.isEmpty() ? nil : item.url.createNSURL().get(),
         true, // We assume here that drag previews need to be updated until proven otherwise in updatePreviewsForActiveDragSources().

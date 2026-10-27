@@ -44,7 +44,7 @@ namespace WebKit {
 
 class TestWithSwiftConditionallyMessageForwarder: public RefCounted<TestWithSwiftConditionallyMessageForwarder>, public IPC::MessageReceiver {
 public:
-    static Ref<TestWithSwiftConditionallyMessageForwarder> createFromWeak(WebKit::TestWithSwiftConditionallyWeakRef* _Nonnull handler)
+    static Ref<TestWithSwiftConditionallyMessageForwarder> createFromWeak(WebKit::TestWithSwiftConditionallyWeakRef* WTF_NONNULL handler)
     {
         return adoptRef(*new TestWithSwiftConditionallyMessageForwarder(handler));
     }
@@ -54,7 +54,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 private:
-    TestWithSwiftConditionallyMessageForwarder(WebKit::TestWithSwiftConditionallyWeakRef* _Nonnull);
+    TestWithSwiftConditionallyMessageForwarder(WebKit::TestWithSwiftConditionallyWeakRef* WTF_NONNULL);
     std::unique_ptr<WebKit::TestWithSwiftConditionally> getMessageTarget();
     std::unique_ptr<WebKit::TestWithSwiftConditionallyWeakRef> m_handler;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
@@ -76,7 +76,7 @@ class TestAsyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestAsyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestAsyncMessage; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -106,7 +106,7 @@ class TestSyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestSyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestSyncMessage; }
     static constexpr bool isSync = true;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -134,7 +134,7 @@ class TestAsyncMessageReply {
 public:
     using Arguments = std::tuple<uint8_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestAsyncMessageReply; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwiftConditionally_TestAsyncMessageReply; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -165,6 +165,8 @@ using TestAsyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSw
 using TestSyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSwiftConditionally::TestSyncMessage::Reply>;
 
 void completeWithDefaultReply(TestAsyncMessageCompletionHandler&);
+
+void complete(TestAsyncMessageCompletionHandler&, uint8_t);
 } // namespace TestWithSwiftConditionally
 } // namespace CompletionHandlers
 

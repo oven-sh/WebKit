@@ -1689,8 +1689,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ProxyConstructorInlines.h
     runtime/ProxyObject.h
     runtime/ProxyObjectInlines.h
-    runtime/ProxyRevoke.h
-    runtime/ProxyRevokeInlines.h
     runtime/PureNaN.h
     runtime/PutDirectIndexMode.h
     runtime/PutPropertySlot.h

@@ -105,6 +105,7 @@
 #include <stdio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Scope.h>
+#include <wtf/SmallSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -724,7 +725,8 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
-    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) -> JSAsyncFunctionGenerator* {
+    SmallSet<JSCell*> visitedCombinators;
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
         JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
         ASSERT(generatorContext);
         JSPromise* awaitedPromise = dynamicDowncast<JSPromise>(generatorContext);
@@ -736,6 +738,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         // handle simple `await`
         if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
             return generator;
+
+        if (!promiseContext.isCell() || !visitedCombinators.add(promiseContext.asCell()).isNewEntry)
+            return nullptr;
 
         // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
         if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {
