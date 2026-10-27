@@ -162,6 +162,8 @@ struct SiteDescription {
     Vector<SitePosition> positions;
     Vector<InlineFrame> inlineFrames;
     Vector<FlaggedSite> flaggedSites;
+    // In rising order. A site without code stands for the call that an inline frame has taken the place of.
+    Vector<uint32_t> callsOfOwnFunctionObjects;
     Vector<SiteHandler> handlers;
     Vector<FaultingAccess> faultingAccesses;
     Vector<PollSite> pollSites;

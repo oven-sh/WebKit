@@ -533,7 +533,6 @@ struct BuiltinClass {
     BuiltinID constructor { };
     BuiltinID prototype { };
     JSType type { CellType };
-    TypedArrayType typedArrayType { NotTypedArray };
     BuiltinInstanceTest instanceTest { BuiltinInstanceTest::None };
     ArrayBufferSharingMode sharingMode { ArrayBufferSharingMode::Default };
     bool isPrimitiveWrapper { false };
@@ -736,6 +735,7 @@ enum class BuiltinMark : uint8_t {
     IsSpy,
     IsNotEnumerable,
     IsReplacedBySetter,
+    RunsWaitingJobs,
 };
 
 struct BuiltinMarkedEntry {
@@ -967,6 +967,7 @@ public:
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
+    TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;
     BuiltinSlotID findSlot(BuiltinClassID, ContentsSlot) const;

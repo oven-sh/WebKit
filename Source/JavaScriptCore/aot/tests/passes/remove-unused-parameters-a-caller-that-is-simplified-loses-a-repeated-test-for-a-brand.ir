@@ -1,0 +1,27 @@
+# A caller whose call loses an argument is simplified. There the second test of one object for one brand goes, as it does wherever the function is simplified, and a build that verifies each pass takes that
+# from the pass that ran inside
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
+
+function f0 name="report" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = Add v0, v0
+    Return v2
+}
+
+function f1 name="testsTwice" parameters=[{type=anything}, {type=classtoken}, {type=anything}, {type=number}] results=[{type=number}] {
+    v4 = PrivateGet v0, v1 layout=L0
+    v5 = Call v2
+    v6 = PrivateGet v0, v1 layout=L0
+    v7 = CallDirect v3, v5 function=f0
+    Return v7
+# CHECK: = PrivateGet v0, v1 layout=L0
+# CHECK-NEXT: = Call v2
+# CHECK-NEXT: = CallDirect v3 function=
+# CHECK-NEXT: Return
+}

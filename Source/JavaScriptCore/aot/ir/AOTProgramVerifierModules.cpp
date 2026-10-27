@@ -76,6 +76,14 @@ static bool isUncompiledCode(const Module& module)
     return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
 }
 
+// Only the run knows every name of such a module.
+static bool findsNamesAtRunTime(const Module& module)
+{
+    return isUncompiledCode(module) || module.requests.containsIf([](const ModuleRequest& request) {
+        return request.isDynamicStarExport;
+    });
+}
+
 static bool hasRequiredIDs(const Module& module)
 {
     auto isSet = [](auto id) { return !!id; };
@@ -128,7 +136,7 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry)
     case ModuleExportKind::Namespace:
         return entry.module && !entry.variable && !entry.importName;
     case ModuleExportKind::Indirect:
-        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && isUncompiledCode(program.at(entry.module));
+        return entry.module && entry.importName && !entry.variable && entry.phase == ImportPhase::Evaluation && findsNamesAtRunTime(program.at(entry.module));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

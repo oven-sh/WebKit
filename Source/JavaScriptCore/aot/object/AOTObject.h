@@ -40,7 +40,7 @@ enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 
 using PropertyWalk::isCompiledObject;
 
-// What the slot of one field may hold: a value of the field's type, or undefined or null where the slot has a marker for it.
+// What RuntimeLayoutTable::slotAdmits() lets into the slot of one field.
 class AcceptedValue {
 public:
     static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }
@@ -227,6 +227,7 @@ public:
     JSObject* extraProperties() const { return hasExtraProperties() ? extraPropertiesSlow() : nullptr; }
     JSObject* extraPropertiesSlow() const;
     JSObject* ensureExtraProperties(VM&);
+    void adoptExtraProperties(VM&, JSObject* filled);
     void setExtraProperties(VM&, JSObject*, CompiledStructure* withExtraProperties);
     struct ExtraProperty {
         UniquedStringImpl* name;
@@ -311,7 +312,7 @@ public:
     JSValue readListedField(const FieldAsProperty&) const;
     const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSValue readPropertyListEntry(const PropertyListEntry&, JSObject* extraProperties) const;
-    JSCellButterfly* keys(VM&) const;
+    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);

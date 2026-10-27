@@ -67,10 +67,10 @@ static Typed::LayoutID onlyReceiverOf(const Program& program, const MemoryLocati
 {
     if (!field.receivers())
         return { };
-    const Typed::LayoutSet& receivers = program.at(field.receivers());
-    if (!receivers.isComplete || receivers.hasMembersWithoutLayout || receivers.members.size() != 1)
+    auto receivers = program.at(field.receivers()).all();
+    if (!receivers || receivers->value().size() != 1)
         return { };
-    return receivers.members[0];
+    return receivers->value().front();
 }
 
 static std::optional<uint64_t> exactKeyOf(const Program& program, const MemoryLocation& location)
@@ -88,10 +88,10 @@ static std::optional<uint64_t> exactKeyOf(const Program& program, const MemoryLo
     case IRHeap::ObjectFields:
         return keyOf(location.key().index(), onlyReceiverOf(program, location).index());
     case IRHeap::ShapeWords: {
-        const Typed::LayoutSet& layouts = program.at(location.layoutSet());
-        if (layouts.members.size() != 1)
+        auto layouts = program.at(location.layoutSet()).all();
+        if (!layouts || layouts->value().size() != 1)
             return std::nullopt;
-        return keyOf(layouts.members[0].index(), 0);
+        return keyOf(layouts->value().front().index(), 0);
     }
     case IRHeap::Elements:
         return std::nullopt;

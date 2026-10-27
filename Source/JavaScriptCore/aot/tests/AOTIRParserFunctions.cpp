@@ -300,12 +300,14 @@ void TextParser::parseValue()
     auto engineFlags = static_cast<uint16_t>(flags & ~wireFlags);
 
     Origin origin = parseOrigin(*this);
-    uint32_t writtenPositionFollows = 0;
+    uint32_t writtenPositionBits = 0;
     if (accept(TokenKind::At)) {
-        writtenPositionFollows = Wire::WrittenPositionFollows;
+        writtenPositionBits = Wire::WrittenPositionFollows;
         code().append(parseUInt32());
+        if (acceptWord("callers"_s))
+            writtenPositionBits |= Wire::WrittenPositionIsForCallers;
     }
-    overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionFollows, origin.position });
+    overwriteRecord(code(), headPosition, Wire::ValueHead { static_cast<uint32_t>(opcode) | writtenPositionBits, origin.position });
     if (engineFlags || origin.inlineFrame || origin.isTailCall || origin.isPartOfConstruction) {
         addPatch([function = m_body.function, id, engineFlags, origin](PatchContext& context) {
             Value& value = context.program.at(function).edit(id);

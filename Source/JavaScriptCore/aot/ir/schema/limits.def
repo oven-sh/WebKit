@@ -117,6 +117,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     InlineSunkAllocationBytes(Optimize, CodeSize, NotOptimized, 160, 160, 0, "inlining credit for an allocation it removes")
     InlineCycleWeight(Optimize, CodeSize, NotOptimized, 4, 4, 0, "inlining weight of a call site in a loop")
     MaxConditionChainLength(Optimize, CompileTime, NotOptimized, 8, 8, 0, "conditions followed to estimate what inlining folds")
+    MaxInlineNesting(Optimize, CompileTime, NotOptimized, 32, 32, 0, "nesting of inlined calls, also of those that add no code")
     MaxFusedArrayCapacity(Optimize, Memory, NotOptimized, 268435456, 268435456, 0, "capacity of the array built by a fused map or filter chain")
     MinAppendsForStringBuilder(Optimize, CodeSize, NotOptimized, 4, 4, 0, "appends needed before a string builder pays off")
     MaxStringWebsPerFunction(Optimize, CompileTime, NotOptimized, 64, 64, 0, "strings built by appending, analyzed per function")

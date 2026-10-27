@@ -65,11 +65,15 @@ public:
     explicit ReasonsForOperationsThatWent(ReasonsForOperationsThatWent* outer)
         : m_outer(outer)
     {
+        if (outer)
+            m_valuesOfOuterAtStart = outer->m_currentValues;
     }
 
     ReasonsForOperationsThatWent* outer() const { return m_outer; }
 
     void add(ValueID, InPlaceOfOperation);
+    // For an operation that is gone, under the number that it had when this one began to listen. Whoever listened before hears it too.
+    void addForOperationThatWent(ValueID idBeforeRun, InPlaceOfOperation);
     void didRenumber(std::span<const BlockID> newBlocks, std::span<const ValueID> newValues);
 
     void didReplaceBody();
@@ -93,6 +97,7 @@ private:
     BitVector m_explained;
     Vector<ValueID> m_currentValues;
     Vector<BlockID> m_currentBlocks;
+    Vector<ValueID> m_valuesOfOuterAtStart;
     ReasonsForOperationsThatWent* m_outer { nullptr };
     bool m_hasLostTrack { false };
 };

@@ -120,6 +120,23 @@ ConstantKey constantKeyOf(const Program& program, const Type& key)
     return { };
 }
 
+bool isSymbolCreatedByLibrary(const Program& program, PropertyKeyID key)
+{
+    const PropertyKey& symbol = program.at(key);
+    if (symbol.kind != PropertyKeyKind::CreatedSymbol || !symbol.module)
+        return false;
+    const Module& creator = program.at(symbol.module);
+    return creator.kind == ModuleKind::RuntimeSource || creator.flags.contains(ModuleFlags::IsLibrary);
+}
+
+ConstantKey constantNameOf(const Program& program, const Function& writtenIn, const Type& key)
+{
+    ConstantKey constantKey = constantKeyOf(program, key);
+    if (constantKey.kind == ConstantKeyKind::Symbol && !isLibraryCode(program, writtenIn) && isSymbolCreatedByLibrary(program, constantKey.symbol))
+        return { };
+    return constantKey;
+}
+
 PropertyKeyID internKey(TypeArena& types, const ConstantKey& key)
 {
     switch (key.kind) {
@@ -189,15 +206,9 @@ TypeID testedNumberTypeContaining(const Type& expectedNumber)
     return expectedNumber.isInt32() ? TypeTable::int32 : TypeTable::number;
 }
 
-static TypedArrayType typedArrayTypeOf(const BuiltinTable& builtins, BuiltinClassID builtinClass)
-{
-    BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(builtinClass);
-    return typedArrayClass ? builtins.at(typedArrayClass).typedArrayType : NotTypedArray;
-}
-
 static bool hasIndexedElements(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
-    return builtinClass == BuiltinClasses::Array || isTypedView(typedArrayTypeOf(builtins, builtinClass));
+    return builtinClass == BuiltinClasses::Array || isTypedView(builtins.typedArrayTypeOf(builtinClass));
 }
 
 static NumberKey testedNumberKey(const Type& key, const Type& expectedNumber)
@@ -296,9 +307,9 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
     const ClassPart* expected = query.receiverExpected ? query.receiverExpected->findClassPart(part.builtinClass) : nullptr;
     if (expected && expected->arrayStorage != ArrayStorage::Other)
         return expected->arrayStorage;
-    ArrayStorage storage = arrayStorageDeclaredBy(program, part);
+    ArrayStorage storage = arrayStorageDeclaredBy(program, part).predicted();
     if (storage == ArrayStorage::Other && expected)
-        storage = arrayStorageDeclaredBy(program, *expected);
+        storage = arrayStorageDeclaredBy(program, *expected).predicted();
     return storage;
 }
 
@@ -382,7 +393,7 @@ static ElementAccessPlan planClassAccess(const Program& program, const ElementAc
     if (plan.builtinClass == BuiltinClasses::Array)
         return planArrayAccess(program, query, key, receiver, plan);
 
-    TypedArrayType typedArrayType = typedArrayTypeOf(program.builtins(), plan.builtinClass);
+    TypedArrayType typedArrayType = program.builtins().typedArrayTypeOf(plan.builtinClass);
     if (isTypedView(typedArrayType))
         return planTypedArrayAccess(program, query, typedArrayType, plan);
     if (plan.builtinClass == BuiltinClasses::Arguments && query.access == Access::Read && plan.needsNoTest())
@@ -393,7 +404,7 @@ static ElementAccessPlan planClassAccess(const Program& program, const ElementAc
 ElementAccessPlan planElementAccess(const Program& program, const ElementAccessQuery& query)
 {
     RELEASE_ASSERT(query.access != Access::None);
-    if (ConstantKey constantKey = constantKeyOf(program, query.key))
+    if (ConstantKey constantKey = constantNameOf(program, query.writtenIn, query.key))
         return planNamedKey(constantKey, namedOperationWith(query.access));
 
     NumberKey key = numberKeyOf(program, query);
@@ -430,10 +441,11 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
         return std::nullopt;
 
     const Value& key = function.at(access.propertyOperand());
+    const Function& writtenIn = program.sourceFunctionOf(function, access);
     std::optional<Access> kind = elementAccessOf(access.opcode);
     if (!kind) {
         const Type& keyType = program.at(key.type);
-        if (ConstantKey constantKey = constantKeyOf(program, keyType))
+        if (ConstantKey constantKey = constantNameOf(program, writtenIn, keyType))
             return planNamedKey(constantKey, namedOperationFor(access.opcode));
         return ElementAccessPlan { .keyIsIntegral = keyType.isNumberWithoutFraction() };
     }
@@ -442,6 +454,7 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
     bool hasStoredValue = *kind == Access::Store || *kind == Access::Define;
     return planElementAccess(program, {
         .access = *kind,
+        .writtenIn = writtenIn,
         .receiver = program.at(receiver.type),
         .receiverExpected = findExpectedType(program, receiver),
         .key = program.at(key.type),

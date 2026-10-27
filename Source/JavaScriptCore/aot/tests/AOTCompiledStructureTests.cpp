@@ -23,6 +23,7 @@
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <array>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyGCStructure.h"

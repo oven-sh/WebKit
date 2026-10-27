@@ -139,6 +139,45 @@ constexpr GPRReg gprOf(StubRegister reg)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// The numbers of the machine registers behind the names on both ISAs, whichever one this build is for: what a stub says of its registers is said of both.
+inline constexpr unsigned numberOfStubRegisters = static_cast<unsigned>(StubRegister::Operation) + 1;
+inline constexpr uint8_t noMachineRegister = 0xff;
+inline constexpr std::array<uint8_t, numberOfStubRegisters> stubRegistersOnX86_64 { 0, 7, 6, 2, 1, 8, 9, noMachineRegister, noMachineRegister, 10, 8, 9, 7, 12, 1, 10, 1, 2, 0 };
+inline constexpr std::array<uint8_t, numberOfStubRegisters> stubRegistersOnARM64 { 0, 0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 12, 13, 11 };
+
+template<typename... Names>
+constexpr bool areDistinctOnEveryISA(Names... names)
+{
+    for (const auto& registers : { stubRegistersOnX86_64, stubRegistersOnARM64 }) {
+        uint32_t seen = 0;
+        for (StubRegister name : { names... }) {
+            uint8_t number = registers[static_cast<unsigned>(name)];
+            if (number == noMachineRegister)
+                continue;
+            if (seen & (1u << number))
+                return false;
+            seen |= 1u << number;
+        }
+    }
+    return true;
+}
+
+static_assert([] {
+#if CPU(X86_64)
+    const auto& registers = stubRegistersOnX86_64;
+#elif CPU(ARM64)
+    const auto& registers = stubRegistersOnARM64;
+#endif
+    for (unsigned index = 0; index < numberOfStubRegisters; ++index) {
+        GPRReg reg = gprOf(static_cast<StubRegister>(index));
+        if (registers[index] != (reg == InvalidGPRReg ? noMachineRegister : static_cast<uint8_t>(reg)))
+            return false;
+    }
+    return true;
+}());
+static_assert(!areDistinctOnEveryISA(StubRegister::R0, StubRegister::A0) && !areDistinctOnEveryISA(StubRegister::T11, StubRegister::Operation));
+static_assert(!areDistinctOnEveryISA(StubRegister::T12, StubRegister::A0) && areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::T13));
+
 #if CPU(X86_64)
 inline constexpr GPRReg assertionScratchGPR = MacroAssembler::s_scratchRegister;
 inline constexpr GPRReg preservingCallImmediateGPR = MacroAssembler::s_scratchRegister;

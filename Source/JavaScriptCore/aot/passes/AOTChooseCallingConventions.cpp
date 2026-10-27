@@ -1049,7 +1049,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
             const Value& call = function.at(block.terminator.callOperand());
             if (call.opcode != Opcode::CallDirect || !isCandidate.get(call.function().index()))
                 continue;
-            if (block.frequency == BlockFrequency::Normal)
+            if (block.frequency.predicted() == BlockFrequency::Normal)
                 mostlyEntersFunctionWithCheck = false;
             rarelyEntered.append(call.function().index());
         }

@@ -75,14 +75,6 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType& type)
     return kinds;
 }
 
-// A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
-static bool hasEveryMarkerOf(SlotRepresentation from, SlotRepresentation to)
-{
-    SlotTraits fromTraits = traitsOf(from);
-    SlotTraits toTraits = traitsOf(to);
-    return (!fromTraits.hasUndefined || toTraits.hasUndefined) && (!fromTraits.hasNull || toTraits.hasNull);
-}
-
 static bool acceptsEveryValue(const RuntimeType& type)
 {
     if (!type.primitiveSet().containsAll(allPrimitives) || type.integerRange() || !type.literalStrings().empty())
@@ -129,7 +121,9 @@ bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const 
 {
     if (to.keepsStateOfBirth && !from.keepsStateOfBirth)
         return false;
-    return hasEveryMarkerOf(from.slot.representation(), to.slot.representation()) && typeAlwaysFits(layouts, from, to);
+    if (from.slotHoldsUndefinedAndNull && !(layouts.slotAdmits(to, jsUndefined()) && layouts.slotAdmits(to, jsNull())))
+        return false;
+    return typeAlwaysFits(layouts, from, to);
 }
 
 std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)

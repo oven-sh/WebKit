@@ -16,7 +16,9 @@
 #include <iterator>
 #include <limits>
 #include <tuple>
+#include <utility>
 #include <wtf/SSACalculator.h>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -98,6 +100,21 @@ SSARepair::SSARepair(IRBuilder& builder, FunctionAnalyses& analyses)
     RELEASE_ASSERT(&builder.function() == &analyses.function());
 }
 
+SSARepair::~SSARepair()
+{
+    setIsPending(false);
+}
+
+void SSARepair::setIsPending(bool isPending)
+{
+    if (std::exchange(m_isPending, isPending) == isPending)
+        return;
+    if (isPending)
+        m_analyses.didBeginRepair();
+    else
+        m_analyses.didEndRepair();
+}
+
 SSARepair::Variable SSARepair::addVariable(ValueID definition)
 {
     Variable variable = m_variables.size();
@@ -113,6 +130,8 @@ void SSARepair::addDefinition(Variable variable, ValueID definition)
     bool wasDefinition = m_isDefinition.set(definition.index());
     RELEASE_ASSERT(!wasDefinition);
     m_variables[variable].values.append(definition);
+    if (m_variables[variable].values.size() > 1)
+        setIsPending(true);
 }
 
 std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) const
@@ -130,6 +149,9 @@ void SSARepair::run()
 {
     RELEASE_ASSERT(!m_didRun);
     RELEASE_ASSERT(m_builder.m_insertions.isEmpty());
+    auto endRepair = makeScopeExit([&] {
+        setIsPending(false);
+    });
     Origin savedOrigin = m_builder.origin();
     separateUsesAsGuards();
     m_didRun = true;

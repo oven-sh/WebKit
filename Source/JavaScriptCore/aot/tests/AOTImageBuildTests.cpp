@@ -267,7 +267,7 @@ static std::array<uint32_t, 4> orderKey(const Typed::Program& program, const Typ
         side = 0;
         leader = program.at(function).creator.as<CreatorRecord::Entrypoint>().target;
     }
-    uint32_t band = program.at(leader).isModuleBody() ? bandOf(Typed::HeatClass::RunsOnce) : bandOf(heat.of(program, leader));
+    uint32_t band = program.at(leader).isModuleBody() ? bandOf(Typed::HeatClass::RunsOnce) : bandOf(heat.of(program, leader).predicted());
     return { band, leader.index(), side, function.index() };
 }
 

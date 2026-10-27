@@ -13,6 +13,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
+layout L0 name="Sized" fields=[{key="size" declared={type=anything}}]
 variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
 
@@ -315,7 +316,7 @@ function f13 name="computedValueGoesToProvenPosition" parameters=[{type=anything
 # What later passes prove of a value that rests on a check is what is expected of it now. The copy comes back only with a value of that type, so the join behind the call takes nothing from the typed code.
 # It comes back behind the call and not behind the read: in the typed code the read becomes a load, and a join there would end what is known about the heap
 function f14 name="wayBackTestsTheExpectedType" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 expectedType=object
+    v2 = Check v0 expectedType=L0
     v3: anything ~ number = PropGet v2 key="size"
     v4 = Call v1
     v5 = Add v3, v3

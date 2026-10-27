@@ -15,6 +15,7 @@
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionKinds.h"
+#include "AOTOperationData.h"
 #include "AOTSort.h"
 #include "AOTStackCheckEmitter.h"
 #include "AOTThrowEmitter.h"
@@ -101,8 +102,6 @@ using ShownFunctions = Vector<ShownFunction, 4>;
 } // anonymous namespace
 
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
-static constexpr LineColumn startOfBuiltinFunction { 1, 11 };
-static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
 static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
 static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };
@@ -192,7 +191,7 @@ static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain;
+        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -301,20 +300,58 @@ static void describeConstructionStart(const Program& program, const ShownFunctio
     position.startIsForCallers = construction->isForCallers;
 }
 
-static Vector<SitePosition> describePositions(const DescribedFunction& described, const Vector<RecordedSite>& renumbered)
+static SitePosition describePosition(const Program& program, const ShownFunctions& shownFunctions, const RecordedSite& site)
+{
+    const ShownFunction& shown = shownFunctions[site.origin.inlineFrame];
+    SitePosition position = positionIn(program, shown, site.origin.position, site.origin.inlineFrame);
+    describeConstructionStart(program, shown, site, position);
+    return position;
+}
+
+static std::optional<unsigned> methodReadColumnDelta(const SitePosition& read, const SitePosition& call)
+{
+    if (read.line != call.line || read.source != call.source || read.inlineFrame != call.inlineFrame || read.constructionStartLine)
+        return std::nullopt;
+    if (read.column > call.column || call.column - read.column > ThrowSiteWord::maxMethodReadColumnDelta)
+        return std::nullopt;
+    return call.column - read.column;
+}
+
+// A method is mostly read a few columns in front of its call. The throw site of the call has room for that number, and the read needs no site.
+static void foldMethodReadSites(const DescribedFunction& described, const ShownFunctions& shownFunctions, const Vector<RecordedSite>& recorded, CodeBody& body, SiteDescription& sites)
+{
+    if (described.build.options().obfuscates())
+        return;
+    body.firstReadSites.removeAllMatching([&](const FirstReadSite& read) {
+        uint32_t callOffset = read.returnOffset - static_cast<uint32_t>(sizeOfNearCall);
+        auto access = std::ranges::lower_bound(sites.faultingAccesses, callOffset, { }, &FaultingAccess::codeOffset);
+        if (access == sites.faultingAccesses.end() || access->codeOffset != callOffset || access->callSite)
+            return false;
+        ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(access->throwSite[0]);
+        if (!word.isCallSite())
+            return false;
+        auto call = std::ranges::lower_bound(body.returnSites, read.returnOffset, { }, &ReturnSite::offset);
+        RELEASE_ASSERT(call != body.returnSites.end() && call->offset == read.returnOffset && call->site);
+        std::optional<unsigned> delta = methodReadColumnDelta(describePosition(described.program, shownFunctions, recorded[read.site - 1]), describePosition(described.program, shownFunctions, recorded[*call->site - 1]));
+        if (!delta)
+            return false;
+        word.registerNumber = *delta + 1;
+        access->throwSite[0] = std::bit_cast<uint32_t>(word);
+        return true;
+    });
+}
+
+static Vector<SitePosition> describePositions(const DescribedFunction& described, const ShownFunctions& shownFunctions, const Vector<RecordedSite>& renumbered)
 {
     const Program& program = described.program;
-    ShownFunctions shownFunctions = findShownFunctions(described);
     Vector<SitePosition> positions;
     positions.reserveInitialCapacity(renumbered.size() + 1);
     const Function& outermost = program.at(shownFunctions[0].id);
     positions.append(positionIn(program, shownFunctions[0], outermost.position, 0));
     if (isDefaultConstructor(program, outermost))
         positions[0].column = startOfBuiltinFunction.column;
-    for (const RecordedSite& site : renumbered) {
-        positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
-        describeConstructionStart(program, shownFunctions[site.origin.inlineFrame], site, positions.last());
-    }
+    for (const RecordedSite& site : renumbered)
+        positions.append(describePosition(program, shownFunctions, site));
     return positions;
 }
 
@@ -326,6 +363,16 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
             flaggedSites.append({ i + 1, renumbered[i].kind, renumbered[i].calledBuiltin });
     }
     return flaggedSites;
+}
+
+static Vector<uint32_t> collectCallsOfOwnFunctionObjects(const Vector<RecordedSite>& renumbered)
+{
+    Vector<uint32_t> sites;
+    for (uint32_t i = 0; i < renumbered.size(); ++i) {
+        if (renumbered[i].callsOwnFunctionObject)
+            sites.append(i + 1);
+    }
+    return sites;
 }
 
 static uint32_t ensureCalleeIndex(CodeBody& body, FunctionID callee)
@@ -362,9 +409,11 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     sites.pollSites = WTF::move(records.traps.pollSites);
     AOT::sort(sites.pollSites, { }, &PollSite::offset);
 
+    ShownFunctions shownFunctions = findShownFunctions(described);
+    foldMethodReadSites(described, shownFunctions, records.sites.positions, body, sites);
     Vector<SiteReference, 32> references = collectSiteReferences(body, sites);
     Vector<RecordedSite> renumbered = renumberSites(records, linkBuffer, references.span(), sites);
-    sites.positions = describePositions(described, renumbered);
+    sites.positions = describePositions(described, shownFunctions, renumbered);
     sites.flaggedSites = collectFlaggedSites(renumbered, sites.numberOfSitesWithoutCode);
     // No walk of the stack can stand in a body without a site that has code, so nobody asks which functions it took in.
     size_t numberOfInlineCallSites = described.function.inlineFrames.isEmpty() ? 0 : described.function.inlineFrames.size() - 1;
@@ -374,6 +423,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
         return sites;
     }
     sites.inlineFrames = describeInlineFrames(described.function, records.sites, body);
+    sites.callsOfOwnFunctionObjects = collectCallsOfOwnFunctionObjects(renumbered);
     return sites;
 }
 

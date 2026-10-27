@@ -340,7 +340,7 @@ bool ControlEmitter::leavesAnotherWayUnlessPromised(const TerminatorContext& ter
         Operand operand = result;
         emitter<CallEmitter>().returnValues(terminator, { &operand, 1 });
     };
-    if (m_function.at(terminator.block()).frequency == BlockFrequency::Normal) {
+    if (m_function.at(terminator.block()).frequency.predicted() == BlockFrequency::Normal) {
         testAndReturn(in<Boxed>(value), m_function.at(value).type);
         return true;
     }

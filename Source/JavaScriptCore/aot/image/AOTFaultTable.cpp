@@ -210,6 +210,13 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
     };
     Vector<uint32_t> firstWords = collectWords(0);
     sortAndRemoveDuplicates(loops, firstWords);
+    // Nobody reads the registerNumber of a call site that leaves it zero. The site takes the next word where that differs in nothing else.
+    for (size_t i = 0; i + 1 < firstWords.size(); ++i) {
+        ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(firstWords[i]);
+        if (word.isCallSite() && !word.registerNumber && word.differsOnlyInRegisterNumber(std::bit_cast<ThrowSiteWord>(firstWords[i + 1])))
+            firstWords[i] = firstWords[i + 1];
+    }
+    removeRepeatedElements(firstWords);
     uint32_t defaultSecondWord = findMostFrequentWord(loops, collectWords(1));
     Vector<FaultSiteWord> secondWords = collectSparseWords(1, defaultSecondWord);
     Vector<FaultSiteWord> thirdWords = collectSparseWords(2, std::nullopt);

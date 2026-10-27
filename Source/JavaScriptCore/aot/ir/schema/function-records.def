@@ -1,6 +1,6 @@
 flags FunctionCapabilities {
     | engine MayChangeSignature MayBeCloned MayBeInlined HasOrdinaryFrame HasOnlyDirectCallers IsNeverCalledByHost IsHiddenInStackTraces
-    ClosuresAreReadWithoutCode RecordsCallee RecordsCalleeOnceRenamed NotesLooksForName
+    ClosuresAreReadWithoutCode RecordsCallee RecordsCalleeOnceRenamed NotesLooksForName IsLongConstructor
 }
 enum FunctionRole (hasSourceBody: Bool, canBeCalledByValue: Bool, hasStackArgumentArea: Bool, record: Name, capabilities: FunctionCapabilities
     | engine isWrapperOrWorker: Bool, isEnteredOnlyByCalls: Bool, showsSourceText: Bool, hasClosureWord: Bool) {
@@ -41,7 +41,7 @@ record ParameterOrigin engine { original: UInt32? }
 record Derivation engine { source: Function(Dispatch)? parameter: UInt32 node: UInt32 parameterMap: List<ParameterOrigin> }
 record DerivedFunctionKey engine { role: FunctionRole target: Function(Dispatch)? parameter: UInt32 node: UInt32 }
 record InlineFrame engine {
-    callee: Function(Dispatch)? callPosition: UInt32 parent: UInt32 isTailCall: Bool isConstruction: Bool callIsPartOfConstruction: Bool module: Module(Referrer)?
+    callee: Function(Dispatch)? callPosition: UInt32 parent: UInt32 isTailCall: Bool isConstruction: Bool callIsPartOfConstruction: Bool callsOwnFunctionObject: Bool calleeIsPredicted: Bool module: Module(Referrer)?
 }
 record Origin engine { position: UInt32 inlineFrame: UInt32 isTailCall: Bool isPartOfConstruction: Bool }
 

@@ -26,6 +26,7 @@
 #include "ArrayPrototype.h"
 #include "InlineCacheCompiler.h"
 #include "JSCInlines.h"
+#include "Lookup.h"
 #include "StructureRareDataInlines.h"
 #include <bit>
 #include <wtf/TZoneMallocInlines.h>
@@ -543,8 +544,16 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
             walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, *offset, attributes);
     }
-    if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid))
-        return stopAt(object, walk);
+    if (structure->hasNonReifiedStaticProperties()) {
+        if (auto entry = structure->findPropertyHashEntry(uid)) {
+            // A read moves every other kind of entry into the object. A custom accessor or value stays in the table of its class until the object changes.
+            unsigned attributes = entry->value->attributes();
+            if (attributes & (PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyProperty | PropertyAttribute::ConstantInteger) || !(attributes & PropertyAttribute::CustomAccessorOrValue))
+                return stopAt(object, walk);
+            walk.changeableObjects.append(object);
+            return stopAtProperty(walk, object, object, invalidOffset, attributesForStructure(attributes));
+        }
+    }
     bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
     if (canGainProperty || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);

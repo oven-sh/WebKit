@@ -84,7 +84,7 @@ void HashedIndex::insert(Slot slot)
 
 void add(Hasher& hasher, const LayoutSet& set)
 {
-    add(hasher, set.isComplete, set.hasMembersWithoutLayout, static_cast<uint32_t>(set.members.size()), set.members);
+    add(hasher, set.listsEveryLayout(), static_cast<uint32_t>(set.written().size()), set.written());
 }
 
 void add(Hasher& hasher, const CalleeSet& set)
@@ -98,7 +98,7 @@ void add(Hasher& hasher, const PropertyKey& key)
     add(hasher, key.kind, key.text, key.owner);
     add(hasher, key.symbol ? static_cast<uint32_t>(*key.symbol) + 1 : 0u);
     add(hasher, key.module);
-    add(hasher, key.position ? static_cast<uint64_t>(*key.position) + 1 : uint64_t { 0 });
+    add(hasher, key.callNumber ? static_cast<uint64_t>(*key.callNumber) + 1 : uint64_t { 0 });
     add(hasher, key.site);
 }
 
@@ -168,7 +168,7 @@ TypeID TypeTable::intern(Type&& type)
 {
     RELEASE_ASSERT(!m_openPhase);
     type.canonicalize();
-    ASSERT(!type.layouts || at(type.layouts).isComplete);
+    ASSERT(!type.layouts || at(type.layouts).listsEveryLayout());
     return internCanonical(m_types, WTF::move(type));
 }
 
@@ -250,34 +250,34 @@ void canonicalize(CalleeSet& set)
 
 bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
 {
-    if (!b.isComplete)
+    if (!b.listsEveryLayout())
         return true;
-    if (!a.isComplete)
+    if (!a.listsEveryLayout())
         return false;
-    if (a.hasMembersWithoutLayout && !b.hasMembersWithoutLayout)
+    std::span<const LayoutID> inA = a.completeMembers();
+    std::span<const LayoutID> inB = b.completeMembers();
+    if (inA.size() > inB.size())
         return false;
-    if (a.members.size() > b.members.size())
-        return false;
-    if (a.members.size() * 16 < b.members.size()) {
-        return std::ranges::all_of(a.members, [&](LayoutID member) {
-            return std::ranges::binary_search(b.members, member);
+    if (inA.size() * 16 < inB.size()) {
+        return std::ranges::all_of(inA, [&](LayoutID member) {
+            return std::ranges::binary_search(inB, member);
         });
     }
-    return std::ranges::includes(b.members, a.members);
+    return std::ranges::includes(inB, inA);
 }
 
 bool overlaps(const LayoutSet& a, const LayoutSet& b)
 {
-    if (!a.isComplete || !b.isComplete)
+    if (!a.listsEveryLayout() || !b.listsEveryLayout())
         return true;
-    if (a.hasMembersWithoutLayout && b.hasMembersWithoutLayout)
-        return true;
+    std::span<const LayoutID> inA = a.completeMembers();
+    std::span<const LayoutID> inB = b.completeMembers();
     size_t indexInA = 0;
     size_t indexInB = 0;
-    while (indexInA < a.members.size() && indexInB < b.members.size()) {
-        if (a.members[indexInA] == b.members[indexInB])
+    while (indexInA < inA.size() && indexInB < inB.size()) {
+        if (inA[indexInA] == inB[indexInB])
             return true;
-        if (a.members[indexInA] < b.members[indexInB])
+        if (inA[indexInA] < inB[indexInB])
             ++indexInA;
         else
             ++indexInB;

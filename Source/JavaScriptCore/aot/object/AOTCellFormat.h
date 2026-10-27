@@ -57,6 +57,12 @@ static constexpr uint8_t frameCellState = UINT8_MAX;
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 
+enum class KeyListKind : uint8_t { Strings, StringsAndSymbols, Symbols };
+// The lists with symbols lie in the table of key lists under the words of shapes that a program with fewer shapes than the step does not have.
+static constexpr uint32_t keyListWordStep = (1u << 29) + 341;
+static constexpr uint32_t keyListWordOf(uint32_t shapeWord, KeyListKind kind) { return shapeWord - static_cast<uint32_t>(kind) * keyListWordStep; }
+static constexpr bool hasKeyListsInTable(KeyListKind kind, uint32_t numberOfShapes) { return kind == KeyListKind::Strings || numberOfShapes < keyListWordStep; }
+
 static constexpr unsigned orderWordCountShift = 15;
 static constexpr uint32_t orderWordOrderMask = (1u << orderWordCountShift) - 1;
 static constexpr uint32_t maxFieldsInOrder = (1 << 12) - 1;

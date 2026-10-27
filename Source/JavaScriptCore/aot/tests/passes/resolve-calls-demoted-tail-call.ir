@@ -29,7 +29,7 @@ function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} parame
 function f5 name="marked-call" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1 @0 tail
     Return v2
-# CHECK: anything = CallDirect v1 function=f2 @0 tail
+# CHECK: anything = CallDirect v1 function=f2 [calleeIsPredicted] @0 tail
 }
 
 function f6 name="ordinary-call" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
@@ -43,8 +43,8 @@ function f6 name="ordinary-call" parameters=[{type=f2}, {type=anything}] results
 function f7 name="marked-call-of-two-callees" parameters=[{type=f2|f3}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1 @0 tail
     Return v2
-# CHECK: anything = CallDirect v1 function=f2 @0 tail
-# CHECK: anything = CallDirect v1 function=f3 @0 tail
+# CHECK: anything = CallDirect v1 function=f2 [calleeIsPredicted] @0 tail
+# CHECK: anything = CallDirect v1 function=f3 [calleeIsPredicted] @0 tail
 }
 
 function f8 name="tail-call-stays" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
@@ -61,7 +61,7 @@ function f9 name="tail-call-behind-a-converted-argument" parameters=[{type=f0}, 
     ReturnCall v2
 # CHECK-NOT: @{{*}} tail
 # CHECK: [[argument9]]: number = AssumeType v1 provenType=number
-# CHECK-NEXT: [[call9]]: Promise = CallDirect [[argument9]] function=f0 @40
+# CHECK-NEXT: [[call9]]: Promise = CallDirect [[argument9]] function=f0 [calleeIsPredicted] @40
 # CHECK-NEXT: ReturnCall [[call9]]
 # CHECK-NOT: @{{*}} tail
 }
@@ -70,6 +70,6 @@ function f10 name="marked-method-call" parameters=[{type=L0}, {type=anything}] r
     v2 = PropGet v0 key="m"
     v3 = Call v2, v0, v1 calleeKey="m" @0 tail
     Return v3
-# CHECK: anything = CallDirect v0, v1 function=f4 @0 tail
+# CHECK: anything = CallDirect v0, v1 function=f4 [calleeIsPredicted] @0 tail
 }
 function f11 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTStubsStrings.h"
 #include "AOTVector.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -279,8 +280,8 @@ void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& valu
         });
         return;
     }
-    // The operation returns the builder to the pool, whose word is collector state, and it does not collect.
-    callVoidOperation(value, RuntimeOperation::StringBuilderDiscard, { in<CellPointer>(value->builderOperand()) }, { .accessesCollectorState = true });
+    // The builder goes back to the pool, whose word is collector state, and nothing collects.
+    callStub(value, stringBuilderDiscard(), { in<CellPointer>(value->builderOperand()).value() }, { .accessesCollectorState = true });
 }
 
 void StringBuilderEmitter::generateStringBuilderCheckpoint(const ValueContext& value)

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTInductionVariables.h"
@@ -64,6 +65,11 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
     Integer bound = select(equal(number, number), rounded, integer(boundForNaN));
     bound = select(lessThanOrEqual(number, this->number(-0x1p62)), integer(least), bound);
     define(value, select(greaterThanOrEqual(number, this->number(0x1p62)), integer(greatest), bound));
+}
+
+void SelectedOperatorEmitter::generateRememberOwner(const ValueContext& value)
+{
+    emitter<BarrierEmitter>().barrierBehindStores(value, value->objectOperand());
 }
 
 void SelectedOperatorEmitter::generateFulfillFreshPromise(const ValueContext& value)

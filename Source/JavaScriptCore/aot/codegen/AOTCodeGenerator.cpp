@@ -17,12 +17,14 @@
 #include "AOTEdgeResults.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTPrimitiveEmitter.h"
 #include "AOTPromisedResults.h"
 #include "AOTRepresentationEmitter.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeValidationEmitter.h"
+#include "AOTSchemaOperationColumns.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTValueIdentity.h"
@@ -153,7 +155,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain, .callsOwnFunctionObject = frame.callsOwnFunctionObject }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 
@@ -287,10 +289,37 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
     generate(context);
 }
 
+static constexpr OpcodeSet opcodesRelyingOnElementProofs = [] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (reliesOf(opcode).intersects({ Proof::ArrayStorage, Proof::InBounds }))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
+
+static_assert(std::ranges::all_of(allMembersOf<Opcode>, [](Opcode opcode) {
+    return !opcodesRelyingOnElementProofs.contains(opcode) || OperandPosition::guard(opcode);
+}));
+
+void CodeGenerator::verifyElementGuard(const ValueContext& context)
+{
+    auto locate = [&](ValueID parameter) -> ValueLocation {
+        BlockID block = m_blockOfParameter[parameter.index()];
+        if (!block)
+            return { };
+        return { ValuePlacement::Parameter, block, static_cast<uint32_t>(function().at(block).parameters.find(parameter)) };
+    };
+    if (!hasGuardForElementProofs(program(), function(), analyses().cfg(), locate, context.value()))
+        fail(context, InternalErrorKind::InvalidGuard);
+}
+
 void CodeGenerator::generate(const ValueContext& context)
 {
     setOrigin(m_out, context.id());
     OperationScope scope(*this, context);
+    if (opcodesRelyingOnElementProofs.contains(context.opcode()))
+        verifyElementGuard(context);
     convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
@@ -402,7 +431,8 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 void CodeGenerator::finishProcedure()
 {
     m_heaps.computeRangesAndDecorateInstructions();
-    m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
+    if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
+        m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
     if (build().recordedOptions().isSabotaged(Sabotage::FieldsNeverChange)) {
         B3::HeapRange fields = m_heaps.rangeOf(m_heaps.entire(AbstractHeap::ObjectFields));
         for (B3::Value* value : m_proc.values()) {

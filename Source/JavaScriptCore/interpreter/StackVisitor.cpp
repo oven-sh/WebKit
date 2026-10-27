@@ -831,6 +831,11 @@ bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
                         return executable->implementationVisibility();
                     return ImplementationVisibility::Public;
                 }
+#if ENABLE(AOT)
+                // A native frame under a function object of compiled code only enters that code, whatever form the function object has.
+                if (AOT::CompiledCallee::isCompiledCallee(callee))
+                    return ImplementationVisibility::Private;
+#endif
             }
         }
 

@@ -20,7 +20,7 @@ namespace Typed {
 // The callee is Symbol itself, by binding: nothing stands between the built-in and the call but upcasts.
 bool callsSymbolDirectly(const BuiltinTable&, const Function&, const Value&);
 
-// The key that stands for the symbols a call makes if it enters Symbol: their description, and where the call stands in the source.
+// The key that stands for the symbols a call makes if it enters Symbol: their description, and which of the calls of its module it is.
 std::optional<PropertyKey> keyOfSymbolsCreatedBy(const Function&, const Value&);
 
 // The key of the symbol that a call of Symbol.for itself answers: one symbol for the text, wherever the call stands and however often it runs.

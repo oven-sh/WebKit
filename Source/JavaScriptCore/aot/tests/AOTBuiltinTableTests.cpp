@@ -444,8 +444,9 @@ static void testClassRelations()
     AOT_TEST_CHECK(!table().isSameOrSubclassOf(BuiltinClasses::Uint8Array, BuiltinClasses::Buffer) && !table().isSameOrSubclassOf(BuiltinClasses::Map, BuiltinClasses::Set));
     AOT_TEST_CHECK(!table().isSameOrSubclassOf(BuiltinClasses::Map, BuiltinClassID()));
 
-    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Int8Array) == BuiltinClasses::Int8Array && table().at(BuiltinClasses::Int8Array).typedArrayType == TypeInt8);
-    AOT_TEST_CHECK(table().at(table().typedArrayClassOf(BuiltinClasses::Buffer)).typedArrayType == TypeUint8);
+    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Int8Array) == BuiltinClasses::Int8Array && table().typedArrayTypeOf(BuiltinClasses::Int8Array) == TypeInt8);
+    AOT_TEST_CHECK(table().typedArrayClassOf(BuiltinClasses::Buffer) == BuiltinClasses::Uint8Array && table().typedArrayTypeOf(BuiltinClasses::Buffer) == TypeUint8);
+    AOT_TEST_CHECK(table().typedArrayTypeOf(BuiltinClasses::DataView) == NotTypedArray && table().typedArrayTypeOf(BuiltinClasses::TypedArray) == NotTypedArray && !table().typedArrayClassOf(BuiltinClasses::Array));
     AOT_TEST_CHECK(!table().typedArrayClassOf(BuiltinClasses::TypedArray) && !table().typedArrayClassOf(BuiltinClasses::Map) && !table().typedArrayClassOf(BuiltinClasses::Array));
 
     AOT_TEST_CHECK(table().at(BuiltinClasses::Array).constructor == Builtins::Array && table().at(BuiltinClasses::Array).prototype == Builtins::ArrayPrototype);

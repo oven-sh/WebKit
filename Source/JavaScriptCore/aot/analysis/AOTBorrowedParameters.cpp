@@ -262,7 +262,7 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
     auto readsProvenSlots = [&](const Value& access, uint32_t operandIndex) {
         if (accessOf(access.opcode) != Access::Read || receiverOf(access.opcode) != operandIndex)
             return false;
-        if (!program.typeOf(function, access.operand(operandIndex)).hasOnlyLayouts(program))
+        if (!program.typeOf(function, access.operand(operandIndex)).hasOnlyLayouts())
             return false;
 
         ProvenAccess storage;
@@ -283,11 +283,12 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             if (call.opcode == Opcode::Call)
                 return;
         }
-        if (isCalledByNativeCode || !callees.isComplete || !callees.builtins.isEmpty()) {
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (isCalledByNativeCode || !functions) {
             lose(carried.all());
             return;
         }
-        for (FunctionID callee : callees.functions) {
+        for (FunctionID callee : functions->value()) {
             if (!isCalled) {
                 handOn(callee, entryParameterOf(readRecordOf(callee), call, operandIndex), carried);
                 continue;

@@ -308,13 +308,13 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             }
         }
 
-        LayoutSet receivers;
+        Vector<LayoutID> seen;
         bool areTooMany = false;
         auto add = [&](LayoutID layout) {
-            if (receivers.members.size() == inputs.build.limit(LimitID::MaxLayoutsInType))
+            if (seen.size() == inputs.build.limit(LimitID::MaxLayoutsInType))
                 areTooMany = true;
             else
-                receivers.members.append(layout);
+                seen.append(layout);
         };
         uint64_t firstHolder = static_cast<uint64_t>(key.index()) << 32;
         auto begin = std::ranges::lower_bound(layoutsWithFieldOfKey, firstHolder);
@@ -332,9 +332,9 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     add(layout);
             }
         }
-        if (areTooMany || receivers.members.isEmpty())
+        if (areTooMany || seen.isEmpty())
             return std::nullopt;
-        receivers.isComplete = false;
+        LayoutSet receivers = LayoutSet::open(WTF::move(seen));
         canonicalize(receivers);
         return receivers;
     };
@@ -348,7 +348,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         ValueID site = receiver.statement.site;
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
-        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.family, receiver.held); receivers && receivers->isComplete) {
+        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.held)) {
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
             return;
         }
@@ -392,9 +392,9 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
     auto stampCall = [&](const StampedOperand& callee) {
-        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.family, callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
+        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);
-        if (!callees || !callees->isComplete) {
+        if (!callees || !callees->listsEveryCallee()) {
             tables.sites.accessSiteLosses[site.index()] = lossOfStampedOperand(callee, [&](FlowSiteLoss& loss) {
                 loss.cause = UnprovenCause::UnknownCallee;
                 inputs.sets().forEachMember(callee.maker.intersect(callee.held, inputs.universe().otherCallables()), [&](ValueFlowObjectID object) {
@@ -403,7 +403,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
                 });
             });
         }
-        if (!callees || (!callees->isComplete && callees->functions.isEmpty() && callees->builtins.isEmpty()))
+        if (!callees || (!callees->listsEveryCallee() && callees->written().isEmpty()))
             return;
 
         tables.sites.callsOfBoundFunctions[site.index()] = false;
@@ -420,7 +420,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
         BitVector& functions = functionsSeenBy[worker];
         functions.ensureSize(numberOfFunctions);
         for (const FlowCallStamp& stamp : application.bodies[index].calls) {
-            for (FunctionID function : types.at(stamp.callees).functions)
+            for (FunctionID function : types.at(stamp.callees).followed().value())
                 functions.quickSet(function.index());
         }
     });

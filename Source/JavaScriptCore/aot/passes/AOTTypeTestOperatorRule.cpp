@@ -52,6 +52,9 @@ static constexpr std::array<TestedOperands, 3> testedOperandSets { { { true, fal
 
 static TypeID testedTypeContaining(const Type& expected)
 {
+    // Of an integer of which only its kind is known, few are beyond int32, and an operator on int32 needs no test of its result.
+    if (expected.isInteger() && expected.integers == Range::full())
+        return TypeTable::int32;
     if (expected.isNumber())
         return testedNumberTypeContaining(expected);
     if (expected.isAnyString())
@@ -183,7 +186,7 @@ static constexpr uint32_t collectionOperandIndex = 0;
 static constexpr uint32_t positionOperandIndex = 1;
 static constexpr size_t maxNamesOfCounter = 16;
 
-static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
+static Expected<bool> findsElementOfView(TestSiteReporter& reporter, const Use& use)
 {
     const Value& user = reporter.function().at(use.user);
     if (use.operandIndex != positionOperandIndex)
@@ -192,12 +195,12 @@ static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
         return true;
     if (!operationsOnElements.contains(user.opcode))
         return false;
-    const Type& collection = reporter.program().expectedOrTypeOf(reporter.function(), user.operand(collectionOperandIndex));
+    const Type& collection = reporter.program().expectedOrTypeOf(reporter.function(), user.operand(collectionOperandIndex)).predicted();
     return typedArrayTypeOf(BuiltinTable::singleton(), collection.withoutPrimitives(Primitive::UndefinedOrNull)) != NotTypedArray;
 }
 
 // Whether typed code in the loop does nothing with the counter but reckon, compare and find elements of views. A call, a store or a return wants a value, and to make one of an integer beyond int32 takes more code than the test does. An array counts its elements in 32 bits, so it wants an int32 too. Behind the loop the value is made once, and the test would be made at every turn.
-static bool isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& loop, ValueID counter)
+static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& loop, ValueID counter)
 {
     const Function& function = reporter.function();
     const UseLists& useLists = reporter.analyses().useLists();
@@ -213,7 +216,7 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& lo
     };
     for (size_t index = 0; index < names.size(); ++index) {
         for (const Use& use : useLists.usesOf(names[index])) {
-            if (function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
+            if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop))
                 continue;
             switch (use.kind) {
             case Use::Kind::Operand: {
@@ -223,7 +226,7 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& lo
                         return false;
                     continue;
                 }
-                if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use))
+                if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use).predicted())
                     continue;
                 if (opcode == Opcode::Add && reporter.typeOf(use.user).isNumber())
                     continue;
@@ -232,7 +235,7 @@ static bool isOnlyReckonedWith(TestSiteReporter& reporter, const NaturalLoop& lo
             case Use::Kind::EdgeArgument: {
                 BlockID targetBlock = targetOf(function, use.edge()).block;
                 const Block& target = function.at(targetBlock);
-                if (target.frequency == BlockFrequency::Normal && loops.belongsTo(targetBlock, loop) && (use.operandIndex >= target.parameters.size() || !follow(target.parameters[use.operandIndex])))
+                if (target.frequency.predicted() == BlockFrequency::Normal && loops.belongsTo(targetBlock, loop) && (use.operandIndex >= target.parameters.size() || !follow(target.parameters[use.operandIndex])))
                     return false;
                 continue;
             }
@@ -266,7 +269,7 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, std::span
                 if (!(bound.isInteger() && !bound.isInt32()) && !reporter.isClaimed(reporter.analyses().identityOf(test.bound)))
                     continue;
                 if (!isEligible)
-                    isEligible = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter);
+                    isEligible = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter).predicted();
                 if (*isEligible)
                     counters.append({ variable.parameter, test.comparison, test.stayingEdge });
             }
@@ -310,14 +313,14 @@ static bool staysCall(TestSiteReporter& reporter, BlockID block, ValueID call)
 }
 
 // Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function, or into a call: an integer stays in its register around the call and takes one instruction to become a value of any type. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
-static bool isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
+static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
 {
     const Function& function = reporter.function();
     const NaturalLoops& loops = reporter.analyses().naturalLoops();
     Vector<ValueID, maxNamesOfCounter> names { counter.parameter };
     for (size_t index = 0; index < names.size(); ++index) {
         for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
-            if (use.kind != Use::Kind::Operand || function.at(use.block).frequency != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
+            if (use.kind != Use::Kind::Operand || function.at(use.block).frequency.predicted() != BlockFrequency::Normal || !loops.belongsTo(use.block, loop) || counter.steppedValues.contains(use.user))
                 continue;
             const Value& user = function.at(use.user);
             if (isCastWithoutTest(user.opcode)) {
@@ -376,7 +379,7 @@ static std::optional<uint32_t> findNumberThatBoundsCounter(TestSiteReporter& rep
             ValueID bound = reporter.analyses().identityOf(test.bound);
             bool isLeftBound = reporter.analyses().identityOf(comparison.operand(leftOperand)) == bound;
             bool isRightBound = reporter.analyses().identityOf(comparison.operand(rightOperand)) == bound;
-            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand) || !isWantedAsInteger(reporter, site, *loop, variable))
+            if (isLeftBound == isRightBound || !mayBeBound(isLeftBound ? leftOperand : rightOperand) || !isWantedAsInteger(reporter, site, *loop, variable).predicted())
                 return std::nullopt;
             return isLeftBound ? leftOperand : rightOperand;
         }

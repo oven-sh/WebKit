@@ -55,7 +55,7 @@ static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<cons
     }
     families.shrink(numberOfFamilies);
     AOT::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
-        return std::pair { program.at(family.family).members.size(), family.family };
+        return std::pair { program.at(family.family).written().size(), family.family };
     });
     return families;
 }
@@ -87,7 +87,7 @@ static Vector<LayoutID, 4> headLayoutsOf(const Program& program, const Type& typ
     for (const FamilyOfMembers& family : familiesOf(program, members)) {
         if (!numberLeft)
             break;
-        std::span<const LayoutID> subtypes = program.at(family.family).members.span();
+        std::span<const LayoutID> subtypes = program.at(family.family).completeMembers();
         auto isOwnerAlone = [&](LayoutID layout) {
             return !family.hasSeveralOwners && layout == family.owner;
         };
@@ -130,7 +130,7 @@ Vector<TypeAlternative, 4> alternativesOf(const Program& program, TypeID id)
             alternatives.append(TypeAlternative { .shape = ResultShape::StringLiteral, .literal = { .kind = ResultLiteral::Kind::String, .string = string } });
     }
     if (const ClassPart* array = type.findClassPart(BuiltinClasses::Array))
-        alternatives.append(TypeAlternative { .shape = ResultShape::Array, .contents = array->contentsAt(program.builtins(), ContentsSlot::Element) });
+        alternatives.append(TypeAlternative { .shape = ResultShape::Array, .contents = array->writtenContentsAt(program.builtins(), ContentsSlot::Element) });
     for (LayoutID layout : headLayoutsOf(program, type))
         alternatives.append(TypeAlternative { .shape = ResultShape::Object, .layout = layout });
     return alternatives;
@@ -173,7 +173,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
         const Field& field = fields[index];
         if (!isEnumerableStringField(program, field))
             continue;
-        TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared));
+        TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared).predicted());
         node.members.append(ResultMember {
             .key = field.key,
             .node = ResultNodeRef { expectation ? expectation : TypeTable::anything },
@@ -209,7 +209,7 @@ Value makeArrayOf(const Program& program, const ResultNode& node)
 {
     const ClassPart* part = program.at(node.type).findClassPart(BuiltinClasses::Array);
     Value array = IRBuilder::make(Opcode::NewArray);
-    array.setContents(part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything);
+    array.setContents(part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything);
     array.setElementsOperands(std::span<const ValueID> { });
     return array;
 }
@@ -500,7 +500,7 @@ std::optional<uint32_t> indexOfAwaitedOperand(const Value& value)
     return std::nullopt;
 }
 
-static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Function& function, const UseLists& uses, ValueID call)
+static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Function& function, const UseLists& uses, ValueID call, Vector<PropertyKeyID, 4>& namesRead)
 {
     struct FollowedValue {
         ValueID value;
@@ -521,6 +521,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
     Vector<FollowedValue, 4> worklist { { call, form != TypedResultForm::ParsedText } };
     BitVector visited;
     visited.set(call.index());
+    Vector<PropertyKeyID, 4> namesReadBeforeAwait;
+    bool isAwaited = false;
 
     while (!worklist.isEmpty()) {
         FollowedValue followed = worklist.takeLast();
@@ -533,6 +535,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
                 continue;
 
             const Value& user = function.at(use.user);
+            if (user.opcode == Opcode::PropGet && use.operandIndex == OperandIndex::PropGet::object)
+                (followed.mayBePromise ? namesReadBeforeAwait : namesRead).append(user.key());
             // AddGenericVersion makes a test and a branch of a Check.
             if (user.opcode == Opcode::TypeTest && use.operandIndex == OperandIndex::TypeTest::value)
                 consider(user.testedType());
@@ -547,6 +551,7 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
             bool isResolvedValue = followed.mayBePromise && indexOfAwaitedOperand(user) == use.operandIndex;
             if (!isSameValue && !isResolvedValue)
                 continue;
+            isAwaited |= isResolvedValue;
             if (user.opcode == Opcode::Check)
                 consider(user.expectedType().predicted());
             consider(user.expected().predicted());
@@ -554,6 +559,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
                 worklist.append({ use.user, followed.mayBePromise && isSameValue });
         }
     }
+    if (!isAwaited)
+        namesRead.appendVector(namesReadBeforeAwait);
     return requestedTypes;
 }
 
@@ -574,16 +581,31 @@ static bool isDeepSubset(const Program& program, TypeID narrow, TypeID wide)
             const ClassPart* partner = wideType.findClassPart(part.builtinClass);
             if (!partner)
                 continue;
-            for (unsigned index = 0; index < partner->contents.size(); ++index)
-                worklist.append(TypePair { part.contentsAt(index), partner->contentsAt(index) });
+            for (unsigned index = 0; index < partner->writtenContents.size(); ++index)
+                worklist.append(TypePair { part.writtenContentsAt(index), partner->writtenContentsAt(index) });
         }
     }
     return true;
 }
 
+static bool declaresNamesRead(const Program& program, const Type& type, std::span<const PropertyKeyID> namesRead)
+{
+    bool hasObjectType = false;
+    for (LayoutID member : membersOf(program, type)) {
+        const Layout& layout = program.at(member);
+        if (layout.kind != LayoutKind::Record)
+            continue;
+        hasObjectType = true;
+        if (std::ranges::all_of(namesRead, [&](PropertyKeyID name) { return !!layout.findField(name); }))
+            return true;
+    }
+    return !hasObjectType;
+}
+
 TypeID findTypeOfTypedResultTarget(const Program& program, const Function& function, const UseLists& uses, ValueID call)
 {
-    Vector<TypeID, 4> requestedTypes = collectRequestedTypes(program, function, uses, call);
+    Vector<PropertyKeyID, 4> namesRead;
+    Vector<TypeID, 4> requestedTypes = collectRequestedTypes(program, function, uses, call, namesRead);
     TypeID mostSpecific;
     for (TypeID requested : requestedTypes) {
         if (!mostSpecific || isDeepSubset(program, requested, mostSpecific))
@@ -593,6 +615,8 @@ TypeID findTypeOfTypedResultTarget(const Program& program, const Function& funct
         if (!isDeepSubset(program, mostSpecific, requested))
             return { };
     }
+    if (mostSpecific && !function.has(FunctionFlags::IsChecked) && !declaresNamesRead(program, program.at(mostSpecific), namesRead.span()))
+        return { };
     return mostSpecific;
 }
 
@@ -639,7 +663,7 @@ void forEachLayoutReachedBy(const Program& program, TypeID root, const HeadLayou
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         if (const ClassPart* array = type.findClassPart(BuiltinClasses::Array))
-            visit(array->contentsAt(program.builtins(), ContentsSlot::Element));
+            visit(array->writtenContentsAt(program.builtins(), ContentsSlot::Element));
         if (!type.layouts || !visitedFamilies.add(type.layouts).isNewEntry)
             continue;
         Vector<LayoutID, 4> headsOfThisWalk;
@@ -652,7 +676,7 @@ void forEachLayoutReachedBy(const Program& program, TypeID root, const HeadLayou
                 return;
             for (const Field& field : program.at(layout).fields) {
                 if (isEnumerableStringField(program, field))
-                    visit(expectationOf(field.declared));
+                    visit(expectationOf(field.declared).predicted());
             }
         }
     }

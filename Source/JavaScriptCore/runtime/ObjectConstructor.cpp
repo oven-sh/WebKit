@@ -1325,6 +1325,8 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
 
 #if ENABLE(AOT)
     if (object->structure()->isCompiledStructure()) {
+        AOT::PropertyWalk::prepareForFreeze(object);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         AOT::PropertyWalk::setIntegrity(vm, object, AOT::PropertyWalk::Integrity::Frozen);
         return object;
     }

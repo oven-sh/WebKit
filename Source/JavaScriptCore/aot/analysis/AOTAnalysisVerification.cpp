@@ -671,12 +671,12 @@ static bool checkFrequencies(Comparison& comparison, const Function& function, c
 {
     comparison.begin(FunctionAnalysis::Frequencies);
     for (BlockID block : graph.reversePostOrder()) {
-        if (!comparison.isSame(cached.frequencyOf(block), fresh.frequencyOf(block), "the frequency of {}"_s, block)
-            || !comparison.isSame(cached.classOf(block), fresh.classOf(block), "the class of {}"_s, block))
+        if (!comparison.isSame(cached.frequencyOf(block).predicted(), fresh.frequencyOf(block).predicted(), "the frequency of {}"_s, block)
+            || !comparison.isSame(cached.classOf(block).predicted(), fresh.classOf(block).predicted(), "the class of {}"_s, block))
             return false;
         forEachOutgoingEdge(function, block, [&](Edge edge, const Target&) {
             if (!comparison.foundDifference())
-                comparison.isSame(cached.classOf(edge), fresh.classOf(edge), "the class of {}"_s, edge);
+                comparison.isSame(cached.classOf(edge).predicted(), fresh.classOf(edge).predicted(), "the class of {}"_s, edge);
         });
         if (comparison.foundDifference())
             return false;

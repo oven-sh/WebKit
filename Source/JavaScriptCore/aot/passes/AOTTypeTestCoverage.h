@@ -178,7 +178,7 @@ public:
     uint32_t endOfResultReadsAfter(ProgramPoint) const;
 
     // A slow path comes back on such an edge: without the edges of this kind its target is still reached.
-    bool isRejoiningEdge(Edge) const;
+    Expected<bool> isRejoiningEdge(Edge) const;
 
 private:
     struct Collector;

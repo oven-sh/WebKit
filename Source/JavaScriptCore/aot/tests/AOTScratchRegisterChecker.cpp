@@ -9,6 +9,7 @@
 #if ENABLE(AOT_SCRATCH_REGISTER_CHECKER)
 
 #include "MacroAssembler.h"
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <inttypes.h>
@@ -40,6 +41,8 @@ namespace {
 // x0 to x30. Neither sp nor zr is counted.
 constexpr unsigned numberOfGeneralRegisters = 31;
 
+enum class ControlFlow : uint8_t { GoesOn, Jumps, JumpsOrGoesOn, Calls, Leaves };
+
 struct InstructionEffects {
     bool reads(GPRReg reg) const { return numberOfReads[reg]; }
     bool writes(GPRReg reg) const { return writtenRegisters & (1u << reg); }
@@ -54,6 +57,9 @@ struct InstructionEffects {
     bool isTest { false };
     // A pair loaded off the stack pointer.
     bool isRestore { false };
+    // It reads no memory, and no general register unless it is a move.
+    bool isConstantOrCopy { false };
+    ControlFlow controlFlow { ControlFlow::GoesOn };
 };
 
 enum class RegisterAccess : uint8_t { Read, Write, ReadAndWrite };
@@ -93,6 +99,19 @@ static bool mayLeaveStraightLine(std::string_view mnemonic)
         || startsWithAnyOf(mnemonic, { "b.", "bl", "br", "ret" });
 }
 
+static ControlFlow controlFlowOf(std::string_view mnemonic)
+{
+    if (!mayLeaveStraightLine(mnemonic))
+        return ControlFlow::GoesOn;
+    if (mnemonic == "b")
+        return ControlFlow::Jumps;
+    if (mnemonic.starts_with("b.") || equalsAnyOf(mnemonic, { "cbz", "cbnz", "tbz", "tbnz" }))
+        return ControlFlow::JumpsOrGoesOn;
+    if (mnemonic.starts_with("bl"))
+        return ControlFlow::Calls;
+    return ControlFlow::Leaves;
+}
+
 static RegisterAccess accessOfRegisterOperand(std::string_view mnemonic, unsigned index)
 {
     if (startsWithAnyOf(mnemonic, { "stxr", "stlxr", "stxp", "stlxp" }))
@@ -128,6 +147,7 @@ static InstructionEffects decodeEffects(uint32_t word)
     Binja::Instruction instruction;
     if (!decode(word, instruction)) {
         effects.mayLeaveStraightLine = true;
+        effects.controlFlow = ControlFlow::Leaves;
         return effects;
     }
 
@@ -144,11 +164,17 @@ static InstructionEffects decodeEffects(uint32_t word)
     std::string_view mnemonic = Binja::get_operation(&instruction);
     effects.mayLeaveStraightLine = mayLeaveStraightLine(mnemonic);
     effects.isTest = mnemonic == "tst";
+    effects.controlFlow = controlFlowOf(mnemonic);
     bool isPairLoad = mnemonic == "ldp";
+    auto finish = [&] {
+        bool readsGeneralRegister = std::ranges::any_of(effects.numberOfReads, [](uint8_t count) { return !!count; });
+        effects.isConstantOrCopy = effects.writtenRegisters && !mnemonic.starts_with("ld") && (mnemonic == "mov" || !readsGeneralRegister);
+    };
     for (unsigned index = 0; index < MAX_OPERANDS; ++index) {
         const Binja::InstructionOperand& operand = instruction.operands[index];
         switch (operand.operandClass) {
         case Binja::NONE:
+            finish();
             return effects;
         case Binja::REG:
             record(operand.reg[0], accessOfRegisterOperand(mnemonic, index));
@@ -170,6 +196,7 @@ static InstructionEffects decodeEffects(uint32_t word)
             break;
         }
     }
+    finish();
     return effects;
 }
 
@@ -219,6 +246,65 @@ Vector<ScratchRegisterConflict> findScratchRegisterConflicts(std::span<const uin
             offsetsOfUnreadWrites.fill(std::nullopt);
     }
     return conflicts;
+}
+
+Vector<UnreadValue> findUnreadConstantsAndCopies(std::span<const uint8_t> code)
+{
+    constexpr uint32_t everyRegister = (1u << numberOfGeneralRegisters) - 1;
+    auto words = spanReinterpretCast<const uint32_t>(code);
+    Vector<InstructionEffects> effectsOfWords(words.size(), [&](size_t index) {
+        return decodeEffects(words[index]);
+    });
+    Vector<uint32_t> readBeforeWrittenAt(words.size(), [](size_t) {
+        return 0u;
+    });
+
+    auto at = [&](int64_t index) {
+        return index >= 0 && index < static_cast<int64_t>(words.size()) ? readBeforeWrittenAt[index] : everyRegister;
+    };
+    auto behind = [&](size_t index) -> uint32_t {
+        const InstructionEffects& effects = effectsOfWords[index];
+        int64_t next = static_cast<int64_t>(index) + 1;
+        int64_t target = effects.branchOffset ? static_cast<int64_t>(index) + *effects.branchOffset / static_cast<int64_t>(sizeof(uint32_t)) : -1;
+        switch (effects.controlFlow) {
+        case ControlFlow::GoesOn:
+        case ControlFlow::Calls:
+            return at(next);
+        case ControlFlow::Jumps:
+            return at(target);
+        case ControlFlow::JumpsOrGoesOn:
+            return at(target) | at(next);
+        case ControlFlow::Leaves:
+            return everyRegister;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (size_t index = words.size(); index--;) {
+            const InstructionEffects& effects = effectsOfWords[index];
+            uint32_t read = effects.controlFlow == ControlFlow::Calls ? everyRegister : 0;
+            for (unsigned reg = 0; reg < numberOfGeneralRegisters; ++reg)
+                read |= effects.numberOfReads[reg] ? 1u << reg : 0;
+            uint32_t result = read | (behind(index) & ~effects.writtenRegisters);
+            changed |= result != readBeforeWrittenAt[index];
+            readBeforeWrittenAt[index] = result;
+        }
+    }
+
+    Vector<UnreadValue> unreadValues;
+    for (size_t index = 0; index < words.size(); ++index) {
+        const InstructionEffects& effects = effectsOfWords[index];
+        if (!effects.isConstantOrCopy)
+            continue;
+        uint32_t unread = effects.writtenRegisters & ~behind(index);
+        for (unsigned reg = 0; reg < numberOfGeneralRegisters; ++reg) {
+            if (unread & (1u << reg))
+                unreadValues.append({ static_cast<GPRReg>(reg), static_cast<uint32_t>(index * sizeof(uint32_t)) });
+        }
+    }
+    return unreadValues;
 }
 
 void printInstructions(PrintStream& out, std::span<const uint8_t> code, uint32_t firstOffset, uint32_t lastOffset)

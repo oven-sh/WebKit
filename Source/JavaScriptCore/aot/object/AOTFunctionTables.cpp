@@ -635,7 +635,7 @@ static String computedFunctionName(JSGlobalObject* globalObject, const Identifie
     return name;
 }
 
-void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
+static void nameFramesOfFunction(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
     if (!isNamedInFramesByFunction(function))
@@ -644,6 +644,14 @@ void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
     Locker locker { tables.namesLock };
     tables.namesSetAtRunTime.set(sourceFunctionOf(function), name);
     tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
+}
+
+void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
+{
+    FunctionID function = *functionOf(closure);
+    if (FunctionDescription(function).recordsCalleeOnceRenamed())
+        FunctionTables::of(vm).recordCalleesOf(vm, sourceFunctionOf(function));
+    nameFramesOfFunction(vm, closure, name);
 }
 
 void didDeleteNameProperty(VM& vm, JSObject* closure)
@@ -691,7 +699,7 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
         rareData->setHasReifiedName();
         rareData->setHasModifiedNameForBoundOrNonHostFunction();
     }
-    didDefineNameProperty(vm, closure, name);
+    nameFramesOfFunction(vm, closure, name);
 }
 
 JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)

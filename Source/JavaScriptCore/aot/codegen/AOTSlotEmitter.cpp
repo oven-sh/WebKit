@@ -510,7 +510,7 @@ Condition SlotEmitter::holdsDeclaredType(CellPointer cell, const PlacedSlot& slo
 
 bool SlotEmitter::holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID key) const
 {
-    return std::ranges::any_of(m_program.at(receivers).members, [&](LayoutID layout) {
+    return std::ranges::any_of(m_program.at(receivers).completeMembers(), [&](LayoutID layout) {
         std::optional<FieldReference> field = findField(m_program, layout, key, BaseChain::Proven);
         return field && holdsRawValueFromBirth(m_program, *field);
     });

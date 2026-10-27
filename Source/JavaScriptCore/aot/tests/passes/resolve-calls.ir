@@ -175,7 +175,7 @@ function f28 name="no-this-value" parameters=[{type=f4}] results=[{type=anything
 function f29 name="never-inlined" parameters=[{type=f0}] results=[{type=anything}] {
     v1 = Call v0 [isNeverInlined]
     Return v1
-# CHECK: = CallDirect function=f0 [isNeverInlined]
+# CHECK: = CallDirect function=f0 [isNeverInlined, calleeIsPredicted]
 }
 function f30 name="access-site" parameters=[{type=f0}] results=[{type=anything}] {
     v1 = Call v0 accessSite=7
@@ -269,7 +269,7 @@ function f39 name="construct" parameters=[{type=f7}] results=[{type=anything}] {
     v1 = Construct v0
     Return v1
 # CHECK: [[object]]: L0 = NewObject layout=L0
-# CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f40 name="construct-unknown" parameters=[{type=function}] results=[{type=anything}] {

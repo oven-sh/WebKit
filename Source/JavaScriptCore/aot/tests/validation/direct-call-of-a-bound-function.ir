@@ -3,6 +3,7 @@
 # so it is outside a type that lists only its target, even where a call of it ends up in that target.
 # The lie: a writer that nobody listed (`storeInSlotWithoutTest` of the shell) puts `listed.bind(null)` into the slot of `callback`. A default build prints the right answer here by luck: the direct call runs `listed` either way.
 # The flow analysis is off, and the text says by hand what it would find: the field holds closures of `listed` alone (the function type of the source admits every function), the slot is always filled and the property never leaves it.
+# Without the analysis any function object may get another name, and a call of one that a stack trace shows has to say which it entered. No stack trace shows `listed`, so its calls may be direct.
 # A validating build puts ValidateCallee in front of a call that a type made direct, and that keeps the callee alive (the run with the prefix IR).
 # What ends the process is the test of the read that was kept, a ValueType, for the reason that direct-call-of-another-closure.ir gives: the callee's own type is the list that ValidateCallee compares it with.
 # With the slot left alone the same build runs to its end
@@ -40,7 +41,7 @@ function f1 name="run" parameters=[{type=L0 site=w0}] results=[{type=anything}] 
     v2 = Call v1, v0 calleeKey="callback"
     Return v2
 }
-function f2 name="listed" results=[{type=anything}] {
+function f2 name="listed" flags=[IsHiddenInStackTraces] results=[{type=anything}] {
     v0 = String string="listed"
     Return v0
 }

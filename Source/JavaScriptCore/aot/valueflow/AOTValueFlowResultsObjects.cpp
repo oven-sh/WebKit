@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDs.h"
+#include "AOTClaimsAboutClassesAndClosures.h"
 #include "AOTFlowRecords.h"
+#include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -22,8 +24,7 @@ static constexpr OptionSet<ObjectMutation> mutationsWithoutMark { ObjectMutation
 
 namespace {
 
-using WrittenNode = ValueFlowHeapIndex::WrittenNode;
-using KeysAddedToClosures = Vector<std::pair<uint32_t, PropertyKeyID>>;
+using PrototypeLinks = LedgerOfClassesAndClosures;
 
 struct ObjectsOfLayouts {
     void add(LayoutID layout, OptionSet<ObjectMutation> mutations)
@@ -51,42 +52,6 @@ struct ObjectCreation {
     ValueSetID layoutSelectors { ValueSets::nothing };
 };
 
-struct PrototypeLinks {
-    PrototypeLinks(const ValueFlowResultInputs&, const ValueFlowHeapIndex&);
-
-    std::array<ValueFlowObjectID, 3> standInsOf(ValueFlowObjectID object) const
-    {
-        return { object, inputs.hasEscaped(object) ? ValueFlowUniverse::unknownObject() : ValueFlowObjectID(), inputs.isLost(object) ? ValueFlowUniverse::untrackedObject() : ValueFlowObjectID() };
-    }
-
-    bool covers(ValueSetID set, ValueFlowObjectID object) const
-    {
-        return std::ranges::any_of(standInsOf(object), [&](ValueFlowObjectID standIn) {
-            return standIn && inputs.sets().contains(set, standIn);
-        });
-    }
-
-    ValueSetID linkedPrototypes(ValueSetMaker& makerOfThread, ValueFlowObjectID object) const
-    {
-        ValueSetID links = linksOfAllObjects;
-        for (ValueFlowObjectID standIn : standInsOf(object)) {
-            if (auto found = standIn ? linksByObject.find(standIn.index()) : linksByObject.end(); found != linksByObject.end())
-                links = makerOfThread.unite(links, found->value);
-        }
-        return links;
-    }
-
-    const ValueFlowResultInputs& inputs;
-    BorrowedValueSetMaker borrowedMaker;
-    ValueSetMaker& maker;
-    ValueSetID classPrototypes;
-    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> linksByObject;
-    ValueSetID linksOfAllObjects { ValueSets::nothing };
-    ValueSetID prototypes { ValueSets::nothing };
-    ValueSetID functionsWithNonObjectPrototype { ValueSets::nothing };
-    HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> markNodes;
-};
-
 } // anonymous namespace
 
 static constexpr MutationCause mutationCauses[] {
@@ -97,84 +62,6 @@ static constexpr MutationCause mutationCauses[] {
     { ObjectMutation::ChangePrototype, UnprovenCause::PrototypeChanged },
     { ObjectMutation::ChangeIntegrity, UnprovenCause::IntegrityChanged },
 };
-
-PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
-    : inputs(inputs)
-    , borrowedMaker(inputs.makerPool())
-    , maker(borrowedMaker.get())
-{
-    const Program& program = inputs.program;
-    const ValueFlowUniverse& universe = inputs.universe();
-    const ValueSets& sets = inputs.sets();
-    auto unite = [&](ValueSetID& into, ValueSetID value) {
-        into = maker.unite(into, value);
-    };
-
-    Vector<ValueFlowObjectID> prototypesOfClasses;
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        if (isClassLayout(program.layouts[index]))
-            prototypesOfClasses.append(universe.prototypeOf(LayoutID(index)));
-    }
-    classPrototypes = maker.of(prototypesOfClasses.span());
-    for (ValueFlowNodeID node : heapIndex.nodesOfMarks()) {
-        if (!inputs.solver().keyOfMadeNode(node)->detail)
-            markNodes.add(inputs.solver().keyOfMadeNode(node)->payload, node);
-    }
-
-    Vector<WrittenNode> storesToPrototypePropertyOfOtherObjects;
-    Vector<WrittenNode> copies;
-    ValueFlowName prototypeProperty = ValueFlowName::property(program.keyOf(BuiltinNames::prototype));
-    for (const ValueFlowHeapIndex::Stretch& stretch : heapIndex.stretchesOfNodesWrittenUnder([&](ValueFlowName name) {
-        return name.kind == ValueFlowNameKind::PrototypeLink || name.kind == ValueFlowNameKind::UnknownKey || name.kind == ValueFlowNameKind::CopiedFrom || name == prototypeProperty;
-    })) {
-        for (const WrittenNode& node : stretch.nodes) {
-            if (stretch.name.kind == ValueFlowNameKind::PrototypeLink) {
-                unite(prototypes, node.value);
-                if (ValueSets::isComplement(node.objects)) {
-                    unite(linksOfAllObjects, node.value);
-                    continue;
-                }
-                sets.forEachMember(node.objects, [&](ValueFlowObjectID object) {
-                    unite(linksByObject.add(object.index(), ValueSets::nothing).iterator->value, node.value);
-                });
-                continue;
-            }
-            bool mayWriteIntoFunction = sets.meet(node.objects, universe.callables());
-            if (stretch.name.kind == ValueFlowNameKind::CopiedFrom) {
-                copies.append({ node.objects, maker.intersect(node.value, universe.objects()) });
-                if (mayWriteIntoFunction)
-                    unite(functionsWithNonObjectPrototype, node.objects);
-            } else if (mayWriteIntoFunction) {
-                unite(prototypes, node.value);
-                if (!sets.isSubset(node.value, universe.objects()))
-                    unite(functionsWithNonObjectPrototype, node.objects);
-            } else
-                storesToPrototypePropertyOfOtherObjects.append(node);
-        }
-    }
-
-    auto standsForMemberOf = [&](ValueSetID holdingPlaceholder, ValueSetID other) {
-        return (sets.contains(holdingPlaceholder, ValueFlowUniverse::unknownObject()) && sets.meet(other, inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped())))
-            || (sets.contains(holdingPlaceholder, ValueFlowUniverse::untrackedObject()) && sets.meet(other, inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost())));
-    };
-    auto mayShareObject = [&](ValueSetID first, ValueSetID second) {
-        return sets.meet(first, second) || standsForMemberOf(first, second) || standsForMemberOf(second, first);
-    };
-    ValueSetID sources = ValueSets::nothing;
-    for (bool hasGrown = true; hasGrown;) {
-        hasGrown = false;
-        for (const WrittenNode& copy : copies) {
-            if (sets.isSubset(copy.value, sources) || (!sets.meet(copy.objects, universe.callables()) && !mayShareObject(copy.objects, sources)))
-                continue;
-            unite(sources, copy.value);
-            hasGrown = true;
-        }
-    }
-    for (const WrittenNode& store : storesToPrototypePropertyOfOtherObjects) {
-        if (mayShareObject(store.objects, sources))
-            unite(prototypes, store.value);
-    }
-}
 
 static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)
 {
@@ -247,7 +134,7 @@ static bool mayFallBackToObjectPrototype(const ValueFlowResultInputs& inputs, co
         if (!constructor)
             return true;
         LayoutID constructed = program.at(constructor).constructedClass;
-        return (!constructed || !isClassLayout(program.at(constructed))) && links.covers(links.functionsWithNonObjectPrototype, newTarget);
+        return (!constructed || !isClassLayout(program.at(constructed))) && links.covers(links.functionsWithNonObjectPrototype(), newTarget);
     });
 }
 
@@ -272,28 +159,31 @@ static ObjectCreation describeCreation(const ValueFlowResultInputs& inputs, cons
     const Value* operation = isMadeByOperation ? &function->at(site->value) : nullptr;
     if (universe.kindOf(object) == ValueFlowObjectKind::Instance) {
         FunctionID constructor = program.at(layout).constructor;
-        if (constructor && !links.covers(links.functionsWithNonObjectPrototype, universe.closureOf(constructor)))
+        if (constructor && !links.covers(links.functionsWithNonObjectPrototype(), universe.closureOf(constructor)))
             allowed = maker.unite(allowed, universe.undefinedValue());
     } else if (operation && site->origin == ValueFlowSiteOrigin::Operation && operation->opcode == Opcode::NewObject && operation->prototypeOperand()) {
         if (mayAllocateOtherLayout(program, *operation)) {
             creation.layoutSelectors = prototypes;
-            allowed = maker.unite(allowed, links.classPrototypes);
+            allowed = maker.unite(allowed, links.classPrototypes());
         }
         const Value& prototype = function->at(sameObjectThroughCasts(*function, operation->prototypeOperand()));
         if (prototype.opcode == Opcode::GetConstructPrototype && !mayFallBackToObjectPrototype(inputs, links, universe.functionOf(object), prototype))
             allowed = maker.unite(allowed, maker.of(objectPrototype));
     } else if (operation && site->origin == ValueFlowSiteOrigin::BuiltinResult && program.prototypeMaySelectOtherClass(layout) && OperandPosition::parent(operation->opcode)) {
         creation.layoutSelectors = prototypes;
-        allowed = maker.unite(allowed, links.classPrototypes);
+        allowed = maker.unite(allowed, links.classPrototypes());
     }
     creation.mayHaveOtherPrototype = !inputs.sets().isSubset(prototypes, allowed);
     return creation;
 }
 
-static OptionSet<ObjectMutation> possibleMutationsOf(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, ValueFlowObjectID object)
+// A mark is the report of somebody who was seen. Whoever has not accounted for the object may do anything to it.
+static OptionSet<ObjectMutation> possibleMutationsOf(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, ValueFlowObjectID object, ClassesAbove classesAbove = ClassesAbove::MayListNoOwnNames)
 {
+    if (!actorsOpenOn(inputs, object, classesAbove).isEmpty())
+        return allObjectMutations;
     OptionSet<ObjectMutation> possible = markedMutationsOf(inputs, object) | mutationsWithoutMark;
-    return links.covers(links.prototypes, object) ? possible | ObjectMutation::BecomePrototype : possible;
+    return links.mayBeLinkedAbove(object) ? possible | ObjectMutation::BecomePrototype : possible;
 }
 
 static bool isAllocatedObject(const ValueFlowResultInputs& inputs, const BitVector& layoutsWithInstances, ValueFlowObjectID object)
@@ -355,18 +245,19 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
     }
 
     ValueSetMakers makers(inputs);
+    ValueFlowHeapView heap(inputs);
     Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfObjects(), [&](unsigned index, ValueSetMaker& maker, Vector<Found>& found) {
         ValueFlowObjectID object(index);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object))
             return;
         LayoutID layout = universe.layoutOf(object);
-        OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object);
+        OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object, links.classesAbove(heap, maker, object));
         ObjectCreation creation = describeCreation(inputs, links, maker, object, layout);
         found.append({ layout, 0, creation.mayHaveOtherPrototype ? possible | ObjectMutation::ChangePrototype : possible });
         if (creation.layoutSelectors == ValueSets::nothing)
             return;
         LayoutID ownClass = declaredLayoutOf(program, layout);
-        sets.forEachMember(maker.intersect(creation.layoutSelectors, links.classPrototypes), [&](ValueFlowObjectID prototype) {
+        sets.forEachMember(maker.intersect(creation.layoutSelectors, links.classPrototypes()), [&](ValueFlowObjectID prototype) {
             if (universe.classLayoutOf(prototype) != ownClass)
                 found.append({ universe.classLayoutOf(prototype), 0, possible });
         });
@@ -430,11 +321,12 @@ static Vector<AllocationClassID> createAllocationClasses(const ValueFlowResultIn
     return classOfLayout;
 }
 
-static void recordWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks& links, const BitVector& layoutsWithInstances, FlowResultTables& tables)
+static void recordWitnesses(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, const BitVector& layoutsWithInstances, FlowResultTables& tables)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueFlowSolver& solver = inputs.solver();
-    ValueSetMaker& maker = links.maker;
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
     auto witnessAt = [&](FunctionID function, ValueID value) {
         return Witness { function.index(), value.index(), inputs.program.at(function).locationOf(value) };
     };
@@ -453,7 +345,7 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks&
 
     for (size_t position = 0; position < std::size(mutationCauses); ++position) {
         HashMap<uint32_t, Witness, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> witnessOfMark;
-        ValueFlowNodeID markNode = links.markNodes.get(static_cast<uint32_t>(mutationCauses[position].mutation));
+        ValueFlowNodeID markNode = links.nodeOfMark(mutationCauses[position].mutation);
         if (markNode && !objectsAskedAbout[position].isEmpty()) {
             ValueSetID remaining = maker.intersect(maker.unite(maker.of(objectsAskedAbout[position].span()), universe.placeholdersAlone()), solver.possibleValuesOf(markNode));
             Vector<std::pair<Witness, ValueFlowNodeID>> marks;
@@ -493,43 +385,6 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks&
             }
         }
     }
-}
-
-static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
-{
-    const ValueFlowUniverse& universe = inputs.universe();
-    const ParallelLoops& loops = inputs.loops();
-    auto isListed = [](ValueFlowNameKind kind) {
-        return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter;
-    };
-    Vector<ValueFlowHeapIndex::Stretch> stretches = heapIndex.stretchesOfNodesWrittenUnder([&](ValueFlowName name) {
-        return isListed(name.kind) || name.kind == ValueFlowNameKind::Elements || name.kind == ValueFlowNameKind::UnknownKey || name.kind == ValueFlowNameKind::GetterUnderUnknownKey
-            || name.kind == ValueFlowNameKind::SetterUnderUnknownKey || name.kind == ValueFlowNameKind::CopiedFrom;
-    });
-    Vector<KeysAddedToClosures> foundByWorker(loops.width());
-    Vector<SetsMeetingOneSet> setsWithClosures(loops.width(), [&](size_t) {
-        return SetsMeetingOneSet(inputs.sets(), universe.closures());
-    });
-    forEachIndexInParallel(loops, stretches.size(), [&](unsigned position, unsigned worker) {
-        ValueFlowName name = stretches[position].name;
-        for (const WrittenNode& node : stretches[position].nodes) {
-            if (ValueSets::isComplement(node.objects)) {
-                foundByWorker[worker].append({ UINT32_MAX, isListed(name.kind) ? PropertyKeyID(name.payload) : PropertyKeyID() });
-                continue;
-            }
-            if (!setsWithClosures[worker].contains(node.objects))
-                continue;
-            inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
-                if (universe.kindOf(object) == ValueFlowObjectKind::Closure)
-                    foundByWorker[worker].append({ universe.closureFunction(object).index(), isListed(name.kind) ? PropertyKeyID(name.payload) : PropertyKeyID() });
-            });
-        }
-    });
-    KeysAddedToClosures added;
-    for (KeysAddedToClosures& found : foundByWorker)
-        added.appendVector(WTF::move(found));
-    sortAndRemoveDuplicates(loops, added);
-    return added;
 }
 
 static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
@@ -575,9 +430,19 @@ struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector all;
     // Of those: no statement is seen to rename a closure of the function. A displayName that is written through an object nobody follows may.
     BitVector onlyWhereNobodySees;
+    // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
+    BitVector outOfSight;
 };
 
-static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
+// No key stands for a key that nobody knows.
+static bool isWrittenUnderAnyKeyThat(std::span<const Write> writes, NOESCAPE const Invocable<bool(PropertyKeyID)> auto& matches)
+{
+    return std::ranges::any_of(writes, [&](const Write& write) {
+        return write.through != ValueSets::nothing && write.under != prototypeLinkName && matches(ClaimsAboutClassesAndClosures::keyOf(write));
+    });
+}
+
+static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, std::span<const AllocationClass> classesOfClosures)
 {
     const Program& program = inputs.program;
     BitVector namedWithSeveralTexts = findWrittenFunctionsNamedWithSeveralTexts(inputs);
@@ -602,13 +467,14 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
 
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());
+    BitVector outOfSight(program.functions.size());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
         if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
             functions.quickSet(function.index());
     });
     // A function that nothing enters has no class of closures.
-    for (auto [function, key] : added) {
-        if (function != UINT32_MAX && key && keys.contains(key) && !inputs.isReached(FunctionID(function)))
+    for (uint32_t function = 0; function < program.functions.size(); ++function) {
+        if (!inputs.isReached(FunctionID(function)) && isWrittenUnderAnyKeyThat(ledger.writesFiledOn(inputs.universe().closureOf(FunctionID(function))), [&](PropertyKeyID key) { return key && keys.contains(key); }))
             functions.quickSet(function);
     }
     for (const AllocationClass& closures : classesOfClosures) {
@@ -621,17 +487,26 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
         auto mayNameFramesOfThisFunction = [&](PropertyKeyID key) {
             return key == keys[0] ? namedWithSeveralTexts.quickGet(writtenFunctionOf(program, closures.closureFunction).index()) : mayNameFrames(key);
         };
-        if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFramesOfThisFunction, &std::pair<uint32_t, PropertyKeyID>::second)
-            || std::ranges::any_of(std::ranges::equal_range(added, UINT32_MAX, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
+        ValueFlowObjectID closure = inputs.universe().closureOf(closures.closureFunction);
+        std::span<const Write> writtenOnThisFunction = ledger.writesFiledOn(closure);
+        if (isWrittenUnderAnyKeyThat(writtenOnThisFunction, mayNameFramesOfThisFunction)
+            || isWrittenUnderAnyKeyThat(ledger.writesThroughEveryObject(), mayNameFrames)
             || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key)))
             functions.quickSet(index);
-        else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(inputs.universe().closureOf(closures.closureFunction)))
-            || (lostClosuresMayBeRenamed && inputs.isLost(inputs.universe().closureOf(closures.closureFunction))))
+        else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeRenamed && inputs.isLost(closure)))
             onlyWhereNobodySees.quickSet(index);
+        else if ((inputs.hasEscaped(closure) || inputs.isLost(closure)) && !isWrittenUnderAnyKeyThat(writtenOnThisFunction, [&](PropertyKeyID key) { return keys.contains(key); }))
+            outOfSight.quickSet(index);
+    }
+    // Without a class of its closures nothing says what a function object of the function meets.
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (!inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
+            functions.quickSet(index);
     }
     onlyWhereNobodySees.exclude(functions);
     functions.merge(onlyWhereNobodySees);
-    return { WTF::move(functions), WTF::move(onlyWhereNobodySees) };
+    outOfSight.exclude(functions);
+    return { WTF::move(functions), WTF::move(onlyWhereNobodySees), WTF::move(outOfSight) };
 }
 
 static BitVector findFunctionsWhoseClosuresAreGivenDisplayName(const ValueFlowResultInputs& inputs)
@@ -702,16 +577,14 @@ static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, cons
     }
 }
 
-static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const PrototypeLinks& links, const KeysAddedToClosures& added, FlowResultTables& tables)
+static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const LedgerOfClassesAndClosures& links, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
-    bool noKeysAreListed = !added.isEmpty() && added.last().first == UINT32_MAX;
     Vector<AllocationClass> classesOfClosures = collectInParallel<AllocationClass>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocationClass>& classes) {
         if (!inputs.isReached(FunctionID(index)) || calls.functionsNamedByUnsolvedCode.get(index) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
             return;
         ValueFlowObjectID closure = inputs.universe().closureOf(FunctionID(index));
         OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, closure);
-        auto keys = std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first);
         AllocationClass closures;
         closures.closureFunction = FunctionID(index);
         closures.impossibleMutations = allObjectMutations - possible;
@@ -720,11 +593,12 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         bool namesEveryStaticField = !constructedClass || std::ranges::all_of(program.at(constructedClass).staticFields, [](const StaticField& field) {
             return !!field.key;
         });
-        closures.addedKeysAreComplete = !possible.containsAny({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript }) && !inputs.isLost(closure) && !noKeysAreListed && (keys.empty() || keys.back().second)
-            && !isDefinedByClass && namesEveryStaticField && inputs.build.isEnabled(FlowResultKind::OwnNames, index);
-        if (closures.addedKeysAreComplete) {
-            for (auto [function, key] : keys)
-                closures.addedKeys.append(key);
+        std::optional<Vector<PropertyKeyID>> addedKeys;
+        if (!isDefinedByClass && namesEveryStaticField && inputs.build.isEnabled(FlowResultKind::OwnNames, index))
+            addedKeys = ClaimsAboutClassesAndClosures::keysAddedTo(links.writersOfEveryOwnProperty(closure), links.writersOfElements(closure), links.reachersOf(closure).value_or(Reachers { { }, everyActor }));
+        closures.addedKeysAreComplete = !!addedKeys;
+        if (addedKeys) {
+            closures.addedKeys = WTF::move(*addedKeys);
             if (constructedClass) {
                 for (const StaticField& field : program.at(constructedClass).staticFields)
                     closures.addedKeys.append(field.key);
@@ -735,9 +609,10 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         classes.append(WTF::move(closures));
     });
     noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
-    FunctionsWhoseClosuresMayBeRenamed renamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, added, classesOfClosures.span());
+    FunctionsWhoseClosuresMayBeRenamed renamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, links, classesOfClosures.span());
     tables.functions.functionsWhoseClosuresMayBeRenamed = WTF::move(renamed.all);
     tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees = WTF::move(renamed.onlyWhereNobodySees);
+    tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed = WTF::move(renamed.outOfSight);
     tables.functions.functionsWhoseClosuresAreGivenDisplayName = findFunctionsWhoseClosuresAreGivenDisplayName(inputs);
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }
@@ -745,26 +620,9 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
 void computeObjectResults(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, FlowResultTables& tables)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
-    std::optional<PrototypeLinks> links;
-    BitVector layoutsWithInstances;
-    KeysAddedToClosures keysAddedToClosures;
-    runTasksInParallel(inputs.loops(), {
-        [&] {
-            links.emplace(inputs, *inputs.heapIndex);
-            times.didFinish("objects: prototype links"_s);
-        },
-        [&] {
-            PhaseTimes timesBeside(inputs.build, PassID::AnalyzeFlow);
-            layoutsWithInstances = findLayoutsWithInstances(inputs);
-            timesBeside.didFinish("objects: layouts with instances, beside prototype links"_s);
-        },
-        [&] {
-            PhaseTimes timesBeside(inputs.build, PassID::AnalyzeFlow);
-            keysAddedToClosures = collectKeysAddedToClosures(inputs, *inputs.heapIndex);
-            timesBeside.didFinish("objects: keys added to closures, beside prototype links"_s);
-        },
-    });
-    times.didFinish("objects: the rest of layouts with instances and of keys added to closures"_s);
+    const LedgerOfClassesAndClosures* links = inputs.classesAndClosures;
+    BitVector layoutsWithInstances = findLayoutsWithInstances(inputs);
+    times.didFinish("objects: layouts with instances"_s);
     ObjectsOfLayouts objects = collectObjectsOfLayouts(inputs, tables, *links, layoutsWithInstances);
     times.didFinish("objects: objects of layouts"_s);
     Vector<AllocationClassID> classOfLayout = createAllocationClasses(inputs, objects, tables);
@@ -782,7 +640,7 @@ void computeObjectResults(const ValueFlowResultInputs& inputs, const ValueFlowSt
         tables.application->bodies[allocation.function.index()].allocations.append(FlowAllocationStamp { .value = allocation.value, .site = site, .allocationClass = allocationClass });
     }
     times.didFinish("objects: allocations stamped"_s);
-    createClassesOfClosures(inputs, calls, *links, keysAddedToClosures, tables);
+    createClassesOfClosures(inputs, calls, *links, tables);
     times.didFinish("objects: classes of closures"_s);
     inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size());
     inputs.build.statistics().count(StatisticID::FlowAllocationClasses, tables.sites.allocationClasses.size());

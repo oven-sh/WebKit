@@ -21,6 +21,7 @@ class SSARepair {
     WTF_MAKE_NONCOPYABLE(SSARepair);
 public:
     SSARepair(IRBuilder&, FunctionAnalyses&);
+    ~SSARepair();
 
     using Variable = unsigned;
     Variable addVariable(ValueID definition);
@@ -50,6 +51,7 @@ private:
         TypeID expected;
     };
 
+    void setIsPending(bool);
     void separateUsesAsGuards();
     void splitCoveredBlocksAfterDefinitions();
 
@@ -65,6 +67,7 @@ private:
     Vector<VariableData> m_variables;
     BitVector m_isDefinition;
     bool m_didRun { false };
+    bool m_isPending { false };
 };
 
 } } } // namespace JSC::AOT::Typed

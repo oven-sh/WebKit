@@ -1,0 +1,27 @@
+# function holder() {}  holder.prototype = function stored() {}  holder.prototype()  plain()
+# What a function holds under `prototype` is the prototype of what it constructs, and a function object that is a prototype has properties of its own. Only `plain` stays as it was made
+# RUN: valueflow-results
+# CHECK-NOT: function f2 {{*}}closureUse
+# CHECK: function f3 callers=AllKnown executions=AtMostOnce closureUse=CalledOnly
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="prototype"
+    v3 = PropGet v0 key="prototype"
+    v4 = Call v3
+    v5 = NewClosure function=f3
+    v6 = Call v5
+    Return
+}
+function f1 name="holder" results=[{type=anything}] {
+    Return
+}
+function f2 name="stored" results=[{type=anything}] {
+    Return
+}
+function f3 name="plain" results=[{type=anything}] {
+    Return
+}

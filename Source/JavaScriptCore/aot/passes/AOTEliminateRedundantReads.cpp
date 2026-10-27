@@ -13,6 +13,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTDominators.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
@@ -320,8 +321,8 @@ struct RedundantReadElimination {
         const Value& store = m_function.at(access.id);
         if (!Value::opcodesWithReceivers.contains(store.opcode) || !store.receivers())
             return true;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return !receivers.isComplete || std::ranges::any_of(receivers.members, [&](LayoutID member) {
+        auto receivers = m_program.at(store.receivers()).all();
+        return !receivers || std::ranges::any_of(*receivers, [&](LayoutID member) {
             std::optional<FieldReference> field = findField(m_program, member, access.location.key(), BaseChain::Proven);
             return !field || flowOf(m_program, *field).location.deferral != ClosureDeferral::Unknown;
         });
@@ -1305,6 +1306,113 @@ static PassOutcome dropRepeatedMapSets(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// An object keeps the brand that it has taken. `this.#method()` behind another one, or behind the definition in the constructor, has nothing left to ask.
+static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PrivateGet))
+        return PassOutcome::Unchanged;
+
+    struct Brand {
+        ValueID object;
+        ValueID token;
+        LayoutID layout;
+        uint32_t field;
+        BlockID block;
+    };
+    const Program& program = context.program;
+    Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Brand, 8> taken;
+    Vector<size_t, 16> numberTakenAtEntry;
+    Vector<std::pair<BlockID, BitVector>> erased;
+    ValueSubstitution substitution(function);
+    dominators.walkTree([&](BlockID block) {
+        numberTakenAtEntry.append(taken.size());
+        const BlockValues& values = function.at(block).values;
+        BitVector erasedIndexes;
+        for (size_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::PrivateGet && value.opcode != Opcode::PrivateDefine)
+                continue;
+            if (!program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand))
+                continue;
+            Brand brand { sameObjectThroughCasts(function, value.objectOperand()), sameObjectThroughCasts(function, value.tokenOperand()), value.layout(), value.field(), block };
+            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
+            bool isTaken = std::ranges::any_of(taken, [&](const Brand& earlier) {
+                return earlier.object == brand.object && earlier.token == brand.token && earlier.layout == brand.layout && earlier.field == brand.field
+                    && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
+            });
+            if (!isTaken) {
+                taken.append(brand);
+                continue;
+            }
+            // The second definition throws.
+            if (value.opcode == Opcode::PrivateDefine)
+                continue;
+            substitution.replace(values[index], value.tokenOperand());
+            erasedIndexes.set(index);
+        }
+        if (!erasedIndexes.isEmpty())
+            erased.append({ block, WTF::move(erasedIndexes) });
+    }, [&](BlockID) {
+        taken.shrink(numberTakenAtEntry.takeLast());
+    });
+    if (erased.isEmpty())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (auto& [block, erasedIndexes] : erased)
+        builder.eraseValues(block, erasedIndexes);
+    substitution.apply(function, &context.analyses);
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
+static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
+        return PassOutcome::Unchanged;
+
+    struct Initialization {
+        BuiltinID builtin;
+        BlockID block;
+    };
+    const BuiltinTable& builtins = context.program.builtins();
+    Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Initialization, 8> done;
+    Vector<size_t, 16> numberDoneAtEntry;
+    Vector<std::pair<BlockID, BitVector>> erased;
+    dominators.walkTree([&](BlockID block) {
+        numberDoneAtEntry.append(done.size());
+        const BlockValues& values = function.at(block).values;
+        BitVector erasedIndexes;
+        for (size_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::InitializeBuiltin)
+                continue;
+            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            bool isDone = std::ranges::any_of(done, [&](const Initialization& earlier) {
+                return earlier.builtin == builtin && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
+            });
+            if (isDone)
+                erasedIndexes.set(index);
+            else
+                done.append({ builtin, block });
+        }
+        if (!erasedIndexes.isEmpty())
+            erased.append({ block, WTF::move(erasedIndexes) });
+    }, [&](BlockID) {
+        done.shrink(numberDoneAtEntry.takeLast());
+    });
+    if (erased.isEmpty())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (auto& [block, erasedIndexes] : erased)
+        builder.eraseValues(block, erasedIndexes);
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 } // anonymous namespace
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
@@ -1312,12 +1420,12 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome = RedundantReadElimination { context }.run();
-    return outcome | dropRepeatedMapSets(context);
+    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context) | dropRepeatedInitializations(context);
 }
 
 namespace {
 
-constexpr AbstractHeapSet carriedHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
+constexpr AbstractHeapSet carriedHeaps = heapsOfVariables;
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -1421,12 +1529,16 @@ struct VariableCarrier : LoopEditor {
         Vector<ValueID, 4> reads { };
         Vector<VariableAccess, 2> stores { };
         Vector<BlockID, 2> blocksOfOtherWrites { };
-        bool isReadInEveryTurn { false };
+        Expected<bool> isReadInEveryTurn { false };
         bool isWrittenOnLeavingPath { false };
+        // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
+        bool isReadWheneverLoopIsEntered { false };
     };
 
     // False for a loop that is entered from its copy, behind a whole turn: what every turn reads has been read when it is read ahead of the loop.
     bool m_firstTurnRunsHere { true };
+    // The copy of such a loop.
+    const RegionCloner* m_copy { nullptr };
     BitVector m_keptReads { m_context.build.validates() ? findReadsKeptForValidation(m_function) : BitVector() };
     BitVector m_stays { };
     Vector<CarriedVariable, 8> m_variables { };
@@ -1533,20 +1645,44 @@ struct VariableCarrier : LoopEditor {
             return;
         // The read ahead of the loop stands for the read of the first turn, so the first turn has to get as far: a loop may well end at its first test.
         BitVector runsInFirstTurn(m_function.blocks.size());
+        // A path that is seldom taken does not count above. That a variable has been stored may hang on the very test that such a path begins with.
+        std::optional<ProgramPoint> firstWayOut;
+        BitVector beginsBeforeAnyWayOut(m_function.blocks.size());
         for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstTurn.set(block.index());) {
+            const BlockValues& values = m_function.at(block).values;
+            if (!firstWayOut)
+                beginsBeforeAnyWayOut.set(block.index());
+            for (uint32_t index = 0; index < values.size() && !firstWayOut; ++index) {
+                if (mayLeaveOrStoreToVariable(m_analyses.effectsOf(values[index]).onAnyEdge()))
+                    firstWayOut = ProgramPoint { block, index };
+            }
             BlockID next;
             bool mayEndHere = false;
             for (const Target& target : m_function.at(block).terminator.targets) {
                 if (m_stays.get(target.block.index())) {
                     mayEndHere |= !!next;
                     next = target.block;
-                } else if (!loops.belongsTo(target.block, loop))
-                    mayEndHere |= m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency;
+                    continue;
+                }
+                if (!firstWayOut)
+                    firstWayOut = pointBeforeTerminatorOf(m_function, block);
+                if (!loops.belongsTo(target.block, loop))
+                    mayEndHere |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
             }
             if (mayEndHere || !next)
                 break;
             block = next;
         }
+        std::optional<Edge> entry = m_copy ? loops.findSingleEntry(loop) : std::nullopt;
+        auto isReachedWheneverLoopIsEntered = [&](const VariableAccess& read) {
+            if (typeOf(read.id).mayBeUnspecified())
+                return false;
+            BlockID block = read.point.block;
+            // A turn of the copy that threw in front of the read and was caught inside the loop has passed the block and not the read.
+            if (BlockID blockOfCopy = entry ? m_copy->cloneOf(block) : BlockID())
+                return dominators.terminatorDominates(blockOfCopy, entry->from);
+            return beginsBeforeAnyWayOut.get(block.index()) && (!firstWayOut || firstWayOut->block != block || read.point.index < firstWayOut->index);
+        };
 
         for (const VariableAccess& access : accesses) {
             if (access.stored || m_keptReads.get(access.id.index()) || !typeOf(access.id).isJavaScriptValue())
@@ -1563,7 +1699,8 @@ struct VariableCarrier : LoopEditor {
                 variable = &m_variables.last();
             }
             variable->reads.append(access.id);
-            variable->isReadInEveryTurn |= (!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span());
+            variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
+            variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
         // The closure of a declared function, for one: nobody stores to it while this function runs, or it is stored to once, ahead of every read.
@@ -1619,7 +1756,7 @@ struct VariableCarrier : LoopEditor {
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (!variable.isReadInEveryTurn || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (!variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -1674,7 +1811,7 @@ struct VariableCarrier : LoopEditor {
     bool carryOnce(const NaturalLoop& loop, BitVector& leaves)
     {
         BlockID header = loop.header();
-        if (m_function.at(header).isHandlerBlock() || m_function.at(header).frequency != BlockFrequency::Normal || m_analyses.isEnteredFromUnreachableBlock(header))
+        if (m_function.at(header).isHandlerBlock() || m_function.at(header).frequency.predicted() != BlockFrequency::Normal || m_analyses.isEnteredFromUnreachableBlock(header))
             return false;
         bool isLoopOfProgram = isHeaderOfLoopOfProgram(header);
         std::optional<Edge> singleEntry = m_analyses.naturalLoops().findSingleEntry(loop);
@@ -1719,6 +1856,10 @@ struct VariableCarrier : LoopEditor {
                 latchEdges.append(edge);
         }
 
+        Vector<FactAheadOfLoop, 8> facts;
+        for (const CarriedVariable& variable : m_variables)
+            facts.append(findFactAheadOfLoop(variable, pointBeforeTerminatorOf(m_function, entry.from)));
+
         IRBuilder builder = makeBuilder();
         BlockID preheader = entry.from;
         if (m_function.at(preheader).terminator.kind != TerminatorKind::Jump) {
@@ -1742,8 +1883,20 @@ struct VariableCarrier : LoopEditor {
         for (size_t index = 0; index < m_variables.size(); ++index) {
             const CarriedVariable& variable = m_variables[index];
             Vector<ValueID, 4>& definitions = definitionsOfVariables[index];
+            FactAheadOfLoop& fact = facts[index];
+            ValueID copiedRead = fact.readWithFact ? fact.readWithFact : variable.reads.first();
+            if (fact.enteredFunction) {
+                Value entered = IRBuilder::make(Opcode::Entered);
+                entered.setFunction(fact.enteredFunction);
+                builder.setOrigin(m_function.at(copiedRead).origin());
+                fact.fact = builder.insertBefore(pointBeforeTerminatorOf(m_function, preheader), WTF::move(entered));
+            }
             auto insertRead = [&](ProgramPoint point) {
-                Value read = m_function.at(variable.reads.first());
+                Value read = m_function.at(copiedRead);
+                if (fact.isNeeded) {
+                    read.setFactOperand(fact.fact);
+                    read.setMayPrecedeItsStore(fact.isMissing);
+                }
                 builder.setOrigin(read.origin());
                 return builder.insertBefore(point, WTF::move(read));
             };
@@ -1773,11 +1926,51 @@ struct VariableCarrier : LoopEditor {
         builder.applyInsertions();
 
         for (size_t index = 0; index < m_variables.size(); ++index) {
-            for (ValueID read : m_variables[index].reads)
-                becomeUpcast(m_function, read, definitionsOfVariables[index].first());
+            ValueID definition = definitionsOfVariables[index].first();
+            for (ValueID read : m_variables[index].reads) {
+                if (!facts[index].isMissing || typeOf(read).mayBeUnspecified()) {
+                    becomeUpcast(m_function, read, definition);
+                    continue;
+                }
+                Value& value = m_function.edit(read, ValueEdit::Definition);
+                ValueID factOfRead = value.factOperand();
+                value.becomeAssumeType(definition, Proven::behindFact(value.type));
+                value.setFactOperand(factOfRead);
+            }
         }
         repair(builder, definitionsOfVariables.span());
         return true;
+    }
+
+    struct FactAheadOfLoop {
+        bool isNeeded { false };
+        bool isMissing { false };
+        ValueID fact;
+        FunctionID enteredFunction;
+        ValueID readWithFact;
+    };
+
+    // The variable has its declared type ahead of the loop where a fact that one of the reads names is defined there, where one of them needs none, or where the first turn is sure to get to one of them.
+    FactAheadOfLoop findFactAheadOfLoop(const CarriedVariable& variable, ProgramPoint aheadOfLoop)
+    {
+        bool someReadLeansOnFact = std::ranges::any_of(variable.reads, [&](ValueID id) {
+            return holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
+        });
+        if (!someReadLeansOnFact)
+            return { };
+        for (ValueID id : variable.reads) {
+            const Value& read = m_function.at(id);
+            if (read.mayPrecedeItsStore())
+                continue;
+            if (!read.factOperand() || m_analyses.dominates(read.factOperand(), aheadOfLoop))
+                return { true, false, read.factOperand(), { }, id };
+        }
+        for (ValueID id : variable.reads) {
+            const Value& read = m_function.at(id);
+            if (variable.isReadWheneverLoopIsEntered && !read.mayPrecedeItsStore() && m_function.at(read.factOperand()).opcode == Opcode::Entered)
+                return { true, false, { }, m_function.at(read.factOperand()).function(), id };
+        }
+        return { true, true, { }, { }, { } };
     }
 
     // The environment that an inlined function reads its variables from is what its closure has captured. With the closure read ahead of the loop, so is the environment.
@@ -1797,7 +1990,7 @@ struct VariableCarrier : LoopEditor {
                 if (value.opcode != Opcode::GetCapture)
                     return false;
                 ValueID closure = m_analyses.definitionThroughUpcasts(value.operand(0));
-                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type)
+                if (loops.belongsTo(useLists.locationOf(closure).block, loop))
                     return false;
                 value.setOperand(0, closure);
                 hoisted.append(id);
@@ -1841,8 +2034,13 @@ struct VariableCarrier : LoopEditor {
             if (block.handler || block.terminator.kind != TerminatorKind::Branch || block.values.isEmpty() || block.terminator.conditionOperand() != block.values.last())
                 break;
             const Value& test = m_function.at(block.values.last());
+            // A fact and the cast that names it go ahead of the loop with the test, behind the tests in front of them.
+            auto isCastBehindFact = [&](ValueID value) {
+                return m_function.at(value).opcode == Opcode::AssumeType && m_function.at(value).factOperand() && useLists.locationOf(value).block == id;
+            };
             bool holdsNothingElse = std::ranges::all_of(block.values.span().first(block.values.size() - 1), [&](ValueID value) {
-                return m_function.at(value).opcode == Opcode::LoopHint;
+                Opcode opcode = m_function.at(value).opcode;
+                return opcode == Opcode::LoopHint || opcode == Opcode::Entered || isCastBehindFact(value);
             });
             if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;
@@ -1852,6 +2050,8 @@ struct VariableCarrier : LoopEditor {
                 break;
 
             ValueID tested = test.valueOperand();
+            if (isCastBehindFact(tested))
+                tested = m_function.at(tested).valueOperand();
             std::optional<size_t> parameterOfHeader;
             if (size_t position = proven.find(tested); position != notFound)
                 parameterOfHeader = tests[position].parameterOfHeader;
@@ -2067,6 +2267,7 @@ struct LoopPathSeparator : LoopEditor {
     Vector<VariableOfLoop> m_variablesWithStores { };
     bool m_likelyPathCannotLeave { false };
     bool m_pathThatOnlyComputesLeaves { false };
+    bool m_wayBackWidensLoopTypes { false };
 
     enum class PathsThatOnlyCompute : uint8_t { LeaveWhereTheyWidenParameters, Stay };
 
@@ -2140,13 +2341,13 @@ struct LoopPathSeparator : LoopEditor {
         m_analyses.didChangeValues();
     }
 
-    BitVector findUnlikelyBlocks(const NaturalLoop& loop)
+    Expected<BitVector> findUnlikelyBlocks(const NaturalLoop& loop)
     {
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
         BitVector isUnlikely(m_function.blocks.size());
         for (unsigned index = 0; index < loop.size(); ++index) {
-            if (frequencies.classOf(loop.at(index)) > frequencyOfLoop)
+            if ((frequencies.classOf(loop.at(index)) > frequencyOfLoop).predicted())
                 isUnlikely.set(loop.at(index).index());
         }
         return isUnlikely;
@@ -2416,7 +2617,7 @@ struct LoopPathSeparator : LoopEditor {
     // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes, or is an object of theirs but for that.
     BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
-        BitVector isUnlikely = findUnlikelyBlocks(loop);
+        BitVector isUnlikely = findUnlikelyBlocks(loop).predicted();
         BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
             return !onlyComputes(m_function.at(block));
         });
@@ -2450,8 +2651,8 @@ struct LoopPathSeparator : LoopEditor {
     {
         BlockID header = loop.header();
         // What is hot is a share of the program, so other code decides it. A loop that is expected to run is copied too when it is small and the copy shortens its loop-carried arithmetic.
-        bool isHot = isHotLoop(m_context, loop);
-        if (!isHot && (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || isCold(heatClassOf(m_context, header))))
+        bool isHot = isHotLoop(m_context, loop).predicted();
+        if (!isHot && (m_analyses.blockFrequencies().classOf(header).predicted() != BlockFrequency::Normal || isCold(heatClassOf(m_context, header)).predicted()))
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;
@@ -2471,7 +2672,7 @@ struct LoopPathSeparator : LoopEditor {
             plan.region.append(block);
             uint64_t bytesOfBlock = estimatedCodeBytes(m_program, m_function, m_function.at(block));
             bytes += bytesOfBlock;
-            if (m_analyses.blockFrequencies().classOf(block) == BlockFrequency::Normal)
+            if (m_analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Normal)
                 bytesOfLikelyPaths += bytesOfBlock;
         }
         // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
@@ -2539,7 +2740,7 @@ struct LoopPathSeparator : LoopEditor {
         // A copy that the loop is entered through runs as often as the loop did.
         for (BlockID block : plan.region) {
             if (!plan.letsVariablesBeCarried)
-                m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = m_function.at(block).frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+                m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = m_function.at(block).frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
         }
         for (Edge edge : plan.leavingEdges) {
             const Target& target = targetOf(m_function, edge);
@@ -2559,8 +2760,11 @@ struct LoopPathSeparator : LoopEditor {
         m_isFinishedHeader.merge(isInCopy);
         if (!addWayBack(builder, plan, cloner.cloneOf(plan.header), isInCopy))
             m_context.build.statistics().count(StatisticID::LoopsWithoutWayBack);
-        else if (plan.letsVariablesBeCarried)
-            carryVariables(builder, plan.header, cloner.cloneOf(plan.header), isInCopy);
+        else if (plan.letsVariablesBeCarried) {
+            if (m_wayBackWidensLoopTypes)
+                retypeValues();
+            carryVariables(builder, plan.header, cloner, isInCopy);
+        }
 
         // A parameter that the repair adds holds what the definitions it joins hold.
         restoreRememberedTypes();
@@ -2617,6 +2821,8 @@ struct LoopPathSeparator : LoopEditor {
         PropertyAccessContext accessContext { m_program, &m_context.inputs.flow };
         Vector<TypeID> tested(header.parameters.size());
         for (size_t index = firstVariable; index < header.parameters.size(); ++index) {
+            if (typeOf(header.parameters[index]).mayBeUnspecified())
+                continue;
             Vector<ValueID, 8> sameValues { header.parameters[index] };
             for (size_t position = 0; position < sameValues.size() && sameValues.size() < 16; ++position) {
                 for (const Use& use : uses.usesOf(sameValues[position])) {
@@ -2675,7 +2881,7 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // Emits at the end of the builder's block.
-    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, BlockFrequency whenPassedFrequency)
+    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, Expected<BlockFrequency> whenPassedFrequency)
     {
         auto argumentsWhenFailed = [&] {
             Arguments arguments;
@@ -2741,21 +2947,33 @@ struct LoopPathSeparator : LoopEditor {
         // A type that a test cannot establish (proven contents, a range of integers) keeps the copy from coming back.
         Vector<TypeID> testedEveryTurn = findTestsOfEveryTurn(*loop, isInCopy, plan.carriedValuesThatMayBeUnspecified);
         Vector<TypeID> testedTypes = testedEveryTurn;
+        Vector<TypeID> typesTakenFromCopy(numberOfParameters);
         for (size_t index = 0; index < numberOfParameters; ++index) {
             const Type& given = types.at(plan.typesOfCarriedValues[index]);
-            const Type& wanted = typeOf(m_function.at(header).parameters[index]);
-            if (testedTypes[index] || given.isSubsetOf(wanted, m_program) || plan.carriedValuesThatMayBeUnspecified.get(index))
+            const Type& typeInLoop = typeOf(m_function.at(header).parameters[index]);
+            if (testedTypes[index] || given.isSubsetOf(typeInLoop, m_program) || plan.carriedValuesThatMayBeUnspecified.get(index))
                 continue;
-            if (!given.isJavaScriptValue() || !wanted.isJavaScriptValue())
+            if (!given.isJavaScriptValue() || !typeInLoop.isJavaScriptValue())
                 return false;
+            // A test for literal strings reads the characters of a string that is none of the program's own. What the copy carries may be any string, so the loop takes any.
+            Type wanted = typeInLoop.withLiteralStringsWidened();
             Type testable = testableStoredTypeOf(PropertyAccessContext { m_program, &m_context.inputs.flow }, given, wanted, types);
             if (testable.isNever() || !given.castTo(testable, types).isSubsetOf(wanted, m_program))
                 return false;
             testedTypes[index] = types.intern(testable);
+            if (typeInLoop.hasLiteralStrings())
+                typesTakenFromCopy[index] = types.intern(wanted);
+        }
+        // The loop has the types of what entered it before there was a way back.
+        m_wayBackWidensLoopTypes = false;
+        for (size_t index = 0; index < numberOfParameters; ++index) {
+            const Type& given = types.at(plan.typesOfCarriedValues[index]);
+            const Type& typeInLoop = typeOf(m_function.at(header).parameters[index]);
+            m_wayBackWidensLoopTypes |= !(testedTypes[index] ? given.castTo(types.at(testedTypes[index]), types) : given).isSubsetOf(typeInLoop, m_program);
         }
 
         builder.setOrigin(m_function.at(header).terminator.origin());
-        BlockFrequency frequencyOfLoop = m_function.at(header).frequency;
+        Expected<BlockFrequency> frequencyOfLoop = m_function.at(header).frequency;
 
         // Everything that enters the loop comes through one block, which is the header of the cycle through the copy. So the loop stays a loop of its own, with one entering edge.
         BlockID entry = builder.addBlock(frequencyOfLoop);
@@ -2768,6 +2986,8 @@ struct LoopPathSeparator : LoopEditor {
                 typeInLoop = types.intern(types.at(typeInLoop).castTo(types.at(tested), types));
             else if (plan.carriedValuesThatMayBeUnspecified.get(index))
                 typeInLoop = types.unionOf(typeInLoop, plan.typesOfCarriedValues[index]);
+            else if (TypeID taken = typesTakenFromCopy[index])
+                typeInLoop = taken;
             parametersOfEntry.append(builder.addParameter(entry, typeInLoop));
             carried.append(builder.addParameter(tests, plan.typesOfCarriedValues[index]));
         }
@@ -2800,9 +3020,10 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // The loop has one entering edge, from the way back. What is read ahead of the loop is read there, and tested there for what every turn tested it for.
-    void carryVariables(IRBuilder& builder, BlockID header, BlockID headerOfCopy, const BitVector& isInCopy)
+    void carryVariables(IRBuilder& builder, BlockID header, const RegionCloner& copy, const BitVector& isInCopy)
     {
-        VariableCarrier carrier { { m_context }, false };
+        BlockID headerOfCopy = copy.cloneOf(header);
+        VariableCarrier carrier { { m_context }, false, &copy };
         BitVector leaves;
         bool changed = carrier.carryAround(header, leaves);
         m_variablesWithStores.appendVector(carrier.m_variablesWithStores);

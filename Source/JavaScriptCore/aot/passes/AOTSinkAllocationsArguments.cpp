@@ -295,12 +295,12 @@ static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& pr
     CalleeSetID stamp = call.callees();
     if (!stamp)
         return std::nullopt;
-    const CalleeSet& callees = program.at(stamp);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+    std::optional<ProvenValue<Callees>> callees = program.at(stamp).all();
+    if (!callees || !callees->value().builtins.empty() || callees->value().functions.empty())
         return std::nullopt;
 
     uint32_t numberOfArguments = 0;
-    for (FunctionID callee : callees.functions) {
+    for (FunctionID callee : callees->value().functions) {
         const Function& function = program.at(callee);
         if (function.has(FunctionFlags::HasRestParameter) || function.hiddenRestParameterIndex() || function.argumentCountParameterIndex())
             return std::nullopt;
@@ -830,7 +830,7 @@ static void retypeProducer(const Program& program, IRBuilder& builder, ValueID p
     Function& function = builder.function();
     Value& value = function.edit(producer);
     value.type = resultTypeOf(program, function, value, builder.types());
-    value.setExpected(ExpectedType(expectedTypeOf(program, function, value, builder.types())));
+    value.setExpected(expectedTypeOf(program, function, value, builder.types()));
 }
 
 static ValueID emitResult(IRBuilder& builder, ValueID producer, uint32_t resultIndex)

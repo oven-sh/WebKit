@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
@@ -60,6 +61,8 @@ struct ValueFlowSolverInput {
     bool isAskedHowValuesCame { true };
     bool leavesOutWhatIsCovered { false };
     uint32_t mostRounds { UINT32_MAX };
+    // With a seed, nodes of the bodies that are reached are given more than the program brings them: whatIsGivenTo() says which and what.
+    std::optional<uint32_t> seedOfWidening;
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
     RefusedCode refusedCode;
     std::array<uint64_t, 8> removedFeatures { };
@@ -337,6 +340,18 @@ public:
         }
         return m_graph.valueOf(node);
     }
+    // All that the set stands for: its members, and what they cover now that the solve has ended.
+    ValueSetID withWhatMembersCover(ValueSetID, ValueSetMaker&) const;
+    enum class GivenToNode : uint8_t { Nothing, UnknownObject, ValueNobodyKnows, WhatAnotherNodeOfBodyHolds };
+    GivenToNode whatIsGivenTo(ValueFlowNodeID) const;
+    ValueFlowNodeID nodeWhoseValueIsGivenTo(ValueFlowNodeID) const;
+    uint32_t numberOfNodesGivenMore() const { return m_numberOfNodesGivenMore; }
+    // The part of it that hangs on no order: the objects of the program written under the name of the read that the node has its value from.
+    ValueSetID writtenUnderNameOfReadSeenAt(ValueFlowNodeID node) const
+    {
+        auto found = m_writtenUnderNamesOfReads.find(node.index());
+        return found == m_writtenUnderNamesOfReads.end() ? ValueSets::nothing : found->value;
+    }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
@@ -379,6 +394,8 @@ public:
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
+    std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
+    Subject subjectOf(ValueFlowNodeID) const;
     const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID node) const LIFETIME_BOUND { return node.index() < m_input.numberOfNodes ? nullptr : &m_madeNodes[m_madeNodesOfNode[node.index() - m_input.numberOfNodes]].key; }
 
     void forEachKindOfStatementRun(NOESCAPE const Invocable<void(ValueFlowStatementKind, Opcode, const RunsAndEdges&)> auto& functor) const
@@ -453,6 +470,7 @@ public:
     uint32_t indexOfMadeNodes(const ValueFlowNodeKey& key) const { return static_cast<uint32_t>(reinterpret_cast<const MadeNodes*>(&key) - m_madeNodes.span().data()); }
     const ValueFlowNodeKey& keyOfMadeNodesAt(uint32_t index) const LIFETIME_BOUND { return m_madeNodes[index].key; }
     ValueFlowNodeID firstOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].first; }
+    uint32_t numberOfUsesOfMadeNodesAt(uint32_t index) const { return index < m_numberOfUsers.size() ? m_numberOfUsers[index] : 0; }
     ValueFlowStatementID statementOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].statement; }
     uint32_t numberOfRecordsOfMadeNodes() const { return m_madeNodes.size(); }
 
@@ -553,7 +571,6 @@ private:
 
     struct Thread;
 
-    std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
@@ -702,7 +719,6 @@ private:
     ValueSetID findClosuresFollowedTo(ValueFlowNodeID, ValueSetMaker&) const;
     void findClosuresFollowedToConstructions();
     void findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk);
-    Subject subjectOf(ValueFlowNodeID) const;
     void report();
     void dumpBytesByTable() const;
     static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
@@ -849,6 +865,7 @@ private:
     Vector<ValueFlowStatementID> m_dearStatements;
     Vector<ValueFlowStatementID> m_due;
     uint32_t m_seedOfSchedule { 0 };
+    uint32_t m_numberOfNodesGivenMore { 0 };
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     void findStatementsWithLongRowsBehindThem();
     void letLongRowsGoFirst();
@@ -871,6 +888,11 @@ private:
         WatchesNode = 1 << 2,
         WaitsForFirstOperand = 1 << 3,
     };
+    // The upper half of the byte counts how often a chain of prototypes has woken its readers.
+    static constexpr unsigned shiftOfWakeUpsByChain = 4;
+    AOT_CLASS_THRESHOLD(uint8_t, mostWakeUpsByGrowingChain, 15);
+    bool isChainOfPrototypes(ValueFlowNodeID) const;
+    void listAsDueLast(ValueFlowStatementID) const;
     void noteListener(ValueFlowNodeID node, ListenerOfNode listener) { WTF::atomicExchangeOr(&m_listenersOfNode[node.index()], static_cast<uint8_t>(listener), std::memory_order_relaxed); }
     ListWithRoomToFill<uint8_t> m_listenersOfNode;
     bool m_isFullRound { false };
@@ -960,6 +982,7 @@ private:
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;

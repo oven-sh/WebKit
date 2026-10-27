@@ -139,9 +139,9 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     return { };
 }
 
-static CodeBand bandOf(HeatClass heatClass)
+static CodeBand bandOf(Typed::Expected<HeatClass> heatClass)
 {
-    switch (heatClass) {
+    switch (heatClass.predicted()) {
     case HeatClass::Hot:
         return CodeBand::Hot;
     case HeatClass::Warm:
@@ -368,6 +368,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
+            .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
             .callSites = callSites[position].span(),
         };
         SideTableParts::append(streams[position], inputs);

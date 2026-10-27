@@ -307,8 +307,10 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageTextTests.cpp
     aot/tests/AOTImageUnitPlacementTests.cpp
     aot/tests/AOTInlinedSerializerTests.cpp
+    aot/tests/AOTInnerPointerValidationTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
+    aot/tests/AOTLedgerTests.cpp
     aot/tests/AOTListedFieldsTests.cpp
     aot/tests/AOTLoadedProgramTestSupport.cpp
     aot/tests/AOTLocationsReadAtRunTimeTests.cpp
@@ -440,6 +442,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTValueFlowSolveTestCommands.cpp
     aot/tests/AOTValueFlowTestCommands.cpp
     aot/tests/AOTValueFlowWhyTestCommands.cpp
+    aot/tests/AOTValueFlowWidenedReport.cpp
     aot/tests/AOTVerifierTests.cpp
     aot/tests/AOTWaiterOrderProgramTests.cpp
     aot/tests/AOTWebAssemblyImageTests.cpp

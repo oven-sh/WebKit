@@ -228,7 +228,7 @@ void BodyDecoder::decodeParameters(Block& block, uint32_t count)
 
 static bool isWrittenAsReflectConstruct(const Value& value)
 {
-    return FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
+    return FlagMask::isDoneInPlace(value.opcode) && value.isDoneInPlace();
 }
 
 static bool constructsWhereWritten(const Value& value)

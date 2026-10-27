@@ -88,6 +88,7 @@ bool carriesProgramValues(OpaqueKind kind)
     case OpaqueKind::Cursor:
     case OpaqueKind::KeyOrder:
     case OpaqueKind::Guard:
+    case OpaqueKind::Fact:
     case OpaqueKind::FlatString:
     case OpaqueKind::CodeAddress:
     case OpaqueKind::JSONHolders:

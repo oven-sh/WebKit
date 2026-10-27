@@ -453,9 +453,7 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
         return true;
     if (store.opcode == Opcode::PropDelete)
         return false;
-    TypeID storedType = m_function.at(store.valueOperand()).type;
-    TypeID fieldType = typeOfField(m_context, description, access.field);
-    if (storedType == fieldType || m_program.at(storedType).isSubsetOf(m_program.at(fieldType), m_program))
+    if (admissionOf(m_sinking, description, access.field, { m_function.at(store.valueOperand()).type }) != Admission::Refused)
         return false;
     return store.opcode != Opcode::PropSet || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
@@ -577,7 +575,7 @@ void AllocationPrefilter::classifyListOperand(uint32_t object, const Use& use)
 
 void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use)
 {
-    uint64_t frequency = static_cast<uint64_t>(m_function.at(use.block).frequency);
+    uint64_t frequency = static_cast<uint64_t>(m_function.at(use.block).frequency.predicted());
     uint64_t operation = use.kind == Use::Kind::Operand ? static_cast<uint64_t>(m_function.at(use.user).opcode) : static_cast<uint64_t>(m_function.at(use.block).terminator.kind);
     uint64_t distance = positionOf(use.block) - positionOf(m_objects[find(object)].block);
     addToTrace(find(object), (static_cast<uint64_t>(use.kind) | frequency << 4 | static_cast<uint64_t>(use.operandIndex) << 8 | operation << 24) + mix(distance));
@@ -1030,12 +1028,12 @@ template<typename Mask>
 void AllocationPrefilter::Solver<Mask>::count(uint32_t bit, BlockID block, const Edge* edge, const Use* use)
 {
     const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-    BlockFrequency frequency = edge ? rarerOf(frequencies.classOf(edge->from), frequencies.classOf(*edge)) : frequencies.classOf(block);
+    Expected<BlockFrequency> frequency = edge ? rarerOf(frequencies.classOf(edge->from), frequencies.classOf(*edge)) : frequencies.classOf(block);
     for (Counts& counts : m_counts) {
         if (counts.bit != bit)
             continue;
         ++counts.numberOfMaterializations;
-        if (isRarerThan(frequency, frequencies.classOf(counts.origin)))
+        if (isRarerThan(frequency, frequencies.classOf(counts.origin)).predicted())
             ++counts.numberOfRarerMaterializations;
         else if (use && use->kind == Use::Kind::Operand) {
             BuildCause cause = describeCause(m_analyses, *use);
@@ -1467,7 +1465,7 @@ void AllocationPrefilter::partition()
         const Object& root = m_objects[object];
         uint64_t allocated = isAllocation(object) ? static_cast<uint64_t>(m_function.at(root.definition).opcode) + 1 : 0;
         uint64_t distance = positionOf(root.block) - firstPositionOfComponent[findComponent(object)];
-        m_objects[findComponent(object)].traceOfComponent += mix(root.trace + mix(allocated | static_cast<uint64_t>(m_function.at(root.block).frequency) << 16 | distance << 24));
+        m_objects[findComponent(object)].traceOfComponent += mix(root.trace + mix(allocated | static_cast<uint64_t>(m_function.at(root.block).frequency.predicted()) << 16 | distance << 24));
     }
     if (m_tracesOfFruitlessComponents && !m_tracesOfFruitlessComponents->isEmpty()) {
         bool hasDecided = false;
@@ -2147,7 +2145,7 @@ void AllocationSinking::refuseUnprovenValues(VirtualObjectID object)
 // A store by name waits for PlaceTypeTests: the value that fits then goes on as a value of the field's type, and only the rare arm keeps the store by name.
 bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
-    return !m_inputs.hasOperationsOnSlots || m_inputs.isLargeForItsWork || m_function.at(block).frequency == BlockFrequency::Normal;
+    return !m_inputs.hasOperationsOnSlots || m_inputs.isLargeForItsWork || m_function.at(block).frequency.predicted() == BlockFrequency::Normal;
 }
 
 } } } // namespace JSC::AOT::Typed

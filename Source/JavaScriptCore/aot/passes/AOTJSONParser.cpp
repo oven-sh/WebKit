@@ -393,7 +393,7 @@ struct JSONParserBuilder final : Emission {
     }
 
     TypeID testedFieldTypeOf(const MemberParse& member) { return fieldTypeToTest(typeStoredInSlotOf(*member.field)); }
-    bool canFillField(const MemberParse& member) { return !passesOnlyUndefinedIntoStoredType(program().at(member.valueType), testedFieldTypeOf(member)); }
+    bool canFillField(const MemberParse& member) { return !member.field->form.contains(FieldForm::IsAccessor) && !passesOnlyUndefinedIntoStoredType(program().at(member.valueType), testedFieldTypeOf(member)); }
     ValueID emitRequireTypeOfMember(ValueID value, const MemberParse& member, BlockID otherwise) { return emitRequireFieldType(value, typeStoredInSlotOf(*member.field), otherwise); }
     ValueID appendObjectKey(ValueID order, LayoutID layout, const MemberParse& member) { return builder().append(make<&Value::setLayout, &Value::setField>(Opcode::JSONObjectKey, { order }, layout, member.member->field)); }
 
@@ -516,7 +516,8 @@ struct JSONParserBuilder final : Emission {
 
         builder().moveToEndOf(more);
         emitRequireByte(state.cursor(), '"', exits.rejected);
-        emitJumpIf(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor() }), exits.unknown);
+        IRBuilder::BranchBlocks keyHasEscapes = builder().emitBranch(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor() }), BlockFrequency::Rare, BlockFrequency::Normal);
+        builder().moveToEndOf(keyHasEscapes.notTaken);
 
         auto emitMatchedMember = [&](size_t index, ValueID valueStart) {
             ObjectState stateOfMember = state;
@@ -545,10 +546,18 @@ struct JSONParserBuilder final : Emission {
             }
         }
 
-        if (exits.undeclaredMember)
+        if (exits.undeclaredMember) {
             builder().emitJump(exits.undeclaredMember);
-        else
-            emitExtraMembers(parse, state);
+            builder().moveToEndOf(keyHasEscapes.taken);
+            builder().emitJump(exits.unknown);
+            return;
+        }
+        BlockID undeclared = builder().addBlock();
+        builder().emitJump(undeclared);
+        builder().moveToEndOf(keyHasEscapes.taken);
+        builder().emitJump(undeclared);
+        builder().moveToEndOf(undeclared);
+        emitExtraMembers(parse, state);
     }
 
     ParsedValue emitObjectClosing(const ObjectParse& parse)

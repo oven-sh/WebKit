@@ -25,6 +25,7 @@
 #include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "AOTVector.h"
+#include "ArrayConstructor.h"
 #include "ButterflyInlines.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
@@ -332,6 +333,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
     OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance* instance, EncodedJSValue lengthOrElement))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayOfLengthOrElement);
+    OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, JSValue::decode(lengthOrElement)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instance, uint32_t lengthAndCapacity, uint32_t flags))

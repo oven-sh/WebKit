@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTFrameAllocationPointers.h"
@@ -221,12 +222,16 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             verifyClassOperation(block, id, value);
         else if (opcode == Opcode::NewArray || Value::opcodesWithKeyIsIntegral.contains(opcode))
             verifyElementOperation(block, id, value);
+        else if (opcode == Opcode::NewObject)
+            verifyFormsOfListedFields(block, id, value);
         return;
     case OperationFamily::Constant:
         if (opcode == Opcode::NewClosure)
             verifyClosureOperation(block, id, value);
         else if (opcode == Opcode::Builtin || opcode == Opcode::ModuleBuiltin)
             verifyBuiltinOperation(block, id, value);
+        else if (opcode == Opcode::Data)
+            verifyElementOperation(block, id, value);
         else if (opcode == Opcode::KeyConstant && isPrivateKind(m_program.at(value.key()).kind))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
@@ -344,9 +349,18 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
+    case Opcode::AssumeType: {
+        // Nobody tests storage for numbers alone where a type proves it. A literal is born with such storage only where it names it.
+        const ClassPart* part = m_program.at(value.provenType()).singleBuiltinClass();
+        if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
+            return;
+        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()));
+        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
+            fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
+        return;
+    }
     case Opcode::Convert:
     case Opcode::NarrowByField:
-    case Opcode::AssumeType:
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
@@ -414,11 +428,11 @@ void FunctionVerifier::verifyTerminatorOperation(BlockID block, const Terminator
         Vector<LayoutID, 16> members;
         for (LayoutSetID id : terminator.layoutSets()) {
             const LayoutSet& set = m_program.at(id);
-            if (!set.isComplete || set.members.isEmpty()) {
+            if (!set.all() || set.written().isEmpty()) {
                 fail(InternalErrorKind::PayloadOutOfRange, block);
                 return;
             }
-            members.appendVector(set.members);
+            members.appendVector(set.written());
         }
         if (hasDuplicates(members.span()))
             fail(InternalErrorKind::DuplicateListEntry, block);

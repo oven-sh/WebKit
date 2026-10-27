@@ -17,6 +17,7 @@
 #include "AOTInstance.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlimClosure.h"
 #include "AOTSort.h"
 #include "AOTStubsClosures.h"
@@ -51,6 +52,25 @@ bool ClosureTestEmitter::isDecidedByClosureWord(FunctionID function, const Type&
     return (tested.anyFunction || tested.anyObject) && !m_options.recorded.validates;
 }
 
+// In a validating build only a function whose closures stay as they were created is decided so.
+Condition ClosureTestEmitter::hasClosureWordThatDecides(CellPointer cell, FunctionID genericEntrypoint)
+{
+    if (m_options.recorded.validates) {
+        LBasicBlock hasProperties = newBlock();
+        LBasicBlock continuation = newBlock();
+        m_out.branch(hasMutableCellType(cell, SlimClosureWithPropertiesType).value(), rareEdge(hasProperties), normalEdge(continuation));
+
+        m_out.appendTo(hasProperties);
+        Pointer butterfly = loadField<Pointer>(cell, m_heaps.JSObject_butterfly);
+        Word32 reifiedFunction(m_out.load32(m_out.address(m_heaps.properties.atAnyNumber(), butterfly.value(), ReifiedSlimClosure::offsetOfFunctionIndexInButterfly())));
+        emitter<RuntimeValidationEmitter>().checkTypeTestsAgree(notEqual(reifiedFunction, word32(genericEntrypoint.index())), cell);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+    }
+    return hasClosureWordOf(cell, true, genericEntrypoint);
+}
+
 Word32 ClosureTestEmitter::upperHalfOfWordAtSlimClosureWord(CellPointer cell)
 {
     return Word32(m_out.load32(m_out.address(cell.value(), m_heaps.AOTSlimClosure_word, sizeof(uint32_t))));
@@ -59,7 +79,7 @@ Word32 ClosureTestEmitter::upperHalfOfWordAtSlimClosureWord(CellPointer cell)
 Condition ClosureTestEmitter::isClosureOf(CellPointer cell, FunctionID function, const Type& tested, CodeShape shape)
 {
     if (isDecidedByClosureWord(function, tested))
-        return hasClosureWordOf(cell, true, inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function)));
+        return hasClosureWordThatDecides(cell, inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function)));
     return asBoolean([&](BranchTargets targets) {
         branchOnIsClosureOf(cell, function, tested, targets, shape);
     });
@@ -92,7 +112,7 @@ void ClosureTestEmitter::branchOnIsClosureOf(CellPointer cell, FunctionID functi
         return;
     }
     if (isDecidedByClosureWord(function, tested)) {
-        branch(hasClosureWordOf(cell, true, entrypoint), targets);
+        branch(hasClosureWordThatDecides(cell, entrypoint), targets);
         return;
     }
     if (m_placement.closureIdentityOf(function) == ClosureIdentity::TableCell) {

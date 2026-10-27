@@ -16,6 +16,7 @@
 #include "AOTFunctionData.h"
 #include "AOTLayoutData.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubFrames.h"
 #include "AOTStubProgramTables.h"
 #include "AOTStubsCallLists.h"
 #include "AOTStubsField.h"
@@ -204,7 +205,9 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     emitCallOfUncreatedClosure(jit, count);
     jit.move(calleeGPR, jit.reuseScratch(slotNameRegister));
     jit.move(thisGPR, R0);
-    jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+    jit.callStub(getById());
+    // Whatever the read throws or runs is shown where the read is written. The call comes behind.
+    jit.bindReturnLabel(StubFrameKind::MethodRead);
     Jump notCell = jit.branchIfNotCell(R0);
     jit.move(R0, calleeGPR);
     jit.load64(Address(sp, sizeof(EncodedJSValue)), thisGPR);

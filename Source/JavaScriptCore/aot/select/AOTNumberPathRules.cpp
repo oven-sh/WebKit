@@ -256,7 +256,7 @@ static void emitIntegerTests(IRBuilder& builder, FunctionAnalyses& analyses, Spl
     analyses.didChangeControlFlow();
     builder.moveToEndOf(split.head);
 
-    BlockFrequency frequency = function.at(split.head).frequency;
+    Expected<BlockFrequency> frequency = function.at(split.head).frequency;
     for (ValueID tested : split.path->tested) {
         ValueID test = builder.appendTypeTest(tested, TypeTable::int32);
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, frequency);

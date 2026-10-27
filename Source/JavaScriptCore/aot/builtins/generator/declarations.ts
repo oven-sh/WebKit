@@ -373,6 +373,12 @@ export interface SeenCodeOnlyDeclaration {
   nativeFiles: readonly string[];
 }
 
+/** The same as `namesDefinedOnNewInstances: []` in the declaration of each class. */
+export interface InstancesWithoutOwnNamesDeclaration {
+  declares: "InstancesWithoutOwnNames";
+  classes: readonly ClassName[];
+}
+
 export type Declaration =
   | NamespaceDeclaration
   | StaticTableDeclaration
@@ -403,7 +409,8 @@ export type Declaration =
   | NamedMemberCallDeclaration
   | HostMethodCallDeclaration
   | StartupDeclaration
-  | SeenCodeOnlyDeclaration;
+  | SeenCodeOnlyDeclaration
+  | InstancesWithoutOwnNamesDeclaration;
 
 export interface SourcedDeclaration {
   declaration: Declaration;

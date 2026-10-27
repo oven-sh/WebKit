@@ -65,7 +65,7 @@ data d2 root=Array{contents=string elements=[String{value="a"}, String{value="b"
 # CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}staticsOffset=16 @50
 # CHECK: = NewTemplateObject templateStrings=[{cooked="x" raw="x"}] request=[[template]] staticsOffset=24 @60
 # CHECK-LABEL: function f1 name="runsOften"
-# CHECK: = NewArray {{*}}literalStorage=Profiled staticsOffset=32 @70
+# CHECK: = NewArray {{*}}literalStorage=Profiled staticsOffset=32 [contentsAreProven] @70
 # CHECK: = Data data=d2 {{*}}encoding=CopyOnWriteArray request=[[strings]] @80
 # CHECK-NOT: staticsOffset
 # CHECK-LABEL: function f2

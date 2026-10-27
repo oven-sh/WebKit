@@ -33,7 +33,7 @@ struct FreshResultVariant {
     Vector<FreshResultField, 4> properties;
     Vector<FreshResultField, 1> parts;
     // Of the arm of the wrapper that builds the variant.
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
 
     bool buildsSameValueAs(const FreshResultVariant&) const;
 };

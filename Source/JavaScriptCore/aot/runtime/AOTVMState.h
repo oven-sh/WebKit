@@ -79,6 +79,8 @@ public:
     CallFrame* classCalledWithoutNew { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
+    // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
+    void* stackPointerOfImport { nullptr };
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;

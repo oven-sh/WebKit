@@ -95,7 +95,7 @@ public:
     void beginArms();
     // The follower stands in the block that only the taken edge of the branch on the root enters, and nobody else uses what stands in front of it there. Each arm gets a copy of that edge and, behind it, copies of those values and of the follower.
     void beginArms(ValueID follower, bool followerIsOnlyReturned);
-    BlockID addArm(BlockFrequency);
+    BlockID addArm(Expected<BlockFrequency>);
     ValueID appendOriginals();
     void endArm(std::optional<ValueID> result);
     void endArmInFrontOfFollower(ValueID result);
@@ -114,7 +114,7 @@ private:
     struct Follower {
         ValueID id;
         BlockID block;
-        BlockFrequency frequency;
+        Expected<BlockFrequency> frequency;
         ValueID handedOver;
         Vector<ValueID, 2> earlierValues;
         Vector<Value, 3> originals;
@@ -130,7 +130,7 @@ private:
     void reopenBlock(BlockID);
     void moveRootToBlockEnd();
     void expandRoot();
-    BlockFrequency slowPathFrequency() const;
+    Expected<BlockFrequency> slowPathFrequency() const;
     Vector<uint32_t, 4> carriedMembers() const;
     void addCarriedParameters(const Vector<uint32_t, 4>& carried);
     ValueID appendFastResult(ValueID member);

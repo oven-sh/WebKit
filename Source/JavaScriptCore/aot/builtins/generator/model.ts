@@ -583,7 +583,6 @@ export interface ModelClass {
   constructor: ModelBuiltin | null;
   prototype: ModelBuiltin | null;
   jsType: string;
-  typedArrayType: string;
   instanceTest: InstanceTest;
   sharingMode: SharingMode | null;
   instanceCppClass: CppClassRef | null;

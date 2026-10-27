@@ -396,7 +396,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     ProgramPoint pointOfSeeds = analyses.useLists().pointAfter(candidate.generator);
     Origin origin = function.at(candidate.generator).origin();
     Origin originOfBody = originOfSteps(program, function, candidate);
-    BlockFrequency frequency = function.at(pointOfSeeds.block).frequency;
+    Expected<BlockFrequency> frequency = function.at(pointOfSeeds.block).frequency;
     builder.setOrigin(origin);
     ValueID resumePoint = builder.insertBefore(pointOfSeeds, makeInteger(0));
     ValueID returnSite = builder.insertBefore(pointOfSeeds, makeInteger(0));
@@ -539,7 +539,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     }
 
     builder.setOrigin(origin);
-    BlockFrequency frequencyWhenFinished = rarerOf(frequency, BlockFrequency::Unlikely);
+    Expected<BlockFrequency> frequencyWhenFinished = rarerOf(frequency, BlockFrequency::Unlikely);
     builder.setHandler(std::nullopt);
     BlockID finished = builder.addBlock(frequencyWhenFinished);
     BlockID stepped = builder.addBlock(frequencyWhenFinished);

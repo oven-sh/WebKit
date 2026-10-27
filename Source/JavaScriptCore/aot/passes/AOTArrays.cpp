@@ -58,18 +58,18 @@ ArrayStorage arrayStorageHolding(const Type& elements)
     return primitives & ~Primitive::Number ? ArrayStorage::Contiguous : ArrayStorage::Double;
 }
 
-ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
+Expected<ArrayStorage> arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
 {
     if (array.arrayStorage != ArrayStorage::Other)
         return array.arrayStorage;
-    const Type& elements = program.at(array.contentsAt(program.builtins(), ContentsSlot::Element));
+    const Type& elements = program.at(array.expectedContentsAt(program.builtins(), ContentsSlot::Element).predicted());
     return elements.isAnything() ? ArrayStorage::Other : arrayStorageHolding(elements);
 }
 
-ArrayStorage arrayStorageDeclaredBy(const Program& program, const Type& array)
+Expected<ArrayStorage> arrayStorageDeclaredBy(const Program& program, const Type& array)
 {
     const ClassPart* part = array.singleBuiltinClass();
-    return part ? arrayStorageDeclaredBy(program, *part) : ArrayStorage::Other;
+    return part ? arrayStorageDeclaredBy(program, *part) : Expected(ArrayStorage::Other);
 }
 
 static ArrayStorage kindAtAllocation(ArrayStorage kind)
@@ -84,14 +84,14 @@ ArrayStorage arrayStorageAtAllocation(const Type& elements)
 
 ArrayStorage arrayStorageAtAllocation(const Program& program, const Type& array)
 {
-    return kindAtAllocation(arrayStorageDeclaredBy(program, array));
+    return kindAtAllocation(arrayStorageDeclaredBy(program, array).predicted());
 }
 
 ArrayStorage arrayStorageOfLiteral(const Program& program, const Type& array, ArrayLiteralParts parts)
 {
     // A literal without an element has the declared kind, or a more general one that the arrays of its site have turned into, and none is more general than Contiguous.
     if (!parts.hasElements && !parts.hasHoles)
-        return arrayStorageDeclaredBy(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
+        return arrayStorageDeclaredBy(program, array).predicted() == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
     // A list of numbers that does not fit its kind is found when code is generated or when the literal runs.
     return arrayStorageAtAllocation(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
 }
@@ -108,8 +108,8 @@ ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& a
     bool areDoublesOrHoles = true;
     for (const DataNode& element : array.elements) {
         const auto* number = element.tryAs<DataNode::Number>();
-        areInt32 &= number && jsNumber(purifyNaN(number->value)).isInt32();
-        areDoublesOrHoles &= number ? !std::isnan(number->value) : element.is<DataNode::Hole>();
+        areInt32 &= number && canStoreWithoutConversion(ArrayStorage::Int32, number->value);
+        areDoublesOrHoles &= number ? canStoreWithoutConversion(ArrayStorage::Double, number->value) : element.is<DataNode::Hole>();
     }
     // The readers of an array that is declared to hold numbers test for Double storage, also where every constant is a whole number.
     if (areInt32 && arrayStorageHolding(program.at(array.contents)) != ArrayStorage::Double)
@@ -153,6 +153,21 @@ bool canStoreWithoutConversion(ArrayStorage kind, const Type& stored)
     if (kind == ArrayStorage::Double)
         return stored.isNumber() && !stored.mayBeNaN();
     return kind == ArrayStorage::Contiguous || (kind == ArrayStorage::Int32 && stored.isInt32());
+}
+
+bool canStoreWithoutConversion(ArrayStorage kind, double stored)
+{
+    if (kind == ArrayStorage::Double)
+        return !std::isnan(stored);
+    return kind == ArrayStorage::Contiguous || (kind == ArrayStorage::Int32 && jsNumber(purifyNaN(stored)).isInt32());
+}
+
+bool fitsStorageOfLiteral(ArrayStorage kind, const Type& element)
+{
+    if (element.isNever())
+        return true;
+    // A NaN among the numbers is found when the literal runs and takes the slow path.
+    return kind == ArrayStorage::Double ? element.isNumber() : canStoreWithoutConversion(kind, element);
 }
 
 Type typeOfElementRead(ArrayStorage kind)
@@ -323,7 +338,8 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
     };
     auto calleeOf = [&](ValueID callback) {
         CalleeCandidates candidates = calleeCandidates(program, function, callback);
-        return candidates.isProven() && candidates.proven.size() == 1 && !candidates.hasOtherCallees && !candidates.mayBeNullish ? candidates.proven[0] : FunctionID();
+        std::optional<ProvenValue<FunctionID>> only = candidates.only();
+        return only ? only->value() : FunctionID();
     };
     auto prependCallback = [&](ArrayChain& chain, const ArrayMethodCall& call, ValueID thisArgument) {
         ValueID callback = call.argumentOrNull(0);
@@ -333,12 +349,12 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
     };
     // The loop of the traversal runs once for each element, however seldom the chain itself is reached. In cold code it pays where each callback goes into the loop.
     auto isWorthFusingIn = [&](const ArrayChain& chain) {
-        if (analyses.blockFrequencies().classOf(chain.block) == BlockFrequency::Rare || context.runsAtMostOnce(chain.block))
+        if (analyses.blockFrequencies().classOf(chain.block).predicted() == BlockFrequency::Rare || context.runsAtMostOnce(chain.block))
             return false;
-        if (!isCold(heatClassOf(context, chain.block)))
+        if (!isCold(heatClassOf(context, chain.block)).predicted())
             return true;
         // Outside the loop the text is put together by calls, which cost what `join` costs and more.
-        if (context.inputs.heat.isCompact(program, context.id) || chain.shape.end == ChainEndKind::Join)
+        if (context.inputs.heat.isCompact(program, context.id).predicted() || chain.shape.end == ChainEndKind::Join)
             return false;
         return !chain.callbacks.isEmpty() && std::ranges::all_of(chain.callbacks, [](const ChainCallback& callback) {
             return !!callback.callee;
@@ -577,7 +593,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     }
     if (chain.shape.end == ChainEndKind::Join) {
         const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
-        bool runsNoUserCode = part && part->contentsAreProven && program.at(part->contentsAt(program.builtins(), ContentsSlot::Element)).hasOnlyPrimitives(primitivesJoinedWithoutUserCode);
+        std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+        bool runsNoUserCode = elements && program.at(*elements).hasOnlyPrimitives(primitivesJoinedWithoutUserCode);
         effects.append(runsNoUserCode ? Effects::none() : context.inputs.effects.unknownCode());
     }
     if (chain.shape.end == ChainEndKind::FlatMap) {
@@ -1107,6 +1124,7 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
         Value allocation = plan.appendsElements ? IRBuilder::make(Opcode::NewArray) : IRBuilder::make(Opcode::NewContiguousArray, { plan.lengthOfArray });
         if (plan.appendsElements) {
             allocation.setContents(function.at(plan.literal).contents());
+            allocation.setContentsAreProven(function.at(plan.literal).contentsAreProven());
             allocation.setArrayStorage(function.at(plan.literal).arrayStorage());
             allocation.setCapacityOperand(plan.lengthOfArray);
         }
@@ -1356,7 +1374,7 @@ static bool canReadHolesAsNaN(FunctionPassContext& context, const PresenceQuery&
 // Nothing where the access keeps its arm for an absent element.
 static std::optional<PresenceTest> choosePresenceTest(FunctionPassContext& context, const PresenceQuery& query)
 {
-    if (!hasFormWithoutAbsentElement(context.program, context.function, query) || context.analyses.blockFrequencies().classOf(query.block) == BlockFrequency::Rare)
+    if (!hasFormWithoutAbsentElement(context.program, context.function, query) || context.analyses.blockFrequencies().classOf(query.block).predicted() == BlockFrequency::Rare)
         return std::nullopt;
     if (query.kind == Access::Read && isTestedForAbsence(context.analyses, query.access))
         return std::nullopt;

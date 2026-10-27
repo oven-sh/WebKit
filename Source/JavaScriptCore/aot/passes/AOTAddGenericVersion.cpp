@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCFG.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionEditing.h"
@@ -150,7 +151,7 @@ struct GenericVersionBuilder {
         bool isUnsplitGenerator = function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator);
         for (CheckSite& site : sites)
             site.isWorthExit = !standsBetweenMethodReadAndCall(site);
-        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id);
+        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
         if (runsSeldom || isUnsplitGenerator || function.role == FunctionRole::GenericVersion || keepsMoreAliveOverAwaitThanFrameMapHolds() || !tryCreateGenericVersion()) {
             if (function.role != FunctionRole::GenericVersion) {
                 context.build.statistics().count(StatisticID::GenericVersionsNotCreated);
@@ -261,9 +262,12 @@ struct GenericVersionBuilder {
             const Value& user = function.at(use.user);
             if (user.operandUses(use.operandIndex) != OperandUses { OperandUse::Retains })
                 return false;
-            // The type of an array literal follows its elements. So only calls and that store count among the operations that take any value.
+            // Only calls and that store count among the operations that take any value.
             if (user.operandKind(use.operandIndex) == OperandKind::Any)
                 return effectRuleOf(user.opcode) == EffectRule::Call || isOnlyStore(use.user);
+            // The storage of an array literal that names none follows the types of its elements.
+            if (holderOfRequiredTypes(program, user) == RequiredTypeHolder::ContentsOfLiteral)
+                return false;
             return user.operandKind(use.operandIndex) == OperandKind::Declared && takesAnything(requiredTypeOfOperand(typing, user, use.operandIndex));
         });
     }
@@ -336,10 +340,12 @@ struct GenericVersionBuilder {
         Vector<ValueID, 8> dropped;
         const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
         for (const CheckSite& site : sites) {
+            const Value& check = function.at(site.check);
             auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, function.at(site.check).valueOperand())) && !isReliedOn(site.check);
+                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand())) && !isReliedOn(site.check);
             };
-            if (isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
+            bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
+            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
                 dropped.append(site.check);
         }
         if (dropped.isEmpty())
@@ -518,7 +524,7 @@ struct GenericVersionBuilder {
             const Block& after = function.at(cut.blockAfter);
             if (blockBefore.terminator.kind != TerminatorKind::Jump || blockBefore.terminator.next().block != cut.blockAfter)
                 continue;
-            if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || blockBefore.frequency != after.frequency || !cfg.singleIncomingEdge(cut.blockAfter))
+            if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || !blockBefore.frequency.isSamePredictionAs(after.frequency) || !cfg.singleIncomingEdge(cut.blockAfter))
                 continue;
             Block& before = function.edit(cut.blockBefore, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
             Block merged = std::exchange(function.edit(cut.blockAfter), Block { });
@@ -769,7 +775,7 @@ struct GenericVersionBuilder {
 
         replaceChecksWithGuards(checksWithoutExit.span());
         BitVector isMadeFromCheckedValue = valuesBehind(function, analyses.cfg(), checksWithExit.span());
-        copy.clone([](BlockFrequency frequency) { return frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare; });
+        copy.clone([](Expected<BlockFrequency> frequency) -> Expected<BlockFrequency> { return frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare; });
         forgetProofsInCopy(copy, isMadeFromCheckedValue);
         for (const CheckSite& site : sites) {
             if (site.hasExit)
@@ -1026,6 +1032,9 @@ static Vector<TypedStore, 16> findTypedStores(const TypingContext& typing, const
             const Value& value = function.at(id);
             if (!opcodesWithRequiredTypes.contains(value.opcode))
                 continue;
+            // The contents of a literal are cut by no check, so they take nothing that a check turns away.
+            if (holderOfRequiredTypes(typing.program, value) == RequiredTypeHolder::ContentsOfLiteral)
+                continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (value.operandKind(operandIndex) == OperandKind::Declared)
                     visit({ operand, requiredTypeOfOperand(typing, value, operandIndex), &value, operandIndex });
@@ -1070,6 +1079,11 @@ static std::optional<Position> variableReadThroughCastsAndChecks(const Function&
 bool mayTurnValueAway(const Program& program, const Function& function, const Value& check)
 {
     return !program.typeOf(function, check.valueOperand()).isSubsetOf(program.at(check.expectedType().predicted()), program);
+}
+
+bool changesCodeWhereProven(const Type& checked)
+{
+    return !checked.anyObject;
 }
 
 namespace {
@@ -1152,12 +1166,12 @@ struct PositionsProvenByTypes {
     bool isAssumedWithoutStart(Position position) const { return isAmong(numbersOfAssumedWithoutStart, position); }
     bool isCandidate(Position position) const { return isAssumed(position) || isAssumedWithoutStart(position); }
     bool holdsDeclaredType(Position position) const { return isAssumed(position) || !findDeclaredType(program, position)->isExpected(); }
-    const Type& declaredTypeOf(Position position) const { return program.at(findDeclaredType(program, position)->expected().predicted()); }
+    Expected<const Type&> declaredTypeOf(Position position) const { return program.at(findDeclaredType(program, position)->expected().predicted()); }
     bool isInside(const Type& type, TypeID other) const { return type.isSubsetOf(program.at(other), program); }
 
-    Type typeWithoutStartOf(Position position) const
+    Expected<Type> typeWithoutStartOf(Position position) const
     {
-        Type type = declaredTypeOf(position);
+        Type type = declaredTypeOf(position).predicted();
         type.primitives = type.primitives & ~Primitive::Undefined;
         return type;
     }
@@ -1270,7 +1284,7 @@ struct PositionsProvenByTypes {
                 return;
             body.variablesNamed.append(*position);
             const Type& arriving = program.typeOf(function, operand);
-            if (!arriving.isSubsetOf(declaredTypeOf(*position), program)) {
+            if (!arriving.isSubsetOf(declaredTypeOf(*position).predicted(), program)) {
                 // Of a position that flow has proven the types of the values may know less.
                 (isAssumed(*position) ? body.positionsGivenUp : body.variablesThatMayHoldUndefined).append(*position);
                 return;
@@ -1299,7 +1313,7 @@ struct PositionsProvenByTypes {
     {
         if (!isAssumed(position))
             return;
-        if (!(value ? program.typeOf(function, value) : program.at(TypeTable::undefined)).isSubsetOf(declaredTypeOf(position), program))
+        if (!(value ? program.typeOf(function, value) : program.at(TypeTable::undefined)).isSubsetOf(declaredTypeOf(position).predicted(), program))
             body.positionsGivenUp.append(position);
         else if (value)
             body.arrivals.append({ position, value });
@@ -1322,7 +1336,7 @@ struct PositionsProvenByTypes {
         bool passesList = call.opcode != Opcode::Call && call.opcode != Opcode::Construct && call.opcode != Opcode::SuperConstruct;
         // The bound arguments come first, and the bound `this` takes the place of the operand.
         bool mayCallBoundFunction = call.accessSite() && flow.mayCallBoundFunction(call.accessSite());
-        for (FunctionID callee : program.at(stamp).functions) {
+        for (FunctionID callee : program.at(stamp).followed().value()) {
             if (mayCallBoundFunction) {
                 forEachParameterOf(callee, true, giveUpParameter);
                 continue;
@@ -1366,8 +1380,8 @@ struct PositionsProvenByTypes {
             return append(call.function());
         if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallList) || !call.callees())
             return false;
-        const CalleeSet& callees = program.at(call.callees());
-        return callees.isComplete && callees.builtins.isEmpty() && !callees.functions.isEmpty() && std::ranges::all_of(callees.functions, append);
+        std::optional<ProvenValue<Callees>> callees = program.at(call.callees()).all();
+        return callees && callees->value().builtins.empty() && !callees->value().functions.empty() && std::ranges::all_of(callees->value().functions, append);
     }
 
     // False unless the check passes as long as the positions that are appended hold.
@@ -1376,8 +1390,8 @@ struct PositionsProvenByTypes {
         if (std::optional<Position> variable = variableReadThroughCastsAndChecks(function, check.valueOperand())) {
             if (!holdsDeclaredType(*variable))
                 return false;
-            if (!isInside(declaredTypeOf(*variable), check.expectedType().predicted())) {
-                if (!isAssumedWithoutStart(*variable) || !isInside(typeWithoutStartOf(*variable), check.expectedType().predicted()))
+            if (!isInside(declaredTypeOf(*variable).predicted(), check.expectedType().predicted())) {
+                if (!isAssumedWithoutStart(*variable) || !isInside(typeWithoutStartOf(*variable).predicted(), check.expectedType().predicted()))
                     return false;
                 tested.sourcesWithoutStart.append(*variable);
             }
@@ -1390,7 +1404,7 @@ struct PositionsProvenByTypes {
         if (parameter == notFound || parameter >= function.numberOfEntryParameters())
             return appendResultsTestedBy(function, definition, check.expectedType().predicted(), tested.sources);
         Position position { Position::Kind::EntryParameter, id.index(), static_cast<uint32_t>(parameter) };
-        if (!isAssumed(position) || !isInside(declaredTypeOf(position), check.expectedType().predicted()))
+        if (!isAssumed(position) || !isInside(declaredTypeOf(position).predicted(), check.expectedType().predicted()))
             return false;
         tested.sources.append(position);
         return true;
@@ -1428,7 +1442,7 @@ struct PositionsProvenByTypes {
                     answered = typeOfConvert(typing, answered, answered, cast.declared);
             }
             Vector<Position, 2> sources;
-            if (answered.isSubsetOf(declaredTypeOf(result), program))
+            if (answered.isSubsetOf(declaredTypeOf(result).predicted(), program))
                 body.arrivals.append({ result, call });
             else if (!appendResultsTestedBy(function, call, function.result().expected().predicted(), sources))
                 body.positionsGivenUp.append(result);
@@ -1633,7 +1647,7 @@ struct PositionsProvenByTypes {
             if (!passes(tested))
                 continue;
             Value& check = function.edit(tested.check);
-            check.becomeAssumeType(check.valueOperand(), Proven::byPosition(check.expectedType().predicted()));
+            check.becomeAssumeType(check.valueOperand(), Proven::byEveryArrival(check.expectedType()));
             numberOfChecks.fetch_add(1, std::memory_order_relaxed);
         }
         settleProofsBehindAnsweredChecks(function);
@@ -1646,7 +1660,7 @@ struct PositionsProvenByTypes {
             Vector<TailCast, 4> casts;
             for (TailCast cast : terminator.casts())
                 casts.append(cast);
-            casts.append(TailCast { DeclaredType(Proven::byPosition(function.result().expected().predicted())), CastResolution::Assume });
+            casts.append(TailCast { DeclaredType(Proven::byEveryArrival(function.result().expected())), CastResolution::Assume });
             terminator.setCasts(casts.span());
         }
     }
@@ -1657,9 +1671,11 @@ struct PositionsProvenByTypes {
     void apply()
     {
         for (Position position : assumed)
-            edit(position).establish(Proven::byPosition(edit(position).expected().predicted()));
-        for (Position position : assumedWithoutStart)
-            edit(position).changeType(Proven::byPosition(program.types.intern(typeWithoutStartOf(position))));
+            edit(position).establish(Proven::byEveryArrival(edit(position).expected()));
+        for (Position position : assumedWithoutStart) {
+            ExpectedType withoutStart(program.types.intern(typeWithoutStartOf(position).predicted()));
+            edit(position).changeType(Proven::byEveryArrival(withoutStart));
+        }
 
         // Whoever has a proven parameter or result, tests one, or hands a value to one is typed anew. So is whoever names a proven variable.
         BitVector isChanged(program.functions.size());
@@ -2055,7 +2071,7 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     Vector<ValueID, 8> checks;
     for (const GuardedRead& read : collectGuardedReads(program, id, function, analyses, marked, changedValues)) {
         DeclaredType checked = read.declared;
-        checked.establish(Proven::byPosition(read.declared.expected().predicted()));
+        checked.establish(Proven::byConversion(read.declared.expected()));
         ConvertResolution resolution = resolveConvert(typing, typing.typeOf(read.declared), checked);
         if (resolution.cast != CastResolution::Check)
             continue;
@@ -2097,7 +2113,14 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     return numberOfChecks;
 }
 
-static uint64_t guardTaintedPositions(Program& program, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs)
+void expectFields(Program& program, std::span<const FieldReference> fields, BuildContext& build)
+{
+    for (FieldReference field : fields)
+        markExpected(program, positionOfField(field));
+    markEnforcedFields(program, build);
+}
+
+static uint64_t guardTaintedPositions(Program& program, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, std::span<const FieldReference> fieldsTakenBack = { })
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
     const ParallelLoops& loops = build.parallelLoops();
@@ -2151,6 +2174,9 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         AOT::sort(marked);
         removeRepeatedElements(marked);
         marked.removeAllMatching([&](Position position) { return !markExpected(program, position); });
+        for (FieldReference field : std::exchange(fieldsTakenBack, { }))
+            marked.append(positionOfField(field));
+        AOT::sort(marked);
         if (marked.isEmpty())
             break;
         numberOfPositions += marked.size();
@@ -2230,12 +2256,13 @@ void guardTaintedPositionsAfterFlow(Program& program, const FlowResults& flow, B
 {
     PositionsProvenByTypes proofs { program, flow, build };
     proofs.findCandidates();
+    std::span<const FieldReference> fieldsTakenBack = flow.fieldsTakenBack();
     if (!proofs.hasCandidates()) {
-        guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, nullptr);
+        guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, nullptr, fieldsTakenBack);
         return;
     }
     proofs.solve();
-    while (guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, &proofs) && proofs.solve()) { }
+    while (guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, &proofs, std::exchange(fieldsTakenBack, { })) && proofs.solve()) { }
     if (proofs.hasCandidates())
         proofs.apply();
 }
@@ -2299,7 +2326,7 @@ static BlockID findCallOfGenericVersion(FunctionPassContext& pass, FunctionID ge
     const Function& function = pass.function;
     for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(id);
-        if (block.frequency != BlockFrequency::Rare || block.values.size() != 1 || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::ReturnCall)
+        if (block.frequency.predicted() != BlockFrequency::Rare || block.values.size() != 1 || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::ReturnCall)
             continue;
         const Value& call = function.at(block.values[0]);
         if (call.opcode == Opcode::CallDirect && call.function() == genericVersion && call.isNeverInlined() && std::ranges::equal(call.variadicOperands(), function.at(entryBlock).parameters.span()))
@@ -2315,7 +2342,7 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
     Vector<Edge, 16> failingEdges;
     for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(id);
-        if (!endsBeforeAnyEffect.quickGet(id.index()) || block.frequency != BlockFrequency::Normal || block.handler || !block.terminator.isConditionalBranch())
+        if (!endsBeforeAnyEffect.quickGet(id.index()) || block.frequency.predicted() != BlockFrequency::Normal || block.handler || !block.terminator.isConditionalBranch())
             continue;
         // What fails without being asked goes where the test behind it would send it.
         const Terminator& branch = function.at(block.terminator.conditionOperand()).opcode == Opcode::ShouldFailPrediction ? function.at(block.terminator.notTaken().block).terminator : block.terminator;
@@ -2325,12 +2352,12 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
         // A test of a type may be a guess, or tell the members of a union apart: the side on which it fails is then an ordinary way through the function, which is worth its own code.
         bool testsState = provesForStretch(provesOf(test.opcode)) && provesOf(test.opcode) != Proof::ExactFunction;
         // What fails such a test is not what its annotation says, as what fails a test at the entrance, or it is undefined or null where the program goes on as if it had an object: it is about to throw.
-        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.expectedOrTypeOf(function, test.valueOperand()).without(pass.program.at(test.testedType()), pass.types).hasOnlyPrimitives(Primitive::UndefinedOrNull)))
+        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.expectedOrTypeOf(function, test.valueOperand()).predicted().without(pass.program.at(test.testedType()), pass.types).hasOnlyPrimitives(Primitive::UndefinedOrNull)))
             continue;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
             BlockID target = block.terminator.targets[index].block;
-            BlockFrequency frequency = function.at(target).frequency;
-            if (target != restart && (testsState ? frequency != BlockFrequency::Normal : frequency == BlockFrequency::Rare))
+            Expected<BlockFrequency> frequency = function.at(target).frequency;
+            if (target != restart && (testsState ? frequency.predicted() != BlockFrequency::Normal : frequency.predicted() == BlockFrequency::Rare))
                 failingEdges.append(Edge { id, index });
         }
     }
@@ -2338,7 +2365,7 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
 }
 
 // What a call that begins again has made is made a second time. So it is made behind the test: from the first value of the block that allocates on, whatever the test does not ask for.
-// Nothing that may throw is passed on the way, and a result stays with the operation that it is a result of.
+// Nothing that may throw is passed on the way, a result stays with the operation that it is a result of, and what takes the caught value stays at the head of its handler.
 static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, BlockID restart)
 {
     Function& function = pass.function;
@@ -2374,6 +2401,7 @@ static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, Blo
             if (!firstThatMayMove && pass.analyses.effectsOf(value).normal.mayExitSideways())
                 firstThatMayMove = index + 1;
         }
+        firstThatMayMove = std::max(firstThatMayMove, indexAfterCaughtValues(function, block));
         for (ValueID value : std::exchange(moved, { }))
             isMoved.quickClear(value.index());
         bool everyValueCompletes = true;

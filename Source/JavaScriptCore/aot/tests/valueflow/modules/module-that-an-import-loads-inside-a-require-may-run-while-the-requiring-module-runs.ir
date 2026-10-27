@@ -1,0 +1,30 @@
+# main.mjs: require("./b.mjs"); export var v = 1        b.mjs: import("./c.mjs")        c.mjs: import { v } from "./main.mjs"; export var seen = v
+# The jobs of the loader run before the `require` returns, and one of them evaluates c.mjs, while the body of main.mjs runs.
+# main.mjs has not run to its end before c.mjs reads its variable: `v` may still be undefined there
+# RUN: valueflow-apply
+# CHECK: variable g0 name="v" {{*}}declared={type=undefined|1} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: variable g0 name="v" {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f2 name="c"
+# CHECK: : undefined|1 = GetModuleVariable variable=g0
+
+variable g0 name="v" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 exports=[{name="v" variable=g0}]
+module m1 path="/app/b.mjs" displayPath="b.mjs" flags=[KeepsError] body=f1
+module m2 path="/app/c.mjs" displayPath="c.mjs" flags=[KeepsError] body=f2 requests=[{target=m0 completes=true}] exports=[{name="seen" variable=g1}]
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="./b.mjs"
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="b" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = ImportModule module=m2 referrer=m1
+    Return
+}
+function f2 name="c" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}

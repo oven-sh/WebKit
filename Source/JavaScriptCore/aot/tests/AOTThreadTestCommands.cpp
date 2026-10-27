@@ -209,6 +209,42 @@ static bool runsEveryTask(const ParallelLoops& loops)
     });
 }
 
+static bool knowsWhetherThreadIsInsideLoop(const ParallelLoops& loops)
+{
+    constexpr unsigned count = 1000;
+    std::atomic<bool> isRight { true };
+    auto expect = [&](bool isInsideLoop) {
+        if (ParallelLoops::isInsideLoop() != isInsideLoop)
+            isRight = false;
+    };
+    auto expectInLoop = [&](unsigned numberOfIndices, bool isInsideLoop) {
+        forEachIndexInParallel(loops, numberOfIndices, [&](unsigned) {
+            expect(isInsideLoop);
+        });
+    };
+    expect(false);
+    expectInLoop(1, false);
+    expectInLoop(count, true);
+    expect(false);
+    forEachIndexInParallel(loops, count, [&](unsigned) {
+        expectInLoop(1, true);
+        expect(true);
+    });
+    expect(false);
+    runTasksInParallel(loops, {
+        [&] {
+            expectInLoop(count, true);
+            expect(true);
+        },
+        [&] { expect(true); },
+    });
+    expect(false);
+    runTasksInParallel(loops, {
+        [&] { expect(false); },
+    });
+    return isRight;
+}
+
 static bool runsSeriallyOnCaller(const ParallelLoops& loops)
 {
     constexpr unsigned count = 100000;
@@ -589,6 +625,7 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "sort"_s, sortsLikeStandardSort(loops, 1000) && sortsLikeStandardSort(loops, 20000) && sortOrderIgnoresWidth(loops, one, 20000) && sortsLikeMergesOfWholeRuns(loops, 20000) && sortsLikeMergesOfWholeRuns(loops, 100003));
     printCheck(out, "sort and remove duplicates"_s, sortsAndRemovesDuplicates(loops, 1000) && sortsAndRemovesDuplicates(loops, 20000));
     printCheck(out, "tasks"_s, runsEveryTask(loops));
+    printCheck(out, "a thread knows whether it is inside a loop"_s, knowsWhetherThreadIsInsideLoop(loops) && knowsWhetherThreadIsInsideLoop(one));
     printCheck(out, "width one is serial"_s, runsSeriallyOnCaller(one));
     printCheck(out, "worker numbers are below the width and unique at one time"_s, handsOutWorkerNumbers(loops));
     printCheck(out, "build thread has the worker stack size"_s, buildThreadHasWorkerStack());

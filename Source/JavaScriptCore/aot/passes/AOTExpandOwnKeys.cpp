@@ -460,8 +460,15 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
 {
     const Program& program = context.program;
     const Type& type = program.typeOf(context.function, site.source);
-    bool areProven = type.hasOnlyLayouts(program) && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
-    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
+    bool areProven = type.hasOnlyLayouts() && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
+    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source).predicted()) };
+}
+
+static bool expectsOneLayout(FunctionPassContext& context, const OwnKeyWalkSite& site)
+{
+    return std::ranges::count_if(walkedLayoutsOf(context, site).second, [&](LayoutID layout) {
+        return context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
+    }) == 1;
 }
 
 // Once its fields are stored one by one, such an object need not be made.
@@ -472,7 +479,7 @@ static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
     return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
 }
 
-// The layout of a literal that somebody keeps, and that has no property yet when a spread without excluded keys fills it.
+// The layout of a literal that has no property yet when a spread without excluded keys fills it.
 static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Spread || !context.function.at(site.value).excludedKeys().empty())
@@ -489,7 +496,7 @@ static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const Unchange
         if (!hasPlainSlot)
             return { };
     }
-    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }) || isKeptByNobody(context, site.target))
+    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
         return { };
     return layout;
 }
@@ -579,7 +586,15 @@ static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context
             return plan;
         }
     }
-    return planWalkByLayouts(context, site, layoutOfEmptyTarget(context, unchanged, site));
+    LayoutID emptyTarget = layoutOfEmptyTarget(context, unchanged, site);
+    if (emptyTarget && isKeptByNobody(context, site.target)) {
+        // The operation behind the arms takes the object as it is, so it is made there. A hot loop leaves for a copy of itself on that way. Other code goes on behind the arms, where an object that is made on one way is made on all.
+        const NaturalLoop* loop = context.analyses.naturalLoops().innerMostLoopOf(site.block);
+        std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, site);
+        if (plan && (!plan->needsOriginalCall || (loop && isHotLoop(context, *loop).predicted())))
+            return plan;
+    }
+    return planWalkByLayouts(context, site, emptyTarget);
 }
 
 // A copy is an ordinary object with ordinary properties under the same names in the same order.
@@ -722,16 +737,16 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
     Vector<OwnKeyWalkSite, 4> sites;
     Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
-        if (function.at(block).frequency == BlockFrequency::Rare)
+        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
             if (!site || context.runsAtMostOnce(block))
                 continue;
-            HeatClass heat = heatClassOf(context, block);
+            Expected<HeatClass> heat = heatClassOf(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site)) {
-                if (!isHot(heat) && fillsEmptyLiteral(function, *site))
+            if (!isCold(heat).predicted() && (site->walk != OwnKeyWalk::Copy || isHot(heat).predicted()) && !isListThatLivesOn(context, *site)) {
+                if (!isHot(heat).predicted() && fillsEmptyLiteral(function, *site))
                     fillingLiteralsOutsideHotCode.append(site->value);
                 sites.append(WTF::move(*site));
             }
@@ -750,8 +765,11 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             if (!plan)
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
-            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target))
-                continue;
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
+                // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
+                if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
+                    continue;
+            }
             walk.walkedSources.append(WalkedSource { walk.site.source, WTF::move(*plan), function.at(walk.site.value) });
         }
         walks.append(WTF::move(walk));
@@ -866,7 +884,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     };
     auto elementTypeOf = [&](TypeID arrayType) {
         const ClassPart* part = program.at(arrayType).findClassPart(BuiltinClasses::Array);
-        return part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
+        return part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
     };
     auto appendArray = [&](TypeID contents, std::span<const ValueID> elements) {
         return builder.append(Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements));
@@ -915,7 +933,7 @@ static void emitArms(Emission& emission, const OwnKeyWalkSite& site, const Walke
     RELEASE_ASSERT(!plan.arms.isEmpty());
     IRBuilder& builder = emission.builder();
     const Function& function = builder.function();
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
 
     auto endExpansion = [&](ValueID result) {
         Vector<ValueID, 2> listAndGuard;
@@ -975,7 +993,7 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
 {
     IRBuilder& builder = emission.builder();
     const OwnKeyWalkSite& site = walk.site;
-    BlockFrequency frequency = builder.function().at(site.block).frequency;
+    Expected<BlockFrequency> frequency = builder.function().at(site.block).frequency;
     IRBuilder::Expansion expansion = builder.beginExpansion({ site.block, site.index });
     if (site.walk != OwnKeyWalk::Assign)
         keepResultAsGuard(builder, expansion);
@@ -1031,7 +1049,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
 
     bool listsHolders = serializer.mayListHolders(site.source);
     bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
-    BlockFrequency frequency = builder.function().at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = builder.function().at(builder.currentBlock()).frequency;
     std::optional<Target> outerHandler = builder.handler();
     BlockID threw;
     if (isCovered) {
@@ -1187,7 +1205,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
     Function& function = context.function;
     IRBuilder& builder = emission.builder();
     BlockID header = naturalLoop.header();
-    if (function.at(header).frequency == BlockFrequency::Rare || context.runsAtMostOnce(header))
+    if (function.at(header).frequency.predicted() == BlockFrequency::Rare || context.runsAtMostOnce(header))
         return PassOutcome::Unchanged;
 
     ValueID step = findStepAtHeadOf(context, header);
@@ -1323,7 +1341,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
     builder.setHandler(function.at(entry).handler);
     builder.moveToEndOf(entry);
 
-    BlockFrequency frequencyOfEntry = function.at(entry).frequency;
+    Expected<BlockFrequency> frequencyOfEntry = function.at(entry).frequency;
     for (size_t index = 0; index < arms.size(); ++index) {
         BlockID nextArm = builder.addBlock(frequencyOfEntry);
         const OwnKeyWalkArm& arm = arms[index].tested;
@@ -1344,7 +1362,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
         Arguments carriedValues(function.at(turn.header).parameters);
         ValueID enumerator = function.at(turn.step).enumeratorOperand();
         ValueID object = function.at(turn.step).objectOperand();
-        BlockFrequency frequency = function.at(turn.header).frequency;
+        Expected<BlockFrequency> frequency = function.at(turn.header).frequency;
         builder.setOrigin(function.at(turn.step).origin());
         IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
         builder.emitFailureOfPredictions(Target { header, Arguments(carriedValues), { } });
@@ -1587,7 +1605,7 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
         builder.endExpansion(expansion, std::span<const ValueID> { });
     };
     Vector<std::pair<int64_t, Target>> cases;
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     for (int64_t number = 1; number <= static_cast<int64_t>(literals.size() + hasOther); ++number)
         cases.append({ number, Target { builder.addBlock(frequency), { }, { } } });
     Vector<BlockID, 4> arms = cases.map<Vector<BlockID, 4>>([](const auto& entry) {
@@ -1830,8 +1848,9 @@ static void addChild(Rewrite& rewrite, OpenDataNode& open, ValueID value, const 
 static Value makeAggregate(OpenDataNode& closed, const FlowDataNodeStamp& stamp, const auto& insert)
 {
     if (const auto* array = closed.node->tryAs<DataNode::Array>()) {
-        return Emission::make<&Value::setContents, &Value::setArrayStorage, &Value::setHoles, &Value::setElementsOperands, &Value::setAllocationSite>(Opcode::NewArray, { },
-            stamp.elements ? stamp.elements : array->contents, stamp.arrayStorage, closed.holes.span(), closed.values.span(), stamp.site);
+        // Flow proves storage only of contents that it has proven.
+        return Emission::make<&Value::setContents, &Value::setContentsAreProven, &Value::setArrayStorage, &Value::setHoles, &Value::setElementsOperands, &Value::setAllocationSite>(Opcode::NewArray, { },
+            stamp.elements ? stamp.elements : array->contents, stamp.arrayStorage != ArrayStorage::Other, stamp.arrayStorage, closed.holes.span(), closed.values.span(), stamp.site);
     }
 
     if (!closed.head && closed.membersDefinedAfterHead.isEmpty())
@@ -1885,7 +1904,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
 
     replacement.setOrigin(origin);
     replacement.type = resultTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types);
-    replacement.setExpected(ExpectedType(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types)));
+    replacement.setExpected(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types));
     rewrite.edit(id) = WTF::move(replacement);
 }
 

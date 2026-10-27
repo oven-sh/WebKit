@@ -1,0 +1,64 @@
+# A version that finds an object it was not compiled for begins again in its generic version, which holds the read by name that stood in the version's own body. The call says of the receiver what that read said:
+# it is looked at, and what is read out of it may go anywhere. So a caller that alone holds the object it hands over still knows it as it was made. What is handed on to any other function gets what the table of flow says of the parameter.
+# FORM: Prepared
+# RUN: operands summaries f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Vault" fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsEnforced] flow={occupancy=FilledWithValueAtBirth}}, {key=#"#secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate, IsEnforced] flow={occupancy=FilledWithValueAtBirth}}] ownFieldCount=2
+
+function f0 name="caller" parameters=[{type=classtoken}] results=[{type=anything}] {
+    v1 = Integer integer=4
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [listsOnlyStoredValues]
+    v3 = CallDirect v2, v0 function=f1
+    v4 = CallDirect v2, v0 function=f2
+    v5 = CallDirect v2, v0 function=f3
+    v6 = CallDirect v2, v0 function=f5
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK: v3 CallDirect 0: [Inspects, RetainsContents]
+# CHECK: v4 CallDirect 0: [Inspects, RetainsContents]
+# CHECK: v5 CallDirect 0: [Inspects, RetainsContents]
+# CHECK: v6 CallDirect 0: [Inspects, Retains, Returns,
+
+function f1 name="readsByName" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: L0, v1: classtoken):
+    v2 = PrivateGet v0, v1 layout=L0 field=1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+
+function f2 name="beginsAgain" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: L0, v1: classtoken):
+    v2 = HasBirthFieldsFilled v0
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlot v0, v3 key=#"#secret"@L0 receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v4
+  b2() frequency=Rare:
+    v5 = CallDirect v0, v1 function=f3 [isNeverInlined]
+    ReturnCall v5 requirement=Allowed
+}
+
+function f3 name="beginsAgain" kind=Method role=GenericVersion flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=classtoken}] results=[{type=number flags=[IsExpected]}] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
+  b0(v0: anything, v1: classtoken):
+    v2 = PrivateGet v0, v1 layout=L0 field=1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+
+function f4 name="readsByNameToo" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: L0, v1: classtoken):
+    v2 = PrivateGet v0, v1 layout=L0 field=1
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return v4
+}
+
+function f5 name="handsOnToAnotherFunction" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=number flags=[IsExpected]}] {
+  b0(v0: L0, v1: classtoken):
+    v2 = CallDirect v0, v1 function=f4
+    Return v2
+}

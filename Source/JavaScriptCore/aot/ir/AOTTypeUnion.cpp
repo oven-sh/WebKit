@@ -37,10 +37,10 @@ static ClassPart uniteParts(const ClassPart& a, const ClassPart& b, TypeArena& a
     result.provenPristine = a.provenPristine & b.provenPristine;
     if (a.arrayStorage != b.arrayStorage)
         result.arrayStorage = ArrayStorage::Other;
-    size_t numberOfContents = std::max(a.contents.size(), b.contents.size());
-    result.contents.grow(numberOfContents);
+    size_t numberOfContents = std::max(a.writtenContents.size(), b.writtenContents.size());
+    result.writtenContents.grow(numberOfContents);
     for (unsigned index = 0; index < numberOfContents; ++index)
-        result.contents[index] = arena.unionOf(a.contentsAt(index), b.contentsAt(index));
+        result.writtenContents[index] = arena.unionOf(a.writtenContentsAt(index), b.writtenContentsAt(index));
     return result;
 }
 
@@ -119,8 +119,8 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
             visited.append(above);
     };
     for (size_t index = 0; index < visited.size(); ++index) {
-        const LayoutSet& family = program.at(program.declaredMembersOf(visited[index]));
-        if (family.members.size() >= members.size() && std::ranges::includes(family.members, members))
+        std::span<const LayoutID> family = program.at(program.declaredMembersOf(visited[index])).completeMembers();
+        if (family.size() >= members.size() && std::ranges::includes(family, members))
             return true;
         const Layout& layout = program.at(visited[index]);
         visit(layout.base);

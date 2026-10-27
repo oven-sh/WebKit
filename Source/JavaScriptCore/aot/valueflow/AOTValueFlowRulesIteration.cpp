@@ -23,7 +23,7 @@ struct BuiltinIteration {
 // The unknown value stands for everything else that the unknown object holds.
 static ValueFlowNodeID bunStoredInUnknownObject(ValueFlowRuleContext& context, ValueFlowName name)
 {
-    return context.masked(context.read(ClimbingSet(context.universe().unknownObjectAlone()), name), context.maker().of(context.universe().objectOf(Builtins::Bun)));
+    return context.masked(context.readWhatWasWritten(ClimbingSet(context.universe().unknownObjectAlone()), name), context.maker().of(context.universe().objectOf(Builtins::Bun)));
 }
 
 struct StepTarget {
@@ -49,17 +49,17 @@ struct StepTarget {
         ClimbingSet unknownObject(universe.unknownObjectAlone());
         ClimbingSet untrackedObject(universe.untrackedObjectAlone());
         if (mayBeUntrackedObject(context, objects)) {
-            take(context.read(ClimbingSet(universe.knownObjects()), name));
-            take(context.read(untrackedObject, name));
-            take(context.read(unknownObject, name));
+            take(context.readWhatWasWritten(ClimbingSet(universe.knownObjects()), name));
+            take(context.readWhatWasWritten(untrackedObject, name));
+            take(context.readWhatWasWritten(unknownObject, name));
         } else {
             ClimbingSet followed = known(context, objects);
-            take(context.read(followed, name));
+            take(context.readWhatWasWritten(followed, name));
             bool followsSomething = holdsSomething(context, followed);
             if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::escaped()))
-                take(context.read(unknownObject, name));
+                take(context.readWhatWasWritten(unknownObject, name));
             if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::lost()))
-                take(context.read(untrackedObject, name));
+                take(context.readWhatWasWritten(untrackedObject, name));
         }
         if (mayBeUnknownObject(context, objects)) {
             context.add(node, unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
@@ -89,9 +89,9 @@ struct StepOfBuiltinIterator {
 
 void connectContentsOfSlot(ValueFlowRuleContext& context, ClimbingSet objects, ValueFlowName name, ValueFlowNodeID target) { StepTarget { context, IteratorKind::Sync, target }.takeContentsOfSlot(objects, name); }
 
-static constexpr ValueFlowName openedByName = ValueFlowName::of(ValueFlowNameKind::OpenedBy);
+static constexpr ValueFlowCellName openedByName { ValueFlowNameKind::OpenedBy };
 
-static constexpr ValueFlowName openedIteratorsName(IteratorKind kind) { return { ValueFlowNameKind::OpenedIterators, static_cast<uint32_t>(kind) }; }
+static constexpr ValueFlowCellName openedIteratorsName(IteratorKind kind) { return ValueFlowCellName { ValueFlowNameKind::OpenedIterators, static_cast<uint32_t>(kind) }; }
 
 enum class Stepper : uint8_t {
     NamedBySeenCode,
@@ -100,7 +100,7 @@ enum class Stepper : uint8_t {
 
 static constexpr uint32_t numberOfResumeModes = 3;
 
-static constexpr ValueFlowName iteratorResultsName(ResumeMode mode, Stepper stepper = Stepper::NamedBySeenCode) { return { ValueFlowNameKind::IteratorResults, static_cast<uint32_t>(mode) + numberOfResumeModes * static_cast<uint32_t>(stepper) }; }
+static constexpr ValueFlowCellName iteratorResultsName(ResumeMode mode, Stepper stepper = Stepper::NamedBySeenCode) { return ValueFlowCellName { ValueFlowNameKind::IteratorResults, static_cast<uint32_t>(mode) + numberOfResumeModes * static_cast<uint32_t>(stepper) }; }
 
 static BuiltinName methodNameOf(ResumeMode mode)
 {
@@ -207,9 +207,9 @@ static void takeContents(ValueFlowRuleContext& context, ClimbingSet containers, 
         ClimbingSet pairs = only(context, pair);
         if (!universe.classOf(pair))
             context.add(context.written(pairs, prototypeLinkName), only(context, universe.objectOf(Builtins::ArrayPrototype)));
-        for (ValueFlowName name : { elementsName, keyOfEntriesPair })
+        for (ValueFlowName name : std::initializer_list<ValueFlowName> { elementsName, keyOfEntriesPair })
             takeKeys(context, containers, iteratorClass, StepTarget { context, IteratorKind::Sync, context.written(pairs, name) });
-        for (ValueFlowName name : { elementsName, valueOfEntriesPair })
+        for (ValueFlowName name : std::initializer_list<ValueFlowName> { elementsName, valueOfEntriesPair })
             takeValues(context, containers, iteratorClass, StepTarget { context, IteratorKind::Sync, context.written(pairs, name) });
         context.add(context.nodes().ofHost(ValueFlowHostNode::PairsOfSteps), pairs);
         target.take(pairs);

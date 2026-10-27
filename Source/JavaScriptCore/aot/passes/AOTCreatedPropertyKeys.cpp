@@ -235,7 +235,7 @@ bool callsSymbolDirectly(const BuiltinTable& builtins, const Function& function,
 
 std::optional<PropertyKey> keyOfSymbolsCreatedBy(const Function& function, const Value& operation)
 {
-    if (operation.opcode != Opcode::Call || !function.module || !operation.hasPosition())
+    if (operation.opcode != Opcode::Call || !function.module || !operation.callNumber())
         return std::nullopt;
 
     std::span<const ValueID> arguments = operation.variadicOperands();
@@ -249,7 +249,7 @@ std::optional<PropertyKey> keyOfSymbolsCreatedBy(const Function& function, const
             return std::nullopt;
         description = text->string();
     }
-    return PropertyKey { .kind = PropertyKeyKind::CreatedSymbol, .text = description, .module = function.module, .position = operation.position };
+    return PropertyKey { .kind = PropertyKeyKind::CreatedSymbol, .text = description, .module = function.module, .callNumber = operation.callNumber() };
 }
 
 std::optional<PropertyKey> keyOfSymbolRegisteredBy(const BuiltinTable& builtins, const Function& function, const Value& operation)

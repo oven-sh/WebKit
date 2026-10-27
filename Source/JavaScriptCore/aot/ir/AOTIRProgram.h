@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTExpected.h"
 #include "AOTIRForm.h"
 #include "AOTIRFunction.h"
 #include "AOTLayout.h"
@@ -102,7 +103,7 @@ public:
     const PropertyKey& at(PropertyKeyID id) const { return types.at(id); }
 
     const Type& typeOf(const Function& function, ValueID value) const { return types.at(function.at(value).type); }
-    const Type& expectedOrTypeOf(const Function& function, ValueID value) const { return types.at(function.at(value).expectedOrType().predicted()); }
+    Expected<const Type&> expectedOrTypeOf(const Function& function, ValueID value) const { return types.at(function.at(value).expectedOrType().predicted()); }
     const Function& sourceFunctionOf(const Function& function, Origin origin) const { return origin.inlineFrame ? at(function.inlineFrames[origin.inlineFrame].callee) : function; }
     const Function& sourceFunctionOf(const Function& function, const Instruction& instruction) const { return sourceFunctionOf(function, instruction.origin()); }
 
@@ -279,6 +280,9 @@ public:
 
     LayoutID addLayout(Layout&&);
     Layout& at(LayoutID);
+    // The tables by class and by name, after classes were added or have another base.
+    void indexClassesAndNames(const ParallelLoops&);
+    void setDeclaredMembers(LayoutID, LayoutSetID);
     Field& at(FieldReference);
     Layout& atForHiddenFields(LayoutID);
 

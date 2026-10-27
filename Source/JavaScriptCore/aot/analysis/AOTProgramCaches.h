@@ -12,6 +12,7 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTResultRules.h"
 #include "AOTSharedTypeMemo.h"
+#include "AOTThreads.h"
 #include <memory>
 #include <utility>
 #include <wtf/DataLog.h>
@@ -32,7 +33,7 @@ public:
             RELEASE_ASSERT(m_program.propertyAccessCache());
             return;
         }
-        RELEASE_ASSERT(!m_program.propertyAccessCache());
+        RELEASE_ASSERT(!m_program.propertyAccessCache() && !ParallelLoops::isInsideLoop());
         m_fieldTypes = makeUnique<SharedFieldTypes>();
         m_propertyAccesses = makeUnique<PropertyAccessCache>();
         m_propertyAccesses->checksAnswers = build.options().verifiesAfterEveryPass;

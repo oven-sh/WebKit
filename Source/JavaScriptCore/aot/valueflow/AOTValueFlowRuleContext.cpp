@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
@@ -499,6 +500,7 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
 bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
 bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
 RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
+bool ValueFlowRuleContext::isSabotaged(Sabotage part) const { return m_solver.m_input.build && m_solver.m_input.build->isSabotaged(part); }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
 {
@@ -538,9 +540,10 @@ NEVER_INLINE ClimbingSet ValueFlowRuleContext::objectsThatMayHoldSomethingUnder(
     return m_solver.mayBeComputedKey(name) ? unite(*holders, valueWithin(objects, writtenUnderUnknownKey())) : *holders;
 }
 
-ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
+ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, ValueFlowName name)
 {
     AOT_THRESHOLD(uint32_t, mostObjectsReadWhole, 8);
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (name.kind == ValueFlowNameKind::Property && !ValueSets::isComplement(objects.m_set) && sets().size(objects.m_set) > mostObjectsReadWhole)
         objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
@@ -602,6 +605,7 @@ bool ValueFlowRuleContext::usesGeneralRulesOnly() const { return m_solver.m_uses
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)
 {
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(name.kind); write && m_solver.m_input.nodes && m_solver.m_input.universe)
         addObjectsOfProgram(rareWriteNode(*write), objects);
     if (m_solver.m_input.nodes && m_solver.m_input.universe) {
@@ -633,6 +637,7 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
 
 ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name)
 {
+    ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (sets().contains(receivers.m_set, ValueFlowUniverse::unknownObject()) && runsCodeThatRecordsDescribe()) {
         ValueFlowNodeID found = lookup(ClimbingSet(m_maker.intersect(receivers.m_set, ValueSets::complement(universe().unknownObjectAlone()))), name);
         ValueFlowNodeID answer = masked(found, ValueSets::complement(m_maker.of(calleeOfDescribedCall(universe()))));

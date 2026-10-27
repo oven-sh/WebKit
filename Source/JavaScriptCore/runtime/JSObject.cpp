@@ -2206,6 +2206,16 @@ ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName propertyNa
     AOT::PropertyWalk::putDirect(vm, this, propertyName, value, attributes);
     return { };
 }
+
+ASCIILiteral JSObject::putDirectToCompiledClosure(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
+{
+    slot.disableCaching();
+    AOT::PropertyWalk::willPutDirectOnClosure(vm, this, propertyName.uid());
+    ASCIILiteral error = putDirectInternal<PutModeDefineOwnPropertyWithoutClosureHooks>(vm, propertyName, value, attributes, slot);
+    if (error.isNull())
+        AOT::PropertyWalk::didPutDirectOnClosure(vm, this, propertyName.uid());
+    return error;
+}
 #endif
 
 void JSObject::putDirectCustomGetterSetterWithoutTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)

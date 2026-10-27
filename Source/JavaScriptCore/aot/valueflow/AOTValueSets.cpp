@@ -190,7 +190,7 @@ size_t ValueSets::InternedRuns::size() const
     return size;
 }
 
-void ValueFlowBytesByTable::add(ASCIILiteral table, size_t bytesInUse, size_t bytesHeld)
+NEVER_INLINE void ValueFlowBytesByTable::add(ASCIILiteral table, size_t bytesInUse, size_t bytesHeld)
 {
     for (Row& row : m_rows) {
         if (row.table.characters() == table.characters()) {

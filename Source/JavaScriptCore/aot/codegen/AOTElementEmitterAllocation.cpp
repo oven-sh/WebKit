@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBarrierEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTConvention.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
@@ -108,19 +110,22 @@ const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& arr
     return arrayStorageFormOf(arrayStorageAtAllocation(m_program, array));
 }
 
-const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(std::span<const ValueID> elements, const Type& array) const
+const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array)
 {
     const ArrayStorageForm& form = formAtAllocation(array);
-    bool canHoldElements = std::ranges::all_of(elements, [&](ValueID element) {
-        Representation representation = representationOf(element);
-        if (isOptionalNumberInDoubleForm(form, representation))
-            return true;
-        // A NaN among the numbers is found when the literal runs and takes the slow path.
-        if (form.element == Representation::Double)
-            return typeOf(element).isNumber();
-        return canStoreWithoutConversion(form.kind, typeOf(element));
+    // A literal with an element that never arrives is never made.
+    bool isNeverMade = std::ranges::any_of(elements, [&](ValueID element) {
+        return typeOf(element).isNever();
     });
-    return canHoldElements ? form : arrayStorageFormOf(ArrayStorage::Contiguous);
+    bool canHoldElements = !isNeverMade && std::ranges::all_of(elements, [&](ValueID element) {
+        return isOptionalNumberInDoubleForm(form, representationOf(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
+    });
+    if (canHoldElements)
+        return form;
+    const ClassPart* part = array.singleBuiltinClass();
+    if (!isNeverMade && part && holdsOnlyNumbers(part->arrayStorage))
+        fail(context, InternalErrorKind::OpcodeWithoutCode);
+    return arrayStorageFormOf(ArrayStorage::Contiguous);
 }
 
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
@@ -200,14 +205,14 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return array;
 }
 
-CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form)
+CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
 {
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     join.add(allocateArrayOfHoles(context, length, form, slowPath));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), length, word32(form.indexingType), word32(0) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), length, word32(form.indexingType), word32(0) }, { .calledBuiltin = calledBuiltin, .isOnRarePath = true }));
     return join.finish();
 }
 
@@ -326,7 +331,7 @@ void ArrayAllocationEmitter::storeElements(CellPointer newArray, const ArrayStor
 CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const ValueID> elements, const Type& array)
 {
     unsigned length = elements.size();
-    const ArrayStorageForm& form = formOfLiteral(elements, array);
+    const ArrayStorageForm& form = formOfLiteral(context, elements, array);
     bool exceedsInlineLength = build().exceeds(LimitID::MaxInlineArrayLiteralLength, length, analyses().subject(context.valueID()));
     if (form.kind == ArrayStorage::Contiguous && !exceedsInlineLength)
         return emitter<CellAllocationEmitter>().newArrayOf(context, boxElements<Boxed>(generator(), context, elements).span());
@@ -368,7 +373,7 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
 CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& value)
 {
     std::span<const ValueID> elements = value->elementsOperands();
-    const ArrayStorageForm& form = formOfLiteral(elements, typeOf(value.id()));
+    const ArrayStorageForm& form = formOfLiteral(value, elements, typeOf(value.id()));
     unsigned length = elements.size() + value->holes().size();
     Vector<uint32_t, 16> indexes = indexesWithoutHoles(length, value->holes());
     LBasicBlock slowPath = newBlock();
@@ -400,7 +405,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         return newArrayOf(value, elements, array);
     uint64_t maxCapacity = build().limit(LimitID::MaxPlannedArrayCapacity);
     Integer capacity = plannedCapacityOf(generator(), value);
-    const ArrayStorageForm& form = length ? formOfLiteral(elements, array) : formOfEmptyLiteral(value.id());
+    const ArrayStorageForm& form = length ? formOfLiteral(value, elements, array) : formOfEmptyLiteral(value.id());
     if (!length && capacity.value()->hasInt64()) {
         uint64_t constantCapacity = capacity.value()->asInt64();
         if (constantCapacity > maxCapacity || (constantCapacity | 1) == arrayLiteralVectorLength(0))
@@ -435,7 +440,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfEmptyLiteral(ValueID liter
 {
     static_assert(ArrayStorage::Int32 < ArrayStorage::Double && ArrayStorage::Double < ArrayStorage::Contiguous);
     const Type& array = typeOf(literal);
-    if (arrayStorageDeclaredBy(m_program, array) != ArrayStorage::Other)
+    if (arrayStorageDeclaredBy(m_program, array).predicted() != ArrayStorage::Other)
         return formAtAllocation(array);
 
     std::optional<ArrayStorage> pushed;

@@ -1,0 +1,83 @@
+# for (const line of lines) { const c = JSON.parse(line); c[0] === "p" ? .. : .. }
+# Behind a test for Double storage `c[0] === "p"` is false by the type of the element. The read and the comparison go, and what is left names neither the list nor the guard.
+# That code may run for a list of another kind of storage where the same is known of the elements: the list is proven to hold numbers, or the other kind holds no more than the first.
+# The same test asked again says the same, and a value of a narrower type says more than the value that it stands for.
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b3 standIn=v2:v5 enter=b4.0
+# RUN: duplicate function=f1 region=b3 standIn=v2:v5 enter=b4.0
+# RUN: duplicate function=f2 region=b4 standIn=v4:v6 enter=b5.0
+# RUN(VALUE): duplicate function=f3 region=b3 standIn=v0:v2 enter=b1.0
+# CHECK: check: CanClone
+# CHECK: guard):
+# CHECK: guard):
+# CHECK-NEXT: Jump -> next [[copy]]()
+# CHECK: [[copy]]():
+# CHECK-NEXT: false = Boolean
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="listProvenToHoldNumbers" parameters=[{type=Array<undefined|number, proven>}] results=[{type=boolean}] {
+    v1 = HasArrayStorage v0 arrayStorage=Double
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    Jump -> next b3()
+  b2():
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b4(| 0), notTaken b5()
+  b3():
+    v4 = Boolean boolean=false
+    Return v4
+  b4(v5: guard):
+    Jump -> next b5()
+  b5():
+    v6 = Boolean boolean=true
+    Return v6
+}
+function f1 name="storageThatHoldsLess" parameters=[{type=Array<anything>}] results=[{type=boolean}] {
+    v1 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    Jump -> next b3()
+  b2():
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b4(| 0), notTaken b5()
+  b3():
+    v4 = Boolean boolean=false
+    Return v4
+  b4(v5: guard):
+    Jump -> next b5()
+  b5():
+    v6 = Boolean boolean=true
+    Return v6
+}
+function f2 name="sameTestAgain" parameters=[{type=Array<anything>}, {type=boolean}] results=[{type=boolean}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b3(| 0), notTaken b6()
+  b2():
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b5(| 0), notTaken b6()
+  b3(v4: guard):
+    Jump -> next b4()
+  b4():
+    v5 = Boolean boolean=false
+    Return v5
+  b5(v6: guard):
+    Jump -> next b6()
+  b6():
+    v7 = Boolean boolean=true
+    Return v7
+}
+function f3 name="valueOfNarrowerType" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    Jump -> next b2()
+  b2():
+    v3 = Undefined
+    Return v3
+  b3():
+    Return v0
+}
+# VALUE: check: CanClone
+# VALUE: Return v2

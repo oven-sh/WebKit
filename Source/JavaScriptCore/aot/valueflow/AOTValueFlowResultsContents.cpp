@@ -12,6 +12,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTCFG.h"
+#include "AOTClaimsOfFields.h"
 #include "AOTConcurrentComponents.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowSiteData.h"
@@ -27,13 +28,11 @@
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowPositions.h"
 #include <atomic>
-#include <cmath>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OptionSet<ObjectMutation> reachMutations { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
 static constexpr OptionSet<ObjectMutation> elementStorageMutations { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
-static constexpr OptionSet<ObjectMutation> unprovenContentsMutations = elementStorageMutations | ObjectMutation::ReachNativeCode;
 static constexpr OptionSet<ObjectMutation> builtinBehaviorMutations = elementStorageMutations | ObjectMutation::AddProperty;
 static constexpr OperandUses usesWritingObject = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor };
 
@@ -184,6 +183,11 @@ static BuiltinClassID classOfCandidate(const ValueFlowResultInputs& inputs, Valu
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
+    // What native code makes where it calls a constructor of the table. Of a typed array nothing but its class and what is done to the object is asked.
+    if (universe.kindOf(object) == ValueFlowObjectKind::ResultOfBuiltin) {
+        BuiltinClassID builtinClass = inputs.classOf(object);
+        return builtinClass && program.builtins().typedArrayClassOf(builtinClass) ? builtinClass : BuiltinClassID();
+    }
     FunctionID function = universe.functionOf(object);
     if (!function || !inputs.isReached(function))
         return { };
@@ -433,7 +437,7 @@ private:
         ValueID definition = definitionThroughSameValues(body, stored);
         bool isReadFromArray = body.at(definition).opcode == Opcode::ElemGet;
         const Type& type = program().typeOf(body, stored);
-        bool isNaN = body.at(definition).opcode == Opcode::Double && std::isnan(body.at(definition).number());
+        bool isNaN = body.at(definition).opcode == Opcode::Double && !canStoreWithoutConversion(ArrayStorage::Double, body.at(definition).number());
         if (isNaN || (!type.isNever() && type.hasOnlyPrimitives(Primitive::UndefinedOrNull)))
             addToEachArray(walker.maker, arrays, ArrayWrites::IsGivenMoreThanNumbers);
         std::optional<ValueFlowNumbers> numbers;
@@ -460,12 +464,10 @@ private:
             if (!array)
                 return;
             bool hasHole = false;
-            bool holdsMoreThanNumbers = false;
             ValueFlowNumbers numbers;
             for (const DataNode& element : listed->elements) {
                 hasHole |= element.is<DataNode::Hole>();
                 const auto* number = element.tryAs<DataNode::Number>();
-                holdsMoreThanNumbers |= number ? std::isnan(number->value) : element.is<DataNode::Undefined>() || element.is<DataNode::Null>();
                 if (number && isTrackedInteger(number->value))
                     numbers.integers = numbers.integers.unionWith(Range::one(static_cast<int64_t>(number->value)));
                 else if (number)
@@ -475,7 +477,7 @@ private:
             writes.add(ArrayWrites::IsInData);
             writes.set(ArrayWrites::IsLiteral, becomesLiterals);
             writes.set(ArrayWrites::IsCreatedDense, !hasHole);
-            if (holdsMoreThanNumbers)
+            if (arrayStorageOfData(program(), *listed) == ArrayStorage::Contiguous)
                 writes.add(ArrayWrites::IsGivenMoreThanNumbers);
             Locker locker { lockOf(*array) };
             writes.storedNumbers.unite(numbers);
@@ -580,7 +582,7 @@ private:
                 continue;
             ValueSetID value = m_heap.possibleValuesOf(walker.maker, operand);
             noteSetOfArrays(walker, value);
-            if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object)
+            if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object && sets().isSubset(m_heap.possibleValuesOf(walker.maker, operands[OperandIndex::ElemGet::property]), m_keysOfElements))
                 walker.elementReads.append({ function, statement.site, value });
             ValueSetID arrays = walker.maker.intersect(value, m_arrays);
             bool storesByName = (statement.opcode == Opcode::PropSet || statement.opcode == Opcode::PropDefine) && index == *receiverOf(statement.opcode);
@@ -719,6 +721,12 @@ private:
     {
         const ParallelLoops& loops = m_inputs.loops();
         m_kindsOfBoundedNumbers = maker().of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Integer), ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
+        Vector<ValueFlowObjectID> namesOfElements;
+        sets().forEachMember(universe().keys(), [&](ValueFlowObjectID constant) {
+            if (program().isIndexLike(universe().keyOf(constant)))
+                namesOfElements.append(constant);
+        });
+        m_keysOfElements = maker().unite(universe().builtinTables().heap().numberKinds(), maker().of(namesOfElements.span()));
         addToEachArray(maker(), m_inputs.solver().possibleValuesOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfEntries)), ArrayWrites::IsCreatedDense | ArrayWrites::IsPairOfEntries);
         forEachIndexInParallel(loops, m_containers.size(), [&](unsigned index) {
             ValueFlowObjectID object = m_containers[index].object;
@@ -870,6 +878,39 @@ private:
         return type;
     }
 
+    // Whoever makes a container lists what it lays into each slot: an operation by its operands, the row of a built-in by the type of its result, a coroutine by its body. Nobody has the object before it is handed out.
+    bool makerListsContentsOf(ValueFlowObjectID object) const
+    {
+        return m_inputs.universe().kindOf(object) == ValueFlowObjectKind::CoroutineResult || m_inputs.universe().siteOf(object);
+    }
+
+    OptionSet<Actor> actorsOpenOnContentsOf(const Container& container) const
+    {
+        OptionSet<Actor> open = actorsOpenOn(m_inputs, container.object) & actorsThatCanWrite(PlaceKind::Elements);
+        if (makerListsContentsOf(container.object)) {
+            open.remove({ Actor::Creation, Actor::Table });
+            if (!m_inputs.isHeldByNativeCode(container.object))
+                open.remove(Actor::NativeCode);
+        }
+        if (container.possibleMutations.contains(ObjectMutation::ReachUnknownJavaScript))
+            open.add(Actor::UnseenCode);
+        if (container.possibleMutations.contains(ObjectMutation::ReachNativeCode))
+            open.add(Actor::NativeCode);
+        return open;
+    }
+
+    static Vector<Write, 4> writesToContentsOf(const Container& container)
+    {
+        Vector<Write, 4> writes;
+        for (ValueSetID stored : container.stored)
+            writes.append(Write { Actor::Statements, WriteForm::Store, { }, stored });
+        if (container.possibleMutations.contains(ObjectMutation::RedefineProperty))
+            writes.append(Write { Actor::Statements, WriteForm::Define, { }, ValueSets::nothing });
+        if (container.possibleMutations.contains(ObjectMutation::ChangePrototype))
+            writes.append(Write { Actor::Statements, WriteForm::Link, { }, ValueSets::nothing });
+        return writes;
+    }
+
     void convertLevel(std::span<const uint32_t> containers)
     {
         ValueFlowResultInputs inputsWithContainers = m_inputs;
@@ -888,7 +929,8 @@ private:
                 const Container& container = m_containers[index];
                 ValueFlowContainerFacts& facts = m_facts[index];
                 facts.contents.clear();
-                facts.contentsAreProven = !container.stored.isEmpty() && !container.possibleMutations.containsAny(unprovenContentsMutations);
+                Vector<Write, 4> writes = writesToContentsOf(container);
+                facts.contentsAreProven = !container.stored.isEmpty() && claimContentsAreWhatWasStored(Writers(writes.span(), actorsOpenOnContentsOf(container)));
                 if (!facts.contentsAreProven)
                     continue;
                 facts.contents.grow(container.stored.size());
@@ -951,7 +993,7 @@ private:
     {
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
             if (isArray(index))
-                m_facts[index].arrayStorage = m_facts[index].arrayStorageToldToCreator = ArrayStorage::Other;
+                m_facts[index].arrayStorage = ArrayStorage::Other;
         }
 
         TypeInterningPhase phase(m_types, 1);
@@ -989,7 +1031,6 @@ private:
             for (uint32_t array : m_membersOfComponent[component]) {
                 m_facts[array].contents[m_indexOfElements] = elements;
                 m_facts[array].arrayStorage = storage;
-                m_facts[array].arrayStorageToldToCreator = storage == arrayStorageAtAllocation(type) ? ArrayStorage::Other : storage;
             }
         }
         Vector<ValueFlowObjectID> arraysThatMustNotBeConverted;
@@ -1111,6 +1152,7 @@ private:
     ValueSetID m_otherArrays { ValueSets::nothing };
     Vector<ArrayWrites> m_arrayWrites;
     ValueSetID m_kindsOfBoundedNumbers { ValueSets::nothing };
+    ValueSetID m_keysOfElements { ValueSets::nothing };
     ValueSetID m_objectsWithReplacedContents { ValueSets::nothing };
     Vector<ValueFlowContainerFacts> m_facts;
     ValueFlowContainerResults m_results;

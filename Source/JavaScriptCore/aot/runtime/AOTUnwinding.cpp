@@ -62,6 +62,7 @@ static bool letsThrowPass(StubFrameKind kind)
     case StubFrameKind::GeneratorBody:
     case StubFrameKind::ArgumentList:
     case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
     case StubFrameKind::BelowSpilledArguments:
     case StubFrameKind::AtStubEntry:
         return true;
@@ -220,6 +221,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::ArgumentList:
             case StubFrameKind::HostCall:
             case StubFrameKind::FirstOfTwoReads:
+            case StubFrameKind::MethodRead:
             case StubFrameKind::BelowSpilledArguments:
             case StubFrameKind::AtStubEntry:
                 break;

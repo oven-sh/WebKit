@@ -585,7 +585,7 @@ struct EdgeThreader : Rewrite {
     {
         bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
             const Block& block = at(id);
-            if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency != BlockFrequency::Normal)
+            if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
                 return false;
             ValueID condition = block.terminator.conditionOperand();
             const Value& test = at(condition);

@@ -36,6 +36,7 @@ private:
     // Every slim closure is one of this instance, so the word of one that is as it was created names its function and no other cell has that word.
     bool closureWordNames(FunctionID) const;
     bool isDecidedByClosureWord(FunctionID, const Type& tested) const;
+    Condition hasClosureWordThatDecides(CellPointer, FunctionID genericEntrypoint);
     Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
     void branchOnIsClosureOfAny(CellPointer, std::span<const FunctionID>, BranchTargets);
     void branchOnIndexInRuns(Word32 index, std::span<const EntrypointRun>, BranchTargets);

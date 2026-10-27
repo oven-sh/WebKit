@@ -310,6 +310,9 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
         JSValue value = object->tryGetIndexQuickly(name.index);
         if (!value)
             value = readSparseElement(object, name.index);
+        // Nothing above a pristine array has elements.
+        if (!value && object->type() == ArrayType && !hasAnyArrayStorage(object->indexingType()) && object->structure()->hasPristineElements())
+            return { jsUndefined(), LeafPresence::Absent };
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name:
@@ -435,7 +438,7 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
 {
     if (key->isSymbol()) {
         SymbolImpl& uid = asSymbol(key)->uid();
-        return uid.isPrivate() ? KeyName { } : KeyName { KeyNameKind::Name, &uid };
+        return uid.isPrivate() || isPreparedBeforeLookups(globalObject->vm(), &uid) ? KeyName { } : KeyName { KeyNameKind::Name, &uid };
     }
     if (!key->isString())
         return { };
@@ -471,8 +474,11 @@ std::optional<uint32_t> indexOfKey(JSValue key)
 
 std::optional<Identifier> nameForKeyedCache(JSGlobalObject* globalObject, JSValue key)
 {
-    if (key.isSymbol())
+    if (key.isSymbol()) {
+        if (isPreparedBeforeLookups(globalObject->vm(), &asSymbol(key)->uid()))
+            return std::nullopt;
         return Identifier::fromUid(asSymbol(key)->privateName());
+    }
     if (!key.isString())
         return std::nullopt;
     auto existingAtomString = asString(key)->toExistingAtomString(globalObject);

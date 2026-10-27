@@ -22,6 +22,7 @@
 #include "JSPropertyNameEnumerator.h"
 #include "SlotVisitorInlines.h"
 #include "StructureChain.h"
+#include "Symbol.h"
 #include <algorithm>
 #include <cstddef>
 #include <wtf/FastMalloc.h>
@@ -46,6 +47,7 @@ static constexpr uint64_t maxTransitionLoadDenominator = 2;
 
 static constexpr uint32_t listsSymbolKeys = orderAndCountMask + 1;
 static_assert(!(listsSymbolKeys & orderAndCountMask));
+static_assert(static_cast<uint64_t>(KeyListKind::Symbols) * listsSymbolKeys + orderAndCountMask <= UINT32_MAX);
 
 namespace {
 
@@ -479,32 +481,45 @@ std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder
     return created->fields();
 }
 
-JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord)
+JSCellButterfly* KeyOrderTable::keysInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, KeyListKind kind)
 {
     orderWord &= orderAndCountMask;
     auto publish = [&](JSCellButterfly* list) {
-        uint32_t shapeWord = shapeWordOf(layout.shape);
-        m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
+        uint32_t shapeWord = keyListWordOf(shapeWordOf(layout.shape), kind);
+        if (hasKeyListsInTable(kind, m_tables.numberOfShapes))
+            m_state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord)] = { orderWord, shapeWord, list };
         return list;
     };
-    if (auto* known = m_storage->keyLists.find(layout.shape, orderWord))
+    KeyListKind listedKind = kind == KeyListKind::StringsAndSymbols && !layout.hasFieldsWithSymbolKeys ? KeyListKind::Strings : kind;
+    uint32_t key = orderWord + static_cast<uint32_t>(listedKind) * listsSymbolKeys;
+    if (auto* known = m_storage->keyLists.find(layout.shape, key))
         return publish(known->value);
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
     Vector<uint16_t, 16> listed;
-    for (uint16_t index : entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord))) {
+    for (uint16_t index : entries) {
         if (index >= layout.numberOfFields || layout.fields()[index].attributes())
             return nullptr;
-        if (layouts.hasStringKey(layout.fields()[index]))
+        if (listedKind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
             listed.append(index);
+    }
+    size_t numberOfStrings = listed.size();
+    if (listedKind != KeyListKind::Strings) {
+        for (uint16_t index : entries) {
+            if (layouts.hasSymbolKey(layout.fields()[index]))
+                listed.append(index);
+        }
     }
     JSCellButterfly* list = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, listed.size());
     if (!list)
         return nullptr;
-    for (unsigned i = 0; i < listed.size(); ++i)
-        list->setIndex(vm, i, jsOwnedString(vm, String(layouts.nameOf(vm, layout.fields()[listed[i]]))));
+    for (unsigned i = 0; i < listed.size(); ++i) {
+        UniquedStringImpl* name = layouts.nameOf(vm, layout.fields()[listed[i]]);
+        list->setIndex(vm, i, i < numberOfStrings ? JSValue(jsOwnedString(vm, String(name))) : JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*name))));
+    }
     {
         Locker locker { m_state.caches->lock() };
-        m_storage->keyLists.add({ layout.shape, orderWord, list });
+        m_storage->keyLists.add({ layout.shape, key, list });
         m_writes.recordAll();
     }
     return publish(list);

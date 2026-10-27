@@ -116,9 +116,10 @@ public:
         for (size_t next = 0; next < m_frames.size(); ++next) {
             FlowScopeFrame* caller = m_frames[next].get();
             for (const FlowFunctionMention& mention : m_index.mentionsIn(caller->function)) {
-                bool runsOnlyDuringCall = m_index.calls.soleCallSites[mention.function.index()] == FlowCallSite { caller->function, mention.value };
-                if (runsOnlyDuringCall && pointOf(*caller, mention.value))
-                    appendFrame(mention.function, caller, mention.value);
+                FlowCallSite site = m_index.calls.soleCallSites[mention.function.index()];
+                bool runsOnlyDuringCall = site.second && site.first == caller->function && (site.second == mention.value || mention.kind == FunctionReferenceKind::Closure);
+                if (runsOnlyDuringCall && pointOf(*caller, site.second))
+                    appendFrame(mention.function, caller, site.second);
             }
         }
     }
@@ -921,14 +922,15 @@ private:
 static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function, ModuleID completed)
 {
     ModuleID module = index.program().at(function).module;
-    return module && index.moduleOrder.completesBefore(completed, module);
+    return module && !index.functionsEnteredWithoutMention.quickGet(function.index()) && index.moduleOrder.completesBefore(completed, module);
 }
 
-static bool canObserveUnfinishedModule(const Program& program, const FlowModuleValueRead& read)
+static bool canObserveUnfinishedModule(const FlowScopeIndex& index, const FlowModuleValueRead& read)
 {
+    const Program& program = index.program();
     Opcode opcode = program.at(read.function).at(read.value).opcode;
     if (opcode == Opcode::ImportModule)
-        return false;
+        return index.moduleOrder.modulesThatJobsMayInterrupt.get(read.subject.index());
     if (opcode == Opcode::RequireModule)
         return program.at(read.subject).requireResult != RequireResult::ModuleExports;
     return true;
@@ -946,7 +948,7 @@ static BitVector findVariablesReadEarly(const FlowScopeIndex& index)
     };
 
     for (const FlowModuleValueRead& read : index.moduleValueReads) {
-        if (canObserveUnfinishedModule(program, read) && !runsAfterCompletion(index, read.function, read.subject))
+        if (canObserveUnfinishedModule(index, read) && !runsAfterCompletion(index, read.function, read.subject))
             visit(read.subject);
     }
     for (size_t module : index.inputs.modulesLoadedByHost)

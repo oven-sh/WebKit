@@ -45,6 +45,7 @@ static constexpr const char* violationRequestVariable = "TESTAOT_VIOLATE_OPERATI
 static constexpr ASCIILiteral undeclaredCollectionTest = "operation-scope/undeclared-collection-crashes"_s;
 static constexpr ASCIILiteral undeclaredVMEntryTest = "operation-scope/undeclared-vm-entry-crashes"_s;
 static constexpr ASCIILiteral undeclaredAllocationTest = "operation-scope/undeclared-allocation-crashes-where-assertions-are-on"_s;
+static constexpr ASCIILiteral allocationInGuardedOperationTest = "operation-scope/allocation-in-a-guarded-operation-crashes"_s;
 
 namespace {
 
@@ -68,6 +69,7 @@ public:
     }
 
     VM& vm() { return *m_vm; }
+    JSGlobalObject* globalObject() { return m_globalObject.get(); }
 
     void collectInOperation(Entry entry)
     {
@@ -155,6 +157,25 @@ static void testFrameRecordHoldsReturnAddress()
     AOT_TEST_CHECK(frameRecordHoldsReturnAddress());
 }
 
+static NEVER_INLINE CallFrame* JIT_OPERATION_ATTRIBUTES callerFrameSeenByOperation()
+{
+    return AOT_OPERATION_FRAME_RECORD()->callerFrame;
+}
+
+static NEVER_INLINE void JIT_OPERATION_ATTRIBUTES allocateObject(JSGlobalObject* globalObject)
+{
+    constructEmptyObject(globalObject);
+}
+
+static constexpr bool operationsAreGuarded = CallWithoutCollection<&allocateObject>::call != &allocateObject;
+static_assert(!operationsAreGuarded || ASSERT_ENABLED);
+
+static NEVER_INLINE void testFrameRecordNamesCallerOfGuardedOperation()
+{
+    CallFrame* callerFrame = CallWithoutCollection<&callerFrameSeenByOperation>::call();
+    AOT_TEST_CHECK(std::bit_cast<CallerFrameAndPC*>(callerFrame) == AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+}
+
 static void testPermissionsFollowDeclaredEffects()
 {
     AOT_TEST_CHECK(!permissionsOf(readOnlyOperation).mayCollect && !permissionsOf(readOnlyOperation).mayEnterVM);
@@ -210,6 +231,16 @@ static void testUndeclaredAllocationCrashesWhereAssertionsAreOn()
     realm.allocateInOperation(readOnlyOperation);
 }
 
+static void testAllocationInGuardedOperationCrashes()
+{
+    if (operationsAreGuarded && !isViolationRequested()) {
+        checkViolationCrashes(allocationInGuardedOperationTest, "AssertNoGC"_s);
+        return;
+    }
+    TestRealm realm(Validation::Off);
+    CallWithoutCollection<&allocateObject>::call(realm.globalObject());
+}
+
 static void testUndeclaredCollectionCrashes()
 {
     if (!isViolationRequested()) {
@@ -234,6 +265,7 @@ std::span<const NativeTest> operationScopeTests()
 {
     static constexpr NativeTest tests[] = {
         { "operation-scope/the-frame-record-holds-the-return-address"_s, testFrameRecordHoldsReturnAddress },
+        { "operation-scope/the-frame-record-names-the-caller-of-a-guarded-operation"_s, testFrameRecordNamesCallerOfGuardedOperation },
         { "operation-scope/permissions-follow-declared-effects"_s, testPermissionsFollowDeclaredEffects },
         { "operation-scope/declared-effects-are-accepted"_s, testDeclaredEffectsAreAccepted },
         { "operation-scope/vm-entry-stays-recorded"_s, testVMEntryStaysRecorded },
@@ -241,6 +273,7 @@ std::span<const NativeTest> operationScopeTests()
         { undeclaredCollectionTest, testUndeclaredCollectionCrashes },
         { undeclaredVMEntryTest, testUndeclaredVMEntryCrashes },
         { undeclaredAllocationTest, testUndeclaredAllocationCrashesWhereAssertionsAreOn },
+        { allocationInGuardedOperationTest, testAllocationInGuardedOperationCrashes },
     };
     return tests;
 }

@@ -140,7 +140,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     for (size_t index = 0; index < sets.size(); ++index) {
         if (index && sets[index] == sets[index - 1])
             continue;
-        for (FunctionID callee : m_program.at(sets[index]).functions)
+        for (FunctionID callee : m_program.at(sets[index]).followed().value())
             add(callee);
     }
 
@@ -343,7 +343,7 @@ static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const Paral
         Vector<uint32_t> peeled = collectInParallel<uint32_t>(loops, remaining.size(), [&](unsigned position, Vector<uint32_t>& chunk) {
             uint32_t index = remaining[position];
             FunctionID function(index);
-            uint8_t reachesUnknownCode = graph.calleeSet(function) != CalleeSetState::Complete;
+            uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
             for (FunctionID callee : graph.calleesOf(function)) {
                 if (!isRanked[callee.index()])
                     return;
@@ -377,7 +377,7 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
         uint32_t index = remaining[node];
         FunctionID function(index);
         nodeIndex[index] = node;
-        uint8_t reachesUnknownCode = graph.calleeSet(function) != CalleeSetState::Complete;
+        uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
         uint32_t numberOfSuccessors = 0;
         for (FunctionID callee : graph.calleesOf(function)) {
             if (isRanked[callee.index()])
@@ -503,8 +503,8 @@ static void verifyRanks(const CallGraph& graph)
         if (node == unknownCodeNode)
             return { graph.functionsCalledByUnknownCode(), std::nullopt };
         FunctionID function(node);
-        if (graph.calleeSet(function) == CalleeSetState::Complete)
-            return { graph.calleesOf(function), std::nullopt };
+        if (std::optional<ProvenValue<std::span<const FunctionID>>> all = graph.allCalleesOf(function))
+            return { *all, std::nullopt };
         return { graph.calleesOf(function), unknownCodeNode };
     });
     for (unsigned index = 0; index < unknownCodeNode; ++index) {
@@ -723,7 +723,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         uint32_t numberOfSites = calleeSetCallSites[index];
         if (!numberOfSites)
             return;
-        for (FunctionID callee : program.at(CalleeSetID(index)).functions)
+        for (FunctionID callee : program.at(CalleeSetID(index)).followed().value())
             WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
     });
     times.didFinish("addUpReferences"_s);
@@ -825,7 +825,7 @@ void CallGraph::dump(PrintStream& out, const Program& program) const
         printFunctions(calleesOf(function));
         out.print(" | callers");
         printFunctions(callersOf(function));
-        out.print(" | sites ", numberOfDirectCallSites(function), " | callers ", enumName(callerSet(function)), " | callees ", enumName(calleeSet(function)), " | entries ", enumName(entrySet(function)), " | ", enumName(recursion(function)), " | rank ", bottomUpRank(function), " | call sites ", numberOfCallSites(function), " ", enumName(callSiteSet(function)));
+        out.print(" | sites ", numberOfDirectCallSites(function), " | callers ", enumName(callerSet(function)), " | callees ", allCalleesOf(function) ? "Complete"_s : "Unknown"_s, " | entries ", enumName(entrySet(function)), " | ", enumName(recursion(function)), " | rank ", bottomUpRank(function), " | call sites ", numberOfCallSites(function), " ", enumName(callSiteSet(function)));
         out.println(isExpectedByCode(function) ? " | expected by code"_s : ""_s);
     }
 }

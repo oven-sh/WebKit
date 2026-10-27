@@ -10,14 +10,16 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTPrototypesAtCreation.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTVector.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr ValueFlowName addedNamesName = ValueFlowName::of(ValueFlowNameKind::AddedNames);
-inline constexpr ValueFlowName internalFieldsName = ValueFlowName::of(ValueFlowNameKind::InternalFields);
+inline constexpr ValueFlowCellName addedNamesName { ValueFlowNameKind::AddedNames };
+inline constexpr ValueFlowCellName internalFieldsName { ValueFlowNameKind::InternalFields };
 inline constexpr ValueFlowName everyPropertyOfListedHoldersOfExports { ValueFlowNameKind::EveryProperty, 2 };
 
 enum class HeapKeyClass : uint8_t {
@@ -89,6 +91,9 @@ public:
     void runLookup();
     void runPropertyAction(const BuiltinPropertyAction&, const ValueFlowPropertyActionOperands&);
     ClimbingSet objectsHeldFromCreation(ClimbingSet objects);
+    void readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey&, ValueFlowNodeID result);
+    void readPropertiesNobodyWroteOnSourcesOfCopies(const HeapChain&, const HeapKey&, ValueFlowNodeID result);
+    void readOwnPropertiesNobodyWrote(ClimbingSet holders, std::optional<PropertyKeyID> key, ValueFlowNodeID result) { readOwnPropertiesNobodyWrote(holders, key ? keyNamed(*key) : unknownHeapKey, result); }
     ClimbingSet prototypesOf(ClimbingSet start, ValueSetID atCreation = { });
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
     ValueFlowNodeID exportsOfHoldersIn(const ValueFlowOperand& object);
@@ -154,14 +159,14 @@ private:
     {
         if (m_asksWithoutNodes && !m_context.mayFindSomethingWritten(objects, name.kind))
             return { };
-        return m_context.read(objects, name);
+        return m_context.readWhatWasWritten(objects, name);
     }
     ClimbingSet valueOfNodeIfAny(ValueFlowNodeID node) { return node ? m_context.valueOf(node) : ClimbingSet(); }
 
     HeapKey keyNamed(PropertyKeyID name) const { return !name ? unknownHeapKey : m_program.isIndexLike(name) ? indexHeapKey : HeapKey { HeapKeyClass::Name, name }; }
     HeapKeyReceivers receiversOfSymbolNobodyKnows(ClimbingSet keys, const HeapKeyUse&);
     ValueFlowOperand receiversUnder(const ValueFlowOperand& object, const HeapKey&);
-    void forEachKey(const ValueFlowOperand& property, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
+    void forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>&, HeapKeyUse = { });
     void forEachKeyOfOperation(uint32_t computedKeyIndex, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
     void forEachKeyOfAction(const BuiltinKey&, const ValueFlowOperand& keyOperand, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
 
@@ -192,7 +197,6 @@ private:
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
-    void appendPrototypeOf(BuiltinClassID, Members&) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
 
     ValueFlowObjectID objectOfMember(BuiltinID member, ModuleID) const;
@@ -202,8 +206,10 @@ private:
     ClimbingSet prototypeObjectsAboveEscapedEntries(std::span<const ValueFlowClassOfEntries>, ClimbingSet holders);
     ClimbingSet holdersOfAccessorsThatRunOnUnknownObject(const HeapKey&);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
+    ValueFlowNodeID readWhatStaysBehindUnder(ValueFlowName);
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
+    bool mayHoldWhatNobodyHasAccountedFor(const HeapChain&, const HeapKey&);
     bool m_undescribedNativeCodeIsOfEngine { false };
     bool m_namesFunctionWhereItIsMade { false };
     bool isNameThatTableDoesNotListOnGlobalObject(const HeapKey&) const;
@@ -231,7 +237,7 @@ private:
     bool isMemberOfBun(BuiltinID member) const { return m_builtins.at(member).holder && m_builtins.canonicalID(m_builtins.at(member).holder) == Builtins::Bun; }
     bool isMemberOfBunUsedByNameAlone(BuiltinID member) const;
     void readPropertiesAtCreation(ClimbingSet objects, const HeapKey&, ValueFlowNodeID result);
-    void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&);
+    void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&, ValueFlowNodeID result);
     bool splitLookupThroughPlaceholders();
     void callAccessors(ClimbingSet functions, ValueFlowCallKind, const HeapReceiver&, const ValueFlowOperand* value, ValueFlowNodeID result);
     bool mayBeAccessorNobodyKnows(ClimbingSet functions) const { return mayBeUnknownObject(functions) || m_context.contains(functions, m_tables.undescribedNativeCode()); }
@@ -277,6 +283,7 @@ private:
     ValueFlowNodeID valueOfDescriptorsInAnswer();
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     bool m_findsOwnPropertiesAlone { false };
+    bool m_answersNothingForNameThatIsLacking { false };
     void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
     void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
@@ -288,13 +295,16 @@ private:
     bool readsUnderNameOfEnumerationOfSameObject();
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
-    void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors);
+    enum class DefinedObject : bool { IsNew, MayHoldProperty };
+    void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject);
+    void compareWithPropertyThatIsThere(const ValueFlowOperand& defined);
     void changePrototype(ClimbingSet objects, const ValueFlowOperand& prototype);
     enum class PropertySearch : uint8_t { OwnProperty, WholeChain };
     bool holdsOnlyWhatWasWritten(ClimbingSet receivers) { return !m_context.meet(receivers, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode()))); }
     void readAccessorFunctions(const ValueFlowOperand& object, const HeapKey&, HeapPropertyPart, PropertySearch);
     bool replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, const HeapKey&, PropertySearch, const ValueFlowOperand* value, bool isGivenAnyValue = false);
 
+    void defineUndefinedOnObjectsNobodyKnows(const ValueFlowOperand& object, const ValueFlowOperand& value);
     ClimbingSet allocateUnder(const ValueFlowOperand& prototype);
     void runCreateArguments(const ValueFlowOperand& count, const ValueFlowOperand& rest, std::span<const ValueFlowOperand> parameters, const ValueFlowOperand* callee);
 
@@ -312,7 +322,7 @@ private:
     ValueSetID m_holdersOfUndeclaredPropertiesUnderName;
 };
 
-void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invocable<void(const HeapKey&)> auto& functor, HeapKeyUse use)
+inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>& functor, HeapKeyUse use)
 {
     ClimbingSet keys = m_context.valueOf(property);
     connect(property, m_context.hub(m_universe.builtinTables().conversionToPrimitive()));
@@ -333,14 +343,22 @@ void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invoc
         HeapKeyReceivers receiversOfSymbols = receiversOfSymbolNobodyKnows(otherKeys, use);
         if (receiversOfSymbols == HeapKeyReceivers::AllButBuiltinObjects) {
             functor(unknownHeapKey);
-            if (!use.isRead)
+            if (!use.isRead || !property.node)
                 return;
+            auto forEachKeyListedAmong = [&](ValueSetID all, NOESCAPE const Invocable<void(const HeapKey&)> auto& take) {
+                ClimbingSet listed(all);
+                if (!holdsAnything(m_context.membersMissingFrom(property.node, listed)))
+                    return;
+                m_context.forEachMember(m_context.valueWithin(listed, property.node), [&](ValueFlowObjectID constant) {
+                    take(keyNamed(m_universe.keyOf(constant)));
+                });
+            };
             // A key nobody knows names no member of Bun. A name that comes beside it does. Any string holds every name, and names none.
-            ClimbingSet names(m_tables.keysOfMembersOfBun());
-            if (!property.node || !holdsAnything(m_context.membersMissingFrom(property.node, names)))
-                return;
-            m_context.forEachMember(m_context.valueWithin(names, property.node), [&](ValueFlowObjectID constant) {
-                functor(keyNamed(m_universe.keyOf(constant)));
+            forEachKeyListedAmong(m_tables.keysOfMembersOfBun(), functor);
+            // Nor does it name a member of an object of the library that is found by name alone. A symbol that comes beside it does.
+            forEachKeyListedAmong(m_context.maker().intersect(m_universe.symbols(), m_universe.keys()), [&](const HeapKey& key) {
+                if (holdsAnything(m_context.holdersOfLibraryExportsWrittenUnder(key.name)))
+                    functor(key);
             });
             return;
         }
@@ -406,7 +424,7 @@ void HeapRule::forEachKeyOfAction(const BuiltinKey& key, const ValueFlowOperand&
         if (m_context.meet(lists, m_universe.placeholdersAlone()) || hasEscaped(known(lists)) || hasBeenLost(known(lists)))
             functor(unknownHeapKey);
         else
-            forEachKey(operandOf(m_context.read(known(lists), elementsName)), functor);
+            forEachKey(operandOf(m_context.readWhatWasWritten(known(lists), elementsName)), functor);
         return;
     }
     }
@@ -432,15 +450,15 @@ void HeapRule::forEachNodeStoredThroughPlaceholdersInto(ClimbingSet objects, Val
 
 void HeapRule::forEachNodeHolding(ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
-    functor(m_context.read(objects, name));
+    functor(m_context.readWhatWasWritten(objects, name));
     forEachNodeStoredThroughPlaceholdersInto(objects, name, functor);
 }
 
 void HeapRule::forEachNodeReadByName(ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
-    functor(m_context.read(foundThroughUntrackedObject(m_universe.knownObjects()), name));
-    functor(m_context.read(untrackedObjectAlone(), name));
-    functor(m_context.read(unknownObjectAlone(), name));
+    functor(m_context.readWhatWasWritten(foundThroughUntrackedObject(m_universe.knownObjects()), name));
+    functor(m_context.readWhatWasWritten(untrackedObjectAlone(), name));
+    functor(m_context.readWhatWasWritten(unknownObjectAlone(), name));
 }
 
 void HeapRule::forEachMemberUnder(ClimbingSet objects, const HeapKey& key, NOESCAPE const Invocable<void(BuiltinID member, ModuleID)> auto& functor)

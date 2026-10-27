@@ -10,7 +10,6 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAnalysisContext.h"
-#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -83,10 +82,10 @@ Value makeValidateCallee(ValueID callee, TypeID validatedType)
 }
 
 // Which checks stand in front of it is known when every answered check is gone: applyScopesOfAnsweredChecks().
-static void assumeInPlaceOfChecking(Value& check, TypeID held)
+static void assumeInPlaceOfChecking(Value& check, ProvenInEveryVersion held)
 {
     RELEASE_ASSERT(check.opcode == Opcode::Check);
-    check.becomeAssumeType(check.valueOperand(), Proven::byFlow(held, ProofScope::EveryVersion));
+    check.becomeAssumeType(check.valueOperand(), held);
 }
 
 static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update, Vector<ValueID, 8>& answeredChecks)
@@ -96,7 +95,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         for (Value& value : body.function.editAllValues()) {
             if (value.opcode != Opcode::Check)
                 continue;
-            value.becomeAssumeType(value.valueOperand(), Proven::byFlow(value.expectedType().predicted(), ProofScope::EveryVersion));
+            value.becomeAssumeType(value.valueOperand(), Proven::byTestingSwitch(value.expectedType()));
             ++numberOfRemovedChecks;
         }
         return numberOfRemovedChecks;
@@ -106,7 +105,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
     for (const FlowClaimUpdate& entry : update.claims) {
         Value& check = body.function.edit(entry.claim);
         if (entry.isRedundant) {
-            assumeInPlaceOfChecking(check, check.expectedType().predicted());
+            assumeInPlaceOfChecking(check, Proven::byFlowAtCheck(check.expectedType()));
             if (!entry.holdsInEveryVersion)
                 answeredChecks.append(entry.claim);
             ++numberOfRemovedChecks;
@@ -118,7 +117,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         }
         // Nothing that arrives passes. What does arrive goes on, and the type that was declared says nothing of what is made from it.
         RELEASE_ASSERT(entry.arriving);
-        assumeInPlaceOfChecking(check, entry.arriving);
+        assumeInPlaceOfChecking(check, *Proven::byFlow(entry.arriving, ProofScope::EveryVersion).inEveryVersion());
         if (!entry.holdsInEveryVersion)
             answeredChecks.append(entry.claim);
         refutedChecks.append(entry.claim);
@@ -241,6 +240,7 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
     case RequiredTypeHolder::InitializedSlot:
         return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
     case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -412,14 +412,14 @@ static std::optional<Type> typeOfListedCallees(const FlowBodyApplication& body, 
 {
     if (!PayloadWord::callees(call.opcode) || !call.callees())
         return std::nullopt;
-    const CalleeSet& callees = body.types.at(call.callees());
-    if (!callees.isComplete || body.results.mayCallBoundFunction(call.accessSite()))
+    std::optional<ProvenValue<Callees>> callees = body.types.at(call.callees()).all();
+    if (!callees || body.results.mayCallBoundFunction(call.accessSite()))
         return std::nullopt;
 
     Type listed;
-    for (FunctionID function : callees.functions)
+    for (FunctionID function : callees->value().functions)
         listed = listed.unionWith(Type::forFunction(function), body.types);
-    for (BuiltinID builtin : callees.builtins)
+    for (BuiltinID builtin : callees->value().builtins)
         listed = listed.unionWith(Type::forBuiltin(builtin), body.types);
 
     bool isConstruction = !!OperandPosition::newTarget(call.opcode);
@@ -436,10 +436,10 @@ static std::optional<Type> typeOfListedReceivers(const FlowBodyApplication& body
 {
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !receiverOf(access.opcode) || !access.receivers())
         return std::nullopt;
-    const LayoutSet& receivers = body.types.at(access.receivers());
-    if (!receivers.isComplete || receivers.hasMembersWithoutLayout)
+    auto receivers = body.types.at(access.receivers()).all();
+    if (!receivers)
         return std::nullopt;
-    Type listed = receivers.members.isEmpty() ? Type() : Type::forLayoutSet(access.receivers());
+    Type listed = receivers->value().empty() ? Type() : Type::forLayoutSet(access.receivers());
     return listed.withPrimitives(Primitive::All);
 }
 
@@ -495,21 +495,19 @@ static bool isNarrowerInLayouts(const Program& program, const Type& current, con
 {
     if (!narrowed.layouts)
         return false;
-    if (!current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size())
-        return true;
-    return hasMembersWithoutLayout(program, current) && !hasMembersWithoutLayout(program, narrowed);
+    return !current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size();
 }
 
-static bool hasUnknownCallees(const Program& program, const Type& type)
+static bool hasUnknownCallees(const Type& type)
 {
-    return type.anyFunction || type.anyObject || hasMembersWithoutLayout(program, type);
+    return type.anyFunction || type.anyObject;
 }
 
-static bool isNarrowerInCallees(const Program& program, const Type& current, const Type& narrowed)
+static bool isNarrowerInCallees(const Type& current, const Type& narrowed)
 {
-    if (!narrowed.mayBeFunction() || hasUnknownCallees(program, narrowed))
+    if (!narrowed.mayBeFunction() || hasUnknownCallees(narrowed))
         return false;
-    return hasUnknownCallees(program, current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
+    return hasUnknownCallees(current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
 }
 
 static bool isNarrowerInClasses(const Type& current, const Type& narrowed)
@@ -527,7 +525,7 @@ bool isWorthNarrowing(const Program& program, const Type& current, const Type& n
     return (narrowed.isNever() && !current.isNever())
         || defaultSlotRepresentationOf(current) != defaultSlotRepresentationOf(narrowed)
         || isNarrowerInLayouts(program, current, narrowed)
-        || isNarrowerInCallees(program, current, narrowed)
+        || isNarrowerInCallees(current, narrowed)
         || isNarrowerInClasses(current, narrowed);
 }
 
@@ -621,8 +619,10 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
             allocation.setAllocationClass(stamp.allocationClass);
         if (stamp.elements)
             allocation.setContents(stamp.elements);
-        if (allocation.opcode == Opcode::NewArray)
+        if (allocation.opcode == Opcode::NewArray) {
+            allocation.setContentsAreProven(stamp.elementsAreProven);
             allocation.setArrayStorage(stamp.arrayStorage);
+        }
         if (allocation.opcode == Opcode::NewObject && body.program.at(allocation.layout()).isEnvironment())
             stopListingStartsThatNobodyReads(body, allocation);
     }
@@ -901,6 +901,7 @@ bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t
         return fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
     }
     case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -973,31 +974,13 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
             return false;
         return definition.opcode != Opcode::AssumeType || definition.isBehindChecks() || !types.at(definition.provenType()).isSubsetOf(types.at(claimed), program);
     };
-    // A literal is born with the storage that fits the types of its elements: one whose element is not known to be a number gets the storage that holds everything.
-    // Its contents are what flow holds, cut by no type, so they hold of the very value that a check tests too.
-    BitVector literalsSeen;
-    auto visitElementsOfLiteral = [&](ValueID array, TypeID claimed) {
-        const ClassPart* part = types.at(claimed).singleBuiltinClass();
-        if (!part || !part->contentsAreProven)
-            return;
-        // A claim that names no storage leaves its readers to expect the storage that holds its contents.
-        ArrayStorage storage = arrayStorageDeclaredBy(program, *part);
-        if (storage != ArrayStorage::Int32 && storage != ArrayStorage::Double)
-            return;
-        ValueID literal = sameObjectThroughCasts(function, array);
-        if (function.at(literal).opcode != Opcode::NewArray || literalsSeen.set(literal.index()))
-            return;
-        TypeID elements = part->contentsAt(program.builtins(), ContentsSlot::Element);
-        for (uint32_t index = OperandIndex::NewArray::elements; index < function.at(literal).numberOfOperands(); ++index) {
-            if (isTypedOnCredit(function.at(literal).operand(index), elements))
-                found.append({ analyses.useLists().pointOf(literal), literal, index, elements });
-        }
-    };
     auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
-        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required) || isCheckedValueItself(stored))
+        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required))
+            return;
+        bool mayRestOnCheckOfStoredValue = !user || holderOfRequiredTypes(program, function.at(user)) != RequiredTypeHolder::ContentsOfLiteral;
+        if (mayRestOnCheckOfStoredValue && isCheckedValueItself(stored))
             return;
         found.append({ point, user, operandIndex, required });
-        visitElementsOfLiteral(stored, required);
     };
 
     const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
@@ -1009,9 +992,6 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID user = contents.values[index];
             const Value& value = function.at(user);
-            // It need not come by a position of this function: it may be stored by name.
-            if (value.opcode == Opcode::AssumeType)
-                visitElementsOfLiteral(value.valueOperand(), value.provenType());
             if (!opcodesWithRequiredTypes.contains(value.opcode))
                 continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {

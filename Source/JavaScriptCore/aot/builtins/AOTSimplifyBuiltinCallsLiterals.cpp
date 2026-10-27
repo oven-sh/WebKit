@@ -371,7 +371,7 @@ static std::optional<ConcatenationOfLiterals> matchConcatenationOfLiterals(Funct
 static TypeID elementTypeOf(const Program& program, const Type& array)
 {
     const ClassPart* part = array.findClassPart(BuiltinClasses::Array);
-    return part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
+    return part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
 }
 
 static AllocationSiteID allocationSiteOf(const Value& call)

@@ -79,7 +79,7 @@ function f9 name="class-is-new-target" parameters=[{type=f0}, {type=anything}] r
     Return v2
 # CHECK-NEXT: b0(v0: f0, v1: anything):
 # CHECK-NEXT: [[point]]: L0 = NewObject layout=L0 allocationClass=5
-# CHECK-NEXT: = CallDirect [[point]], v0, v1 function=[[pointVersion]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[point]], v0, v1 function=[[pointVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f10 name="class-named-as-new-target" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
@@ -87,14 +87,14 @@ function f10 name="class-named-as-new-target" parameters=[{type=f0}, {type=anyth
     Return v2
 # CHECK-NEXT: b0(v0: f0, v1: anything):
 # CHECK-NEXT: [[samePoint]]: L0 = NewObject layout=L0 allocationClass=5
-# CHECK-NEXT: = CallDirect [[samePoint]], v0, v1 function=[[pointVersion]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[samePoint]], v0, v1 function=[[pointVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f11 name="other-new-target" parameters=[{type=f1}, {type=f2}, {type=anything}] results=[{type=anything}] {
     v3 = Construct v0, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f1, v1: f2, v2: anything):
-# CHECK-NEXT: : L1|L2|L3 = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK-NEXT: : L1|L2|L3 = CallDirect v1, v2 function=f1 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: NewObject
 # CHECK-NOT: = Construct
 }
@@ -103,7 +103,7 @@ function f12 name="constructor-may-return-another-object" parameters=[{type=f8},
     Return v3
 # CHECK-NEXT: b0(v0: f8, v1: object, v2: boolean):
 # CHECK-NEXT: [[cached]]: L8 = NewObject layout=L8
-# CHECK-NEXT: [[returned]]: undefined|object = CallDirect [[cached]], v0, v1, v2 function=[[cachedVersion]] [isConstruction]
+# CHECK-NEXT: [[returned]]: undefined|object = CallDirect [[cached]], v0, v1, v2 function=[[cachedVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NEXT: [[isObject]]: boolean = TypeTest [[returned]] testedType=object
 # CHECK-NEXT: Branch [[isObject]] -> taken [[replaced]](| 0), notTaken [[kept]](
 # CHECK: [[join]](v3: anything ~ object):
@@ -120,7 +120,7 @@ function f13 name="class-evaluated-more-than-once" parameters=[{type=f4}] result
 # CHECK-NEXT: [[prototype]]: object = GetConstructPrototype v0 layout=L4
 # CHECK-NEXT: [[scoped]]: object ~ L4 = NewObject [[prototype]] layout=L4
 # CHECK-NEXT: [[scopedThis]]: L4 = AssumeType [[scoped]] provenType=L4
-# CHECK-NEXT: = CallDirect [[scopedThis]], v0 function=[[scopedVersion]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[scopedThis]], v0 function=[[scopedVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f14 name="derived-class" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
@@ -128,14 +128,14 @@ function f14 name="derived-class" parameters=[{type=f2}, {type=anything}] result
     Return v2
 # CHECK-NEXT: b0(v0: f2, v1: anything):
 # CHECK-NEXT: [[circle]]: L2 = NewObject layout=L2
-# CHECK-NEXT: = CallDirect [[circle]], v0, v0, v1 function=[[circleVersion]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[circle]], v0, v0, v1 function=[[circleVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f15 name="super-call-is-not-linked-to-the-parent" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
     v2 = Construct v0, -, v1
     Return v2
 # CHECK-NEXT: b0(v0: f3, v1: anything):
-# CHECK-NEXT: : L3 = CallDirect v0, v0, v1 function=f3 [isConstruction]
+# CHECK-NEXT: : L3 = CallDirect v0, v0, v1 function=f3 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: NewObject
 # CHECK-NOT: = Construct
 }
@@ -143,7 +143,7 @@ function f16 name="allocation-after-the-entry-block" parameters=[{type=f5}] resu
     v1 = Construct v0
     Return v1
 # CHECK-NEXT: b0(v0: f5):
-# CHECK-NEXT: : L5 = CallDirect v0 function=f5 [isConstruction]
+# CHECK-NEXT: : L5 = CallDirect v0 function=f5 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: NewObject
 # CHECK-NOT: = Construct
 }
@@ -153,14 +153,14 @@ function f17 name="base-class-with-capture" parameters=[{type=f6}] results=[{typ
 # CHECK-NEXT: b0(v0: f6):
 # CHECK-NEXT: [[counted]]: L6 = NewObject layout=L6
 # CHECK-NEXT: [[count]]: number = GetCapture v0 function=f6
-# CHECK-NEXT: = CallDirect [[count]], [[counted]], v0 function=[[countedVersion]] [isConstruction]
+# CHECK-NEXT: = CallDirect [[count]], [[counted]], v0 function=[[countedVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 function f18 name="parent-needs-its-closure" parameters=[{type=f7}] results=[{type=anything}] {
     v1 = Construct v0
     Return v1
 # CHECK-NEXT: b0(v0: f7):
-# CHECK-NEXT: : L7 = CallDirect v0, v0 function=f7 [isConstruction]
+# CHECK-NEXT: : L7 = CallDirect v0, v0 function=f7 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: NewObject
 # CHECK-NOT: = Construct
 # CHECK: function [[pointVersion]] name="Point"{{*}}role=AllocatedThisVersion flags=[HasThis, HasNewTarget]

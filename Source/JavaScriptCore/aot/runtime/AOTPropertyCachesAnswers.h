@@ -13,6 +13,7 @@
 #include "JSType.h"
 #include "PropertyOffset.h"
 #include <optional>
+#include <wtf/Noncopyable.h>
 
 namespace JSC {
 
@@ -23,6 +24,7 @@ class PutPropertySlot;
 namespace AOT {
 
 class Object;
+class PropertyCaches;
 
 enum class PropertyAnswerKind : uint8_t {
     Uncacheable,
@@ -56,6 +58,7 @@ enum class PropertyAnswerKind : uint8_t {
 
 struct PropertyAnswer {
     static PropertyAnswer uncacheable(SlotAccess access, bool didFlatten = false) { return { .access = access, .didFlatten = didFlatten }; }
+    static PropertyAnswer handlerOfProxyAnswers(SlotAccess access, JSCell* key) { return { .access = access, .keyForTrap = key }; }
     static PropertyAnswer uncacheableAfter(SlotAccess access, ChainWalk&& walk) { return { .access = access, .didFlatten = walk.didFlatten, .changeableObjects = WTF::move(walk.changeableObjects) }; }
     static PropertyAnswer own(PropertyAnswerKind kind, SlotAccess access, PropertyOffset offset = invalidOffset) { return { .kind = kind, .access = access, .isOwn = true, .offset = offset }; }
     static PropertyAnswer above(PropertyAnswerKind kind, SlotAccess access, ChainWalk&& walk) { return { .kind = kind, .access = access, .offset = walk.offset, .holder = walk.holder, .changeableObjects = WTF::move(walk.changeableObjects) }; }
@@ -80,6 +83,9 @@ struct PropertyAnswer {
     SlotData variable { };
     uint32_t customAccessor { 0 };
     JSValue constant { };
+    // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
+    JSCell* keyForTrap { nullptr };
+    uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
 };
 
@@ -136,6 +142,23 @@ JSValue readThroughAnswer(JSGlobalObject*, JSValue base, const PropertyAnswer&);
 Structure* structureForPrimitive(JSGlobalObject*, JSValue primitive);
 constexpr bool isProxyType(JSType type) { return type == ProxyObjectType || type == GlobalProxyType; }
 bool isNeverCachedName(VM&, UniquedStringImpl*);
+// See PropertyCaches::prepareHoldersBeforeLookupsUnder().
+bool isPreparedBeforeLookups(VM&, UniquedStringImpl*);
+// Calls what the library has registered for the name, if anything, on the compiled object. May throw.
+void prepareForLookup(JSGlobalObject*, JSObject* compiledObject, UniquedStringImpl*);
+// The same for each field of the object, before its values are handed out one after the other.
+void prepareForWalk(JSGlobalObject*, JSObject*);
+// An operation of compiled code that names the property. Only the text of the library names one by such a symbol, and it finds there what the library keeps there: while one of these lives, the object is not asked.
+class LookByName {
+    WTF_MAKE_NONCOPYABLE(LookByName);
+public:
+    LookByName(VM&, JSValue holder, UniquedStringImpl*);
+    ~LookByName();
+
+private:
+    PropertyCaches* m_caches { nullptr };
+    JSCell* m_previous { nullptr };
+};
 std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, ChainWalkMode, unsigned& attributes);
 bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);

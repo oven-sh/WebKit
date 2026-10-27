@@ -21,6 +21,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
+#include "AOTProgramCaches.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTSchemaWalkers.h"
@@ -262,7 +263,7 @@ private:
     {
         if (type.isOpaque(OpaqueKind::Guard))
             return false;
-        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol || hasMembersWithoutLayout(m_program, type))
+        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
             return true;
         return std::ranges::any_of(type.functions, [&](FunctionID function) {
             return !m_program.at(function).captures.isEmpty() || !m_flow.closuresGoUnnoticed(function);
@@ -753,6 +754,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     using FunctionAccesses = std::pair<FunctionID, Vector<RemovableAccess>>;
     FreshDataFunctions freshDataFunctions(program.functions.size());
     UnnoticedObjects unnoticedObjects(program, inputs.flow);
+    std::optional<ProgramCaches> caches(std::in_place, program, build);
     Vector<FunctionAccesses> functions = collectInParallel<FunctionAccesses>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         const Function& function = program.at(id);
@@ -784,8 +786,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 bool reachesOnlyCandidates = false;
                 bool mayReachAnyLayout = false;
                 if (LayoutSetID stamp = value.receivers()) {
-                    members = program.at(stamp).members.span();
-                    reachesOnlyCandidates = program.at(stamp).isComplete;
+                    auto all = program.at(stamp).all();
+                    members = all ? all->value() : program.at(stamp).seen().predicted();
+                    reachesOnlyCandidates = !!all;
                 } else if (std::optional<uint8_t> receiver = receiverOf(opcode)) {
                     const Type& type = program.typeOf(function, value.operand(*receiver));
                     members = membersOf(program, type);
@@ -863,6 +866,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (!accesses.isEmpty())
             collected.append({ id, WTF::move(accesses) });
     });
+    caches.reset();
 
     // An access goes only if each candidate that it may reach goes.
     struct CandidateSet : WTF::UnionFind<CandidateSet> { };

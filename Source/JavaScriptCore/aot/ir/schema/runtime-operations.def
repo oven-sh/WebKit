@@ -163,8 +163,8 @@ runtime PromiseAll : JSCell* (uint32_t count, const EncodedJSValue* elements, ui
 runtime Throw, ThrowToHandlerInFunction : void (EncodedJSValue value) ; reads(all) throws
 runtime ThrowAfterCleanup : void (EncodedJSValue value, uint64_t kept) ; reads(all) throws
 runtime AddressOfThrow : uint64_t () ; reads(RuntimeState)
-runtime Catch, CatchException : EncodedJSValue () ; reads(all) writes(RuntimeState)
-runtime CatchValueAndException : UGPRPair () ; reads(all) writes(RuntimeState)
+runtime Catch, CatchException : EncodedJSValue () ; RuntimeAllocates
+runtime CatchValueAndException : UGPRPair () ; RuntimeAllocates
 runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uint32_t source) ; reads(all) throws collects
 runtime ThrowStackOverflowError : void () ; reads(all) throws
 runtime NewRuntimeError : JSCell* (uint32_t errorKind) ; RuntimeAllocates

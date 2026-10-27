@@ -42,6 +42,7 @@ ValueID definitionThroughTests(const Function&, ValueID);
 BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
 
 bool hasRuleOfItsOwn(Opcode);
+bool throwsInsteadOfRunning(const Function& callee, bool isConstruction);
 
 bool answersByKindsOfOperands(Opcode);
 bool makesNoFraction(Opcode);

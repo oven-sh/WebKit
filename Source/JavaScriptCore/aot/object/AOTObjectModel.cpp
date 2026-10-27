@@ -522,7 +522,7 @@ struct StructureTable::VariantMaps {
 
     // A variant may have no object yet or no more. Whoever gets one out of these tables holds it by this pointer alone, which the compiler must not make anew from the ID behind an allocation.
     static CompiledStructure* decode(StructureID id) { return WTF::opaque(uncheckedDowncast<CompiledStructure>(id.decode())); }
-    static unsigned recentIndex(const Variant& variant) { return (variant.extraPropertiesStructure->id().bits() * 0x9e3779b1u ^ variant.layout->shape * 0x85ebca6bu) >> (32 - recentIndexBits); }
+    static unsigned recentIndex(const Variant& variant) { return ((variant.extraPropertiesStructure ? variant.extraPropertiesStructure->id().bits() : 0) * 0x9e3779b1u ^ variant.layout->shape * 0x85ebca6bu) >> (32 - recentIndexBits); }
     static unsigned requestedIndex(const Structure& extraPropertiesStructure) { return extraPropertiesStructure.id().bits() * 0x9e3779b1u >> (32 - requestedIndexBits); }
 
     CompiledStructure* findRecent(const Variant& variant) const
@@ -982,7 +982,13 @@ CompiledStructure* StructureTable::withExtraProperties(VM& vm, const CompiledStr
             return const_cast<CompiledStructure*>(&current);
         variant.hasExtraProperties = true;
         variant.extraPropertiesStructure = nullptr;
-        return findOrCreate(vm, variant);
+        if (!current.extraPropertiesSlot())
+            return findOrCreate(vm, variant);
+        if (CompiledStructure* recent = m_variants->findRecent(variant))
+            return recent;
+        CompiledStructure* structure = findOrCreate(vm, variant);
+        m_variants->setRecent(variant, *structure);
+        return structure;
     }
     variant.hasExtraProperties = true;
     variant.extraPropertiesStructure = named;
@@ -1123,7 +1129,7 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : objectHeaderFor(structure, allocation),
         .orderAndShapeWords = orderAndShapeWordsFor(allocation.shape, allocation.orderWord()),
         .allocator = allocator ? allocator : &m_allocatorWithoutRoom,
-        .unused = 0,
+        .prototype = kind == AllocatedCellKind::Object ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
     m_writtenRecords.record(&record);
     count(vm, RuntimeCounterID::AllocationSiteRecordsFilled);
@@ -1141,6 +1147,7 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     if (!usual || !record || !usual->hasOtherPrototype() || structureIDOf(number) != usual->id())
         return;
     record->header = objectHeaderFor(structure, allocation);
+    record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
     m_writtenRecords.record(record);
 }
 

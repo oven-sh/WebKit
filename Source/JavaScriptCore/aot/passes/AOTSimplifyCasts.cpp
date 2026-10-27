@@ -130,6 +130,7 @@ struct CastSimplification : Rewrite {
             if (!canMoveCast(cfg, candidate))
                 continue;
             const Value cast = at(candidate.cast);
+            bool joinSaysLessThanCast = false;
             builder().setOrigin(cast.origin());
             for (Edge edge : cfg.incomingEdges(candidate.block)) {
                 ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
@@ -140,11 +141,15 @@ struct CastSimplification : Rewrite {
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // A check that nothing on its edge passes has the whole type that it asks for.
+                    joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
                 }
                 didChangeEdge |= passed != argument;
                 argument = passed;
             }
+            if (joinSaysLessThanCast)
+                edit(candidate.cast, ValueEdit::Definition).becomeAssumeType(cast.operand(0), Proven::byRulesBehindChecks(cast.type));
             movedParameters.append(cast.operand(0));
         }
         if (movedParameters.isEmpty())
@@ -234,6 +239,10 @@ struct CastSimplification : Rewrite {
             claimsKeptBehindChecks.append(id);
             return changed;
         }
+        if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            noteCastThatStays(id);
+            return changed;
+        }
         // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
         bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
@@ -271,6 +280,12 @@ struct CastSimplification : Rewrite {
     bool saysMoreThanTypeOnCredit(const Value& cast, ValueID operand)
     {
         return cast.opcode == Opcode::AssumeType && !cast.isBehindChecks() && isBehindCheck(operand);
+    }
+
+    // What the language asks of a value it asks in every version of the function. A type that is owed to a check answers in the typed version alone, so the test stays until the function has its generic version.
+    bool isTestOfLanguageAnsweredOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand);
     }
 
     bool isBehindCheck(ValueID value)
@@ -330,7 +345,7 @@ struct CastSimplification : Rewrite {
         ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
-        if (!program.expectedOrTypeOf(function, cast).isSubsetOf(program.expectedOrTypeOf(function, current), program))
+        if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
             return 0;
         Value& user = edit(id, ValueEdit::Definition);
         user.setOperand(operandIndex, cast);

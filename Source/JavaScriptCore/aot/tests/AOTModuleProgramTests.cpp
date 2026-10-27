@@ -417,11 +417,100 @@ function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results
 }
 )IR"_s;
 
+static constexpr ASCIILiteral dynamicImportsFromScript = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/first.js" displayPath="first.js" body=f1 requests=[{target=m2 completes=true}]
+module m2 path="/below-first.js" displayPath="below-first.js" body=f2
+module m3 path="/second.js" displayPath="second.js" body=f3 requests=[{target=m6 completes=true}]
+module m4 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g0
+module m5 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f5 exportsVariable=g1
+module m6 path="#6" displayPath="file.cjs" exportRule=CommonJs body=f6 requests=[{target=m4 kind=Require completes=true}] syntheticExports=[{name="default" variable=g2}]
+module m7 path="#7" displayPath="last.cjs" exportRule=CommonJs body=f7 requests=[{target=m5 kind=Require completes=true}] syntheticExports=[{name="default" variable=g3}]
+entry module=m0
+variable g0 name="exports" module=m4 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m5 declared={type=anything} initialization=Undefined
+variable g2 name="default" module=m6 declared={type=anything}
+variable g3 name="default" module=m7 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f8
+    v1 = NewClosure function=f9
+    v2 = NewClosure function=f10
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="registerImports" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="belowFirst" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="below-first.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f3 name="second" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="second.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="file" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="file.cjs"
+    v4 = Call v1, -, v2, v3
+    v5 = NewDictionary
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f5 name="last" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="last.cjs"
+    v4 = Call v1, -, v2, v3
+    v5 = NewDictionary
+    PutModuleVariable v5 variable=g1
+    Return
+}
+function f6 name="faceOfFile" module=m4 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m6 [isBare]
+    Return
+}
+function f7 name="faceOfLast" module=m5 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m7 [isBare]
+    Return
+}
+function f8 name="importFirst" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f9 name="importSecond" results=[{type=anything}] {
+    v0 = ImportModule module=m3 referrer=m0
+    Return v0
+}
+function f10 name="importLast" results=[{type=anything}] {
+    v0 = ImportModule module=m7 referrer=m0
+    Return v0
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
 globalThis.input = 1;
 globalThis.register = closure => { globalThis.registered = closure; };
+globalThis.registerImports = (first, second, last) => Object.assign(globalThis, { importFirst: first, importSecond: second, importLast: last });
 )js"_s;
 
 static constexpr ASCIILiteral scriptEnd = R"js(.then(() => {
@@ -451,7 +540,7 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const String& programT
     return output;
 }
 
-static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords)
+static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
@@ -461,7 +550,7 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ')', scriptEnd),
+        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ')', scriptAfterEntryPoint),
     };
 
     String shell = shellPath();
@@ -472,10 +561,10 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput)
+static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(programText, referencesWord, optionWords);
+        String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint);
         if (output != expectedOutput)
             dataLog("with ", referencesWord, " the shell printed\n", output, "expected\n", expectedOutput);
         AOT_TEST_CHECK(output == expectedOutput);
@@ -561,6 +650,43 @@ the closure, called later: true
 )"_s);
 }
 
+static void testTerminationDuringImportHandoff()
+{
+    checkShellOutput(dynamicImportsFromScript, { }, R"(termination was pending: true
+runs: below-first.js
+runs: first.js
+runs: file.cjs
+runs: second.js
+first import: fulfilled
+second import: fulfilled
+later import: fulfilled
+)"_s, R"js(.then(async () => {
+    async function outcome(promise)
+    {
+        try {
+            await promise;
+            return "fulfilled";
+        } catch (error) {
+            return "rejected with " + error;
+        }
+    }
+    const first = importFirst();
+    for (let turn = 0; turn < 5; ++turn)
+        await null;
+    const second = importSecond();
+    (async () => {
+        for (let turn = 0; turn < 40; ++turn)
+            await null;
+    })();
+    requestTerminationOnResolve("/below-first.js");
+    report("termination was pending", callAndCancelTermination(importLast));
+    report("first import", await outcome(first));
+    report("second import", await outcome(second));
+    report("later import", await outcome(importSecond()));
+}).catch(error => print("the script threw " + error));
+)js"_s);
+}
+
 std::span<const NativeTest> moduleProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -571,6 +697,7 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/import-meta-kept"_s, testImportMetaKept },
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
+        { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
     };
     return tests;
 }

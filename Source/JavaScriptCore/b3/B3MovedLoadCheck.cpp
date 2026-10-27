@@ -78,6 +78,7 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     check->clobber(RegisterSet::macroClobberedGPRs());
     check->effects = Effects::none();
     check->effects.writesLocalState = true;
+    check->setRunsWithoutFrame(true);
     check->setGenerator([load, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg found = params.gpScratch(0);
@@ -233,6 +234,22 @@ void MovedLoadLog::willDelete(Value* value)
         if (entry.givenToUsers == value)
             entry.givenToUsers = standsFor;
         name(standsFor, index);
+    }
+}
+
+void MovedLoadLog::didSplitForward(BasicBlock* block, BasicBlock* head)
+{
+    for (Entry& entry : m_entries) {
+        if (entry.block == block)
+            entry.block = head;
+    }
+}
+
+void MovedLoadLog::willDelete(BasicBlock* block)
+{
+    for (Entry& entry : m_entries) {
+        if (entry.block == block && !entry.before)
+            drop(entry);
     }
 }
 

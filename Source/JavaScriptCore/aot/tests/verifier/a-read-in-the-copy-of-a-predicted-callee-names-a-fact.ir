@@ -1,0 +1,30 @@
+# What is stored ahead of every caller that flow has followed need not be stored around the copy of a callee that was predicted. A read in such a copy, or in a copy inside it, names a fact or says that the word may
+# be anything
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="storedOnce" declared={type=string} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
+
+function f0 name="reads" results=[{type=string}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f1 name="goodCopyOfFollowedCallee" results=[{type=string}] inlineFrames=[{}, {callee=f0 module=m0}] {
+    v0 = GetModuleVariable variable=g0 @0:1
+    Return v0
+}
+function f2 name="goodReadNamesFact" results=[{type=string}] inlineFrames=[{}, {callee=f0 calleeIsPredicted=true module=m0}] {
+    v0 = Entered function=f0
+    v1 = GetModuleVariable fact=v0 variable=g0 @0:1
+    Return v1
+}
+function f3 name="badReadNamesNothing" results=[{type=string}] inlineFrames=[{}, {callee=f0 calleeIsPredicted=true module=m0}] {
+    v0 = GetModuleVariable variable=g0 @0:1
+    Return v0
+}
+function f4 name="badReadInCopyInsideTheCopy" results=[{type=string}] inlineFrames=[{}, {callee=f0 calleeIsPredicted=true module=m0}, {callee=f0 parent=1 module=m0}] {
+    v0 = GetModuleVariable variable=g0 @0:2
+    Return v0
+}

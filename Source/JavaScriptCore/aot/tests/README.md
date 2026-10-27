@@ -253,11 +253,11 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - An id is a letter and a number: `v` value, `b` block, `f` function, `L` layout, `g` variable, `m` module, `q` module failure,
   `w` type site, `e` eval scope, `x` expected result, `d` data.
 - A flag word is `[A, B]`, a nested record `{field=value ..}`, a variant `Case` or `Case{field=value ..}`, a list `[a, b]`.
-- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`.
+- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`
+  (the symbols that the call with `callNumber=120` in module 0 makes; with a description, `symbol("x")@m0:120`).
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
-  family: the layouts below it. `nolayout` beside layouts says that the family also has members without a layout (`L3|nolayout`, in a layout
-  set `[L3, nolayout]`). `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
+  family: the layouts below it. `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
   converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
   symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
 - A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
@@ -265,7 +265,9 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - A value is `vN = Operation operands.. name=value.. [flag, flag] @position`. Operands come first, in declaration order, separated by
   commas, with `-` for an absent optional operand that another operand follows. An operation without a result has no `vN =` and
   still takes the next id. The position is the offset in the module's text that a stack trace names. A second one, `@position @written`,
-  says where the text has the operation if that is elsewhere: the build report lists an access there.
+  says where the text has the operation if that is elsewhere: the build report lists an access there. `@position @written callers` is an
+  operation that reports its own errors at the first and whatever it calls at the second. `round-trip wire` prints what a front end sends,
+  as `testaot print --wire` does, which is where the second position of such an operation and of a construction shows.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
 - The head of `b0` may be left out. The block then has the parameters that the function's line gives it, `v0` onward: the captures, `this`, the
@@ -397,7 +399,8 @@ If you write a command:
 testaot list options
 ```
 
-Every test file runs with `check=VerifyEachStage`: the program is verified after each stage. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
+Every test file runs with `check=VerifyEachStage,ValidateReferences,FlowFixpoint,UsedValuesAreListed`, the checks that no byte of the output depends on: the program is verified after each stage,
+the finished code is asked about its references, the rules of the flow analysis run once more over the solved sets, and no pass may leave a use of a value that no block lists. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
 the program it hands to the back end. Bun turns the option off outside its own tests: there the code generator stops the build at an operation that it has no code for, a call that a
 required pass removes among them. `check=VerifyEachPass` verifies after each stage and each pass.
 
@@ -425,10 +428,21 @@ Every optional pass but the named ones and `AnalyzeFlow` is off.
 
 ## Built-ins in IR text
 
-There is one built-ins table, and `testaot` has all of it, the host's entries included. IR text names an entry, a class, a slot, a
-result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`, `overload=MathMax/0`). A test that
-needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads `this`) names a real entry that
-has it.
+A program has one built-ins table, and whoever links `testaot` compiles it: the engine's entries (`aot/builtins/*.builtins.ts`) and a
+host's. WebKit's own build links the stand-in host's (`aot/tests/host`), which has few entries. Bun's build links Bun's. IR text names an
+entry, a class, a slot, a result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`,
+`overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
+`this`) names a real entry that has it.
+
+A test in this folder says the same under both tables:
+
+- It names entries of the engine and of the stand-in host alone. A token that only Bun's table has (`builtin=QueueMicrotask`) does not
+  parse in WebKit's build. To hand a function to the host, which calls it later and ignores what it returns:
+  `Construct` of `builtin=FinalizationRegistry`.
+- It pins nothing that hangs on what else the table holds: the number of a name or of an object, or how an entry that both hosts
+  declare (`BunServe`) treats an operand the test is not about.
+- A test that needs an entry of Bun lies in Bun's `test/aot/engine-tests`. A native test that does is listed in
+  `AOTNativeTestsOfHostEntries.inc`, and `testaot` with the stand-in host's table leaves it out and counts it.
 
 ## Native tests
 

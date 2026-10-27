@@ -18,6 +18,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
@@ -318,6 +319,8 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(hasOwnPropertiesToCopy(source));
     JSObject* from = source.isObject() ? asObject(source) : source.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, threw);
+    prepareForWalk(globalObject, from);
     RETURN_IF_EXCEPTION(scope, threw);
     Object* record = compiledObjectOrNull(target);
     if (record) {

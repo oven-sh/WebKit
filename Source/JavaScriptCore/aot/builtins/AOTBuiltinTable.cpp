@@ -422,13 +422,23 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
     return false;
 }
 
+// The test for an instance of the class compares the type of the cell, and the type of the cell says how wide an element is.
+TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const
+{
+    if (!builtinClass || !isTypedArrayType(at(builtinClass).type))
+        return NotTypedArray;
+    return JSC::typedArrayType(at(builtinClass).type);
+}
+
 BuiltinClassID BuiltinTable::typedArrayClassOf(BuiltinClassID builtinClass) const
 {
-    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
-        if (at(current).typedArrayType != NotTypedArray)
-            return current;
-    }
-    return { };
+    TypedArrayType type = typedArrayTypeOf(builtinClass);
+    if (type == NotTypedArray)
+        return { };
+    BuiltinClassID highest = builtinClass;
+    while (typedArrayTypeOf(at(highest).parent) == type)
+        highest = at(highest).parent;
+    return highest;
 }
 
 template<typename Predicate>

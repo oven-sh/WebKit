@@ -225,6 +225,9 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     bool isConstructorOfClass = callee.constructedClass || callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
+    // A call of a field whose closure is not made yet enters the function through a closure in the frame of the stub, and the list of recorded callees, which the collector visits, holds the closure that the function is entered through.
+    if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+        return false;
     if (!callee.captures.isEmpty()) {
         const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)
@@ -468,8 +471,8 @@ struct WindowScanner {
     {
         if (store.level() != KnowledgeLevel::Proven || (store.guardOperand() && !isObject(store.guardOperand())))
             return { };
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return receivers.isComplete && receivers.members.size() == 1 ? receivers.members[0] : LayoutID();
+        auto receivers = m_program.at(store.receivers()).all();
+        return receivers && receivers->value().size() == 1 ? receivers->value().front() : LayoutID();
     }
 
     bool passesObjectOnlyAsReceiver(const Value& call) const
@@ -525,11 +528,11 @@ struct WindowScanner {
     {
         if (!isClosure(store.valueOperand()))
             return;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        if (!receivers.isComplete || receivers.members.isEmpty())
+        auto receivers = m_program.at(store.receivers()).all();
+        if (!receivers || receivers->value().empty())
             return;
         std::optional<FieldReference> declaration;
-        for (LayoutID member : receivers.members) {
+        for (LayoutID member : *receivers) {
             std::optional<uint32_t> field = m_program.at(member).findField(store.key());
             if (!field || !m_layouts.all.quickGet(member.index()))
                 return;
@@ -722,7 +725,7 @@ struct DeferralAnalysis {
         }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
-            members = program.at(access.receivers()).members.span();
+            members = program.at(access.receivers()).completeMembers().value();
         else if (access.numberOfOperands() && access.operand(0))
             members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
@@ -749,7 +752,7 @@ struct DeferralAnalysis {
     // `ifAbsent` is the answer for a receiver without the field.
     bool holdsForFieldInEveryReceiver(const Value& access, bool ifAbsent, const Invocable<bool(FieldReference)> auto& predicate) const
     {
-        return std::ranges::all_of(program.at(access.receivers()).members, [&](LayoutID member) {
+        return std::ranges::all_of(program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             return field ? predicate(FieldReference { member, *field }) : ifAbsent;
         });
@@ -1125,7 +1128,7 @@ struct DeferralAnalysis {
 
     bool findsClosureOverReceiver(const Value& read) const
     {
-        return !program.at(read.receivers()).members.isEmpty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
+        return !program.at(read.receivers()).completeMembers().value().empty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
             const FieldState& state = stateOf(field);
             const LocationFlow& location = flowOf(program, field).location;
             return state.canDefer()
@@ -1236,7 +1239,7 @@ struct DeferralAnalysis {
     {
         for (AccessKind kind : { SlotRead, NamedAccess }) {
             for (ValueReference reference : accesses[kind]) {
-                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)))
+                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)).predicted())
                     continue;
                 forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
                     if (states[row].isGivenWhereLayoutIsExpected)
@@ -1521,7 +1524,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         if (!mayFindSlotEmpty)
             read.setHoldsDeclaredType(previous.opcode == Opcode::GetSlot && previous.holdsDeclaredType());
         setResultType(id, read, previous.type);
-        read.setExpected(ExpectedType(expectedTypeOf(program, function, read, types)));
+        read.setExpected(expectedTypeOf(program, function, read, types));
     };
 
     auto hoist = [&](auto& self, ValueID id) -> void {
@@ -2403,9 +2406,12 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
     auto becomeReadOfData = [&](ValueID id, Opcode operation, DataID data) -> Value& {
         Value& value = function.edit(id);
         AllocationSiteID allocationSite = value.allocationSite();
+        ArrayStorage arrayStorage = operation == Opcode::Data ? value.arrayStorage() : ArrayStorage::Other;
         value.become(operation);
         value.setData(data);
         value.setAllocationSite(allocationSite);
+        if (operation == Opcode::Data)
+            value.setArrayStorage(arrayStorage);
         value.type = resultTypeOf(context.program, function, value, types);
         return value;
     };

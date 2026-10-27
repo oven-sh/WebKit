@@ -8,13 +8,18 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
+#include "AOTCurrentWork.h"
+#include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardFactDetails.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <optional>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -284,6 +289,8 @@ public:
                 return CloneCheck::OperandMustBeDefinition;
         }
         for (ValueID value : block.values) {
+            if (!m_separatesFunctions && isUniqueInFunctionOf(m_function.at(value).opcode))
+                return CloneCheck::UniqueInFunction;
             if (!canBeSeparatedFromUses(value))
                 return CloneCheck::OperandMustBeDefinition;
         }
@@ -489,12 +496,28 @@ Vector<ValueID> RegionCloner::findLiveIns(const Function& function, std::span<co
     return liveIns;
 }
 
+// What the code of the region asked of a value may be answered already, by the type of the value or by what a guard proves, and of an answered question nothing is left in the code.
+bool RegionCloner::saysAsMuchAs(ValueID inDestination, ValueID inSource) const
+{
+    const Program& program = m_destination.context().program;
+    const Function& destination = m_destination.function();
+    if (isGuardValue(m_source, inSource))
+        return isSameFunction() && isGuardValue(destination, inDestination) && provesAsMuchAs(program, destination, inDestination, inSource);
+    // A value that was made a moment ago gets its type when the pass is done.
+    if (!destination.at(inDestination).type || !m_source.at(inSource).type)
+        return true;
+    return program.typeOf(destination, inDestination).isSubsetOf(program.typeOf(m_source, inSource), program);
+}
+
 void RegionCloner::mapValue(ValueID inSource, ValueID inDestination)
 {
     RELEASE_ASSERT(m_clonedBlocks.isEmpty());
     RELEASE_ASSERT(inDestination && !m_valueMap[inSource.index()]);
     m_valueMap[inSource.index()] = inDestination;
     m_isSeeded.set(inSource.index());
+    const AnalysisContext& context = m_destination.context();
+    if (context.build.options().verifiesProgram && !saysAsMuchAs(inDestination, inSource)) [[unlikely]]
+        context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::CopyRunsBehindLess, .function = context.id, .pass = currentWork().pass.load(std::memory_order_relaxed), .detail = makeString('v', inDestination.index(), " stands for v"_s, inSource.index()) });
 }
 
 void RegionCloner::mapBlock(BlockID inSource, BlockID inDestination)

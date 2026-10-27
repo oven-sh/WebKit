@@ -18,6 +18,7 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyCaches.h"
 #include "AOTPropertyListCache.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
@@ -90,6 +91,18 @@ static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = 
         || structure->hasAnyKindOfGetterSetterProperties()
         || structure->isUncacheableDictionary()
         || extra->hasNonReifiedStaticProperties();
+}
+
+// A walk hands out values, a store that asks nobody writes them, and neither runs code. So they are not for an object that is asked to prepare itself first.
+static bool hasFieldPreparedBeforeLookups(VM& vm, const Object& typed)
+{
+    const LayoutData& layout = typed.layout();
+    if (!layout.hasFieldsWithSymbolKeys)
+        return false;
+    RuntimeLayoutTable& layouts = typed.state().objects->layouts;
+    return std::ranges::any_of(layout.fields(), [&](const FieldData& field) {
+        return layouts.hasSymbolKey(field) && typed.isInSlot(field) && isPreparedBeforeLookups(vm, layouts.nameOf(vm, field));
+    });
 }
 
 static Result visitFields(const Object& typed, Filter filter, const Visitor& visitor)
@@ -264,7 +277,7 @@ bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to)
 Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor& visitor)
 {
     Object* typed = compiledObjectOrNull(object);
-    if (!typed)
+    if (!typed || (filter == Filter::StringsAndSymbols && hasFieldPreparedBeforeLookups(vm, *typed)))
         return Result::NeedsGenericPath;
     JSObject* extra = typed->extraProperties();
     if (!extra)
@@ -279,7 +292,7 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
 Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements)
 {
     Object* typed = compiledObjectOrNull(object);
-    if (!typed)
+    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
@@ -322,6 +335,12 @@ bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)
     PropertyNameArrayBuilder keys(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
     return keys.size();
+}
+
+void prepareHoldersBeforeLookupsUnder(JSGlobalObject* globalObject, Symbol* symbol, JSObject* function)
+{
+    if (Instance* instance = Instance::of(globalObject))
+        instance->state->propertyCaches->prepareHoldersBeforeLookupsUnder(symbol, function);
 }
 
 void materializeLazyProperties(VM& vm, JSObject* object)
@@ -396,7 +415,7 @@ Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& valu
     const Object& typed = *uncheckedDowncast<Object>(object);
     State& state = typed.state();
     if (const FieldData* field = typed.fieldNamed(state, name)) {
-        if (field->isPrivate() || field->isAccessor()) [[unlikely]]
+        if (field->isPrivate() || field->isAccessor() || isPreparedBeforeLookups(*state.instance.vm, name)) [[unlikely]]
             return Presence::Unknown;
         value = typed.readInline(*field);
         if (!value) [[unlikely]]
@@ -412,6 +431,12 @@ void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsig
 {
     ASSERT(isCompiledObject(object));
     uncheckedDowncast<Object>(object)->putDirectFromNativeCode(vm, name, value, attributes);
+}
+
+void prepareForFreeze(JSObject* object)
+{
+    ASSERT(isCompiledObject(object));
+    prepareForWalk(object->structure()->realm(), object);
 }
 
 void setIntegrity(VM& vm, JSObject* object, Integrity level)
@@ -431,8 +456,10 @@ Presence testIntegrity(JSObject* object, Integrity level)
     return typed->testIntegrity(typed->vm(), objectIntegrity(level)) ? Presence::Present : Presence::Absent;
 }
 
-static bool hasOnlyWritableDataProperties(const Object& object)
+static bool hasOnlyWritableDataProperties(VM& vm, const Object& object)
 {
+    if (hasFieldPreparedBeforeLookups(vm, object))
+        return false;
     for (const FieldData& field : object.layout().fields()) {
         bool interceptsStores = field.isAccessor() || object.attributesOf(field) & PropertyAttribute::ReadOnly;
         if (interceptsStores && object.isInSlot(field))
@@ -451,7 +478,7 @@ bool wouldPerformFastPut(VM& vm, JSObject* target)
             materializeLazyProperties(vm, object);
         Structure* structure = object->structure();
         if (Object* compiled = compiledObjectOrNull(object)) {
-            if (!hasOnlyWritableDataProperties(*compiled))
+            if (!hasOnlyWritableDataProperties(vm, *compiled))
                 return false;
         } else if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || (object == target ? structure->mayHaveImmutableProperties() : structure->typeInfo().overridesPut()))
             return false;

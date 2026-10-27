@@ -13,6 +13,7 @@
 #include "AOTFieldTable.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTNameClass.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
@@ -26,6 +27,10 @@
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "ECMAMode.h"
+#include "GetterSetter.h"
+#include "PropertyName.h"
+#include <limits>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -110,6 +115,27 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     if (cache && (!tablesAnswer || !RowDisplacementTable::hasColumn(*identifier)))
         return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     return readThroughTables();
+}
+
+// No layout of the receivers has the name, so the answer lies above the object: in fast code the site is asked in line.
+Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value)
+{
+    Boxed receiver = in<Boxed>(value->objectOperand());
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
+    bool asksSiteInLine = cache && identifier && value.shape() == CodeShape::Fast && value->receivers() && typeOf(value->objectOperand()).isObject() && m_program.nameClassOf(value->key()) != NameClass::Length;
+    if (!asksSiteInLine || !comesAgain(value))
+        return getById(value, receiver, value->key(), cache);
+
+    recordArrival(value, receiver);
+    Pointer site = siteCacheAddress(cache);
+    LBasicBlock asksStub = newBlock();
+    Join<Boxed> join(m_out);
+    join.add(loadBySlotAtSite(unboxCell(receiver), site, Slot::Kind::Value, asksStub, asksStub));
+
+    m_out.appendTo(asksStub);
+    join.add(Boxed(callStub(value, getByIdAtSite(), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
+    return join.finish();
 }
 
 void AccessEmitter::putById(const OperationContext& context, Boxed receiver, PropertyKeyID key, Boxed value, PutMode mode, SiteCacheID cache)
@@ -198,6 +224,62 @@ Boxed AccessEmitter::getFreeName(const ValueContext& value)
     m_out.appendTo(holdsNoConstant);
     join.add(readByStub(true));
     return join.finish();
+}
+
+Condition AccessEmitter::countMissAtSite(Pointer site)
+{
+    Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
+    LValue offset = m_out.bitAnd(m_out.lShr(site.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
+    LValue state = m_out.add(states.value(), offset);
+    TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
+    Word32 count(m_out.load8ZeroExt32(missesLeft));
+    m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
+    return equal(count, word32(0));
+}
+
+Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Kind kind, LBasicBlock whenSlotIsOfOtherKind, LBasicBlock whenSlotIsOfOtherStructure)
+{
+    RELEASE_ASSERT(Slot::payloadOf(kind) == SlotPayload::Holder && Slot::locationOf(kind) == SlotLocation::WordIndex);
+    // Each part of the slot is compared where it lies.
+    auto partOfSlot = [&](ptrdiff_t offset) {
+        return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
+    };
+    branchUnless(equal(Word32(m_out.load32(partOfSlot(Slot::offsetOfStructureID()))), loadStructureID(object)), whenSlotIsOfOtherStructure);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), word32(static_cast<int32_t>(kind))), whenSlotIsOfOtherKind);
+    // An own property has no holder.
+    Pointer holder(m_out.load64(partOfSlot(Slot::offsetOfPayload())));
+    Pointer owner = select(isZero(Integer(holder.value())), Pointer(object.value()), holder);
+    Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, owner.value(), JSObject::butterflyOffset())));
+    Pointer storage = select(hasBits(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags()))), Slot::isOutOfLine), butterfly, owner);
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), m_out.constInt32(3));
+    return Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0)));
+}
+
+// A site that has no answer for the Structure of the object has the name looked up, so the first object of a Structure is answered like those behind it.
+void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
+{
+    SiteCacheID cache = value->siteCache();
+    std::optional<uint32_t> identifier = findIdentifierNumber(value, value->key());
+    if (!cache || !identifier || value.shape() != CodeShape::Fast) {
+        define(value, undefined());
+        return;
+    }
+
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Pointer site = siteCacheAddress(cache);
+    LBasicBlock findsNoGetter = newBlock();
+    LBasicBlock hasOtherStructure = newBlock();
+    Join<Boxed> join(m_out);
+    Boxed accessor = loadBySlotAtSite(object, site, Slot::Kind::Getter, findsNoGetter, hasOtherStructure);
+    join.add(Boxed(m_out.load64(m_out.address(m_heaps.root, accessor.value(), GetterSetter::offsetOfGetter()))));
+
+    m_out.appendTo(hasOtherStructure);
+    branchUnless(countMissAtSite(site), findsNoGetter);
+    join.add(callOperation<Boxed>(value, RuntimeOperation::FindGetterAndFillSiteCache, { object, word32(static_cast<int32_t>(*identifier)), site }, { .isOnRarePath = true }));
+
+    m_out.appendTo(findsNoGetter);
+    join.add(undefined());
+    define(value, join.finish());
 }
 
 void AccessEmitter::putFreeName(const ValueContext& value)
@@ -335,7 +417,7 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
 
 void AccessEmitter::generatePropGet(const ValueContext& value)
 {
-    define(value, value->isFreeName() ? getFreeName(value) : getById(value, in<Boxed>(value->objectOperand()), value->key(), value->siteCache()));
+    define(value, value->isFreeName() ? getFreeName(value) : getMemberAboveLayouts(value));
 }
 
 void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, PutMode mode)
@@ -363,7 +445,16 @@ void AccessEmitter::generatePropSet(const ValueContext& value)
 
 void AccessEmitter::generatePropDefine(const ValueContext& value)
 {
-    putNamedProperty(value, boxCell(in<CellPointer>(value->objectOperand())), PutMode::Define);
+    Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
+    // `{ 2: value }` defines an element.
+    if (m_program.nameClassOf(value->key()) == NameClass::Index) {
+        std::optional<uint32_t> index = parseIndex(byteCast<Latin1Character>(m_program.strings[m_program.at(value->key()).text]));
+        if (index && *index <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
+            putByVal(value, object, Boxed(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index))))), in<Boxed>(value->valueOperand()), PutMode::Define);
+            return;
+        }
+    }
+    putNamedProperty(value, object, PutMode::Define);
 }
 
 void AccessEmitter::generatePropHas(const ValueContext& value)

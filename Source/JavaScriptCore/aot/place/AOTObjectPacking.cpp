@@ -470,7 +470,7 @@ void ObjectPacker::computeRowProperties()
     for (const JoinedRows::Set& joined : m_joinedRows.sets()) {
         std::span<const SlotRow> rows = m_joinedRows.rowsOf(joined);
         bool isStored = std::ranges::any_of(rows, [&](SlotRow row) {
-            return m_uses.rows[row].isStoredSomewhere();
+            return m_uses.rows[row].isStoredSomewhere().predicted();
         });
         if (!isStored)
             continue;
@@ -489,7 +489,7 @@ bool ObjectPacker::hasVisibleStore(LayoutID id, SlotRow row) const
 {
     constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
     const SlotRowUse& use = m_uses.rows[row];
-    if (use.isStoredSomewhere() || m_claims[row].existsAtCreation || !use.holderHeat || m_rowsTreatedAsStored.quickGet(row))
+    if (use.isStoredSomewhere().predicted() || m_claims[row].existsAtCreation || !use.holderHeat.predicted() || m_rowsTreatedAsStored.quickGet(row))
         return true;
     return declarationAt(id, row).flags.containsAny(privateNameFlags);
 }
@@ -641,7 +641,7 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
         }
         // A field that is added late is stored by a function of its own, which may store into one object again and again: how often it runs ranks such fields and does not say how many objects get one.
         bool isAddedLate = row < m_context.rows.extensionWordOf(id) && declarationAt(id, row).flags.contains(FieldFlags::IsAddedLate);
-        bool isLikelyFilled = isAddedLate ? m_uses.rows[row].isFilledBesideCreation() : m_uses.rows[row].isLikelyFilled();
+        bool isLikelyFilled = isAddedLate ? m_uses.rows[row].isFilledBesideCreation().predicted() : m_uses.rows[row].isLikelyFilled().predicted();
         if ((claim.isSetAtCreation && (claim.isInitializedWithValue || !claim.existsAtCreation)) || isLikelyFilled)
             bytesSetAtCreation += width;
         if (!claim.mayBeOutOfLine || isInherited(row)) {
@@ -684,12 +684,12 @@ void ObjectPacker::chooseOutOfLineRows(LayoutID id, RowsOutOfLine& outOfLine)
         for (uint32_t rank = 0; rank < ranked.size(); ++rank)
             betterRanks[ranked[rank] - firstRow] = std::min(betterRanks[ranked[rank] - firstRow], rank);
     };
-    rankBy([](const SlotRowUse& use) { return use.fillHeat; });
-    rankBy([](const SlotRowUse& use) { return use.accessWeight; });
+    rankBy([](const SlotRowUse& use) { return use.fillHeat.predicted(); });
+    rankBy([](const SlotRowUse& use) { return use.accessWeight.predicted(); });
     auto scoreOf = [&](SlotRow row) {
         const SlotClaim& claim = m_claims[row];
         const SlotRowUse& use = m_uses.rows[row];
-        return std::tuple(claim.isSetAtCreation, claim.isInitializedWithValue, use.isFilledBesideCreation(), std::numeric_limits<uint32_t>::max() - betterRanks[row - firstRow], hasVisibleStore(id, row), use.accessWeight);
+        return std::tuple(claim.isSetAtCreation, claim.isInitializedWithValue, use.isFilledBesideCreation().predicted(), std::numeric_limits<uint32_t>::max() - betterRanks[row - firstRow], hasVisibleStore(id, row), use.accessWeight.predicted());
     };
     AOT::sort(optionalRows, [&](SlotRow a, SlotRow b) {
         auto scoreOfA = scoreOf(a);
@@ -768,7 +768,7 @@ void ObjectPacker::agreeOnStorage()
             if (slot.isOutOfLine())
                 rowsOutOfLine.append(row);
             else
-                hasRowInCell |= !!m_uses.rows[row].holderHeat;
+                hasRowInCell |= !!m_uses.rows[row].holderHeat.predicted();
         }
         if (!hasRowInCell || rowsOutOfLine.isEmpty())
             continue;
@@ -778,12 +778,12 @@ void ObjectPacker::agreeOnStorage()
         });
         if (isOnlyDeclared)
             continue;
-        double bytesAllocated = 0;
+        SiteHeat bytesAllocated = 0;
         for (SlotRow row : rowsOutOfLine) {
             uint32_t bytes = bytesOf(layoutOf(row));
             bytesAllocated += m_uses.rows[row].holderHeat * (cellSizeFor(bytes + widthOf(m_claims[row].representation)) - cellSizeFor(bytes));
         }
-        if (bytesAllocated * accessesForEachByte > static_cast<double>(joined.weight >> siteWeightFractionBits))
+        if ((bytesAllocated * accessesForEachByte > static_cast<double>(joined.weight.predicted() >> siteWeightFractionBits)).predicted())
             continue;
         for (SlotRow row : rowsOutOfLine) {
             LayoutID layout = layoutOf(row);
@@ -854,7 +854,7 @@ void ObjectPacker::appendSteps(std::span<const MemberRow> rows, StepRank rank, S
         step.rank = StepRank::JoinsFamilies;
         step.weight = 0;
         for (MemberRow member : rows)
-            step.weight = std::max(step.weight, m_uses.rows[member.row].accessWeight);
+            step.weight = greaterOf(step.weight, m_uses.rows[member.row].accessWeight);
     }
     for (size_t end = 1; end <= rows.size(); ++end) {
         step.depth = depthOfDeclaration(rows[end - 1]);
@@ -969,7 +969,7 @@ Vector<PlacementStep> ObjectPacker::collectSteps(const BitVector& setsToPlaceFir
     }
 
     AOT::sort(steps, [](const PlacementStep& a, const PlacementStep& b) {
-        return std::tuple(a.depth, a.rank, b.weight, a.firstSharedRow) < std::tuple(b.depth, b.rank, a.weight, b.firstSharedRow);
+        return std::tuple(a.depth, a.rank, b.weight.predicted(), a.firstSharedRow) < std::tuple(b.depth, b.rank, a.weight.predicted(), b.firstSharedRow);
     });
     return steps;
 }
@@ -1015,7 +1015,7 @@ void ObjectPacker::placeSharedRows(const BitVector& setsToPlaceFirst)
         else if (step.placesHiddenWords)
             placeAtSharedOffsets(rows);
         else
-            placeTogether(rows, step.weight);
+            placeTogether(rows, !!step.weight.predicted());
     }
 }
 
@@ -1074,7 +1074,7 @@ void ObjectPacker::placeSharedRowsInBestOrder()
     m_extension = Vector<Area>(extensionAreas.size());
     forgetLocations();
     placeSharedRows(setsWithoutRoom);
-    if (weightOf(findSetsWithoutOneLocation()) < weightOf(setsWithoutRoom))
+    if ((weightOf(findSetsWithoutOneLocation()) < weightOf(setsWithoutRoom)).predicted())
         return;
 
     m_packed.slots = WTF::move(slots);
@@ -1112,7 +1112,7 @@ Vector<LocationRequest> ObjectPacker::collectRequests()
             requests.last().weight = saturatedSum(requests.last().weight, use.weight);
             continue;
         }
-        size_t numberOfReceivers = m_context.program.at(access.receivers).members.size();
+        size_t numberOfReceivers = m_context.program.at(access.receivers).written().size();
         if (numberOfReceivers < 2)
             continue;
         requests.append(LocationRequest { access.key, access.receivers, use.weight, numberOfMembers, 0 });
@@ -1126,8 +1126,8 @@ Vector<LocationRequest> ObjectPacker::collectRequests()
         return request.numberOfMemberRows < 2;
     });
     parallelSort(loops(), requests.mutableSpan(), [](const LocationRequest& a, const LocationRequest& b) {
-        if (a.weight != b.weight)
-            return a.weight > b.weight;
+        if (!a.weight.isSamePredictionAs(b.weight))
+            return (a.weight > b.weight).predicted();
         return std::tuple(a.key, a.receivers) < std::tuple(b.key, b.receivers);
     });
     return requests;
@@ -1137,7 +1137,7 @@ void ObjectPacker::findMemberRows(LocationRequest& request)
 {
     const Program& program = m_context.program;
     std::span<MemberRow> rows = m_memberRows.mutableSpan().subspan(request.firstMemberRow);
-    for (LayoutID member : program.at(request.receivers).members) {
+    for (LayoutID member : program.at(request.receivers).completeMembers()) {
         if (!m_context.isCompiledObject(member))
             continue;
         auto field = program.at(member).findField(request.key);
@@ -1385,7 +1385,7 @@ void ObjectPacker::placeOutOfLineRowsByWeight(LayoutID id)
             rows.append(row);
     }
     AOT::sort(rows, [&](SlotRow a, SlotRow b) {
-        return std::tuple(m_uses.rows[b].accessWeight, a) < std::tuple(m_uses.rows[a].accessWeight, b);
+        return std::tuple(m_uses.rows[b].accessWeight.predicted(), a) < std::tuple(m_uses.rows[a].accessWeight.predicted(), b);
     });
     for (SlotRow row : rows)
         placeAtFirstFreeOffset({ id, row });
@@ -1451,7 +1451,7 @@ void ObjectPacker::collectSharedLocations()
         }
         SharedLocation& location = m_packed.sharedLocations[locationOfRoot];
         location.rows.append(row);
-        location.weight = std::max(location.weight, m_uses.rows[row].accessWeight);
+        location.weight = greaterOf(location.weight, m_uses.rows[row].accessWeight);
         m_packed.sharedLocationOfRow[row] = locationOfRoot;
     }
 }

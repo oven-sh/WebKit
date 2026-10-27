@@ -207,6 +207,11 @@ struct TemplateObjectRequest {
 };
 static_assert(sizeof(TemplateObjectRequest) == 4);
 
+constexpr bool isAssignableBinding(EvalBindingKind kind)
+{
+    return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
+}
+
 struct EvalBindingData {
     static constexpr uint32_t noOperand = UINT32_MAX;
 
@@ -252,9 +257,7 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    // The descriptor literal has no prototype: a member that it does not list is absent, whatever Object.prototype holds.
-    uint32_t inheritsNothing : 1;
-    uint32_t unused : 22;
+    uint32_t unused : 23;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 
@@ -313,6 +316,7 @@ struct ThrowSiteWord {
     static constexpr uint32_t narrowNone = (1u << 17) - 1;
     static constexpr uint32_t maxNarrowA = narrowNone - 1;
     static constexpr unsigned numberOfRegistersPerBank = 32;
+    static constexpr unsigned maxMethodReadColumnDelta = numberOfRegistersPerBank - 2;
 #if CPU(X86_64)
     // Behind a call each word is the immediate of a `test eax, imm32` that nothing executes: whoever decodes the code in order finds instructions alone, and the next one where it begins.
     static constexpr uint8_t opcodeInFrontOfWordBehindCall = 0xa9;
@@ -322,10 +326,18 @@ struct ThrowSiteWord {
 #endif
 
     uint32_t narrowA() const { return a == narrowNone ? none : a; }
+    // Such a site has no operand. Its registerNumber is one more than the number of columns from the read of the method to the call, or zero.
+    bool isCallSite() const { return static_cast<ThrowKind>(kind) == ThrowKind::NotAFunction && static_cast<Typed::Representation>(representation) == Typed::Representation::Void; }
+    bool differsOnlyInRegisterNumber(ThrowSiteWord other) const
+    {
+        other.registerNumber = registerNumber;
+        return std::bit_cast<uint32_t>(other) == std::bit_cast<uint32_t>(*this);
+    }
 
+    // The lowest bits: words that differ in nothing else are neighbors by value.
+    uint32_t registerNumber : 5;
     uint32_t kind : 3;
     uint32_t representation : 4;
-    uint32_t registerNumber : 5;
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
     uint32_t unused : 1;

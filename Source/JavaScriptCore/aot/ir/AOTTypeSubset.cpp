@@ -198,8 +198,8 @@ bool isPartSubset(const ClassPart& a, const ClassPart& b, const TypeTable& types
         return false;
     if (b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage)
         return false;
-    for (unsigned index = 0; index < b.contents.size(); ++index) {
-        if (!isSubset(types.at(a.contentsAt(index)), types.at(b.contentsAt(index)), types))
+    for (unsigned index = 0; index < b.writtenContents.size(); ++index) {
+        if (!isSubset(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
             return false;
     }
     return true;
@@ -355,11 +355,6 @@ static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
         return false;
     if (a.anyObject || b.anyObject)
         return true;
-    auto listsObjectsWithoutLayout = [](const Type& type) {
-        return type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty();
-    };
-    if ((hasMembersWithoutLayout(types, a) && listsObjectsWithoutLayout(b)) || (hasMembersWithoutLayout(types, b) && listsObjectsWithoutLayout(a)))
-        return true;
     const BuiltinTable& builtins = types.builtins();
     return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
 }
@@ -397,7 +392,7 @@ std::span<const LayoutID> membersOf(const TypeTable& types, const Type& type)
 {
     if (!type.layouts)
         return { };
-    return types.at(type.layouts).members.span();
+    return types.at(type.layouts).completeMembers();
 }
 
 std::span<const LayoutID> membersOf(const Program& program, const Type& type)

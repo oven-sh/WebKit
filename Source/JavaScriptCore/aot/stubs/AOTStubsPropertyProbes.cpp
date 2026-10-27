@@ -442,7 +442,15 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     const FieldAddressRegisters field { object, T10, T11, T11, T12 };
     jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), field.slotData);
     computeFieldAddress(jit, field, false, otherwise);
-    branchOnFieldPresence(jit, field, T10, otherwise, isAbsent);
+    JumpList isPresent;
+    branchOnFieldPresence(jit, field, T10, isPresent, isAbsent);
+
+    // A closure that is made at its first use. The object and the name say all that making it takes, so nothing is looked up and nothing is filed.
+    static_assert(!uncreatedDeferredClosure);
+    isPresent.link(&jit);
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::DeferredClosure))));
+    otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(field.address)));
+    jit.callOperationAndReturn(Entry::operationAOTMaterializeDeferredClosure, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = object, .thirdArgumentIn = name });
 
     isAbsent.link(&jit);
     jit.bindEntry(getByIdOfEmptySlot().withCallerFrame(callerFrame));
@@ -863,6 +871,7 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     RELEASE_ASSERT(result != m_header);
     switch (Slot::payloadOf(m_kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         jit.move(TrustedImm32(0), result);
         return;
     case SlotPayload::Holder: {

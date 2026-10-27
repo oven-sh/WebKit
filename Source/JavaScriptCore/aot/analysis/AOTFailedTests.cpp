@@ -149,9 +149,9 @@ bool FailedTests::isCoveredBySwitch(const Value& shapeTest, const FailedSwitch& 
 {
     const Program& program = m_analyses.program();
     std::span<const LayoutSetID> cases = m_function.at(entry.from).terminator.layoutSets();
-    return std::ranges::all_of(program.at(shapeTest.layouts()).members, [&](LayoutID layout) {
+    return std::ranges::all_of(program.at(shapeTest.layouts()).completeMembers(), [&](LayoutID layout) {
         return std::ranges::any_of(cases, [&](LayoutSetID set) {
-            return std::ranges::binary_search(program.at(set).members, layout);
+            return std::ranges::binary_search(program.at(set).completeMembers(), layout);
         });
     });
 }

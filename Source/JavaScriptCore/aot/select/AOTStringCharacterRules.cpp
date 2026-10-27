@@ -215,7 +215,7 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
             reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];
-                pair.hasLikelyReader |= function.at(block).frequency != BlockFrequency::Rare;
+                pair.hasLikelyReader |= function.at(block).frequency.predicted() != BlockFrequency::Rare;
                 pair.hasResolvingReader |= reader->resolvesRopes;
                 pair.resolvesUnderOtherHandler |= reader->resolvesRopes && function.at(block).handler != function.at(pair.header).handler;
             }
@@ -235,7 +235,7 @@ static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID fo
         return true;
     const Function& function = context.function();
     std::span<const BlockID> predecessors = context.analyses().cfg().predecessors(follower);
-    return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency == function.at(block).frequency && function.at(follower).handler == function.at(block).handler;
+    return predecessors.size() == 1 && predecessors[0] == block && function.at(follower).frequency.isSamePredictionAs(function.at(block).frequency) && function.at(follower).handler == function.at(block).handler;
 }
 
 // The first reader that resolves ropes leaves the string flat for every reader it dominates.
@@ -285,7 +285,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
                 flatteningReader = first.index;
             unsigned numberOfLikelyReads = firstReader.readsCharacters;
             for (const PlacedIndex& follower : remaining) {
-                if (!readers[follower.index].readsCharacters || function.at(follower.point.block).frequency != function.at(first.point.block).frequency || !staysFlatUntil(follower))
+                if (!readers[follower.index].readsCharacters || !function.at(follower.point.block).frequency.isSamePredictionAs(function.at(first.point.block).frequency) || !staysFlatUntil(follower))
                     continue;
                 ++numberOfLikelyReads;
                 if (!flatteningReader && runsRightBehind(context, first.point.block, follower.point.block))
@@ -377,7 +377,7 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
 static ValueID appendFlattenIfString(IRBuilder& builder, ValueID value)
 {
     Function& function = builder.function();
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     ValueID test = builder.appendTypeTest(value, TypeTable::string);
     IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, rarerOf(frequency, BlockFrequency::Unlikely));
 

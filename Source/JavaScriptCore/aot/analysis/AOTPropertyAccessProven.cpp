@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowObjectOperations.h"
@@ -125,7 +126,7 @@ static bool addMemberArm(const PropertyAccessContext& context, const PropertyAcc
 static bool addProvenArms(const PropertyAccessContext& context, const PropertyAccessQuery& query, ProvenAccess& result)
 {
     const ReceiverCandidates& receivers = query.receivers;
-    RELEASE_ASSERT(receivers.predicted.isEmpty() && !receivers.mayBeNullish);
+    RELEASE_ASSERT(receivers.expected.predicted().isEmpty() && !receivers.mayBeNullish);
     if (!receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() > query.maxMembers)
         return false;
     if (receivers.proven.isEmpty())
@@ -148,7 +149,7 @@ static bool definesPropertyOfOrdinaryObject(const Program& program, const Functi
     if (function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject)
         return true;
     const Type& type = program.typeOf(function, access.objectOperand());
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record;
     });
 }
@@ -161,6 +162,8 @@ static bool readsNameOfClosuresWithoutCode(const Program& program, const Type& r
     for (BuiltinID above : { Builtins::FunctionPrototype, Builtins::ObjectPrototype }) {
         BuiltinID member = findOwnMember(program, above, key);
         if (!listsEveryMemberUnder(program, above, key) || (member && program.builtins().at(member).kind != BuiltinKind::Method))
+            return false;
+        if (!isLockedLocation(program, above, key) || !program.builtins().hasLockedPrototypeLink(above))
             return false;
     }
     Type closures = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
@@ -185,12 +188,12 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     if (!query || looksForNameThatFramesTellOf(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
         return ProvenAccess::unknown();
     query->receivers.mayBeNullish = false;
-    query->receivers.predicted.clear();
+    query->receivers.expected = LayoutList();
     query->isOnlyCalled = !query->isPrivate;
     query->usesOnlyPlansWithoutTests = true;
 
     ProvenAccess result;
-    if (!addProvenArms({ program, nullptr }, *query, result)) {
+    if (!addProvenArms({ program, nullptr, !program.propertyAccessCache() }, *query, result)) {
         if (definesPropertyOfOrdinaryObject(program, function, access))
             return { .isComplete = true, .definesOwnProperty = true, .key = query->key };
         if (query->access == Access::Read && !query->isPrivate && readsNameOfClosuresWithoutCode(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))

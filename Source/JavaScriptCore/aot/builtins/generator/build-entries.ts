@@ -63,6 +63,7 @@ import {
   builtinMarks,
   pristineTests,
   targetPlatforms,
+  typedArrayTypes,
   type BuiltinKind,
   type BuiltinPath,
   type CallMode,
@@ -189,6 +190,7 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "HostMethodCall":
     case "Startup":
     case "SeenCodeOnly":
+    case "InstancesWithoutOwnNames":
       return null;
   }
 }
@@ -272,6 +274,10 @@ function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclarati
   return "Mark";
 }
 
+// The cell type of a typed array says how wide its elements are, and every class below makes cells of that type.
+const isCellTypeOfTypedArray = (jsType: string) =>
+  typedArrayTypes.some(type => type !== "NotTypedArray" && type !== "TypeDataView" && jsType === `${type.slice(4)}ArrayType`);
+
 function declareClasses({ builder, sorted }: EntryContext): void {
   for (const { declaration, source } of select(sorted, "Class")) {
     const { name, columns } = declaration;
@@ -284,7 +290,6 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       constructor: null,
       prototype: null,
       jsType: columns.jsType ?? "CellType",
-      typedArrayType: columns.typedArrayType ?? "NotTypedArray",
       instanceTest: instanceTestOf(columns),
       sharingMode: columns.sharingMode ?? null,
       instanceCppClass: columns.instanceCppClass ?? null,
@@ -316,6 +321,21 @@ function declareClasses({ builder, sorted }: EntryContext): void {
     const { declaration, source } = builder.writtenClassOf(builtinClass);
     const parentName = declaration.columns.extends;
     if (parentName !== undefined) builtinClass.parent = builder.resolveClass(parentName, source);
+    const { parent } = builtinClass;
+    if (parent !== null && isCellTypeOfTypedArray(parent.jsType) && builtinClass.jsType !== parent.jsType) {
+      builder.problems.add(
+        source,
+        `the class ${builtinClass.token} stands below ${parent.token}, whose instances have the cell type ${parent.jsType}, and names ${builtinClass.jsType}`,
+      );
+    }
+  }
+  for (const { declaration, source } of select(sorted, "InstancesWithoutOwnNames")) {
+    for (const name of declaration.classes) {
+      const builtinClass = builder.resolveClass(name, source);
+      if (builtinClass === null) continue;
+      if (builtinClass.namesDefinedOnNewInstances === null) builtinClass.namesDefinedOnNewInstances = [];
+      else builder.problems.add(source, `the class ${name} says twice which own names its instances have`);
+    }
   }
 }
 
@@ -976,7 +996,9 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
 // The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it. aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
 // A constructor has `prototype` besides. The comparison loads no module, so a constructor that only a module hands out lists what the table knows of it and may have more, and so does one that is itself what a module exports: the module puts members on it when it is loaded.
 function closeFunctions({ builder, ownPropertyLists }: EntryContext): void {
-  const moduleObjects = new Set(builder.modules.map(module => builder.find(joinPath(module.namespace.path))));
+  const moduleObjects = new Set<ModelBuiltin | undefined>(
+    builder.modules.map(module => builder.find(joinPath(module.namespace.path))),
+  );
   const rootOf = (builtin: ModelBuiltin): ModelBuiltin => (builtin.holder === null ? builtin : rootOf(builtin.holder));
   const isHandedOutByModule = (builtin: ModelBuiltin): boolean =>
     moduleObjects.has(builtin) || rootOf(builtin).scope !== "Realm" || moduleObjects.has(rootOf(builtin));

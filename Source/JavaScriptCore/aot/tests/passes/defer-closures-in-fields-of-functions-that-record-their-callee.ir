@@ -1,0 +1,43 @@
+# A call of a field whose closure is not made yet enters the function through a closure that lies in the frame of the stub. The entrypoint of a function that records its callee writes the closure it is entered through
+# into a list that the collector visits: the closures of such a function are made where they are written. Where it is the run time that records, once a closure of the function was renamed, it writes no closure that lies in a frame
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 2
+# STATISTIC: ClosuresDeferredInFields = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="HoldsFunctionThatRecords" fields=[{key="run" declared={type=function}}]
+layout L1 name="HoldsFunctionThatRecordsOnceRenamed" fields=[{key="run" declared={type=function}}]
+layout L2 name="HoldsFunction" fields=[{key="run" declared={type=function}}]
+# CHECK: layout L0 name="HoldsFunctionThatRecords" fields=[{key="run" declared={type=function}}]
+# CHECK-NEXT: layout L1 {{*}}deferral=CapturesNothing deferredFunction=f2
+# CHECK-NEXT: layout L2 {{*}}deferral=CapturesNothing deferredFunction=f3
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f3
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    PutModuleVariable v7 variable=g0
+    Return
+# CHECK-NOT: function=f1 [isMadeOnDemand]
+# CHECK: = NewClosure function=f2 [isMadeOnDemand]
+# CHECK: = NewClosure function=f3 [isMadeOnDemand]
+}
+function f1 name="records" module=m0 kind=Arrow results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee] {
+    Return
+}
+function f2 name="recordsOnceRenamed" module=m0 kind=Arrow results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee, RecordsCalleeOnceRenamed] {
+    Return
+}
+function f3 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
+    Return
+}

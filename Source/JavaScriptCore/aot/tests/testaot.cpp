@@ -27,6 +27,8 @@
 #include "AOTTestRunner.h"
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
+#include "AOTValueFlowWidenedReport.h"
+#include "AOTValueFlowWidenedSolve.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include "InitializeThreading.h"
@@ -351,6 +353,7 @@ int main(int argc, char** argv)
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 
     WTF::initializeMainThread();
+    Typed::reportWhatIsFoundOnlyFromLessBy(Typed::reportWhatIsFoundOnlyFromLessInWords);
 
     std::span<char*> commandLine = unsafeMakeSpan(argv, static_cast<size_t>(argc));
     const SubcommandEntry* entry = commandLine.size() > 1 ? findSubcommand(StringView::fromLatin1(commandLine[1])) : nullptr;

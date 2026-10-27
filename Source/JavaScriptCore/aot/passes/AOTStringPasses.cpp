@@ -777,6 +777,12 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
             return std::nullopt;
         if (nested.web->reads.first().use != nested.readOfLastState || !nested.web->reads.first().endsWeb)
             return std::nullopt;
+        // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
+        bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
+            return context.program.typeOf(context.function, entry.value).mayBeUnspecified();
+        });
+        if (wouldReadEmptyFirstState)
+            return std::nullopt;
         return nested;
     };
     // A concatenation converts its operands before it joins them. The code that the conversion of an object runs would come after the front is written.
@@ -1640,7 +1646,7 @@ static bool markLikelyKeys(FunctionPassContext& context)
                     continue;
                 }
                 // As the call by name that stands in where a Map is not what its type says.
-                if (function.at(use.block).frequency != BlockFrequency::Normal)
+                if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
                     continue;
 
                 ValueID sameString;

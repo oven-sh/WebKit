@@ -18,6 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
 struct Function;
+struct LocationFlow;
 struct Value;
 
 template<typename IDType>
@@ -278,6 +279,13 @@ MemoryAccess memoryAccessOf(const Function&, const Value&);
 enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedDuringActivation };
 
 LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);
+// The location has been stored to wherever a function that reads it is entered, and not sooner. In the function's own body that is everywhere. A copy of the body in another function names a fact that says where it begins.
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&);
+// What is stored ahead of every caller of its readers is stored ahead of the callers that flow has followed. The copy of a callee that was predicted may stand in another function, where no more holds than that the callee is entered.
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&, bool calleeIsPredicted);
+bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Function&, const Value& read);
+// The frame, or one around it, is the copy of a callee that was predicted.
+bool liesInCopyOfPredictedCallee(const Function&, uint32_t inlineFrame);
 
 } } } // namespace JSC::AOT::Typed
 

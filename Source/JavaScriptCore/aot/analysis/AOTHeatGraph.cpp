@@ -11,6 +11,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTCallGraph.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectSummaries.h"
@@ -76,7 +77,7 @@ static void mergeEdges(WeightedCallList& calls)
     calls.shrink(mergedSize);
 }
 
-static bool mayHaveNoLayout(const Program& program, const Type& object) { return object.anyObject || !object.classes.isEmpty() || hasMembersWithoutLayout(program, object); }
+static bool mayHaveNoLayout(const Type& object) { return object.anyObject || !object.classes.isEmpty(); }
 
 static bool saysNothingAboutCalls(OperandUses uses) { return uses.containsAll(callingUses); }
 
@@ -94,8 +95,8 @@ static bool entersOnlyBuiltins(const Program& program, const Value& call)
 {
     if (effectRuleOf(call.opcode) == EffectRule::Builtin)
         return true;
-    CalleeList callees = calleesOfCall(program, call);
-    return callees.isComplete && callees.functions.isEmpty() && !callees.builtins.isEmpty();
+    std::optional<ProvenValue<Callees>> callees = calleesOfCall(program, call).all();
+    return callees && callees->value().functions.empty() && !callees->value().builtins.empty();
 }
 
 static double estimateCallbackCalls(OperandUses uses)
@@ -118,11 +119,11 @@ static bool isHandedToCodeThatRuns(const Value& user, uint32_t operandIndex)
 
 static bool isHandedToCodeThatRuns(const Terminator&, uint32_t) { return true; }
 
-static double shareOfClass(BlockFrequency frequency)
+static double shareOfClass(Expected<BlockFrequency> frequency)
 {
-    if (frequency == BlockFrequency::Normal)
+    if (frequency.predicted() == BlockFrequency::Normal)
         return 1;
-    return frequency == BlockFrequency::Unlikely ? frequencyConstants.unlikelyEdgeShare : frequencyConstants.rareEdgeShare;
+    return frequency.predicted() == BlockFrequency::Unlikely ? frequencyConstants.unlikelyEdgeShare : frequencyConstants.rareEdgeShare;
 }
 
 static Vector<WeightOfBlock> computeWeightsOfBlocks(FunctionAnalyses& analyses)
@@ -131,15 +132,15 @@ static Vector<WeightOfBlock> computeWeightsOfBlocks(FunctionAnalyses& analyses)
     Vector<WeightOfBlock> weights;
     weights.reserveInitialCapacity(analyses.cfg().reversePostOrder().size());
     for (BlockID id : analyses.cfg().reversePostOrder())
-        weights.append(WeightOfBlock { id, frequencies.frequencyOf(id), shareOfClass(frequencies.classOf(id)) });
+        weights.append(WeightOfBlock { id, frequencies.frequencyOf(id).predicted(), shareOfClass(frequencies.classOf(id)) });
     return weights;
 }
 
 static double estimateIndirectCalls(const FlowIndirectCall& call)
 {
-    bool describesSite = call.kind == FlowIndirectCallKind::BuiltinCallback || call.times == BuiltinCallbackTimes::Once;
+    bool describesSite = call.kind == FlowIndirectCallKind::BuiltinCallback || call.times.predicted() == BuiltinCallbackTimes::Once;
     double runsOfSite = call.isInCycle && describesSite ? frequencyConstants.iterationsPerLoop : 1;
-    switch (call.times) {
+    switch (call.times.predicted()) {
     case BuiltinCallbackTimes::PerEvent:
         return 0;
     case BuiltinCallbackTimes::Repeatedly:
@@ -230,7 +231,7 @@ FunctionsUnderNames::FunctionsUnderNames(const Program& program, const CallGraph
                 const Type& type = program.typeOf(function, holder);
                 for (LayoutID layout : membersOf(program, type))
                     note(layout);
-                if (mayHaveNoLayout(program, type))
+                if (mayHaveNoLayout(type))
                     note(LayoutID());
             });
         };
@@ -330,20 +331,65 @@ static PropertyKeyID nameOfCallee(const Program&, const Function&, const Termina
 static bool isCall(const Value& value) { return effectRuleOf(value.opcode) == EffectRule::Call; }
 static bool isCall(const Terminator& terminator) { return effectRuleOf(terminator.kind) == EffectRule::Call; }
 
+// A read under a name that runs code nobody knows runs what a descriptor holds under `get`, and a store what one holds under `set`.
+static PropertyKeyID nameOfAccessorInDescriptor(const Program& program, const Value& access)
+{
+    if (!PayloadWord::key(access.opcode) || !access.key())
+        return { };
+    if (accessOf(access.opcode) == Access::Read)
+        return program.keyOf(BuiltinNames::get);
+    return accessOf(access.opcode) == Access::Store ? program.keyOf(BuiltinNames::set) : PropertyKeyID();
+}
+
+static PropertyKeyID nameOfAccessorInDescriptor(const Program&, const Terminator&) { return { }; }
+
+static bool constructsUnknownCallee(const Program& program, const Function& function, const Value& value)
+{
+    std::optional<unsigned> callee = OperandPosition::callee(value.opcode);
+    return callee && OperandPosition::newTarget(value.opcode) && !calleesOf(program, program.typeOf(function, value.operand(*callee))).listsEveryCallee();
+}
+
+static bool constructsUnknownCallee(const Program&, const Function&, const Terminator&) { return false; }
+
+enum class EnteredAsValueBy : uint8_t { Nothing, Calls, Constructions };
+
+static EnteredAsValueBy whatEntersAsValue(const Function& function)
+{
+    switch (function.kind) {
+    case FunctionKind::Plain:
+    case FunctionKind::Arrow:
+    case FunctionKind::Method:
+        return EnteredAsValueBy::Calls;
+    case FunctionKind::BaseConstructor:
+    case FunctionKind::DerivedConstructor:
+        return EnteredAsValueBy::Constructions;
+    case FunctionKind::Getter:
+    case FunctionKind::Setter:
+    case FunctionKind::Initializer:
+    case FunctionKind::Module:
+    case FunctionKind::CommonJsModule:
+        return EnteredAsValueBy::Nothing;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 namespace {
 
 struct SeenCode {
     BitVector isReached;
     BitVector mayBeCalledAsValue;
+    BitVector hasSiteThatMayEnter;
     bool reachesEverything { false };
+    bool seesWhatRuns { false };
 
     bool reaches(FunctionID function) const { return reachesEverything || isReached.get(function.index()); }
+    bool mayEnter(FunctionID function) const { return !seesWhatRuns || hasSiteThatMayEnter.get(function.index()); }
 };
 
 } // anonymous namespace
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
-static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, EstimateOf estimate)
+static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
 {
     unsigned count = graph.numberOfFunctions();
     bool isForClasses = estimate == EstimateOf::Classes;
@@ -415,6 +461,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     auto mayStandWhereValueIsCalled = [&](FunctionID function) {
         return hasEscaped.quickGet(function.index()) && (!names.isUnderSomeName(function) || isUnderNameReadAsValue.quickGet(function.index()) || (evaluatesText && !isLibraryCode(program, program.at(function))));
     };
+    bool constructsValue = false;
     Vector<Vector<FunctionID>> functionsWaitingFor(program.modules.size());
     BitVector isWaiting(count);
     auto reachIfCalled = [&](FunctionID function) {
@@ -459,6 +506,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
             continue;
         }
         FunctionID function(node);
+        constructsValue |= !!constructsUnknownValue[node];
         for (ModuleID module : modulesLoadedBy[node]) {
             if (FunctionID body = program.at(module).body)
                 reach(body.index());
@@ -519,9 +567,16 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         }
     }
     seen.mayBeCalledAsValue = BitVector(count);
+    seen.hasSiteThatMayEnter = WTF::move(isUnderNameThatIsCalled);
+    bool callsValue = isReached.quickGet(graph.unknownCodeNode().index());
+    seen.seesWhatRuns = flow.hasResults() && !program.entries.isEmpty();
     for (size_t function : hasEscaped) {
-        if (isReached.quickGet(function) && mayStandWhereValueIsCalled(FunctionID(function)))
-            seen.mayBeCalledAsValue.quickSet(function);
+        if (!isReached.quickGet(function) || !mayStandWhereValueIsCalled(FunctionID(function)))
+            continue;
+        seen.mayBeCalledAsValue.quickSet(function);
+        EnteredAsValueBy enteredBy = whatEntersAsValue(program.functions[function]);
+        if ((enteredBy == EnteredAsValueBy::Calls && callsValue) || (enteredBy == EnteredAsValueBy::Constructions && constructsValue))
+            seen.hasSiteThatMayEnter.quickSet(function);
     }
     return seen;
 }
@@ -661,7 +716,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     auto callOf = [&](FunctionID callee) {
         if (isCalledPerEvent.get(callee.index()))
             return WeightedCall { graph.nodeOf(callee).index(), eventsOfHandlers[callee.index()] };
-        bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && !flow.runsAtMostOnce(program, callee);
+        bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && seen.mayEnter(callee) && !flow.runsAtMostOnce(program, callee);
         return WeightedCall { graph.nodeOf(callee).index(), std::max(runsAsLoopDoes ? frequencyConstants.iterationsPerLoop : 1.0, comesWithEvents(callee) ? entriesPerEvent[callee.index()] : 0.0) };
     };
     WeightedCallList calls;
@@ -759,6 +814,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     Vector<Vector<uint32_t>> namesReadBy(countWhereNamesAreFollowed);
     Vector<Vector<uint32_t>> holdersReadBy(countWhereNamesAreFollowed);
     Vector<Vector<ModuleID>> modulesLoadedBy(countWhereNamesAreFollowed);
+    Vector<uint8_t> constructsUnknownValue(FillWith { }, countWhereNamesAreFollowed, static_cast<uint8_t>(0));
     Vector<ModuleID> moduleOfRuntimeModule(program.builtins().moduleCount());
     for (uint32_t module = 0; module < program.modules.size(); ++module) {
         RuntimeModuleID runtimeModule = program.modules[module].runtimeModule;
@@ -778,9 +834,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     BitVector isCalledOnceAfterReturn;
     BitVector isCalledPerEvent;
     for (const FlowIndirectCall& call : flow.indirectCalls()) {
-        if (call.times == BuiltinCallbackTimes::Later)
+        if (call.times.predicted() == BuiltinCallbackTimes::Later)
             isCalledOnceAfterReturn.set(call.callee.index());
-        if (call.times == BuiltinCallbackTimes::PerEvent)
+        if (call.times.predicted() == BuiltinCallbackTimes::PerEvent)
             isCalledPerEvent.set(call.callee.index());
     }
     const bool verifies = build.options().verifiesAfterEveryPass;
@@ -815,11 +871,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 addUnknownCode(weight);
                 return;
             }
-            if (!isCall(instruction))
-                return;
-            PropertyKeyID name = nameOfCallee(program, function, instruction);
+            PropertyKeyID name = isCall(instruction) ? nameOfCallee(program, function, instruction) : nameOfAccessorInDescriptor(program, instruction);
             if (!name) {
+                if (!isCall(instruction))
+                    return;
                 addUnknownCode(weight);
+                constructsUnknownValue[index] |= !isLibraryCode(program, function) && constructsUnknownCallee(program, function, instruction);
                 return;
             }
             if (std::optional<size_t> position = names.find(name))
@@ -835,9 +892,10 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         };
         auto addHandOver = [&](ValueID operand, double weight) {
             CalleeList callees = calleesOf(program, program.typeOf(function, operand));
-            for (FunctionID callee : callees.functions) {
+            std::span<const FunctionID> seen = callees.seen().predicted().functions;
+            for (FunctionID callee : seen) {
                 if (callGraph.callerSet(callee) != CallerSet::Complete && !isCalledOnceAfterReturn.get(callee.index()))
-                    add(callee, weight / callees.functions.size(), CallOfHost::IsReplaced);
+                    add(callee, weight / seen.size(), CallOfHost::IsReplaced);
             }
         };
         auto addCallsOfSite = [&](const auto& instruction, double weight, std::span<const FunctionID> candidates, bool callsUnknownCode) {
@@ -858,11 +916,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!additionalCalls || isCountedByCallers(operand))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, operand));
-                for (FunctionID callee : callees.functions) {
+                std::span<const FunctionID> seen = callees.seen().predicted().functions;
+                for (FunctionID callee : seen) {
                     if (!isCalledOnceAfterReturn.get(callee.index()))
-                        add(callee, weight * additionalCalls / callees.functions.size());
+                        add(callee, weight * additionalCalls / seen.size());
                 }
-                if (!callees.isComplete)
+                if (!callees.listsEveryCallee())
                     addUnknownCode(weight * additionalCalls);
             });
         };
@@ -947,7 +1006,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         } else {
             const BlockFrequencies& frequencies = analyses.blockFrequencies();
             for (BlockID blockID : analyses.cfg().reversePostOrder())
-                visit(blockID, frequencies.frequencyOf(blockID), shareOfClass(frequencies.classOf(blockID)));
+                visit(blockID, frequencies.frequencyOf(blockID).predicted(), shareOfClass(frequencies.classOf(blockID)));
         }
         sharePerWeight = 1;
         if (!followsNames)
@@ -994,12 +1053,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!position || std::ranges::binary_search(readsOfCallees, read.index()))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, read));
-                if (callees.isComplete && callees.functions.isEmpty())
+                if (!callees.mayRunUserCode())
                     return;
                 namesReadBy[index].append(static_cast<uint32_t>(*position));
             });
             auto readHoldersOf = [&](const Type& object) {
-                if (mayHaveNoLayout(program, object))
+                if (mayHaveNoLayout(object))
                     holdersReadBy[index].append(FunctionsUnderNames::holderOf({ }));
                 for (LayoutID member : membersOf(program, object)) {
                     LayoutID current = member;
@@ -1015,7 +1074,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!(key.primitives & (Primitive::AnyString | Primitive::AnySymbol)) || (key.primitives & Primitive::Number) || constantKeyOf(program, key))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, read));
-                if (callees.isComplete && callees.functions.isEmpty())
+                if (!callees.mayRunUserCode())
                     return;
                 readHoldersOf(program.typeOf(function, value.operand(OperandIndex::ElemGet::object)));
             });
@@ -1097,7 +1156,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             if (flow.mayRunUnseenCode())
                 calls[graph.unknownCodeNode().index()] = shareAmong(program, flow, graph, isCalledPerEvent, seen, callGraph.functionsCalledByUnknownCode());
         } else
-            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, estimate);
+            seen = findWhatSeenCodeReaches(program, callGraph, flow, graph, calls, names, functionsMadeBy, isCalledByHost, hasOnlySeenCallers, namesReadBy, holdersReadBy, modulesLoadedBy, constructsUnknownValue, estimate);
         Vector<double> eventsOfHandlers(FillWith { }, count, 0.0);
         if (!isForClasses) {
             forEachIndexInParallel(loops, graph.m_numberOfNames, [&](unsigned position) {
@@ -1118,7 +1177,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             // A handler gets events only as surely as whoever registers it is reached. What is reached as surely as a rare edge is taken counts as reached.
             Vector<double> sureness = estimateHowSurelyNodesAreReached(program, flow, graph, calls, names, seen, hasOnlySeenCallers, modulesLoadedBy);
             for (const FlowIndirectCall& call : flow.indirectCalls()) {
-                if (call.times != BuiltinCallbackTimes::PerEvent)
+                if (call.times.predicted() != BuiltinCallbackTimes::PerEvent)
                     continue;
                 double howSurely = call.caller && !program.entries.isEmpty() ? sureness[call.caller.index()] : 1.0;
                 if (howSurely >= frequencyConstants.rareEdgeShare)

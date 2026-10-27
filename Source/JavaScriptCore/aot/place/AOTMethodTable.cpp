@@ -122,7 +122,7 @@ static Vector<MethodTableRow> createRows(const PlacementContext& context, const 
                 row.entries.append({ shape, target, guard });
         };
         PropertyAccessContext access { context.program, &context.inputs.flow };
-        MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).members.span(), use.selector.key, Access::Read);
+        MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).completeMembers(), use.selector.key, Access::Read);
         for (const MemberArm& arm : partition.arms) {
             FunctionID target = arm.answer.kind == MemberKind::Method && arm.answer.receiverProofs.isEmpty() ? functions.entrypointOf(arm.answer.method, use.selector) : FunctionID();
             GuardBitID guard;

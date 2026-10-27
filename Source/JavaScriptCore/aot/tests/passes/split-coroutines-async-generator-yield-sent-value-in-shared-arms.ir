@@ -1,0 +1,214 @@
+# What flow proves of the values that are sent in goes behind the switch on the mode also where an arm that does not throw is entered from elsewhere, or takes the proven value as an argument:
+# the copies stand in a block of their own on the edge, and so does the argument.
+# What stands in front of the yield is not asked, whatever it passes on. An await that reads the proven value and is merged into the next yield hands that yield the copy of its arm.
+# The await stays apart from the yield where the arm that throws does more with the proven value than throw it, where that arm takes it as an argument, and where no arm is for the mode that throws
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Named" fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+function f0 name="armEnteredFromElsewhere" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    ValidateType v5 validatedType=undefined|int
+    v7 = AssumeType v5 provenType=undefined|int
+    v8 = ResultAt v4 index=1
+    Switch v8 cases=[1, 2] -> case b1(), case b3(v7), otherwise b2()
+  b1():
+    Throw v7
+  b2():
+    v9 = String string="early"
+    Jump -> next b3(v9)
+  b3(v10):
+    Return v10
+}
+function f1 name="twoYieldsShareAnArm" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 provenType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b4(v6, v6), otherwise b2()
+  b1():
+    Throw v6
+  b2():
+    v8 = Await v1 @13
+    v9 = Yield v8 @14
+    v10 = ResultAt v9 index=0
+    v11 = AssumeType v10 provenType=undefined|int
+    v12 = ResultAt v9 index=1
+    Switch v12 cases=[1, 2] -> case b3(), case b4(v6, v11), otherwise b4(v11, v6)
+  b3():
+    Throw v11
+  b4(v13, v14):
+    v15 = Add v13, v14
+    Return v15
+}
+function f2 name="armThatThrowsReadsTheValue" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 provenType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    v8 = TypeOf v6
+    Throw v8
+  b2():
+    Return v1
+}
+function f3 name="armThatThrowsTakesAnArgument" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 provenType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[1, 2] -> case b1(v6), case b2(), otherwise b2()
+  b1(v8):
+    Throw v8
+  b2():
+    Return v1
+}
+function f4 name="noArmForTheModeThatThrows" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 provenType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[2] -> case b1(), otherwise b2()
+  b1():
+    Return v6
+  b2():
+    Return v6
+}
+function f5 name="objectFinishedInFront" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Await v4 @11
+    v6 = Yield v5 @12
+    v7 = ResultAt v6 index=0
+    v8 = AssumeType v7 provenType=undefined|int
+    v9 = ResultAt v6 index=1
+    Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v8
+  b2():
+    Return v8
+  b3():
+    Return v8
+}
+function f6 name="answerIsYieldedAgain" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 provenType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v6
+  b2():
+    Return v6
+  b3():
+    v8 = Await v6 @13
+    v9 = Yield v8 @14
+    v10 = ResultAt v9 index=0
+    Return v10
+}
+
+# CHECK-LABEL: function f7 name="armEnteredFromElsewhere"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: ValidateType v5 validatedType=undefined|int
+# CHECK-NEXT: {{*}}: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK: Jump -> next b3(v9)
+# CHECK: [[own0]]() frequency=Rare:
+# CHECK-NEXT: ValidateType v5 validatedType=undefined|int
+# CHECK-NEXT: [[returned0]]: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b3([[returned0]])
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v8{{*}}= ResultAt v4 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case [[own0]](), otherwise b2()
+
+# CHECK-LABEL: function f8 name="twoYieldsShareAnArm"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[first1]]: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NEXT: v9{{*}}= AsyncGeneratorYield {{*}}, v1, v0
+# CHECK-NEXT: v10: anything = ResultAt v9
+# CHECK-NEXT: v12{{*}}= ResultAt v9 index=1
+# CHECK-NEXT: Switch v12 cases=[1, 2] -> case b3(), case [[return1]](), otherwise [[next1]]()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Throw v10
+# CHECK: [[early1]]() frequency=Rare:
+# CHECK-NEXT: [[proof1]]: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b4([[proof1]], [[proof1]])
+# CHECK-NEXT: [[return1]]() frequency=Rare:
+# CHECK-NEXT: [[second1]]: undefined|int = AssumeType v10 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b4([[first1]], [[second1]])
+# CHECK-NEXT: [[next1]]()
+# CHECK-NEXT: [[third1]]: undefined|int = AssumeType v10 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b4([[third1]], [[first1]])
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v7{{*}}= ResultAt v4 index=1
+# CHECK-NEXT: Switch v7 cases=[1, 2] -> case b1(), case [[early1]](), otherwise b2()
+
+# CHECK-LABEL: function f9 name="armThatThrowsReadsTheValue"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: TypeOf v6
+# CHECK: v3{{*}}= AwaitBySavingFrame v1, {{*}} @11
+# CHECK-NEXT: v4{{*}}= YieldBySavingFrame {{*}}, v3, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f10 name="armThatThrowsTakesAnArgument"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3{{*}}= AwaitBySavingFrame v1, {{*}} @11
+# CHECK-NEXT: v4{{*}}= YieldBySavingFrame {{*}}, v3, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f11 name="noArmForTheModeThatThrows"
+# CHECK-NOT: AsyncGeneratorYield
+# CHECK: v3{{*}}= AwaitBySavingFrame v1, {{*}} @11
+# CHECK-NEXT: v4{{*}}= YieldBySavingFrame {{*}}, v3, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NOT: AsyncGeneratorYield
+
+# CHECK-LABEL: function f12 name="objectFinishedInFront"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: [[returned5]]: undefined|int = AssumeType v7 provenType=undefined|int
+# CHECK-NEXT: Return [[returned5]]
+# CHECK: v4{{*}}= FinishObject v3
+# CHECK-NEXT: v6{{*}}= AsyncGeneratorYield {{*}}, v4, v0{{*}} @12
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v9{{*}}= ResultAt v6 index=1
+
+# CHECK-LABEL: function f13 name="answerIsYieldedAgain"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v5
+# CHECK: b3():
+# CHECK-NEXT: [[sent6]]: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NEXT: v9{{*}}= AsyncGeneratorYield {{*}}, [[sent6]], v0{{*}} @14
+# CHECK-NEXT: v10: anything = ResultAt v9
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0{{*}} @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v7{{*}}= ResultAt v4 index=1

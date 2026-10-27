@@ -54,7 +54,7 @@ struct FieldInputs {
     const SlotRowUse& use;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
-    bool isNamedSomewhere;
+    Expected<bool> isNamedSomewhere;
     MemberFacts members;
 };
 
@@ -135,11 +135,14 @@ static bool holdsEnvironmentOfDeferredClosures(const FieldInputs& field)
     return isObjectLayout(field.layout.kind) && field.declaration.flags.contains(FieldFlags::IsHidden) && field.type.environment;
 }
 
-static bool needsAbsentState(const FieldInputs& field)
+static bool needsAbsentState(const SlotPlanContext& context, const FieldInputs& field)
 {
     constexpr OptionSet<FieldStability> everyStability { FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined, FieldStability::IsNeverStoredWithOtherType };
     if (holdsEnvironmentOfDeferredClosures(field))
         return false;
+    // The markers for undefined and null come with the one for a slot that is empty.
+    if (slotHoldsUndefinedAndNull(context.program, field.reference))
+        return true;
     bool isAlwaysFilled = field.flow.occupancy == Occupancy::AlwaysFilled;
     switch (field.layout.kind) {
     case LayoutKind::CoroutineFrame:
@@ -179,7 +182,7 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
     if (field.declaration.form.contains(FieldForm::IsAccessor))
         return !isRemovedField(context.program, field.reference);
 
-    if (!field.isNamedSomewhere && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isParsedByType)
+    if (!field.isNamedSomewhere.predicted() && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isParsedByType)
         return false;
 
     bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites && !field.use.storesIntoNewObjects;
@@ -234,7 +237,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
 
     const LocationFlow& location = field.flow.location;
     bool isAlwaysFilledByNativeCode = field.members.isFilledByNativeCode && field.declaration.flags.contains(FieldFlags::IsRequired);
-    claim.needsAbsentState = needsAbsentState(field) || (context.build.validates() && field.layout.kind == LayoutKind::Environment);
+    claim.needsAbsentState = needsAbsentState(context, field) || (context.build.validates() && field.layout.kind == LayoutKind::Environment);
     claim.isSetAtCreation = location.initialization == InitializationState::SetAtCreation;
     claim.existsAtCreation = field.use.initializingSites || claim.isSetAtCreation || isAlwaysFilledByNativeCode;
     claim.isInitializedWithValue = field.use.sitesInitializingWithValue || (claim.isSetAtCreation && !field.use.initializingSites) || isAlwaysFilledByNativeCode;
@@ -333,9 +336,9 @@ static bool isBornWithoutValues(const SlotPlanContext& context, const SlotUses& 
     return true;
 }
 
-static bool isNamedSomewhere(const Program& program, const SlotUses& uses, const Field& declaration, const SlotRowUse& use)
+static Expected<bool> isNamedSomewhere(const Program& program, const SlotUses& uses, const Field& declaration, const SlotRowUse& use)
 {
-    if (use.accessWeight || use.isStoredSomewhere() || use.environmentUses || use.storesWithoutAllocation || use.storesIntoFilledSlots || use.storesIntoNewObjects || use.privateDefinitionsByName)
+    if (use.accessSites || use.isStoredSomewhere().predicted() || use.environmentUses || use.storesWithoutAllocation || use.storesIntoFilledSlots || use.storesIntoNewObjects || use.privateDefinitionsByName)
         return true;
     if (!declaration.key || uses.keysNamed.at(declaration.key.index()))
         return true;
@@ -566,7 +569,7 @@ private:
             else if (reached && reachesOnlyChangedForms)
                 weightSpent = saturatedSum(weightSpent, access.weight);
         }
-        return weightSaved >= weightSpent;
+        return (weightSaved >= weightSpent).predicted();
     }
 
     bool hasSpareBytesFor(const ClaimUnit& unit, SlotRepresentation representation) const

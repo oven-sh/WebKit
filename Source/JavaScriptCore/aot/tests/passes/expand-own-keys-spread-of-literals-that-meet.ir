@@ -104,16 +104,17 @@ function f4 name="accessor" parameters=[{type=boolean}, {type=function}] results
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
-    v3 = NewObject -, v1 layout=L1 fields=[0]
-    v4 = FinishObject v3
-    Jump -> next b3(v4)
-  b2():
-    v5 = Boolean boolean=false
+    v3 = NewObject layout=L1 fields=[]
+    DefineGetter v3, v1 key="g"
+    v5 = FinishObject v3
     Jump -> next b3(v5)
-  b3(v6: false|L1):
-    CopyDataProperties v2, v6
+  b2():
+    v6 = Boolean boolean=false
+    Jump -> next b3(v6)
+  b3(v7: false|L1):
+    CopyDataProperties v2, v7
     Return v2
-# CHECK: CopyDataProperties v2, v6
+# CHECK: CopyDataProperties v2, v7
 }
 
 function f5 name="textOnAnEdge" parameters=[{type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {

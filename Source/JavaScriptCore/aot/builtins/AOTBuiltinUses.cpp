@@ -236,7 +236,7 @@ void degradeToUnmatchedCall(BuiltinUsePlan& plan)
 
 bool hasOnlyNeverAllocatedLayouts(const Program& program, const Type& type)
 {
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
         return program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
 }
@@ -545,7 +545,7 @@ static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& repl
     FunctionPassContext& context = rewrite.context;
     Value& value = context.function.edit(rewrite.use);
     value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
-    value.setExpected(ExpectedType(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo)));
+    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -577,10 +577,10 @@ static bool reliesOnPristineOperand(const BuiltinCallPlan& call)
 
 static void becomePlannedCall(Value& value, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
 {
-    bool isReflectConstructSyntax = FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
+    bool isDoneInPlace = FlagMask::isDoneInPlace(value.opcode) && value.isDoneInPlace();
     becomeBuiltinCall(value, plan.call.overload, plan.form, operands, plan.stamps);
     value.setNeedsPristineReceiver(reliesOnPristineOperand(plan.call));
-    value.setIsReflectConstructSyntax(isReflectConstructSyntax);
+    value.setIsDoneInPlace(isDoneInPlace);
 }
 
 static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, Origin origin)
@@ -627,9 +627,15 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
 
     Origin origin = function.at(rewrite.use).origin();
     bool isPropertyAccess = accessOf(function.at(rewrite.use).opcode) != Access::None;
+    // A step of a function that is called in tail position runs inside the function, when the frame of the caller is gone.
+    const Terminator& terminator = function.at(rewrite.block).terminator;
+    bool isCalledInTailPosition = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == rewrite.use;
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
-        function.edit(id, ValueEdit::Definition).setOrigin(origin);
+        Value& value = function.edit(id, ValueEdit::Definition);
+        value.setOrigin(origin);
+        if (isCalledInTailPosition && Value::opcodesWithCalledBuiltin.contains(value.opcode) && value.calledBuiltin())
+            value.isTailCall = true;
         return id;
     };
     InsertBeforeCall insert = insertWithOrigin;

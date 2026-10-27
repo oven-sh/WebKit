@@ -49,10 +49,11 @@ struct InitializerCall {
     Keys keysObservedWhereObjectRefusesDefinition { };
 };
 
-bool isNeverEntered(const Function& function, BlockID block)
+// Nothing has the type of one of its parameters. Where that type is owed to a check, the generic version of the function enters the block.
+bool isNeverEntered(const Function& function, const PredictedValues& predicted, BlockID block)
 {
     return std::ranges::any_of(function.at(block).parameters, [&](ValueID parameter) {
-        return function.at(parameter).type == TypeTable::never;
+        return function.at(parameter).type == TypeTable::never && !predicted.isBehindCheck(parameter);
     });
 }
 
@@ -104,6 +105,7 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
     if (cfg.hasHandlers() || cfg.hasCycle())
         return summary;
 
+    PredictedValues predicted(initializer, cfg);
     ValueIdentities identities(initializer, cfg);
     ValueID object = identities.identityOf(initializer.at(entryBlock).parameters[*thisIndex]);
     auto isObject = [&](ValueID id) {
@@ -120,7 +122,7 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
 
     Keys keysDefinedTwice;
     for (BlockID block : cfg.reversePostOrder()) {
-        if (isNeverEntered(initializer, block))
+        if (isNeverEntered(initializer, predicted, block))
             continue;
         for (ValueID id : initializer.at(block).values) {
             const Value& value = initializer.at(id);
@@ -202,7 +204,7 @@ struct ConstructionWalk {
         if (usesOfObjectIn(terminator) || leavesConstructor(terminator.kind) || mergesObjectWithOtherValues(terminator))
             observeEverything(state);
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (isNeverEntered(function, predicted, target.block))
                 continue;
             if (target.block == firstBlock)
                 entersFirstBlockAgain = true;
@@ -306,7 +308,7 @@ struct ConstructionWalk {
     bool mergesObjectWithOtherValues(const Terminator& terminator)
     {
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (isNeverEntered(function, predicted, target.block))
                 continue;
             const auto& parameters = function.at(target.block).parameters;
             for (uint32_t index = 0; index < target.arguments.size(); ++index) {
@@ -324,6 +326,7 @@ struct ConstructionWalk {
     ValueID object;
     bool isKnownToOtherCode { true };
     const Function& function { analyses.function() };
+    PredictedValues predicted { function, analyses.cfg() };
     Vector<std::optional<State>> statesAtHead = Vector<std::optional<State>>(function.blocks.size());
     Keys observedKeys { };
     bool hasChanged { false };
@@ -340,8 +343,9 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
     std::optional<unsigned> thisIndex = constructor.thisParameterIndex();
     ValueID thisParameter = thisIndex ? analyses.identityOf(constructor.at(entryBlock).parameters[*thisIndex]) : ValueID();
     Vector<BlockID> blocks(analyses.cfg().reversePostOrder());
+    PredictedValues checkedValues(constructor, analyses.cfg());
     blocks.removeAllMatching([&](BlockID block) {
-        return isNeverEntered(constructor, block);
+        return isNeverEntered(constructor, checkedValues, block);
     });
     Vector<ValueID, 8> worklist;
     for (BlockID block : blocks) {
@@ -434,8 +438,9 @@ bool keepsObjectToItself(const Program& program, BuildContext& build, FunctionID
     }
 
     Vector<ValueID, 8> accesses;
+    PredictedValues predicted(constructor, analyses.cfg());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (isNeverEntered(constructor, block))
+        if (isNeverEntered(constructor, predicted, block))
             continue;
         for (ValueID valueID : constructor.at(block).values) {
             const Value& value = constructor.at(valueID);

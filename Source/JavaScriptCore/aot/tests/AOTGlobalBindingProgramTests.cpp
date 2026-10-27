@@ -17,6 +17,7 @@
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

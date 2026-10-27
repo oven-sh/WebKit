@@ -72,9 +72,7 @@ static CallResultUse classifyCallResultUse(const Program& program, const Functio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-enum class UsesLookedAt : uint8_t { All, InLikelyCode };
-
-static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLookedAt usesLookedAt)
+static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, NOESCAPE const Invocable<bool(const Use&)> auto& isLookedAt)
 {
     const Function& function = analyses.function();
     const UseLists& useLists = analyses.useLists();
@@ -85,7 +83,7 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLoo
     worklist.append(value);
     while (!worklist.isEmpty()) {
         for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-            if (usesLookedAt == UsesLookedAt::InLikelyCode && function.at(use.block).frequency != BlockFrequency::Normal)
+            if (!isLookedAt(use))
                 continue;
             CallResultUse classified = classifyCallResultUse(analyses.program(), function, use);
             switch (classified.kind) {
@@ -101,6 +99,16 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLoo
         }
     }
     return true;
+}
+
+static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value)
+{
+    return isOnlyInterpreted(analyses, value, [](const Use&) { return true; });
+}
+
+static Expected<bool> isOnlyInterpretedInLikelyCode(FunctionAnalyses& analyses, ValueID value)
+{
+    return isOnlyInterpreted(analyses, value, [&](const Use& use) { return analyses.function().at(use.block).frequency.predicted() == BlockFrequency::Normal; });
 }
 
 static bool takesCells(const Program& program, const Value& user)
@@ -143,16 +151,16 @@ public:
         : m_context(context)
         , m_id(context.function.at(call).function())
     {
-        m_isRepeated = isHot(heatClassOf(context, block)) || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+        m_isRepeated = isHot(heatClassOf(context, block)).predicted() || context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfCallInLoop;
     }
 
-    bool onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)
+    Expected<bool> onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)
     {
         const Function& callee = m_context.program.at(m_id);
         if (!m_isRepeated || !callee.hasBody() || !callee.has(FunctionFlags::HasRestParameter) || entryParameter != callee.firstParameterIndex() + callee.numberOfPositionalParameters())
             return false;
         FunctionAnalyses analyses(AnalysisContext { m_context.build, m_context.program, &m_context.inputs.flow, &m_context.inputs.effects, m_id }, callee);
-        return isOnlyInterpreted(analyses, callee.at(entryBlock).parameters[entryParameter], UsesLookedAt::InLikelyCode);
+        return isOnlyInterpretedInLikelyCode(analyses, callee.at(entryBlock).parameters[entryParameter]);
     }
 
 private:
@@ -167,7 +175,7 @@ static bool needsCellOnlyFor(FunctionAnalyses& analyses, ObjectID object, ValueI
     bool isPassedToCall = false;
     for (const ObjectUse& objectUse : analyses.escape().usesOf(object)) {
         bool isOperandOfCall = objectUse.use.kind == Use::Kind::Operand && objectUse.use.user == call;
-        if (objectUse.isEscape && !(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(objectUse.use.operandIndex)))
+        if (objectUse.isEscape && !(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(objectUse.use.operandIndex).predicted()))
             return false;
         if (isOperandOfCall)
             isPassedToCall = true;
@@ -289,9 +297,10 @@ static SeenOfAllocation lookAtUsesOf(FunctionAnalyses& analyses, ValueID maker, 
                 addName(use.user);
                 break;
             case UseSeenAlone::IsListedAsEscape:
-                if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex)))
+                if (!(isOperandOfCall && callee.onlyInterpretsRestArgumentsInLikelyCode(use.operandIndex).predicted()))
                     return SeenOfAllocation::Escapes;
-                isPassedToCall = true;
+                // What the callee lets escape may come back out of it, under names that only the objects tell.
+                hasSeenAll = false;
                 break;
             case UseSeenAlone::IsListed:
                 hasSeenAll = hasSeenAll && !maySendObjectOn(analyses, use);
@@ -393,14 +402,14 @@ Vector<SunkAllocation> predictSinking(FunctionAnalyses& analyses)
     return sinking.outcomes();
 }
 
-unsigned sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
+Expected<unsigned> sinkableAllocationsAfterInlining(FunctionPassContext& context, BlockID block, ValueID call, NOESCAPE const ScopedLambda<bool()>& calleeReturnsFreshAggregate)
 {
     if (context.function.at(call).opcode != Opcode::CallDirect)
         return 0;
 
     CalleeOfCall callee(context, block, call);
     unsigned count = countAllocationsBuiltOnlyFor(context.analyses, call, callee);
-    if (isOnlyInterpreted(context.analyses, call, UsesLookedAt::All) && calleeReturnsFreshAggregate())
+    if (isOnlyInterpreted(context.analyses, call) && calleeReturnsFreshAggregate())
         ++count;
     return count;
 }

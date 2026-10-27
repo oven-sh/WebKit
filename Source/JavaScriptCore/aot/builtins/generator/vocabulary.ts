@@ -579,6 +579,8 @@ export const builtinMarks = [
   "IsNotEnumerable",
   // An accessor of the host stands under its name. The getter answers what the entry says. The setter puts the value that it is given in the accessor's place, on the holder, whatever its receiver is.
   "IsReplacedBySetter",
+  // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
+  "RunsWaitingJobs",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -648,7 +650,6 @@ export type PristineTest = (typeof pristineTests)[number];
 export interface ClassColumns {
   extends?: ClassName;
   jsType?: string;
-  typedArrayType?: string;
   sharingMode?: SharingMode;
   isPrimitiveWrapper?: boolean;
   isNeverPristine?: boolean;
@@ -659,7 +660,11 @@ export interface ClassColumns {
   instancesAreEntries?: boolean;
   /** The constructor puts the characters of a string on an instance, each an own read-only property under its index. The classes below do the same. */
   definesCharactersOnNewInstances?: boolean;
-  /** Every own property that the constructor, or the engine later on its own, puts on an instance whose result type is unaliased. The lists of the classes above are added. */
+  /**
+   * Every own property that native code puts on an instance, however the instance is made: by the constructor, by a built-in that answers with one, by an operation of the language, for a class below.
+   * The lists of the classes above and the members under `instance` are added. A list is a claim, an empty one too, and a test holds each class to it.
+   * Left out: nobody has said. A read that finds nothing on an instance then answers with a value nobody knows.
+   */
   namesDefinedOnNewInstances?: readonly string[];
   /** What native code puts under some of those names: primitives. A name without a type may hold anything. */
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;

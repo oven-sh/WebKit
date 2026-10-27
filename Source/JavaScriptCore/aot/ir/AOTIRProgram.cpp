@@ -297,21 +297,40 @@ void Program::indexNames(const ParallelLoops& loops)
         return std::pair { holder.key, holder.layout };
     };
 
+    // A class that has taken over the fields of the class above it names them all itself, and so on up a row of classes: whoever has listed its fields finds no new name among those above.
+    Vector<uint8_t> namesEveryFieldAbove;
+    namesEveryFieldAbove.fill(0, layouts.size());
+    forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
+        const Layout& layout = layouts[index];
+        LayoutID base = expectedBaseOf(layout);
+        namesEveryFieldAbove[index] = base && std::ranges::all_of(at(base).fields, [&](const Field& field) {
+            return !field.key || layout.findField(field.key);
+        });
+    });
+
     Vector<Holder> holders = collectInParallel<Holder>(loops, layouts.size(), [&](unsigned index, Vector<Holder>& found) {
         LayoutID id(index);
         if (at(id).flow.allocation == AllocationState::NeverAllocated || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
             return;
 
         size_t firstOfLayout = found.size();
-        Vector<LayoutID, 8> visitedClasses;
+        // A ring of classes is left once the walk meets a class that it remembers, and it remembers a later one each time it has gone twice as far. What it lists a second time on the way goes again below.
+        LayoutID remembered;
+        size_t steps = 0;
+        size_t stepsToNextRemembered = 1;
         bool inheritsFields = true;
-        for (LayoutID current = id; current && !visitedClasses.contains(current); current = expectedBaseOf(at(current))) {
-            visitedClasses.append(current);
+        bool hasNamedFields = false;
+        for (LayoutID current = id; current && current != remembered; current = expectedBaseOf(at(current))) {
+            if (++steps == stepsToNextRemembered) {
+                remembered = current;
+                stepsToNextRemembered *= 2;
+            }
             const Layout& layout = at(current);
-            for (uint32_t field = 0; inheritsFields && field < layout.fields.size(); ++field) {
+            for (uint32_t field = 0; inheritsFields && !hasNamedFields && field < layout.fields.size(); ++field) {
                 if (PropertyKeyID key = layout.fields[field].key)
                     found.append({ key, id, declarationOf(*this, { current, field }).layout });
             }
+            hasNamedFields = namesEveryFieldAbove[current.index()];
             for (const Vector<ClassMember>* members : { &layout.classFlow.members, &layout.classFlow.namedMembers }) {
                 for (const ClassMember& member : *members) {
                     if (member.key && member.side == ClassSide::Prototype)
@@ -820,6 +839,18 @@ LayoutID ProgramEditor::addLayout(Layout&& layout)
     m_isChangedLayout.append(static_cast<uint8_t>(0));
     initializeAddedLayout(m_program, id);
     return id;
+}
+
+void ProgramEditor::indexClassesAndNames(const ParallelLoops& loops)
+{
+    m_program.indexClasses();
+    m_program.indexNames(loops);
+}
+
+void ProgramEditor::setDeclaredMembers(LayoutID id, LayoutSetID members)
+{
+    m_program.familyTables().didChangeLayouts();
+    m_program.setDeclaredMembers(id, members);
 }
 
 Layout& ProgramEditor::at(LayoutID id)

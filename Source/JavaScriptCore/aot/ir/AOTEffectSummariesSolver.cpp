@@ -18,9 +18,11 @@
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <numeric>
+#include <optional>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 
@@ -39,6 +41,18 @@ static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults&
     if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, id))
         return false;
     return function.mayBeCalledByHost() || !function.hasOnlyDirectCallers();
+}
+
+// A closure is entered at an entrypoint, which may hold the only copy of the body. Flow names the function of the closure.
+static bool isDerivedFromAny(const Program& program, const Function& function, const BitVector& functions)
+{
+    if (function.hasOnlyDirectCallers())
+        return false;
+    for (FunctionID source = function.derivation.source; source; source = program.at(source).derivation.source) {
+        if (functions.get(source.index()))
+            return true;
+    }
+    return false;
 }
 
 static uint32_t numberOfNode(const SummaryNode& node)
@@ -407,7 +421,8 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
     m_kept.m_borrowed = WTF::move(borrowed);
     m_kept.m_parametersWhoseContentsAreCalled = WTF::move(contentsAreCalled);
 
-    m_kept.m_seed.grow(numberOfFunctions, &loops);
+    EffectSummaries& seed = m_kept.m_seed.write();
+    seed.grow(numberOfFunctions, &loops);
     Vector<uint32_t> functionsToSeed = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return index >= m_numberOfFunctionsBefore || m_recordLooksDifferent[index] || (!m_hasNewSeed.isEmpty() && m_hasNewSeed[index]);
     });
@@ -415,16 +430,16 @@ void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
     forEachIndexInParallel(loops, functionsToSeed.size(), [&](unsigned position) {
         numbersOfParameters[position] = m_program.functions[functionsToSeed[position]].numberOfEntryParameters();
     });
-    m_kept.m_seed.reserveParameters(loops, std::accumulate(numbersOfParameters.begin(), numbersOfParameters.end(), static_cast<size_t>(0)));
+    seed.reserveParameters(loops, std::accumulate(numbersOfParameters.begin(), numbersOfParameters.end(), static_cast<size_t>(0)));
     for (size_t position = 0; position < functionsToSeed.size(); ++position)
-        m_kept.m_seed.setNumberOfParameters(functionsToSeed[position], numbersOfParameters[position]);
+        seed.setNumberOfParameters(functionsToSeed[position], numbersOfParameters[position]);
     forEachIndexInParallel(loops, functionsToSeed.size(), [&](unsigned position) {
         FunctionID id(functionsToSeed[position]);
-        m_kept.m_seed.set(id.index(), createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, id));
+        seed.set(id.index(), createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, id));
     });
     if (m_build.options().verifiesAfterEveryPass) {
         forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
-            RELEASE_ASSERT(m_kept.m_seed.of(FunctionID(index)) == createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, FunctionID(index)));
+            RELEASE_ASSERT(seed.of(FunctionID(index)) == createSummaryFromFlow(m_program, m_flow, m_kept.m_borrowed, m_build, FunctionID(index)));
         });
     }
 }
@@ -489,53 +504,58 @@ void EffectSummarizer::summarizeBodies()
     const ParallelLoops& loops = m_build.parallelLoops();
     unsigned numberOfFunctions = m_program.functions.size();
 
-    auto summarize = [&](unsigned index, BodyReferenceCollector* references = nullptr) {
+    auto summarize = [&](const EffectSummaries& seed, unsigned index, BodyReferenceCollector* references = nullptr) {
         FunctionID id(index);
-        EffectContext context { m_program, m_kept.m_seed };
+        EffectContext context { m_program, seed };
         std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(m_build, context, m_flow, id, m_program.functions[index]);
         return summarizeBodyLocally(context, id, *analyses, references);
     };
-    auto summarizeAndGiveReferences = [&](unsigned index) {
+    auto summarizeAndGiveReferences = [&](const EffectSummaries& seed, unsigned index) {
         if (!m_references)
-            return summarize(index);
+            return summarize(seed, index);
         BodyReferenceCollector references(m_program);
-        BodySummary body = summarize(index, &references);
+        BodySummary body = summarize(seed, index, &references);
         if (references.hasReadBody())
             m_references->take(m_program, FunctionID(index), references.finish(m_flow, FunctionID(index)), m_kept.m_stampsOfRecords[index]);
         return body;
     };
 
+    // A version that finds a value it was not compiled for begins again in its generic version, which then holds the operations that stood in the version's own body.
+    // So the generic versions are read first, and whoever hands them an operand reads what their bodies do to it.
+    auto isReadFirst = [&](unsigned index) {
+        return m_program.functions[index].role == FunctionRole::GenericVersion && m_program.functions[index].hasBody();
+    };
+    Vector<uint32_t> functionsReadFirst = findIndicesInParallel(loops, numberOfFunctions, isReadFirst);
     Vector<ReasonToSummarize> reasons = findReasonsToSummarize();
-    Vector<uint32_t> functionsToSummarize = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
-        return reasons[index] != ReasonToSummarize::None;
-    });
-    Vector<uint64_t> longFunctions;
-    for (uint32_t position = 0; position < functionsToSummarize.size(); ++position) {
-        size_t numberOfValues = m_program.functions[functionsToSummarize[position]].values.size();
-        if (numberOfValues >= fewestValuesOfLongFunction)
-            longFunctions.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
+    Vector<uint32_t> functionsToSummarize;
+    for (uint32_t index : functionsReadFirst) {
+        if (reasons[index] != ReasonToSummarize::None)
+            functionsToSummarize.append(index);
     }
-    AOT::sort(longFunctions);
-    Vector<uint32_t> longestFirst = longFunctions.map([](uint64_t key) {
-        return static_cast<uint32_t>(key);
-    });
+    const uint32_t numberToSummarizeFirst = functionsToSummarize.size();
 
     growWithRoomToSpareInParallel(loops, m_kept.m_bodies, numberOfFunctions);
     growWithRoomToSpareInParallel(loops, m_kept.m_functionsOfClosuresMade, numberOfFunctions);
     m_kept.m_wasLoweredSinceSummarized.insertFill(m_numberOfFunctionsBefore, 0, numberOfFunctions - m_numberOfFunctionsBefore);
     if (m_references)
         m_references->prepareToTake(m_program, loops, m_kept.m_stampsOfRecords.span());
-    Vector<uint8_t> doesSomethingElse(FillWith { }, functionsToSummarize.size(), static_cast<uint8_t>(0));
-    Vector<Vector<FunctionID>> functionsNamedForTheFirstTime(functionsToSummarize.size());
-    forEachIndexInParallel(loops, functionsToSummarize.size(), longestFirst.span(), [&](unsigned position) {
+    Vector<uint8_t> doesSomethingElse(FillWith { }, numberToSummarizeFirst, static_cast<uint8_t>(0));
+    Vector<uint8_t> usesOperandsOtherwise(FillWith { }, numberToSummarizeFirst, static_cast<uint8_t>(0));
+    Vector<Vector<FunctionID>> functionsNamedForTheFirstTime(numberToSummarizeFirst);
+    auto summarizeAt = [&](const EffectSummaries& seed, unsigned position) {
         unsigned index = functionsToSummarize[position];
-        BodySummary body = summarizeAndGiveReferences(index);
+        BodySummary body = summarizeAndGiveReferences(seed, index);
         StoredBodySummary stored(m_kept.m_masks, FunctionID(index), body);
         m_kept.m_wasLoweredSinceSummarized[index] = 0;
         m_kept.m_functionsOfClosuresMade[index] = functionsOfClosuresMadeBy(m_program.functions[index]);
         if (index < m_numberOfFunctionsBefore && stored == m_kept.m_bodies[index])
             return;
         doesSomethingElse[position] = 1;
+        if (position < numberToSummarizeFirst && index < m_numberOfFunctionsBefore) {
+            usesOperandsOtherwise[position] = !std::ranges::equal(stored.parameters(), m_kept.m_bodies[index].parameters(), [](const StoredParameterSummary& a, const StoredParameterSummary& b) {
+                return a.uses == b.uses && a.retainedIn == b.retainedIn;
+            });
+        }
         Vector<FunctionID, 32> functionsNamedBefore;
         m_kept.m_bodies[index].forEachFunctionInDependencies(FunctionID(index), [&](FunctionID named) {
             functionsNamedBefore.append(named);
@@ -545,12 +565,82 @@ void EffectSummarizer::summarizeBodies()
                 functionsNamedForTheFirstTime[position].append(named);
         });
         m_kept.m_bodies[index] = WTF::move(stored);
-    });
-    if (m_build.options().verifiesAfterEveryPass) {
+    };
+    auto checkBodiesThatWereKept = [&](const EffectSummaries& seed, bool areReadFirst) {
+        if (!m_build.options().verifiesAfterEveryPass)
+            return;
         forEachIndexInParallel(loops, m_numberOfFunctionsBefore, [&](unsigned index) {
-            RELEASE_ASSERT(reasons[index] != ReasonToSummarize::None || m_kept.m_wasLoweredSinceSummarized[index] || m_kept.m_bodies[index] == StoredBodySummary(m_kept.m_masks, FunctionID(index), summarize(index)));
+            RELEASE_ASSERT(isReadFirst(index) != areReadFirst || reasons[index] != ReasonToSummarize::None || m_kept.m_wasLoweredSinceSummarized[index] || m_kept.m_bodies[index] == StoredBodySummary(m_kept.m_masks, FunctionID(index), summarize(seed, index)));
+        });
+    };
+    const EffectSummaries& seed = m_kept.m_seed.read();
+    forEachIndexInParallel(loops, numberToSummarizeFirst, [&](unsigned position) {
+        summarizeAt(seed, position);
+    });
+    checkBodiesThatWereKept(seed, true);
+
+    if (usesOperandsOtherwise.contains(1)) {
+        Vector<uint8_t> usesOperandsOtherwiseThanBefore(FillWith { }, m_numberOfFunctionsBefore, static_cast<uint8_t>(0));
+        for (uint32_t position = 0; position < numberToSummarizeFirst; ++position) {
+            if (usesOperandsOtherwise[position])
+                usesOperandsOtherwiseThanBefore[functionsToSummarize[position]] = 1;
+        }
+        // A body that was read just now may name a function that is new. What is read next still names what it named before.
+        forEachIndexInParallel(loops, m_numberOfFunctionsBefore, [&](unsigned index) {
+            if (reasons[index] != ReasonToSummarize::None || isReadFirst(index))
+                return;
+            bool namesOne = false;
+            m_kept.m_bodies[index].forEachFunctionInDependencies(FunctionID(index), [&](FunctionID named) {
+                namesOne |= !!usesOperandsOtherwiseThanBefore[named.index()];
+            });
+            if (namesOne)
+                reasons[index] = ReasonToSummarize::NamesFunctionThatLooksDifferent;
         });
     }
+    functionsToSummarize.appendVector(findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        return reasons[index] != ReasonToSummarize::None && !isReadFirst(index);
+    }));
+    const uint32_t numberToSummarizeNext = functionsToSummarize.size() - numberToSummarizeFirst;
+    doesSomethingElse.insertFill(numberToSummarizeFirst, 0, numberToSummarizeNext);
+    functionsNamedForTheFirstTime.grow(functionsToSummarize.size());
+    Vector<uint64_t> longFunctions;
+    for (uint32_t position = 0; position < numberToSummarizeNext; ++position) {
+        size_t numberOfValues = m_program.functions[functionsToSummarize[numberToSummarizeFirst + position]].values.size();
+        if (numberOfValues >= fewestValuesOfLongFunction)
+            longFunctions.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
+    }
+    AOT::sort(longFunctions);
+    Vector<uint32_t> longestFirst = longFunctions.map([](uint64_t key) {
+        return static_cast<uint32_t>(key);
+    });
+
+    // The seed may be lent to an analysis that runs meanwhile, so the rows that bodies replace are rows of a copy.
+    std::optional<EffectSummaries> seedWithRowsOfBodies;
+    for (uint32_t index : functionsReadFirst) {
+        StoredParameterRange range = seed.m_parameterRanges[index];
+        std::span<const StoredParameterSummary> seeded = seed.m_parameters.subspan(range.first, range.size);
+        std::span<const StoredParameterSummary> read = m_kept.m_bodies[index].parameters();
+        RELEASE_ASSERT(seeded.size() == read.size());
+        for (uint32_t parameter = 0; parameter < seeded.size(); ++parameter) {
+            bool saysLess = read[parameter].uses != seeded[parameter].uses && !(read[parameter].uses & ~seeded[parameter].uses);
+            if (!saysLess)
+                continue;
+            if (!seedWithRowsOfBodies) {
+                EffectSummaries copy(Ref { m_kept.m_masks }, EffectSummaries::Contents::SayNothingOfBodies);
+                copy.m_parameterRanges = seed.m_parameterRanges;
+                copy.m_parameters = seed.m_parameters;
+                seedWithRowsOfBodies.emplace(WTF::move(copy));
+            }
+            StoredParameterSummary& row = seedWithRowsOfBodies->parametersOf(index)[parameter];
+            row.uses = read[parameter].uses;
+            row.retainedIn = read[parameter].retainedIn;
+        }
+    }
+    const EffectSummaries& seedOfOthers = seedWithRowsOfBodies ? *seedWithRowsOfBodies : seed;
+    forEachIndexInParallel(loops, numberToSummarizeNext, longestFirst.span(), [&](unsigned position) {
+        summarizeAt(seedOfOthers, numberToSummarizeFirst + position);
+    });
+    checkBodiesThatWereKept(seedOfOthers, false);
 
     const bool updatesUserLists = m_kept.m_isSolved && static_cast<size_t>(std::ranges::count(doesSomethingElse, 1)) <= maxIncrementalSolveSize();
     CountsByReason numberOfBodiesSummarizedAsBefore { };
@@ -569,6 +659,7 @@ void EffectSummarizer::summarizeBodies()
             }).iterator->value.append(FunctionID(index));
         }
     }
+    AOT::sort(m_changedFunctions);
 
     if (!m_kept.m_addedEffects.isEmpty()) {
         InternedLocationMasks& masks = m_kept.m_masks;
@@ -638,7 +729,7 @@ void EffectSummarizer::findFunctionsEnteredByUnknownCode()
     m_kept.m_isEnteredByUnknownCode.insertFill(m_kept.m_isEnteredByUnknownCode.size(), 0, numberOfFunctions - m_kept.m_isEnteredByUnknownCode.size());
     Vector<uint32_t> functionsWithAnotherAnswer = findIndicesInParallel(m_build.parallelLoops(), numberOfFunctions, [&](unsigned index) {
         const Function& function = m_program.functions[index];
-        bool isEntered = function.hasBody() && (isCalledIndirectly.get(index) || mayBeEnteredByUnknownCode(m_program, m_flow, FunctionID(index), function, m_kept.m_bodies[index]));
+        bool isEntered = function.hasBody() && (isCalledIndirectly.get(index) || isDerivedFromAny(m_program, function, isCalledIndirectly) || mayBeEnteredByUnknownCode(m_program, m_flow, FunctionID(index), function, m_kept.m_bodies[index]));
         return isEntered != !!m_kept.m_isEnteredByUnknownCode[index];
     });
     if (functionsWithAnotherAnswer.isEmpty())

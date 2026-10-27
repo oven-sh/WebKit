@@ -257,9 +257,13 @@ static void checkPositionsOf(const BodiesImage& built, uint32_t function, const 
 {
     uint32_t index = built.image.indexOf(function);
     uint32_t count = static_cast<uint32_t>(positions.size());
-    for (uint32_t k = 0; k < count; ++k)
+    for (uint32_t k = 0; k < count; ++k) {
         AOT_TEST_CHECK(built.table().positionOf(index, CallSiteIndex(k)) == sourcePositionOf(positions[k]));
+        SourcePosition oneColumnInFront { { positions[k].line, positions[k].column - 1 }, positions[k].source };
+        AOT_TEST_CHECK(built.table().positionOf(index, methodReadSite(CallSiteIndex(k), 1)) == oneColumnInFront);
+    }
     AOT_TEST_CHECK(!built.table().positionOf(index, CallSiteIndex(count)));
+    AOT_TEST_CHECK(!built.table().positionOf(index, methodReadSite(CallSiteIndex(count), 1)));
 }
 
 static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite)

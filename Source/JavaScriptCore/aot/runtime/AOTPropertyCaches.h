@@ -20,6 +20,7 @@
 #include <atomic>
 #include <span>
 #include <tuple>
+#include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
@@ -28,7 +29,12 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC { namespace AOT {
+namespace JSC {
+
+class JSObject;
+class Symbol;
+
+namespace AOT {
 
 class CustomAccessorTable;
 class Image;
@@ -62,6 +68,7 @@ public:
     bool didMissBefore(SiteCache);
     void didMissRepeatedly(SiteCache site) { didMissBefore(site); }
     void didFailToFill(SiteCache);
+    void didFindNothingToFill(SiteCache);
     void fill(SiteCache, const Slot&);
     void fill(SiteCache, const Slot&, const NamedFill&);
     void fill(SiteCache, const Slot&, std::span<const ChainDependence>);
@@ -308,6 +315,8 @@ public:
 
     void cache(const CachedAccess&, const PropertyAnswer&);
     bool shouldFile(StructureID, UniquedStringImpl*, SlotAccess);
+    // The look that followed the last yes of shouldFile() changed the Structure of the receiver, so nothing is filed under the Structure that it came with. It changes the next object of that Structure too: the misses of the pair count anew.
+    void didFileNothing();
     bool countsNames() const { return !!m_countedFilings; }
     void countNamed(ASCIILiteral what, UniquedStringImpl* name);
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
@@ -316,10 +325,24 @@ public:
     // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
     bool shouldMakeStructureForAdditionByKey(Structure*, UniquedStringImpl*);
     void didMakeStructureForAdditionByKey(Structure* made) { m_structureMadeForAdditionByKey = made->id(); }
+    // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
+    bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
+    // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
+    JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
+    // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
+    JSCell* keyForTraps(UniquedStringImpl*);
+    // The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field, which puts the field in the form that every program may see.
+    void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
+    JSObject* preparationBeforeLookupsUnder(UniquedStringImpl* uid) const { return m_preparationsBeforeLookups.isEmpty() ? nullptr : m_preparationsBeforeLookups.get(uid).function; }
+    bool hasPreparationsBeforeLookups() const { return !m_preparationsBeforeLookups.isEmpty(); }
+    bool isPreparingHolder() const { return m_isPreparingHolder; }
+    void setIsPreparingHolder(bool isPreparing) { m_isPreparingHolder = isPreparing; }
+    JSCell* holderLookedAtByName() const { return m_holderLookedAtByName; }
+    JSCell* exchangeHolderLookedAtByName(JSCell* holder) { return std::exchange(m_holderLookedAtByName, holder); }
 
     template<typename Visitor> void visitRoots(Visitor&);
     void didFinishCollection(VM&, CollectionScope);
@@ -349,10 +372,22 @@ private:
     WatchedValues m_watchedValues;
     StringKeyCache m_stringKeys;
     Vector<Addition> m_additionsSinceCollection;
+    // Written under the lock of the caches.
+    UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;
+    struct PreparationBeforeLookups {
+        Symbol* symbol { nullptr };
+        JSObject* function { nullptr };
+    };
+    UncheckedKeyHashMap<UniquedStringImpl*, PreparationBeforeLookups> m_preparationsBeforeLookups;
+    bool m_isPreparingHolder { false };
+    // Compared, never read through.
+    JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
+    uint8_t* m_counterOfPairToFile { nullptr };
     std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
     uint32_t m_evictionSeed { 0 };
     StructureID m_structureMadeForAdditionByKey;
+    StructureID m_structureOfLastFieldCreatedOutsideStubs;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

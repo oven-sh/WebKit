@@ -171,6 +171,7 @@ enum class ImageFunctionFlag : uint8_t {
     HasPositions = 1 << 4,
     // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
+    HasCallsOfOwnFunctionObjects = 1 << 6,
 };
 
 // function() is a FunctionID index. An image function index is a position in ImageSection::Functions.
@@ -259,6 +260,7 @@ struct SideTableInputs {
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
+    std::span<const uint32_t> callsOfOwnFunctionObjects;
     std::span<const uint8_t> callSites;
 };
 
@@ -268,12 +270,15 @@ struct SideTableParts {
     static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
+    bool callsOwnFunctionObjectAt(uint32_t site) const;
 
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
+    // Each site as its distance from the one in front.
+    std::span<const uint8_t> callsOfOwnFunctionObjects;
     const uint8_t* callSites { nullptr };
 };
 
@@ -301,6 +306,11 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
         parts.handlers = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
+    if (function.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+        size_t size = static_cast<size_t>(readVarint(cursor));
+        parts.callsOfOwnFunctionObjects = unsafeMakeSpan(cursor, size);
+        cursor += size;
+    }
     if (function.has(ImageFunctionFlag::HasCallSites))
         parts.callSites = cursor;
     return parts;
@@ -311,6 +321,7 @@ inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
     OptionSet<ImageFunctionFlag> flags;
     flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
     flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
+    flags.set(ImageFunctionFlag::HasCallsOfOwnFunctionObjects, !callsOfOwnFunctionObjects.empty());
     flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
     return flags;
 }
@@ -330,7 +341,27 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }
+    if (flags.contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+        Vector<uint8_t> distances;
+        uint32_t previous = 0;
+        for (uint32_t site : inputs.callsOfOwnFunctionObjects) {
+            RELEASE_ASSERT(site > previous);
+            appendVarint(distances, site - std::exchange(previous, site));
+        }
+        appendVarint(stream, distances.size());
+        stream.appendVector(distances);
+    }
     stream.append(inputs.callSites);
+}
+
+inline bool SideTableParts::callsOwnFunctionObjectAt(uint32_t site) const
+{
+    const uint8_t* cursor = callsOfOwnFunctionObjects.data();
+    const uint8_t* end = cursor + callsOfOwnFunctionObjects.size();
+    uint64_t listed = 0;
+    while (cursor < end && listed < site)
+        listed += readVarint(cursor);
+    return site && listed == site;
 }
 
 inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)

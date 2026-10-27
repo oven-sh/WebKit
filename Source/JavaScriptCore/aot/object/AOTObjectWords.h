@@ -9,6 +9,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
+#include "AOTThreshold.h"
 #include "Structure.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -27,11 +28,13 @@ struct AllocationSiteRecord {
     uint64_t header;
     uint64_t orderAndShapeWords;
     void* allocator;
-    uint64_t unused;
+    // What the Structure of the header holds as its prototype, for an object. Zero for any other cell and where there is no header.
+    uint64_t prototype;
 
     static constexpr ptrdiff_t offsetOfHeader() { return offsetof(AllocationSiteRecord, header); }
     static constexpr ptrdiff_t offsetOfOrderAndShapeWords() { return offsetof(AllocationSiteRecord, orderAndShapeWords); }
     static constexpr ptrdiff_t offsetOfAllocator() { return offsetof(AllocationSiteRecord, allocator); }
+    static constexpr ptrdiff_t offsetOfPrototype() { return offsetof(AllocationSiteRecord, prototype); }
     static constexpr unsigned sizeShift = 5;
 };
 static_assert(sizeof(AllocationSiteRecord) == 1u << AllocationSiteRecord::sizeShift);
@@ -110,7 +113,11 @@ static constexpr uint32_t numberOfCachedEnumerators = 256;
 static constexpr unsigned enumeratorHashShift = 6;
 static constexpr uint32_t indexOfCachedEnumerator(uint32_t structureID, uint32_t orderWord) { return ((structureID >> enumeratorHashShift) + orderWord) % numberOfCachedEnumerators; }
 
+// What lies in front of the first element is made with it.
+AOT_THRESHOLD(uint32_t, maxIndexOfFirstElementMadeByStub, 7);
+
 // The Structure that an object with the Structure `before` gets with another prototype. The headers of their cells differ in the StructureID alone.
+// Where RealmWords::extraPropertiesWithElementsStructure stands in place of a prototype, which it never is: the Structure that the object gets with its first element, where nobody has to be asked or told.
 struct PrototypeTransition {
     EncodedJSValue prototype;
     uint32_t before;
@@ -204,10 +211,27 @@ struct PrototypeOfClassObject {
 constexpr unsigned numberOfPrototypesOfClassObjects = 32;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
 
+// What the constructor of a class makes where new.target has another prototype object than the record of the allocation names: that of a class below, or that of another evaluation of the class. It is an object in which nothing is stored yet.
+struct InstanceOfClassBelow {
+    JSCell* prototype;
+    uint64_t header;
+    // The cell without its header, in whole chunks of sixteen bytes. The subspace of objects has an allocator for so many bytes.
+    const uint8_t* cellAtBirth;
+    uint32_t allocation;
+    // Half the bytes: how far the allocator for the cell lies behind the first one of the subspace.
+    uint32_t offsetOfAllocator;
+};
+constexpr unsigned numberOfInstancesOfClassesBelow = 64;
+// No two prototype objects begin closer to each other.
+constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 5;
+// With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
+constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
+
 struct ClassWords {
     JSCell** classPrototypes;
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
+    const InstanceOfClassBelow* instancesOfClassesBelow;
 };
 
 static_assert(sizeof(KeyOrderTransition) == 16);
@@ -216,6 +240,7 @@ static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));
 static_assert(sizeof(EnumeratorCacheEntry) == 16);
 static_assert(!(numberOfCachedEnumerators & (numberOfCachedEnumerators - 1)));
 static_assert(sizeof(PrototypeTransition) == 16);
+static_assert(sizeof(InstanceOfClassBelow) == 32 && !(numberOfInstancesOfClassesBelow & (numberOfInstancesOfClassesBelow - 1)));
 static_assert(!(numberOfPrototypeTransitions & (numberOfPrototypeTransitions - 1)));
 static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
 

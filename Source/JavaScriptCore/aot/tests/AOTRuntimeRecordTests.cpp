@@ -22,6 +22,7 @@
 #include <bit>
 #include <optional>
 #include <wtf/HashSet.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -102,6 +103,7 @@ static Slot createSlotOfKind(const Cells& cells, Slot::Kind kind, uint8_t flags)
 {
     switch (Slot::payloadOf(kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         return Slot::createWithoutPayload(cells.id(), kind, flags);
     case SlotPayload::Holder:
         if (kind == Slot::Kind::InheritedField)
@@ -160,6 +162,7 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
     case SlotPayload::None:
     case SlotPayload::CustomAccessor:
     case SlotPayload::Constant:
+    case SlotPayload::Key:
         return !(flags & Slot::isOutOfLine);
     case SlotPayload::Holder:
     case SlotPayload::Field:
@@ -208,6 +211,7 @@ static void testEveryKindReadsBack()
         bool isOutOfLine = flags & Slot::isOutOfLine;
         switch (Slot::payloadOf(kind)) {
         case SlotPayload::None:
+        case SlotPayload::Key:
             AOT_TEST_CHECK(!slot.payloadBits() && !slot.location);
             break;
         case SlotPayload::Holder:

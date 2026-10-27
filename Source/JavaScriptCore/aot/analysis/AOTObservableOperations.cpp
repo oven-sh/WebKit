@@ -77,6 +77,20 @@ void ReasonsForOperationsThatWent::add(ValueID id, InPlaceOfOperation reason)
     m_explained.set(id.index());
 }
 
+void ReasonsForOperationsThatWent::addForOperationThatWent(ValueID idBeforeRun, InPlaceOfOperation reason)
+{
+    m_explained.set(idBeforeRun.index());
+    if (!m_outer)
+        return;
+    if (m_valuesOfOuterAtStart.isEmpty()) {
+        m_outer->addForOperationThatWent(idBeforeRun, reason);
+        return;
+    }
+    size_t index = m_valuesOfOuterAtStart.find(idBeforeRun);
+    if (index != notFound)
+        m_outer->addForOperationThatWent(ValueID(index), reason);
+}
+
 template<typename SomeID>
 static void renumber(Vector<SomeID>& current, std::span<const SomeID> newIDs)
 {

@@ -15,7 +15,7 @@ import type {
   ModelTypePart,
   TableModel,
 } from "./model.ts";
-import { operandUses } from "./vocabulary.ts";
+import { operandUses, type FeatureName } from "./vocabulary.ts";
 
 export interface LoadedModule {
   isConditional: boolean;
@@ -47,9 +47,11 @@ export interface UndescribedResult {
 interface HandedOutValues {
   objects: readonly ModelBuiltin[];
   undescribedValue: string | null;
+  /** What the entry that hands out the undescribed value is linked with. */
+  features: readonly FeatureName[];
 }
 
-const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null };
+const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [] };
 
 function createDependencies(): RuntimeDependencies {
   return { loads: new Map(), calls: new Set(), callsForTexts: new Map(), implementedBy: new Set(), namedBy: new Map() };
@@ -143,6 +145,9 @@ function collectClassObjects(classes: readonly ModelClass[]): Map<ModelClass, Mo
   }
   return objects;
 }
+
+const featuresOf = ({ attachments }: ModelBuiltin): FeatureName[] =>
+  attachments.featureUses.map(({ feature }) => feature);
 
 function linkedObjectsOf({ prototype, instanceClass }: ModelBuiltin): ModelBuiltin[] {
   const inherited = prototype.link === "Builtin" ? [prototype.builtin] : [];
@@ -274,7 +279,8 @@ class HandedOutValueCollector {
 export class DependencyClosure {
   readonly #builtins: readonly ModelBuiltin[];
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
-  readonly #hostClassObjects: readonly ModelBuiltin[];
+  readonly #hostClassObjectsInEveryExecutable: readonly ModelBuiltin[];
+  readonly #hostClassObjectsOfFeature: ReadonlyMap<FeatureName, readonly ModelBuiltin[]>;
   readonly #engineClassObjects: ReadonlySet<ModelBuiltin>;
   readonly #namespacesWrittenInJavaScript: ReadonlySet<ModelBuiltin>;
   readonly #compiledFunctions: ReadonlyMap<ModelBuiltin, readonly ModelFunction[]>;
@@ -286,9 +292,22 @@ export class DependencyClosure {
       model.classes.filter(builtinClass => builtinClass.origin === origin);
     this.#builtins = model.builtins;
     this.#classObjects = collectClassObjects(model.classes);
-    this.#hostClassObjects = classesOf("Host")
-      .filter(builtinClass => !builtinClass.instancesAreEntries)
-      .flatMap(objectsOfClass);
+    // The native code that makes an instance of a class is linked with the features of the class.
+    const inEveryExecutable: ModelBuiltin[] = [];
+    const ofFeature = new Map<FeatureName, ModelBuiltin[]>();
+    for (const builtinClass of classesOf("Host")) {
+      if (builtinClass.instancesAreEntries) continue;
+      const objects = objectsOfClass(builtinClass);
+      const features = new Set(objects.flatMap(featuresOf));
+      if (features.size === 0) inEveryExecutable.push(...objects);
+      for (const feature of features) {
+        const listed = ofFeature.get(feature);
+        if (listed === undefined) ofFeature.set(feature, [...objects]);
+        else listed.push(...objects);
+      }
+    }
+    this.#hostClassObjectsInEveryExecutable = inEveryExecutable;
+    this.#hostClassObjectsOfFeature = ofFeature;
     this.#engineClassObjects = new Set(classesOf("Engine").flatMap(objectsOfClass));
     this.#namespacesWrittenInJavaScript = new Set(
       model.modules.filter(module => module.hasSource).map(module => module.namespace),
@@ -301,7 +320,7 @@ export class DependencyClosure {
     this.#addOwnDependencies(dependencies, builtin, null);
     mergeDependencies(dependencies, this.#reachableFrom(this.#handedOutBy(builtin)));
     if (this.#engineClassObjects.has(builtin)) {
-      mergeDependencies(dependencies, this.#reachableFrom({ objects: [builtin], undescribedValue: null }));
+      mergeDependencies(dependencies, this.#reachableFrom({ ...nothingHandedOut, objects: [builtin] }));
     }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
@@ -319,7 +338,7 @@ export class DependencyClosure {
   }
 
   dependenciesOfAnyHostObject(): RuntimeDependencies {
-    return this.#reachableFrom({ objects: [], undescribedValue: "" });
+    return this.#reachableFrom({ ...nothingHandedOut, undescribedValue: "" });
   }
 
   undescribedResults(): UndescribedResult[] {
@@ -395,11 +414,12 @@ export class DependencyClosure {
     return {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),
       undescribedValue: collector.undescribedValue,
+      features: collector.undescribedValue === null ? [] : featuresOf(builtin),
     };
   }
 
   #reachableFrom(roots: HandedOutValues): RuntimeDependencies {
-    const key = `${roots.undescribedValue !== null}:${roots.objects.map(object => object.id).join(",")}`;
+    const key = `${roots.undescribedValue !== null}:${roots.features.join(",")}:${roots.objects.map(object => object.id).join(",")}`;
     let dependencies = this.#reachable.get(key);
     if (dependencies === undefined) {
       dependencies = this.#computeReachable(roots);
@@ -414,11 +434,17 @@ export class DependencyClosure {
     const reached: ModelBuiltin[] = [];
     const workList: ModelBuiltin[] = [];
     let hasHostClasses = false;
-    const addHandedOut = ({ objects, undescribedValue }: HandedOutValues): void => {
+    const featuresAdded = new Set<FeatureName>();
+    const addHandedOut = ({ objects, undescribedValue, features }: HandedOutValues): void => {
       workList.push(...objects);
-      if (undescribedValue === null || hasHostClasses) return;
+      if (undescribedValue === null) return;
+      if (!hasHostClasses) workList.push(...this.#hostClassObjectsInEveryExecutable);
       hasHostClasses = true;
-      workList.push(...this.#hostClassObjects);
+      for (const feature of features) {
+        if (featuresAdded.has(feature)) continue;
+        featuresAdded.add(feature);
+        workList.push(...(this.#hostClassObjectsOfFeature.get(feature) ?? []));
+      }
     };
     addHandedOut(roots);
     for (let next = workList.pop(); next !== undefined; next = workList.pop()) {

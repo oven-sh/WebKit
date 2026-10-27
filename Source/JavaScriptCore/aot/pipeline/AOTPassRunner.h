@@ -66,6 +66,8 @@ public:
     bool mayRunAnalysesTogether() const;
 
     bool isStopped() const { return m_isStopped; }
+    // For what a stage checks between two passes.
+    void stopAfterErrors() { m_isStopped |= m_build.diagnostics().hasErrors(); }
     PassOutcome lastProgramPassOutcome() const { return m_lastProgramPassOutcome; }
     void didFinishFunctionLoop();
 
