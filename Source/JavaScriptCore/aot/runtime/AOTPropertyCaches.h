@@ -17,7 +17,9 @@
 #include "CollectionScope.h"
 #include "Identifier.h"
 #include "RememberedSlot.h"
+#include <array>
 #include <atomic>
+#include <bit>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -401,6 +403,9 @@ public:
     void finishFilling(VM&);
     // Whether the object was being filled. It is so no longer.
     bool forget(JSObject*);
+    // An object that is given a name and loses it, or is looked at between any two names, begins to be filled again and again, and each time its names are copied and Structures are made that nothing finds again.
+    // After a few times it makes Structures as ever, which come again.
+    bool mayBeginToFill(JSObject*) const;
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
@@ -414,9 +419,17 @@ private:
     StructureID m_structureMade;
     std::array<JSObject*, numberOfObjectsBeingFilled> m_objectsBeingFilled { };
     uint32_t m_numberOfObjectsFilled { 0 };
+    static constexpr uint32_t numberOfObjectsCounted = 64;
+    static constexpr uintptr_t timesMask = 15;
+    static uint32_t placeOfTimes(JSObject* object) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(object) >> 4) * 0x9e3779b1u >> 26; }
+    // The address of an object, which ends in four zeros, and in their place how often it began to be filled. The addresses are compared and never followed, and a collection forgets them.
+    std::array<uintptr_t, numberOfObjectsCounted> m_timesObjectsBeganToFill { };
 };
 
 FirstAdditions& firstAdditionsOf(State&);
+void didFinishFilling(Structure*);
+// The names that an object has are copied into the table in which it is filled. An object that is given a name between two looks, again and again, is filled again and again: it may be so while it has few names.
+bool hasFewEnoughNamesToBeFilled(Structure*);
 
 } } // namespace JSC::AOT
 

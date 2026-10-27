@@ -786,20 +786,12 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
 }
 
-std::optional<ModuleID> Modules::findByName(const Identifier& key)
-{
-    std::optional<ModuleID> found = m_table.findByPath(key.string());
-    if (found && data(*found).kind == ModuleKind::Runtime && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, key.string()))
-        return std::nullopt;
-    return found;
-}
-
 std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
         return std::nullopt;
     // A module of the library has one form.
-    if (std::optional<ModuleID> module = findByName(key); module && data(*module).registryID())
+    if (std::optional<ModuleID> module = m_table.findByPath(key.string()); module && data(*module).registryID())
         return module;
     if (!host().findModuleWithAttributes)
         return std::nullopt;
@@ -835,6 +827,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     bool isFile = isImportedByLoader(module);
     bool isBuiltinModule = !isFile && isBuiltinModuleOfLoader(module);
     noteRequestByLoader(module);
+    noteLoadOfGraph(module);
     if (isFile || isBuiltinModule) {
         VM& vm = *m_instance.vm;
         bool isBuiltinModuleThatLoaderHas = isBuiltinModule && !isBuiltinModuleNewToLoader(module);
@@ -1417,7 +1410,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         return fetchParameters.error();
     Identifier key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key)) {
+    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : m_table.findByPath(key.string())) {
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         // An import() that names a file in its text names the face of the file.
@@ -1775,10 +1768,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* in
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer), JSValue::decode(options))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t))
+JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireModule);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module))));
+    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module), ModuleID(referrer))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequire, void, (Instance* instance, uint32_t module, uint32_t referrer))
@@ -1924,7 +1917,7 @@ static PathOfModule pathOfModule(ModuleID module)
         RELEASE_ASSERT(table);
         // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
-        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
+        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->pathText(module);
         return PathOfModule { &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef(), !!evaluator };
     }).iterator->value;
 }
@@ -1951,12 +1944,6 @@ bool isESModule(ModuleID module)
 {
     std::optional<ModuleTable> table = currentModuleTable();
     return table && table->data(module).kind == ModuleKind::SourceText;
-}
-
-bool isNativeModule(ModuleID module)
-{
-    std::optional<ModuleTable> table = currentModuleTable();
-    return table && table->data(module).kind == ModuleKind::Runtime;
 }
 
 bool leavesModuleToHost(JSGlobalObject* realm, ModuleID module)
@@ -2021,15 +2008,6 @@ void setModuleExports(JSGlobalObject* realm, ModuleID module, JSValue exports)
         return;
     ASSERT(modules->data(module).kind == ModuleKind::CommonJs);
     modules->setCommonJSExports(module, exports);
-}
-
-bool recordRequire(JSGlobalObject* realm, ModuleID target, ModuleID referrer)
-{
-    Modules* modules = modulesOf(realm);
-    if (!modules)
-        return false;
-    modules->recordRequire(target, referrer);
-    return modules->data(target).kind == ModuleKind::CommonJs;
 }
 
 static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadByName form)
@@ -2133,10 +2111,10 @@ JSObject* moduleNamespace(JSGlobalObject* realm, ModuleID module)
     return modules ? modules->moduleNamespace(module, Modules::ModulePhase::Evaluation) : nullptr;
 }
 
-JSValue requireModule(JSGlobalObject* realm, ModuleID module)
+JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> referrer)
 {
     Modules* modules = modulesForEvaluation(realm, module);
-    return modules ? modules->require(module) : JSValue();
+    return modules ? modules->require(module, referrer.value_or(ModuleID())) : JSValue();
 }
 
 static void throwLoaderChangeRefused(JSGlobalObject* realm, LoaderChange change, StringView changed)
@@ -2239,16 +2217,23 @@ void ModuleRecord::didLoad()
     modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
 }
 
-void ModuleRecord::didFailToLoad(const ModuleGraphLoadingState& state)
+void ModuleRecord::didFailToLoad(JSGlobalObject* globalObject, const ModuleGraphLoadingState& state)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Exception* exception = scope.exception();
+    if (exception)
+        TRY_CLEAR_EXCEPTION(scope, void());
     state.iterateVisited([&](CyclicModuleRecord* visited) {
         auto* compiled = dynamicDowncast<ModuleRecord>(visited);
-        if (!compiled)
+        if (!compiled || scope.exception())
             return;
         compiled->modules().didFailToLoadGraph(compiled->m_module);
-        if (compiled->modules().hasDeferredLoads()) [[unlikely]]
+        if (!scope.exception() && compiled->modules().hasDeferredLoads()) [[unlikely]]
             compiled->modules().didSettleLoad(state);
     });
+    if (!scope.exception() && exception)
+        throwException(globalObject, scope, exception);
 }
 
 std::optional<ModuleID> ModuleRecord::fileToWaitFor(JSGlobalObject* globalObject, const Identifier& key)
@@ -2349,6 +2334,7 @@ unsigned ModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, ModuleLi
     LinkContext context { stack, index, WTF::move(scriptFetcher) };
     modules().queueJobsThatWaitForLoader();
     modules().didLoadGraph(m_module);
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     modules().finishLink(m_module, context);
     if (!scope.exception() && status() == Status::Unlinked && !modules().data(m_module).needsLink())
         setStatus(Status::Linked);

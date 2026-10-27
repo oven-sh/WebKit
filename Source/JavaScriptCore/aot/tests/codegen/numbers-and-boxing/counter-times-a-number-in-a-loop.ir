@@ -100,4 +100,4 @@ function f1 name="ramp" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # NONE-NOT: Branch(b@{{*}}, Terminal, {{*}}:IsInsideView)
 # NONE-LABEL: end of loop
 # X64: instructions: 41, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 35, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 34, patchpoints: 8, {{*}} steps by 8

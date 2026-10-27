@@ -106,8 +106,51 @@ private:
     Vector<std::pair<ValueID, std::unique_ptr<Vector<Type>>>, 4> m_slotTypesByReceiver;
 };
 
+// What the tests above a block have left of the values that its own test looks at, whichever type or value each of them asks for.
+class TestsOfSameValues {
+public:
+    TestsOfSameValues(FunctionAnalyses&, TypeArena&);
+
+    // What is expected of a value where the tests above have left nothing else of it.
+    struct ProvenExpectation {
+        BlockID block;
+        ValueID expectation;
+        TypeID type;
+    };
+
+    KnownBoolean outcomeBehindDominatingTests(BlockID branchingBlock);
+    Vector<ProvenExpectation, 4> takeProvenExpectations();
+    bool hasTests() const { return !m_operands.isEmpty(); }
+    // Branches have become jumps. The values are the same.
+    void didChangeControlFlow() { m_outcomes.clear(); }
+
+private:
+    struct TestedOperand {
+        ValueID subject;
+        BlockID block;
+        uint32_t operandIndex;
+        // Set where the block does not test the value, and expects something of it.
+        ValueID expectation { };
+        uint32_t group { 0 };
+    };
+
+    const Value& testBranchedOn(BlockID) const LIFETIME_BOUND;
+    std::span<const TestedOperand> operandsTestedIn(BlockID) const LIFETIME_BOUND;
+    void computeOutcomes();
+
+    FunctionAnalyses& m_analyses;
+    TypeArena& m_types;
+    // The operands that stand for a value which several branches test, by block.
+    Vector<TestedOperand, 16> m_operands;
+    uint32_t m_numberOfGroups { 0 };
+    Vector<KnownBoolean> m_outcomes;
+    Vector<ProvenExpectation, 4> m_provenExpectations;
+};
+
+void proveExpectation(IRBuilder&, const TestsOfSameValues::ProvenExpectation&);
+
 KnownBoolean evaluateConditionByDefinitions(FunctionAnalyses&, BlockID branchingBlock);
-KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotValueTests&, BlockID branchingBlock);
+KnownBoolean evaluateCondition(FunctionAnalyses&, const TypeTestBranches&, SlotValueTests&, TestsOfSameValues&, BlockID branchingBlock);
 std::optional<uint32_t> decidedTargetOf(const Terminator&, KnownValue tested);
 
 void decideTerminator(IRBuilder&, BlockID, uint32_t targetIndex);

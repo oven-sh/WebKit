@@ -21,9 +21,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -235,30 +235,22 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
 
-# `thing instanceof Shape` walks no prototype chain. The shape words of a class and its subclasses are neighbors, so the two subclasses that are made here are one comparison with a bound. The word is loaded once. Behind the comparison the arm asks once more, now for the class with its subclasses, then reads the field by a plain load.
+# `thing instanceof Shape` walks no prototype chain. The shape words of a class and its subclasses are neighbors, so the two subclasses that are made here are one comparison with a bound. The word is loaded once and compared once: what is no Shape is a Label, so neither arm tests again. In each arm the field is a plain load, and it is returned as the double that it is.
 # CHECK-LABEL: name="measure" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[thing]] = ArgumentReg(
 # CHECK-NEXT: Int32 b@[[word]] = Load(b@[[thing]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
-# CHECK: Int32 b@[[isSubclass]] = AboveEqual(b@[[word]], $-
-# CHECK: Branch(b@[[isSubclass]], Terminal
-# CHECK-NEXT: Successors: Then:#[[shape]], Else:#[[other]]
-# CHECK-NEXT: BB#[[shape]]:
+# CHECK: Int32 b@[[isOne]] = AboveEqual(b@[[word]], $-
+# CHECK: Branch(b@[[isOne]], Terminal
+# CHECK-NEXT: Successors: Then:#[[one]], Else:#[[other]]
+# CHECK-NEXT: BB#[[one]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK: Int32 b@[[isShape]] = AboveEqual(b@[[word]], $-
-# CHECK-NEXT: Branch(b@[[isShape]], Terminal
-# CHECK-NEXT: Successors: Then:#[[area]], Else:Unlikely:#[[neither]]
-# CHECK-NEXT: BB#[[area]]:
-# CHECK-NEXT: Predecessors: #[[shape]]
-# CHECK-NEXT: Double b@{{*}} = Load(b@[[thing]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: BB#[[other]]:
+# CHECK-NEXT: Double b@[[first]] = Load(b@[[thing]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[first]], Terminal)
+# CHECK-NEXT: BB#[[other]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK: Int32 b@[[isLabel]] = Equal(b@[[word]], $-
-# CHECK-NEXT: Branch(b@[[isLabel]], Terminal
-# CHECK-NEXT: Successors: Then:#[[size]], Else:Unlikely:#[[neither]]
-# CHECK-NEXT: BB#[[size]]:
-# CHECK-NEXT: Predecessors: #[[other]]
-# CHECK-NEXT: Double b@{{*}} = Load(b@[[thing]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[second]] = Load(b@[[thing]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[second]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="measure" role=Source
 # NONE-NOT: PrototypeLinks
@@ -268,8 +260,8 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # NONE-NOT: PrototypeLinks
 # NONE-NOT: JSCell_structureID
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
+# Both arms load from the same offset, so the back end makes one of them.
 # X64-LABEL: name="measure" role=Source
-# X64-NEXT: instructions: 9, patchpoints: 3
+# X64-NEXT: instructions: 3, patchpoints: 0
 # ARM64-LABEL: name="measure" role=Source
-# ARM64-NEXT: instructions: 27, patchpoints: 3
+# ARM64-NEXT: instructions: 4, patchpoints: 0

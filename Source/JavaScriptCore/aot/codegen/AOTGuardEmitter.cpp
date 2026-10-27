@@ -413,7 +413,7 @@ Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID buil
     }
     // `Base.call(this)`: a constructor function has its `prototype` property, which hides no other name. A word that is read too early is zero, and the test fails.
     for (unsigned index = 0; index < ClosureWords::numberOfStructuresWithPrototypeProperty; ++index)
-        isAsCreated = logicalOr(isAsCreated, equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));
+        isAsCreated = logicalOr(isAsCreated, equal(structureID, loadFilledOnce32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));
     return isAsCreated;
 }
 

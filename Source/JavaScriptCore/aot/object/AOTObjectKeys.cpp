@@ -530,6 +530,47 @@ bool Object::forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, 
     return true;
 }
 
+static NEVER_INLINE void writeJSONKeys(VM& vm, CachedPropertyList& list)
+{
+    size_t size = FieldAsProperty::jsonKeyBlockSize;
+    bool areWrittenAsTheyAre = true;
+    for (const PropertyListEntry& property : list.properties) {
+        list.hasToJSON |= property.name == vm.propertyNames->toJSON.impl();
+        areWrittenAsTheyAre = areWrittenAsTheyAre && property.name->is8Bit() && std::ranges::all_of(property.name->span8(), [](Latin1Character character) {
+            return character >= 0x20 && character < 0x7F && character != '"' && character != '\\';
+        });
+        size += property.name->length() + 4;
+    }
+    if (!areWrittenAsTheyAre)
+        return;
+    list.jsonKeys.fill(0, size);
+    list.endsOfJSONKeys.fill(0, list.properties.size());
+    Latin1Character* next = list.jsonKeys.mutableSpan().data();
+    uint32_t* end = list.endsOfJSONKeys.mutableSpan().data();
+    const Latin1Character* start = next;
+    for (const PropertyListEntry& property : list.properties) {
+        *next++ = ',';
+        *next++ = '"';
+        memcpy(next, property.name->span8().data(), property.name->length());
+        next += property.name->length();
+        *next++ = '"';
+        *next++ = ':';
+        *end++ = next - start;
+    }
+}
+
+CachedPropertyList* findCachedPropertyList(VM& vm, const Object& object, JSObject* extra)
+{
+    validateKeyListing(vm, object);
+    if (!hasNumberedKeyOrder(object))
+        return nullptr;
+    StructureID structureID = extra->structureID();
+    uint32_t shapeWord = object.shapeWord();
+    uint32_t orderAndCount = object.orderWord() & orderAndCountMask;
+    CachedPropertyList& entry = object.state().objects->caches->propertyLists.entryFor(structureID, shapeWord, orderAndCount);
+    return entry.extraPropertiesStructureID == structureID && entry.shapeWord == shapeWord && entry.orderAndCount == orderAndCount ? &entry : nullptr;
+}
+
 CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
 {
     validateKeyListing(vm, object);
@@ -591,6 +632,7 @@ CachedPropertyList* cachedPropertyList(VM& vm, const Object& object)
         properties.append(extraKeys[nextExtraKey]);
     auto& newEntry = propertyLists.entryFor(structure->id(), shapeWord, orderAndCount);
     newEntry = { structure->id(), shapeWord, orderAndCount, nullptr, WTF::move(properties) };
+    writeJSONKeys(vm, newEntry);
     return &newEntry;
 }
 
@@ -673,18 +715,6 @@ static CachedPropertyList* listOfKeysFixedByStructure(VM& vm, const Object& obje
     return cachedPropertyList(vm, object);
 }
 
-static bool beginsWithListedKeys(VM& vm, const Object& object, const PropertyNameArrayBuilder& names, uint32_t numberOfListedKeys)
-{
-    CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
-    if (!listing || listing->properties.size() != numberOfListedKeys || names.size() < numberOfListedKeys)
-        return false;
-    for (uint32_t i = 0; i < numberOfListedKeys; ++i) {
-        if (names[i].impl() != listing->properties[i].name)
-            return false;
-    }
-    return true;
-}
-
 static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM& vm, const Object& object, StructureChain* prototypeChain)
 {
     CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
@@ -693,20 +723,20 @@ static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM&
     return listing->enumerator;
 }
 
-static std::optional<uint32_t> countKeysInOrderWord(VM& vm, const Object& object)
+// Which names a loop finds on the object itself, and in which order: the attributes of a field in its slot are those of the layout, and the Structure of the extra properties has those of every other.
+static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object& object)
 {
-    if (object.hasExtraProperties()) {
-        CachedPropertyList* listing = listOfKeysFixedByStructure(vm, object);
-        return listing ? std::optional(static_cast<uint32_t>(listing->properties.size())) : std::nullopt;
-    }
-    auto properties = object.fieldsInKeyOrder();
-    if (!properties)
-        return std::nullopt;
-    for (auto& property : *properties) {
-        if (!holdsValue(object, *property.field))
-            return std::nullopt;
-    }
-    return static_cast<uint32_t>(properties->size());
+    if (!object.keysDependOnlyOnStructureAndOrderWord())
+        return false;
+    JSObject* extra = object.extraProperties();
+    if (extra && (object.compiledStructure().extraPropertiesStructureID() != extra->structureID() || !extra->structure()->canCacheOwnPropertyNames()))
+        return false;
+    std::span<const FieldData> fields = object.layout().fields();
+    bool holdsEveryListedField = true;
+    object.forEachFieldInKeyOrder(object.state(), [&](uint16_t index) {
+        holdsEveryListedField &= holdsValue(object, fields[index]) || (extra && livesInExtraProperties(vm, object, fields[index]));
+    });
+    return holdsEveryListedField;
 }
 
 static bool canCacheEnumeratorFor(StructureChain* prototypeChain)
@@ -732,8 +762,8 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     uint32_t orderWordBefore = orderWord();
 
     bool hasExtraProperties = this->hasExtraProperties();
-    std::optional<uint32_t> numberOfOwnNames = countKeysInOrderWord(vm, *this);
-    bool isCacheable = numberOfOwnNames && (hasExtraProperties || !compiledStructure().hasOtherPrototype());
+    bool ownNamesAreFixed = enumerableNamesFollowFromStructureAndOrderWord(vm, *this);
+    bool isCacheable = ownNamesAreFixed && (hasExtraProperties || !compiledStructure().hasOtherPrototype());
     StructureChain* prototypeChainBefore = nullptr;
     if (isCacheable) {
         prototypeChainBefore = structureBefore->prototypeChain(vm, globalObject, this);
@@ -745,22 +775,19 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
 
     uint32_t indexedLength = 0;
     uint32_t numberOfStructureProperties = 0;
+    uint32_t numberOfOwnNames = 0;
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    getEnumerablePropertyNames(globalObject, this, names, indexedLength, numberOfStructureProperties);
+    getEnumerablePropertyNames(globalObject, this, names, indexedLength, numberOfStructureProperties, &numberOfOwnNames);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ASSERT(!indexedLength && !numberOfStructureProperties);
 
     bool isUnchanged = structure() == structureBefore && orderWord() == orderWordBefore;
-    if (hasExtraProperties && numberOfOwnNames && !(isUnchanged && beginsWithListedKeys(vm, *this, names, *numberOfOwnNames))) {
-        numberOfOwnNames = std::nullopt;
-        isCacheable = false;
-    }
     constexpr uint32_t orderWordMask = orderAndCountMask | orderWordHasExtraProperties;
     JSPropertyNameEnumerator* enumerator = nullptr;
     if (!names.size())
         enumerator = vm.emptyPropertyNameEnumerator();
-    else if (numberOfOwnNames && isUnchanged)
-        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, *numberOfOwnNames, WTF::move(names), orderWordBefore & orderWordMask, orderWordMask);
+    else if (ownNamesAreFixed && isUnchanged)
+        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, numberOfOwnNames, WTF::move(names), orderWordBefore & orderWordMask, orderWordMask);
     else
         enumerator = JSPropertyNameEnumerator::tryCreate(vm, structure(), 0, 0, WTF::move(names));
     if (!enumerator) [[unlikely]] {

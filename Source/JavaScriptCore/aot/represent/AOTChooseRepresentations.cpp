@@ -1181,6 +1181,46 @@ static BitVector findDoublesKeptWithTheOneNaN(FunctionPassContext& pass, const R
     return result;
 }
 
+// The sign of a NaN that arithmetic has made counts, and that of a NaN out of bytes does not. Behind a join nobody can tell the two apart, so each edge into such a join makes of its NaN what is to be made of it.
+// What a loop carries round is computed from both, as a sum of the two is, and stays bits of bytes.
+static bool keepJoinsOfBytesAndArithmeticWithTheOneNaN(FunctionPassContext& pass, const RepresentationInputs& inputs, BitVector& keptWithTheOneNaN)
+{
+    const Function& function = pass.function;
+    const CFG& cfg = pass.analyses.cfg();
+    bool hasFoundJoin = false;
+    for (BlockID id : cfg.reversePostOrder()) {
+        const CompactList<ValueID>& parameters = function.at(id).parameters;
+        std::optional<bool> isLoopHeader;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            if (function.at(parameters[index]).representation != Representation::ImpureDouble)
+                continue;
+            if (!isLoopHeader) {
+                isLoopHeader = std::ranges::any_of(cfg.incomingEdges(id), [&](Edge edge) {
+                    return cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(id);
+                });
+            }
+            if (*isLoopHeader)
+                break;
+            bool takesNaNOfArithmetic = std::ranges::any_of(cfg.incomingEdges(id), [&](Edge edge) {
+                IncomingValue incoming = incomingValueOf(function, edge, index);
+                if (incoming.kind == IncomingValue::Kind::EdgeResult) {
+                    EdgeResult result = edgeResultAt(function, incoming.result);
+                    bool isCopy = result.kind == EdgeResultKind::NarrowedOperand;
+                    return (isCopy ? function.at(result.subject).representation : edgeResultRepresentationOf(inputs, incoming.result)) != Representation::ImpureDouble;
+                }
+                if (!incoming.argument || function.at(incoming.argument).representation == Representation::ImpureDouble)
+                    return false;
+                return inputs.typeOf(incoming.argument).mayBeNaN() && !makesTheOneNaNOfBytes(inputs, function.at(incoming.argument));
+            });
+            if (!takesNaNOfArithmetic)
+                continue;
+            keptWithTheOneNaN.set(parameters[index].index());
+            hasFoundJoin = true;
+        }
+    }
+    return hasFoundJoin;
+}
+
 static std::optional<Value> makeOnlyValueOf(const Type& type)
 {
     if (type.isInteger() && type.integers.isSingleValue()) {
@@ -1361,14 +1401,19 @@ PassOutcome chooseRepresentations(FunctionPassContext& pass)
     RepresentationInputs inputs { pass.program, pass.id, function, *pass.inputs.placement, *pass.inputs.callingConventions };
     writeRepresentations(pass, inputs);
     BitVector keptWithTheOneNaN;
-    if (findDoublesWithAnyNaN(pass, inputs, keptWithTheOneNaN))
+    bool mustChooseAgain = false;
+    if (findDoublesWithAnyNaN(pass, inputs, keptWithTheOneNaN)) {
         keptWithTheOneNaN = findDoublesKeptWithTheOneNaN(pass, inputs);
-    if (!keptWithTheOneNaN.isEmpty()) {
+        mustChooseAgain = keepJoinsOfBytesAndArithmeticWithTheOneNaN(pass, inputs, keptWithTheOneNaN) || !keptWithTheOneNaN.isEmpty();
+    }
+    // What is computed from a join that is kept is bits of bytes no more, and may meet such bits at the next join.
+    while (mustChooseAgain) {
         for (uint32_t index = 0; index < function.values.size(); ++index) {
             if (holdsAnyNaN(function.at(ValueID(index)).representation))
                 function.edit(ValueID(index), ValueEdit::Type).representation = Representation::Double;
         }
         findDoublesWithAnyNaN(pass, inputs, keptWithTheOneNaN);
+        mustChooseAgain = keepJoinsOfBytesAndArithmeticWithTheOneNaN(pass, inputs, keptWithTheOneNaN);
     }
 
     ConversionInserter inserter { inputs, pass, builder };

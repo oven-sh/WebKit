@@ -95,5 +95,5 @@ function f1 name="total" module=m0 position=5 flags=[IsChecked] length=2 paramet
 # X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
 # X64-COUNT-8: AddDouble {{*}}(%{{*}},%{{*}},8), %xmm
 # ARM64 has no base + index * 8 + offset address: the loads share base + index * 8.
-# ARM64: instructions: 20, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8
 }

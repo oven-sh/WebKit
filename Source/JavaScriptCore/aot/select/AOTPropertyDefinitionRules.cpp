@@ -180,7 +180,7 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
     if (!operands || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
         return std::nullopt;
-    // The operation hands what is no object to the built-in, which refuses it. Its result is its operand, which says less than the result of the call where the operand may be something else.
+    // The operation hands what is no object to the built-in, which refuses it.
     const Type& typeOfObject = context.typeOf(operands->object);
     if (!typeOfObject.hasObjects() || !typeOfObject.isJavaScriptValue() || (!typeOfObject.isObject() && context.analyses().useLists().useCount(id)))
         return std::nullopt;

@@ -13,7 +13,6 @@
 # const twice: Twice = { op: 2, operand: +input };
 # const literal: Literal = { op: 3, value: +input };
 # (globalThis as any).answer = evaluate(input > 1 ? sum : input ? twice : literal);
-# TODO: control-flow: a switch that lists every value its subject can have keeps a way for the rest: the last case is still tested and what is left leaves the function
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
@@ -21,9 +20,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -181,8 +180,7 @@ function f1 name="evaluate" module=m0 position=133 flags=[IsChecked, HasExplicit
 # NONE-NOT: Equal(b@{{*}}, $3(
 # NONE-NOT: Switch(
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="evaluate" role=Source
-# X64-NEXT: instructions: 11, patchpoints: 3
+# X64-NEXT: instructions: 11, patchpoints: 0
 # ARM64-LABEL: name="evaluate" role=Source
-# ARM64-NEXT: instructions: 39, patchpoints: 3
+# ARM64-NEXT: instructions: 12, patchpoints: 0

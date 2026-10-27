@@ -103,4 +103,4 @@ function f1 name="smallest" module=m0 flags=[IsChecked, HasExplicitName] length=
 # CHECK-NEXT: Upsilon(b@[[value]], 
 # CHECK-LABEL: end of loop
 # X64: loop #{{*}}, instructions: 42, patchpoints: 16, {{*}} steps by 8
-# ARM64: loop #{{*}}, instructions: 44, patchpoints: 16, {{*}} steps by 8
+# ARM64: loop #{{*}}, instructions: 43, patchpoints: 16, {{*}} steps by 8

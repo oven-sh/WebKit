@@ -103,6 +103,8 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
                 jit.branchTest64(CCallHelpers::Zero, given, CCallHelpers::TrustedImm64(static_cast<int64_t>(bits))).linkTo(done, &jit);
                 counts.link(&jit);
             }
+            if (load.mayGetFilled)
+                (is64Bit ? jit.branchTest64(CCallHelpers::Zero, given) : jit.branchTest32(CCallHelpers::Zero, given)).linkTo(done, &jit);
             for (const WordChange& change : load.changesThatDoNotCount) {
                 RELEASE_ASSERT(!is64Bit);
                 CCallHelpers::Jump isOther = jit.branch32(CCallHelpers::NotEqual, given, CCallHelpers::TrustedImm32(static_cast<int32_t>(change.before)));

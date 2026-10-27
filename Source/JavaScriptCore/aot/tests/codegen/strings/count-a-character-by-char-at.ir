@@ -108,6 +108,6 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 
 # x86-64 compares the byte in memory. ARM64 loads it first.
 # X64: instructions: 3, patchpoints: 1, {{*}} steps by 1
-# X64: instructions: 17, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
 # ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

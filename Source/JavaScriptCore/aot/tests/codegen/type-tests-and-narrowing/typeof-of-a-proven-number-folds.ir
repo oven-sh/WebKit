@@ -11,9 +11,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -64,20 +64,19 @@ function f1 name="double" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v10
 }
 
-# The value is proven to be a number, so the test is decided at build time: the value arrives in a floating-point register, nothing is branched on in front of the addition, and the arm that calls String is gone. The sum is returned as a boxed value.
+# The value is proven to be a number, so the test is decided at build time: the value arrives in a floating-point register, nothing is branched on in front of the addition, and the arm that calls String is gone. With that arm gone every way out returns a number, so the sum is returned as the double that it is.
 # CHECK-LABEL: name="double" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Double b@[[value]] = ArgumentReg(
 # CHECK-NEXT: Double b@[[sum]] = Add(b@[[value]], b@[[value]], {{*}}:Add)
-# CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@[[sum]]:
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="double" role=Source
 # NONE-NOT: ExitsSideways
 # NONE-NOT: JSRopeString
 # NONE-NOT: :TypeTest)
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="double" role=Source
-# X64-NEXT: instructions: 2, patchpoints: 1
+# X64-NEXT: instructions: 2, patchpoints: 0
 # ARM64-LABEL: name="double" role=Source
-# ARM64-NEXT: instructions: 11, patchpoints: 1
+# ARM64-NEXT: instructions: 2, patchpoints: 0

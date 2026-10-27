@@ -200,8 +200,9 @@ void ModuleEmitter::generateStopLoadingBehindFile(const ValueContext& value)
 void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
 {
     ModuleID module = value->module();
+    // The operations around the site record who required whom, also where the module has run and the run time is not asked.
     auto askRunTime = [&](const CallOptions& options) {
-        callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
+        callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(ModuleID()) }, options);
     };
     if (value.shape() == CodeShape::Compact) {
         askRunTime({ });

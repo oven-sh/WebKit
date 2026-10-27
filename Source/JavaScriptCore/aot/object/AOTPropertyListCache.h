@@ -14,10 +14,12 @@
 #include <array>
 #include <memory>
 #include <wtf/Noncopyable.h>
+#include <wtf/text/Latin1Character.h>
 
 namespace JSC {
 
 class JSCellButterfly;
+class JSObject;
 class JSPropertyNameEnumerator;
 class StructureChain;
 class VM;
@@ -35,6 +37,10 @@ struct CachedPropertyList {
     Vector<PropertyListEntry> properties;
     JSPropertyNameEnumerator* enumerator { nullptr };
     StructureChain* prototypeChain { nullptr };
+    Vector<Latin1Character> jsonKeys;
+    Vector<uint32_t> endsOfJSONKeys;
+    bool hasToJSON { false };
+    bool holdsOnlyPlainData { false };
 };
 
 class PropertyListCache {
@@ -56,6 +62,7 @@ private:
 };
 
 CachedPropertyList* cachedPropertyList(VM&, const Object&);
+CachedPropertyList* findCachedPropertyList(VM&, const Object&, JSObject* extraProperties);
 
 } } // namespace JSC::AOT
 

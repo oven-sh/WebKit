@@ -108,12 +108,14 @@ function f1 name="parse" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 }
 
 # A parser's loop: read a code unit, leave at the first that is no digit, else multiply and add. The unit and the value stay 32-bit integers, and `| 0` takes the overflow checks away.
+# `code < 48 || code > 57` is one subtraction, one unsigned comparison and one branch.
 # CHECK-LABEL: steps by 1
 # CHECK: Int32 b@[[unit]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
-# CHECK: Int32 b@[[isBelow]] = Below(b@[[unit]], $48(
-# CHECK-NEXT: Branch(b@[[isBelow]], Terminal,
-# CHECK: Int32 b@[[isAbove]] = Above(b@[[unit]], $57(
-# CHECK-NEXT: Branch(b@[[isAbove]], Terminal,
+# CHECK-NOT: Branch(
+# CHECK: Int32 b@[[digit]] = Add(b@[[unit]], $-48(
+# CHECK: Int32 b@[[isNoDigit]] = Above(b@[[digit]], $9(
+# CHECK-NEXT: Branch(b@[[isNoDigit]], Terminal,
+# CHECK-NOT: Branch(
 # CHECK: Int32 b@[[tenfold]] = Mul(b@{{*}}, $10(
 # CHECK: Int32 b@[[sum]] = Add(b@[[unit]], b@[[tenfold]],
 # CHECK: Int32 b@{{*}} = Add(b@[[sum]], $-48(

@@ -12,6 +12,7 @@
 #include "B3Dominators.h"
 #include "B3EliminateDeadCode.h"
 #include "B3HoistLoopInvariantValues.h"
+#include "B3MovedLoadCheck.h"
 #include "B3RegisterPressure.h"
 #include <wtf/WeakRandom.h>
 
@@ -485,6 +486,35 @@ static void testHoistLoopInvariantValuesHoistsImmutableLoadPastStores()
     }
 }
 
+static void testMovedLoadCheckLetsWordGetFilled()
+{
+    constexpr int32_t reported = 42;
+    for (bool mayGetFilled : { true, false }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t*, int64_t>(proc, root);
+        Value* given = graph.make(root, Trunc, arguments[1]);
+        std::optional<MovedLoad> moved = MovedLoad::describe(graph.load(root, Int32, arguments[0], 0, firstHeap));
+        moved->mayGetFilled = mayGetFilled;
+        root->append(createMovedLoadCheck(proc, *moved, arguments[0], given, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm32(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        })));
+        graph.ret(root, graph.int32(root, 0));
+
+        auto code = compileProc(proc);
+        auto resultFor = [&](int32_t found, int32_t givenToUsers) {
+            return invoke<int32_t>(*code, &found, static_cast<int64_t>(givenToUsers));
+        };
+        CHECK_EQ(resultFor(5, 5), 0);
+        CHECK_EQ(resultFor(5, 0), mayGetFilled ? 0 : reported);
+        CHECK_EQ(resultFor(5, 3), reported);
+        CHECK_EQ(resultFor(0, 3), reported);
+    }
+}
+
 static void testHoistFromLargeLoop()
 {
     Procedure proc(likelyPathsPolicy(true));
@@ -713,6 +743,7 @@ void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testHoistLoopInvariantValuesLimitsLoadsByPreservedRegisters());
     RUN(testHoistLoopInvariantValuesLimitsHoistedLoads());
     RUN(testHoistLoopInvariantValuesHoistsImmutableLoadPastStores());
+    RUN(testMovedLoadCheckLetsWordGetFilled());
     RUN(testHoistFromLargeLoop());
     RUN(testHoistWithEarlyLikelyExit());
     RUN(testHoistAcrossInnerLoop());

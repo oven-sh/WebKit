@@ -15,9 +15,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -26,7 +26,7 @@ typesite w1 module=m0 position=286 kind=Variable
 typesite w2 module=m0 position=105 kind=Parameter function=f1
 typesite w3 module=m0 position=90 kind=Result
 typesite w4 module=m0 position=368 kind=CallResult
-layout L0 name="Leaf" module=m0 position=5 fields=[{key="op" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L0 name="Leaf" module=m0 position=5 fields=[{key="op" declared={type=0} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
 layout L1 name="Pair" module=m0 position=43 fields=[{key="left" declared={type=number} flags=[IsRequired]}, {key="op" declared={type=1} flags=[IsRequired]}, {key="right" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -35,7 +35,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v0 = NewClosure function=f1
     v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     v2 = Integer
-    v3 = Convert v2 declared={type=number}
+    v3 = Convert v2 declared={type=0}
     v4 = Builtin builtin=GlobalThis
     v5 = PropGet v4 key="input" [isFreeName]
     v6 = Convert v5 declared={type=number flags=[IsExpected]}
@@ -110,37 +110,29 @@ function f1 name="total" module=m0 position=90 flags=[IsChecked, HasExplicitName
     Return v15
 }
 
-# The tag is loaded once and branched on. A tag of the literal type 0 is kept as a 32-bit number whose value is not known, so a tag that is not 0 does not decide the layout: the arm of the Pair tests the shape word before it reads.
+# A tag of 0 and 1 is one byte in the object, loaded once and branched on. The tag decides the layout, so the fields of either arm are plain loads with no shape test, and each arm returns a double.
 # CHECK-LABEL: name="total" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[op]] = Load(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int32 b@[[op]] = Load8Z(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Branch(b@[[op]], Terminal
-# CHECK-NEXT: Successors: Then:#[[notZero]], Else:#[[leaf]]
-# CHECK-NEXT: BB#[[notZero]]:
-# CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int32 b@[[word]] = Load(b@[[node]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
-# CHECK: Int32 b@[[isPair]] = Equal(b@[[word]], $-
-# CHECK-NEXT: Branch(b@[[isPair]], Terminal
-# CHECK-NEXT: Successors: Then:#[[pair]], Else:Unlikely:#
+# CHECK-NEXT: Successors: Then:#[[pair]], Else:#[[leaf]]
 # CHECK-NEXT: BB#[[pair]]:
-# CHECK-NEXT: Predecessors: #[[notZero]]
+# CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Double b@[[left]] = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@[[right]] = Load(b@[[node]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Double b@{{*}} = Add(b@[[left]], b@[[right]]
-# The arm of the Leaf needs no test: no other member can have the tag 0.
-# CHECK: BB#[[leaf]]:
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[left]], b@[[right]]
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-NEXT: BB#[[leaf]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Double b@{{*}} = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[value]] = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[value]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="total" role=Source
 # NONE-NOT: ExitsSideways
-# NONE-COUNT-1: AOTObject_shapeWord
 # NONE-NOT: AOTObject_shapeWord
-# NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="total" role=Source
-# X64-NEXT: instructions: 9, patchpoints: 3
+# X64-NEXT: instructions: 6, patchpoints: 0
 # ARM64-LABEL: name="total" role=Source
-# ARM64-NEXT: instructions: 32, patchpoints: 4
+# ARM64-NEXT: instructions: 8, patchpoints: 0

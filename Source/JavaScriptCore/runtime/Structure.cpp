@@ -1230,9 +1230,8 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
 Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, DictionaryKind kind, DeferredStructureTransitionWatchpointFire* deferred)
 {
     ASSERT(!structure->isUncacheableDictionary());
-    DeferGC deferGC(vm);
-    
     Structure* transition = Structure::create(vm, structure, deferred);
+    DeferGC deferGC(vm);
     countStructureMade(vm, "Structure:a_dictionary"_s);
 
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);

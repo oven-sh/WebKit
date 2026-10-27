@@ -202,7 +202,8 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
                 return result;
             block = m_directory->tryAllocateBlock(heap);
         }
-        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
+        // Another thread may take what this one lets go of.
+        while (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
             block = m_directory->tryAllocateBlock(heap);
         if (!block) {
             if (failureMode == AllocationFailureMode::Assert)

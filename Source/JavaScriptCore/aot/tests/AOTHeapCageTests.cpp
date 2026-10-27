@@ -11,6 +11,7 @@
 #include "AOTChildProcess.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
+#include "AddressSpaceBudget.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
 #include "DeferGCInlines.h"
@@ -38,6 +39,8 @@
 #include <wtf/DataLog.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -555,6 +558,57 @@ static void checkCellInFullRangeGrowsIntoSharedReserve()
     AOT_TEST_CHECK(largest);
     cage.free(largest);
 }
+
+#if USE(MIMALLOC)
+// All the address space is taken. A request to malloc that may fail gets null, requests that may not fail are served, and the thread is told. When address space comes back the ballast is kept again.
+static void checkRequestsThatMayNotFailUseBallast()
+{
+    static unsigned timesToldOfUse;
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+    bmalloc::api::setAddressSpaceBallastHandler([] { ++timesToldOfUse; });
+
+    struct Mapping {
+        void* pages;
+        size_t size;
+    };
+    Vector<Mapping, 64> mappings;
+    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
+        while (void* pages = OSAllocator::tryReserveUncommitted(size))
+            mappings.append({ pages, size });
+    }
+    Vector<void*> pieces;
+    pieces.reserveInitialCapacity(256 * KB);
+    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
+        pieces.append(piece);
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && !timesToldOfUse);
+
+    // An allocator that does not remember what it refused cannot be asked again.
+    if (void* again = bmalloc::api::memalignAgainWithBallast()) {
+        fastFree(again);
+        std::array<void*, 32> served;
+        for (void*& piece : served) {
+            piece = fastMalloc(16 * KB);
+            fill(piece, 16 * KB, 3);
+        }
+        served[0] = fastRealloc(served[0], 48 * KB);
+        AOT_TEST_CHECK(!bmalloc::api::hasWholeAddressSpaceBallast() && timesToldOfUse);
+        for (void* piece : served) {
+            AOT_TEST_CHECK(isFilled(piece, 16 * KB, 3));
+            fastFree(piece);
+        }
+    }
+
+    for (void* piece : pieces)
+        fastFree(piece);
+    for (auto [pages, size] : mappings)
+        OSAllocator::releaseDecommitted(pages, size, 0);
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+    bmalloc::api::setAddressSpaceBallastHandler(nullptr);
+}
+#endif
 #endif
 
 static bool covers(MarkedBlockCage::Indices indices, uintptr_t base, const void* pointer, size_t size)
@@ -1047,6 +1101,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
         { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
+#if USE(MIMALLOC)
+        { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
+#endif
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },

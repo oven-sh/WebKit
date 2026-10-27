@@ -530,6 +530,7 @@ ClimbingSet HeapRule::foundThroughUntrackedObject(ValueSetID objects)
 }
 
 // No key that is computed is a private name, so what lies under one stays behind when its holder escapes. A read under the name through an object nobody knows finds it on each holder that has escaped or stands above another object.
+// Under a name that the modules of the library alone spell it finds what lies on any holder: native code hands such a module objects that have escaped to nobody.
 ValueFlowNodeID HeapRule::readWhatStaysBehindUnder(ValueFlowName name)
 {
     if (m_context.mayFindWhatIsWrittenUnderUnknownKey(name))
@@ -537,6 +538,8 @@ ValueFlowNodeID HeapRule::readWhatStaysBehindUnder(ValueFlowName name)
     std::optional<ClimbingSet> holders = m_context.holdersUnder(name, ClimbingSet(m_universe.knownObjects()));
     if (!holders || !holdsAnything(*holders))
         return { };
+    if (m_program.at(PropertyKeyID(name.payload)).kind == PropertyKeyKind::ModulePrivateName)
+        return m_context.readWhatWasWritten(*holders, name);
     Members aboveInstances;
     m_context.forEachMember(*holders, [&](ValueFlowObjectID holder) {
         if (m_universe.kindOf(holder) == ValueFlowObjectKind::Prototype)
@@ -1454,8 +1457,14 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(result, m_universe.anyPrimitive());
     }
 
+    // Every store under a name that the modules of the library alone spell is a store that flow sees.
+    bool isSpelledByLibraryAlone = key.keyClass == HeapKeyClass::Name && m_program.at(key.name).kind == PropertyKeyKind::ModulePrivateName;
     if (mayBeUnknownObject(start)) {
-        add(result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
+        if (isSpelledByLibraryAlone) {
+            answer(m_context.readWhatWasWritten(unknownObjectAlone(), value));
+            takeGetters(m_context.readWhatWasWritten(unknownObjectAlone(), getter));
+        } else
+            add(result, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject));
         if (key.keyClass == HeapKeyClass::Name) {
             ClimbingSet holdersOfExports = letMembersOfHeldPrototypeObjectsEscape(key.name, { value, getter });
             if (holdsAnything(holdersOfExports)) {
@@ -1470,7 +1479,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.constructorKey())) {
             ValueFlowNodeID constructors = m_context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
             connect(m_context.masked(constructors, ValueSets::complement(m_universe.builtinObjects())), result);
-            connect(m_context.masked(constructors, m_universe.builtinObjects()), ValueFlowProgramNodes::escaped());
+            connect(m_context.masked(constructors, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_tables.objectsThatLetInUnseenCode()))), ValueFlowProgramNodes::escaped());
         }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;
@@ -1503,7 +1512,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         }
     }
     if (chain.holdsUnknownObject) {
-        builtinGetters.append(ValueFlowUniverse::unknownObject());
+        if (!isSpelledByLibraryAlone)
+            builtinGetters.append(ValueFlowUniverse::unknownObject());
         if (ValueFlowNodeID found = readWhatStaysBehindUnder(value))
             answer(found);
         takeGetters(readWhatStaysBehindUnder(getter));
@@ -1656,7 +1666,8 @@ void HeapRule::collectAccessors(BuiltinCallMode mode)
             accessors.append(m_tables.undescribedNativeCode());
     }
     if (chain.holdsUnknownObject) {
-        accessors.append(ValueFlowUniverse::unknownObject());
+        if (key.keyClass != HeapKeyClass::Name || m_program.at(key.name).kind != PropertyKeyKind::ModulePrivateName)
+            accessors.append(ValueFlowUniverse::unknownObject());
         appendAccessorsOf(holdersOfAccessorsThatRunOnUnknownObject(key));
         answer(readWhatStaysBehindUnder(name));
         if (key.keyClass == HeapKeyClass::Name) {

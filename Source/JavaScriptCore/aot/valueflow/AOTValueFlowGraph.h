@@ -211,11 +211,11 @@ private:
         IsCoveredNode = 1 << 3,
     };
 
-    AOT_CLASS_THRESHOLD(unsigned, mostCoverings, 5);
+    AOT_CLASS_THRESHOLD(unsigned, mostCoverings, 6);
 
     // coveringsFlowedInto: one bit a covering: the node flows into its covered node.
     struct Gate {
-        uint32_t mask : 23;
+        uint32_t mask : 22;
         uint32_t flags : 4;
         uint32_t coveringsFlowedInto : mostCoverings;
     };

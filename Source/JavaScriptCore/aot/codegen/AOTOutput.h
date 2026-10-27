@@ -17,6 +17,7 @@
 #include "B3ConstDoubleValue.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
+#include "B3Policy.h"
 #include "B3Procedure.h"
 #include "B3RelocatableValue.h"
 #include "B3SwitchValue.h"
@@ -111,6 +112,8 @@ public:
         for (const SwitchTarget& switchCase : cases)
             switchValue->appendCase(B3::SwitchCase(switchCase.caseValue, switchCase.target));
     }
+
+    unsigned minCasesForJumpTable() const { return m_proc.policy().switchLowering.minCasesForJumpTable; }
 
     void appendSuccessor(B3::FrequentedBlock target) { m_block->appendSuccessor(target); }
 

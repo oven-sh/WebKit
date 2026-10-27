@@ -82,5 +82,5 @@ function f1 name="twiceOf" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # NONE-NOT: Patchpoint(
 # NONE: Return(
 # NONE-LABEL: end of function
-# X64: instructions: 4, patchpoints: 0, rare instructions: 3
-# ARM64: instructions: 3, patchpoints: 0, rare instructions: 3
+# X64: instructions: 4, patchpoints: 0, rare instructions: 2
+# ARM64: instructions: 3, patchpoints: 0, rare instructions: 2

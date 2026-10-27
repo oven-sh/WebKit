@@ -83,9 +83,12 @@ function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=
     Return v24
 }
 
-# Ahead of the loop the text is made flat, and its characters, length and width are read once. The loop for 8-bit characters is written out eight times: eight loads of a byte off one counter.
+# Ahead of the loop the text is made flat, and its characters, length and width are read once. The loop for 8-bit characters is written out eight times: eight loads of a byte off one counter, at the offsets 0 to 7.
 # CHECK-LABEL: steps by 8
-# CHECK-COUNT-8: Int32 b@{{*}} = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# CHECK: Int32 b@{{*}} = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# REPEAT: turn = 1..7
+# CHECK: Int32 b@{{*}} = Load8Z(b@{{*}}, offset = %(turn), ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# END REPEAT
 # CHECK-NOT: Reads:characters
 # CHECK-LABEL: end of loop
 # What is left over goes through the same loop, one character a turn.
@@ -111,8 +114,8 @@ function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=
 # HOT-NOT: isLoopPoll
 # HOT-LABEL: end of loop
 
-# One character costs a load, an addition, the counter and the branch. In the eight turns, seven of the loads add to the counter first.
+# One character costs a load, an addition, the counter and the branch. The eight turns have eight loads, eight additions, the counter and the branch. ARM64 adds the characters and the counter first.
 # X64: instructions: 4, patchpoints: 1, {{*}} steps by 1
-# X64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
 # ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

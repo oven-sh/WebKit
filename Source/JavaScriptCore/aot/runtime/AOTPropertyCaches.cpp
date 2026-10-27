@@ -41,6 +41,7 @@
 #include "GetterSetter.h"
 #include "JSCConfig.h"
 #include "JSCInlines.h"
+#include "PropertyOffset.h"
 #include "SlotVisitorInlines.h"
 #include <array>
 #include <bit>
@@ -1680,6 +1681,21 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
     return false;
 }
 
+// What was a dictionary only while it was given its names has not grown into one: its Structure is like any other. Other objects may share it, what is added to them is remembered in it,
+// and it may still grow into a dictionary, which is then made flat once.
+void didFinishFilling(Structure* structure)
+{
+    ASSERT(!structure->isDictionary());
+    structure->setHasBeenFlattenedBefore(false);
+    structure->setHasBeenDictionary(false);
+}
+
+bool hasFewEnoughNamesToBeFilled(Structure* structure)
+{
+    AOT_THRESHOLD(unsigned, maxNamesCopiedIntoTable, 64);
+    return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) <= maxNamesCopiedIntoTable;
+}
+
 // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
 static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
 {
@@ -1689,7 +1705,7 @@ static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
     if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->hasBeenFlattenedBefore())
         return;
     structure->flattenDictionaryStructure(vm, object);
-    structure->setHasBeenFlattenedBefore(false);
+    didFinishFilling(structure);
 }
 
 bool FirstAdditions::forget(JSObject* object)
@@ -1703,8 +1719,18 @@ bool FirstAdditions::forget(JSObject* object)
     return false;
 }
 
+bool FirstAdditions::mayBeginToFill(JSObject* object) const
+{
+    AOT_THRESHOLD(uintptr_t, maxTimesOneObjectIsFilled, 4);
+    static_assert(maxTimesOneObjectIsFilled < timesMask);
+    uintptr_t times = m_timesObjectsBeganToFill[placeOfTimes(object)] ^ std::bit_cast<uintptr_t>(object);
+    return times > timesMask || times < maxTimesOneObjectIsFilled;
+}
+
 void FirstAdditions::didBeginToFill(VM& vm, JSObject* object)
 {
+    uintptr_t& times = m_timesObjectsBeganToFill[placeOfTimes(object)];
+    times = (times ^ std::bit_cast<uintptr_t>(object)) > timesMask ? std::bit_cast<uintptr_t>(object) | 1 : times + 1;
     makeFlatWhatWasFilled(vm, std::exchange(m_objectsBeingFilled[m_numberOfObjectsFilled++ % numberOfObjectsBeingFilled], object));
     vm.aotState().hasObjectsBeingFilled = true;
 }
@@ -1717,6 +1743,7 @@ void FirstAdditions::finishFilling(VM& vm)
 
 size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
 {
+    m_timesObjectsBeganToFill.fill(0);
     size_t numberOfDeadObjects = 0;
     for (JSObject*& object : m_objectsBeingFilled) {
         if (object && !vm.heap.isMarked(object)) {

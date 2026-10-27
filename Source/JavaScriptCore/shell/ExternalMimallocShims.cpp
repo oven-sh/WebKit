@@ -40,6 +40,12 @@ extern "C" void mi_on_thread_idle(void) noexcept
     mi_theap_collect(mi_theap_get_default(), /* force */ false);
 }
 
+// The consumer's mimalloc remembers the request of a thread that last found no memory. The vendored one does not.
+extern "C" bool mi_last_failed_request(struct mi_failed_request_s*) noexcept
+{
+    return false;
+}
+
 // A value above 1 skips the teardown at process exit, like the consumer's MI_NO_PROCESS_DETACH.
 __attribute__((constructor)) static void skipProcessTeardown()
 {

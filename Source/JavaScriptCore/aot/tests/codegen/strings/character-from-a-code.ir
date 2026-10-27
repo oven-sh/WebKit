@@ -8,7 +8,7 @@
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
 # RUN(NONE): lower-to-b3 optimized f1
-# REQUIRES(NONE): unsanitized-code
+# REQUIRES(NONE): no-jscvt unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

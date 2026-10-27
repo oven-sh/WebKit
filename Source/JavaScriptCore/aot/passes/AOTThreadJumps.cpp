@@ -15,8 +15,11 @@
 #include "AOTRegionCloner.h"
 #include "AOTRewrite.h"
 #include "AOTSSARepair.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
+#include <array>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <wtf/IndexMap.h>
@@ -137,8 +140,13 @@ struct EdgeThreader : Rewrite {
 
     bool chooseMergePoints(NOESCAPE const Invocable<bool(const CFG&, BlockID)> auto& isWanted)
     {
+        return chooseMergePointsAmong(analyses.cfg().reversePostOrder(), isWanted);
+    }
+
+    bool chooseMergePointsAmong(std::span<const BlockID> blocks, NOESCAPE const Invocable<bool(const CFG&, BlockID)> auto& isWanted)
+    {
         const CFG& cfg = analyses.cfg();
-        for (BlockID block : cfg.reversePostOrder()) {
+        for (BlockID block : blocks) {
             if (cfg.incomingEdges(block).size() >= 2 && isWanted(cfg, block))
                 candidates.append(block);
         }
@@ -190,22 +198,27 @@ struct EdgeThreader : Rewrite {
         }
     }
 
-    BlockID copyBlock(BlockID original)
+    // The copy of the first block.
+    BlockID copyBlocks(std::span<const BlockID> originals)
     {
         RegionCloner cloner(builder(), function);
-        cloner.cloneBlocks(singleElementSpan(original), [](ValueID, Value&) { });
+        cloner.cloneBlocks(originals, [](ValueID, Value&) { });
 
-        Arguments definitions = at(original).parameters;
-        for (ValueID value : at(original).values) {
-            if (resultRuleOf(at(value).opcode) != ResultRule::None)
-                definitions.append(value);
+        for (BlockID original : originals) {
+            Arguments definitions = at(original).parameters;
+            for (ValueID value : at(original).values) {
+                if (resultRuleOf(at(value).opcode) != ResultRule::None)
+                    definitions.append(value);
+            }
+            Arguments copies;
+            for (ValueID definition : definitions)
+                copies.append(cloner.cloneOf(definition));
+            addDefinitions(original, definitions, copies);
         }
-        Arguments copies;
-        for (ValueID definition : definitions)
-            copies.append(cloner.cloneOf(definition));
-        addDefinitions(original, definitions, copies);
-        return cloner.cloneOf(original);
+        return cloner.cloneOf(originals[0]);
     }
+
+    BlockID copyBlock(BlockID original) { return copyBlocks(singleElementSpan(original)); }
 
     PassOutcome finish()
     {
@@ -585,6 +598,8 @@ struct EdgeThreader : Rewrite {
     {
         bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
             const Block& block = at(id);
+            if (leadsToOneBlock(block.terminator))
+                joinsThatLeadToOneBlock.append(id);
             if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
                 return false;
             ValueID condition = block.terminator.conditionOperand();
@@ -612,6 +627,91 @@ struct EdgeThreader : Rewrite {
         for (BlockID candidate : candidates)
             decidedEdges.append(incomingEdges[candidate].span().first(incomingEdges[candidate].size() - 1));
         return giveCopiesTo(decidedEdges.span());
+    }
+
+    static bool leadsToOneBlock(const Terminator& choice)
+    {
+        if (choice.kind != TerminatorKind::Branch && choice.kind != TerminatorKind::Switch)
+            return false;
+        return std::ranges::all_of(choice.targets, [&](const Target& target) { return target.block == choice.targets[0].block; });
+    }
+
+    // The test of what a join takes, where it ends the one block that every edge of the join leads to and no other edge does.
+    const Value* findTestBelowJoin(const CFG& cfg, BlockID id) const
+    {
+        const Block& join = at(id);
+        const Terminator& choice = join.terminator;
+        if (!leadsToOneBlock(choice) || join.isHandlerBlock() || join.frequency.predicted() != BlockFrequency::Normal)
+            return nullptr;
+        BlockID below = choice.targets[0].block;
+        for (uint32_t targetIndex = 0; targetIndex < choice.targets.size(); ++targetIndex) {
+            if (hasEdgeResults(function, Edge { id, targetIndex }))
+                return nullptr;
+        }
+        const Block& testing = at(below);
+        if (below == id || cfg.incomingEdges(below).size() != choice.targets.size() || testing.isHandlerBlock() || testing.terminator.kind != TerminatorKind::Branch)
+            return nullptr;
+        if (hasEdgeTo(testing.terminator, below) || hasEdgeTo(testing.terminator, id))
+            return nullptr;
+        ValueID condition = testing.terminator.conditionOperand();
+        const Value& test = at(condition);
+        bool testsParameter = test.opcode == Opcode::TypeTest && testing.values.contains(condition) && join.parameters.contains(sameObjectBehindFacts(function, test.valueOperand()));
+        return testsParameter ? &test : nullptr;
+    }
+
+    // A second choice may stand between the join and the test: `shapes[i].scaled(factors[j])` finds the argument before it asks which method the shape has, and a list that is never made is read by a choice among its elements.
+    // The edges whose values pass the test share one copy of the two blocks, the others keep the blocks, and the test folds in both. The walk of copySmallJoins() has noted the joins.
+    PassOutcome copyJoinsAboveTests()
+    {
+        if (joinsThatLeadToOneBlock.isEmpty())
+            return PassOutcome::Unchanged;
+        auto answerFor = [&](const Value& test, Edge edge) {
+            const Block& join = at(targetOf(function, edge).block);
+            const Type& passed = typeOf(substituteParameter(join, sameObjectBehindFacts(function, test.valueOperand()), targetOf(function, edge).arguments));
+            return evaluateTypeTest(program, passed, context.types.at(test.testedType()));
+        };
+        bool hasCandidates = chooseMergePointsAmong(joinsThatLeadToOneBlock.span(), [&](const CFG& cfg, BlockID id) {
+            const Value* test = findTestBelowJoin(cfg, id);
+            if (!test || isLoopHeader(cfg, id))
+                return false;
+            bool somePass = false;
+            bool someFail = false;
+            for (Edge edge : cfg.incomingEdges(id)) {
+                KnownBoolean answer = canRedirect(edge) ? answerFor(*test, edge) : KnownBoolean::Unknown;
+                if (answer == KnownBoolean::Unknown)
+                    return false;
+                (answer == KnownBoolean::True ? somePass : someFail) = true;
+            }
+            std::array<BlockID, 2> blocks { id, at(id).terminator.targets[0].block };
+            if (!somePass || !someFail || RegionCloner::checkCanDuplicate(analyses, blocks, singleElementSpan(id)) != CloneCheck::CanClone)
+                return false;
+            return !context.exceeds(LimitID::MaxThreadedBlockValues, at(blocks[0]).values.size() + at(blocks[1]).values.size(), at(blocks[1]).terminator.conditionOperand());
+        });
+        if (!hasCandidates)
+            return PassOutcome::Unchanged;
+
+        // A copy adds edges to what lies below it. Whoever stands there waits for the next run.
+        IndexSet<BlockID> changedBlocks;
+        for (BlockID candidate : candidates) {
+            std::array<BlockID, 2> blocks { candidate, at(candidate).terminator.targets[0].block };
+            const Terminator& branch = at(blocks[1]).terminator;
+            std::array<BlockID, 4> touchedBlocks { blocks[0], blocks[1], branch.taken().block, branch.notTaken().block };
+            if (std::ranges::any_of(touchedBlocks, [&](BlockID block) { return changedBlocks.contains(block); }))
+                continue;
+            for (BlockID block : touchedBlocks)
+                changedBlocks.add(block);
+
+            const Value& test = at(branch.conditionOperand());
+            Vector<Edge, 4> passingEdges;
+            for (Edge edge : incomingEdges[candidate]) {
+                if (answerFor(test, edge) == KnownBoolean::True)
+                    passingEdges.append(edge);
+            }
+            BlockID copy = copyBlocks(blocks);
+            for (Edge edge : passingEdges)
+                redirect(edge, Target { copy, Arguments(targetOf(function, edge).arguments), { } });
+        }
+        return finish();
     }
 
     // Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
@@ -697,6 +797,7 @@ struct EdgeThreader : Rewrite {
     }
 
     Vector<BlockID> candidates;
+    Vector<BlockID, 4> joinsThatLeadToOneBlock;
     IndexSet<BlockID> isCandidate;
     IndexMap<BlockID, Vector<Edge, 2>> incomingEdges;
     std::optional<SSARepair> repair;
@@ -710,7 +811,10 @@ PassOutcome threadJumps(FunctionPassContext& context)
 {
     PassOutcome outcome = EdgeThreader(context).threadBranchesOnParameters();
     outcome |= EdgeThreader(context).threadDecidedBranches();
-    outcome |= EdgeThreader(context).copySmallJoins();
+    EdgeThreader joinCopier(context);
+    PassOutcome copiedSmallJoins = joinCopier.copySmallJoins();
+    // A phase that has chosen no merge point has kept nothing but what it noted for the next one. Where it has copied a block, that is out of date, and the pass runs again.
+    outcome |= copiedSmallJoins == PassOutcome::Unchanged ? joinCopier.copyJoinsAboveTests() : copiedSmallJoins;
     if (hasTwoFunctionTestsForOneType(context))
         outcome |= EdgeThreader(context).copyRepeatedTests();
     if (outcome == PassOutcome::Changed)

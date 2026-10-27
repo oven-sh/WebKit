@@ -112,18 +112,23 @@ function f1 name="list" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
     Return v25
 }
 
-# `out += "<li>" + names[i] + "</li>"` makes no rope for the right side: the three parts go into the buffer one after the other. The literals are stores of immediates (0x3e696c3c is "<li>"), the name is copied by one stub.
+# `out += "<li>" + names[i] + "</li>"` makes no rope for the right side: the three parts go into the buffer one after the other. The literals are stores of immediates (0x3e696c3c is "<li>"), the name is copied by one stub. The stub may move the characters, so the limit of the buffer is read once a turn, behind it.
 # CHECK-LABEL: steps by 1
 # CHECK: Int64 b@[[name]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
-# CHECK: Store($1047096380(b@{{*}}), b@[[cursor]], ControlDependent|Writes:StringBuilderContents, {{*}}:StringBuilderAppendConstant)
+# CHECK: Store($1047096380(b@{{*}}), b@[[cursor]], ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
+# CHECK-NOT: Reads:AOTStackStringBuilder_fields
 # CHECK: Int64 b@[[behindName]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}:StringBuilderAppendString)
-# CHECK: Store($268056670012(b@{{*}}), b@[[behindName]], ControlDependent|Writes:StringBuilderContents, {{*}}:StringBuilderAppendConstant)
-# CHECK: Int64 b@{{*}} = Add(b@[[behindName]], $5(
+# CHECK: Int64 b@[[limit]] = Load(b@{{*}}, ControlDependent|Reads:AOTStackStringBuilder_fields, {{*}}:StringBuilderAppendString)
+# CHECK: Store($268056670012(b@{{*}}), b@[[behindName]], ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
+# CHECK: Int64 b@[[behindAll]] = Add(b@[[behindName]], $5(
+# CHECK-NOT: Reads:AOTStackStringBuilder_fields
+# CHECK: Int32 b@[[fits]] = {{*}}Equal(b@{{*}}, b@{{*}}, {{*}}:StringBuilderAppendConstant)
+# CHECK-NEXT: Branch(b@[[fits]], Terminal,
 # CHECK-LABEL: end of loop
-# The stub is the one call of a turn that is not rare. Each turn also loads the cells of both literals and tests that they exist.
+# The stub is the one call of a turn that is not rare. No cell is made or loaded for either literal.
 # HOT-LABEL: steps by 1
-# HOT-COUNT-2: Reads:AOTInstance_stringCells, {{*}}:String)
 # HOT-NOT: Reads:AOTInstance_stringCells
+# HOT-NOT: :String)
 # HOT-LABEL: end of loop
 # CALLS-LABEL: f1: size=
 # CALLS-NOT: Concatenate

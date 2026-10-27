@@ -151,5 +151,5 @@ function f1 name="hits" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 10, patchpoints: 2
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 2
+# X64: loop #{{*}}, instructions: 8, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 7, patchpoints: 2

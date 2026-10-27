@@ -169,6 +169,7 @@ constexpr std::array rows {
     programPass(ReadCapturesFromEnvironments, Optional, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies),
     takingAway(programPass(RemoveUnreadFields, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
+    addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
@@ -780,12 +781,14 @@ static_assert(scheduleAt(FunctionSchedule::Simplify).inputs == simplifyInputs);
 static_assert(scheduleAt(FunctionSchedule::Optimize).inputs.contains(CallGraph));
 static_assert(canRunSimplify(RemoveUnreadFields));
 static_assert(canRunSimplify(RemoveUnusedResults));
+static_assert(canRunSimplify(ProveResults));
 static_assert(canRunSimplify(RemoveUnusedParameters));
 static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
 static_assert(canRunFunctionPass(RemoveUnreadFields, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(ProveResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
@@ -1346,6 +1349,9 @@ PassOutcome Pipeline::runProgramPass(PassID id)
     case PassID::RemoveUnusedResults:
         edit(id, removeUnusedResults, inputsFor(id), m_runner);
         return m_runner.lastProgramPassOutcome();
+    case PassID::ProveResults:
+        edit(id, proveResults, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnusedParameters:
         edit(id, removeUnusedParameters, inputsFor(id), m_runner);
         didAddFunctions();
@@ -1623,6 +1629,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
     stage.run(FunctionSchedule::Optimize);
+    stage.run(PassID::ProveResults);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
     stage.run(PassID::RemoveUnusedResults);

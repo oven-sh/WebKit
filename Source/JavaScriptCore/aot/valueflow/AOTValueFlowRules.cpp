@@ -448,6 +448,10 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
             context.connect(context.readWhatWasWritten(holdersOfExports, { ValueFlowNameKind::EveryGetter, 0 }), escapedNode);
     }
 
+    // The members of the prototype object of a library class are found by name alone. Whoever lists its own keys has every name.
+    if (ClimbingSet listed = context.newSince(context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed)); holdsSomething(context, listed))
+        context.connect(context.readWhatWasWritten(listed, { ValueFlowNameKind::EveryProperty, 0 }), escapedNode);
+
     if (context.holdsAnyOf(known(context, escaped), ValueFlowProgramNodes::lost())) {
         ClimbingSet untrackedObject(universe.untrackedObjectAlone());
         for (ValueFlowNameKind kind : kindsOfMembers)

@@ -60,7 +60,7 @@ record EvalBinding wire {
 record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> }
 
 enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, canOwnVariables: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
-    SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, true, false, false, false, false) External(false, false, false, false, false, false)
+    SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, false, false, false, false, false) External(false, false, false, false, false, false)
 }
 enum CommonJsParameter { Exports Require Module Filename Dirname }
 enum ExternalKind { UncompiledCode HostValue }

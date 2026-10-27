@@ -2264,12 +2264,6 @@ static bool isNeverEvaluated(const Program& program, const Module& module)
     return module.body && !program.at(module.body).hasBody();
 }
 
-// The image holds no code of a module that has a source and this kind. What a program writes of a module with an open namespace is the object.
-static bool isAnsweredByLoaderAlone(const Program& program, const Module& module)
-{
-    return module.kind == ModuleKind::Runtime && program.builtins().at(module.runtimeModule).flags.containsAny({ RuntimeModuleFlag::HasSource, RuntimeModuleFlag::HasOpenNamespace });
-}
-
 static bool isSourceTextOrCommonJs(const Module& module)
 {
     return module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs;
@@ -2341,7 +2335,7 @@ static void setDisplayPath(TableEncoder& encoder, ModuleID id, const Module& mod
 {
     std::span<const uint8_t> displayPath = module.displayPath ? encoder.program.string(module.displayPath) : std::span<const uint8_t>();
     entry.charactersInFrontOfDisplayPath = ModuleData::hasNoDisplayPath;
-    if ((encoder.obfuscates() && !module.runtimeModule) || displayPath.empty())
+    if (encoder.obfuscates() || displayPath.empty())
         return;
     std::span<const uint8_t> publicPath = encoder.program.string(module.path);
     if (publicPath.size() >= displayPath.size()) {
@@ -2383,7 +2377,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
         { isBundlerHelperModule(program, module), Flag::IsLibraryCodeWithFilePath },
-        { module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
+        { module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
     };
     for (auto [holds, flag] : flags) {
         if (holds)
@@ -2548,7 +2542,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPathOf(module.kind) || isAnsweredByLoaderAlone(program, module) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });

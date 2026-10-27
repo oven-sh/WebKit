@@ -48,21 +48,21 @@ function f1 name="isEmpty" module=m0 flags=[IsChecked, HasExplicitName] length=1
     Return v3
 }
 
-# `text === ""` asks whether the length is zero. No character is read and nothing is called.
+# There is one empty text, so `text === ""` compares the cell with it. Nothing of the text is read and nothing is called.
 # CHECK-LABEL: name="isEmpty" role=Source
-# CHECK: Int64 b@[[word]] = Load(b@[[text]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0, {{*}}:StringEqualsLiteral)
-# CHECK: Int32 b@{{*}} = Load(b@[[word]], offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length,
-# CHECK: Int32 b@[[length]] = Phi(
-# CHECK: Int32 b@[[isEmpty]] = Equal(b@[[length]], $0(
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[empty]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, {{*}}:StringEqualsLiteral)
+# CHECK: Int32 b@[[isEmpty]] = Equal(b@{{*}}, b@[[empty]], {{*}}:StringEqualsLiteral)
 # CHECK-NEXT: Return(b@[[isEmpty]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="isEmpty" role=Source
 # NONE-NOT: Writes:
 # NONE-NOT: ExitsSideways
-# NONE-NOT: Reads:characters
-# NONE-NOT: Reads:StringImpl_data
+# NONE-NOT: Reads:JSRopeString
+# NONE-NOT: Reads:StringImpl
+# NONE-NOT: Branch(
 # NONE-LABEL: end of function
 # X64-LABEL: name="isEmpty" role=Source
-# X64-NEXT: instructions: 8, patchpoints: 1
+# X64-NEXT: instructions: 3, patchpoints: 0
 # ARM64-LABEL: name="isEmpty" role=Source
-# ARM64-NEXT: instructions: 8, patchpoints: 1
+# ARM64-NEXT: instructions: 3, patchpoints: 0

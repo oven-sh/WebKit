@@ -41,8 +41,12 @@ GroupRewriter::GroupRewriter(RewriteSession& session, const SelectionGroup& grou
 {
     RELEASE_ASSERT(!group.members.isEmpty() && group.members.last().value == group.root);
     m_originals.reserveInitialCapacity(group.members.size());
-    for (const GroupMember& member : group.members)
+    for (const GroupMember& member : group.members) {
         m_originals.append(function().at(member.value));
+        m_originals.last().forEachOperand([&](ValueID operand, uint32_t) {
+            session.m_formerOperands.append(operand);
+        });
+    }
 
     builder().setOrigin(m_originals.last().origin());
     builder().setHandler(function().at(state().block).handler);

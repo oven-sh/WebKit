@@ -103,6 +103,25 @@ BINLINE bool isMTEEnabled()
 //      allocated from this heap.
 //
 
+#if BUSE(MIMALLOC)
+// Address space that nothing uses, kept where there is a limit on it. Requests that may fail get null when the rest has been taken.
+// A request that may not fail lets go of the ballast piece by piece and asks again.
+// Keeps as many pieces as make up the size, as far as as much again stays free.
+BEXPORT void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft);
+BEXPORT bool hasWholeAddressSpaceBallast();
+// False when no piece is left.
+BEXPORT bool tryReleasePieceOfAddressSpaceBallast();
+// Called on the thread whose request let go of a piece, behind the request.
+using AddressSpaceBallastHandler = void (*)();
+BEXPORT void setAddressSpaceBallastHandler(AddressSpaceBallastHandler);
+// They ask again for what the thread's last request asked for, which the allocator remembers: no caller keeps its arguments for them.
+BEXPORT void* mallocAgainWithBallast();
+BEXPORT void* zeroedMallocAgainWithBallast();
+BEXPORT void* memalignAgainWithBallast();
+BEXPORT void* zeroedMemalignAgainWithBallast();
+BEXPORT void* reallocAgainWithBallast();
+#endif
+
 // Returns null on failure.
 BINLINE void* tryMalloc(size_t size, CompactAllocationMode mode, HeapKind kind = HeapKind::Primary)
 {
@@ -146,6 +165,8 @@ BINLINE void* malloc(size_t size, CompactAllocationMode mode, HeapKind kind = He
     BUNUSED(mode);
     BUNUSED(kind);
     void* memory = mi_malloc(size);
+    if (!memory) [[unlikely]]
+        memory = mallocAgainWithBallast();
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -197,6 +218,8 @@ BINLINE void* zeroedMalloc(size_t size, CompactAllocationMode mode, HeapKind kin
     BUNUSED(mode);
     BUNUSED(kind);
     void* memory = mi_zalloc(size);
+    if (!memory) [[unlikely]]
+        memory = zeroedMallocAgainWithBallast();
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -257,6 +280,8 @@ BINLINE void* memalign(size_t alignment, size_t size, CompactAllocationMode mode
     BUNUSED(mode);
     BUNUSED(kind);
     void* memory = mi_malloc_aligned(size, alignment);
+    if (!memory) [[unlikely]]
+        memory = memalignAgainWithBallast();
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -318,6 +343,8 @@ BINLINE void* zeroedMemalign(size_t alignment, size_t size, CompactAllocationMod
     BUNUSED(mode);
     BUNUSED(kind);
     void* memory = mi_zalloc_aligned(size, alignment);
+    if (!memory) [[unlikely]]
+        memory = zeroedMemalignAgainWithBallast();
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -377,6 +404,8 @@ BINLINE void* realloc(void* object, size_t newSize, CompactAllocationMode mode, 
     BUNUSED(mode);
     BUNUSED(kind);
     void* memory = mi_realloc(object, newSize);
+    if (!memory) [[unlikely]]
+        memory = reallocAgainWithBallast();
     RELEASE_BASSERT(memory);
     return memory;
 #else

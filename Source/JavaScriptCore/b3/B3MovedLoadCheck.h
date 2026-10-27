@@ -57,6 +57,8 @@ struct MovedLoad {
     uint64_t bitsThatMayGetCleared { 0 };
     // Nor is it one that the word went from `before` to `after`.
     std::span<const WordChange> changesThatDoNotCount { };
+    // Nor that it was zero when the users' value was read.
+    bool mayGetFilled { false };
 };
 
 // Reads the location again and reports unless it holds what the users of the load are given. No load or store waits for it, and no function gets a frame for it: the report does not come back.

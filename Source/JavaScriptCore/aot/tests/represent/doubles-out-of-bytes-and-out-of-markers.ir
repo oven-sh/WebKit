@@ -1,4 +1,5 @@
 # A double read out of a float view is kept as ImpureDouble, and so is what arithmetic makes of it and the block parameter that takes it. A store into a float view takes it as it is.
+# A block parameter that also takes what may be a NaN of arithmetic, whose sign counts, is kept as Double: each edge makes of its NaN what is to be made of it. What a loop carries round stays ImpureDouble.
 # What an operator makes of an operand that may be undefined is kept as DoubleWithPayload, whatever its other operand is. What it makes of numbers is a Double.
 # Where each run of the read is followed by a place that makes the one NaN of what is computed from it, the read makes the one NaN and all of it is kept as Double.
 # FORM: Placed
@@ -33,8 +34,8 @@ function f0 name="scaleElement" parameters=[{type=Float64Array}, {type=i32}, {ty
 # CHECK: v5: number @ImpureDouble = GetTypedArrayElement
 # CHECK-NEXT: v6: number @ImpureDouble = Mul v5, v2 form=Numbers
 # CHECK: v8: number @Double = Add v2, v2 form=Numbers
-# CHECK: b3(v9: number @ImpureDouble):
-# CHECK-NEXT: v10: number @ImpureDouble = Negate v9 form=Numbers
+# CHECK: b3(v9: number @Double):
+# CHECK-NEXT: v10: number @Double = Negate v9 form=Numbers
 # CODE-LABEL: f0:
 # CODE-NOT: operation
 
@@ -178,3 +179,69 @@ function f8 name="elementPlusNumberOrUndefined" parameters=[{type=Float64Array},
 # CHECK: v5: number @ImpureDouble = GetTypedArrayElement
 # CHECK-NEXT: v6: number @DoubleWithPayload = Add v5, v2 form=Numbers
 # CHECK-NEXT: v7: number @ImpureDouble = Mul v6, v5 form=Numbers
+
+function f9 name="elementOrNegatedProduct" parameters=[{type=Float64Array}, {type=Float64Array}, {type=i32}, {type=undefined|number}, {type=boolean}] results=[{type=undefined}] {
+    v5 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v5 -> taken b1(| 0), notTaken b5()
+  b1(v6):
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetTypedArrayElement v0, v2, v6 typedArrayType=10 level=Proven [isInsideView]
+    PutTypedArrayElement v0, v2, v7, v6 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b4(v7)
+  b3():
+    v9 = Mul v3, v3 form=Numbers
+    v10 = Negate v9 form=Numbers
+    Jump -> next b4(v10)
+  b4(v11: number):
+    PutTypedArrayElement v0, v2, v11, v6 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b5()
+  b5():
+    v13 = Undefined
+    Return v13
+}
+# CHECK-LABEL: function f9 name="elementOrNegatedProduct"
+# CHECK: v7: number @ImpureDouble = GetTypedArrayElement
+# CHECK: v10: number @DoubleWithPayload = Negate v9 form=Numbers
+# CHECK: b4(v11: number @Double):
+
+function f10 name="sumOfElementsFromAnyStart" parameters=[{type=Float64Array}, {type=i32}, {type=number}] results=[{type=number}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4: number, v5: i32):
+    LoopHint
+    v7 = IsInsideView v0, v5 typedArrayType=10
+    TestAndBranch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = GetTypedArrayElement v0, v5, v8 typedArrayType=10 level=Proven [isInsideView]
+    v10 = Add v4, v9 form=Numbers
+    Jump -> next b1(v10, v1)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f10 name="sumOfElementsFromAnyStart"
+# CHECK: b1(v4: number @ImpureDouble,
+# CHECK: v9: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v10: number @ImpureDouble = Add v4, v9 form=Numbers
+
+function f11 name="elementOfEitherOrItsDouble" parameters=[{type=Float64Array}, {type=Float64Array}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v4 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5):
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b4(v6)
+  b3():
+    v7 = GetTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven [isInsideView]
+    v8 = Add v7, v7 form=Numbers
+    Jump -> next b4(v8)
+  b4(v9: number):
+    PutTypedArrayElement v0, v2, v9, v5 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b5()
+  b5():
+    v11 = Undefined
+    Return v11
+}
+# CHECK-LABEL: function f11 name="elementOfEitherOrItsDouble"
+# CHECK: b4(v9: number @ImpureDouble):

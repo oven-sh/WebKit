@@ -798,12 +798,9 @@ private:
     // A receiver that the overload does not accept makes the call throw. All that the call does with it is to describe it in the error. A data property asks nothing of the receiver that finds it.
     ValueSetID receiversAcceptedBy(const BuiltinOverload& overload) const
     {
-        const BuiltinParameter* receiver = overload.receiver;
-        if (!receiver || !receiver->accepted || receiver->conversion != BuiltinConversion::None || isConstruction(m_call.kind) || overload.isUndeclared())
+        if (isConstruction(m_call.kind) || overload.isUndeclared() || m_builtins.at(m_builtin).kind == BuiltinKind::DataProperty)
             return ValueSets::anything;
-        if (m_builtins.at(m_builtin).kind == BuiltinKind::DataProperty)
-            return ValueSets::anything;
-        return m_tables.maskOf(receiver->accepted);
+        return m_tables.acceptedValues(overload.receiver);
     }
 
     // Some native functions convert their arguments before they check the receiver.
@@ -1328,8 +1325,9 @@ private:
                 });
             }
         }
+        // A retired node takes no prototype object of a library class. The node of the operand hands on those that come to it, whether before it is retired or after.
         if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::OwnPropertyKeys && parameter.protocols.contains(Protocol::OwnKeys))
-            letMembersOfListedPrototypeObjectsOfLibraryClassesEscape(parameter.operand);
+            connectOperands(parameter.operand, m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed));
         if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
             describeRefusedOperands(parameter);
         if (parameter.protocols.contains(Protocol::Species))
@@ -1345,19 +1343,6 @@ private:
                 });
             }
         }
-    }
-
-    // The members of the prototype object of a library class are found by name alone. Whoever lists its own keys has every name.
-    void letMembersOfListedPrototypeObjectsOfLibraryClassesEscape(BuiltinOperand operand)
-    {
-        ClimbingSet prototypeObjects(m_universe.prototypeObjectsOfLibraryClasses());
-        ClimbingSet listed = m_context.restrict(valueAt(operand), m_universe.prototypeObjectsOfLibraryClasses());
-        forEachOperandAt(operand, [&](const ValueFlowOperand& passed) {
-            if (passed.node)
-                listed = m_context.unite(listed, m_context.valueWithin(prototypeObjects, passed.node));
-        });
-        if (holdsAnything(listed))
-            m_context.connect(m_context.readWhatWasWritten(listed, everyPropertyName), escaped());
     }
 
     bool isCalledByProgramCode() const

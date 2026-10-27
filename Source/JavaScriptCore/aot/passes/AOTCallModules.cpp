@@ -12,6 +12,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTDominators.h"
 #include "AOTFlowResults.h"
@@ -615,7 +616,12 @@ static bool asksWhoRequiredWhom(const Program& program, const FlowResults& flow)
     if (!flow.hasResults() || !flow.unseenCode().empty())
         return true;
     // `if (!module.parent)` asks whether somebody has required the file. `children` is a list whoever has required what.
-    return !flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty();
+    if (!flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty())
+        return true;
+    // The `id` says whether a file was required before the loader came to this one.
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID idOfModuleObject = builtins.findOwnMember(Builtins::ModuleObject, builtins.nameOf(byteCast<uint8_t>("id"_span)));
+    return idOfModuleObject && !flow.usesOf(idOfModuleObject).isEmpty();
 }
 
 static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bool(ModuleID)> auto& recordsNothingThatIsSeen, ModuleID evaluated, Function& function, IRBuilder& builder)

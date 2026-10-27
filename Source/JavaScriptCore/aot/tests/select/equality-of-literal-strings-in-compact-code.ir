@@ -1,4 +1,4 @@
-# Two literal strings are two words, and a comparison of words takes fewer bytes than a call. So compact code compares them as every other code does. Two strings of any text stay one call there
+# Two literal strings are two words, and a comparison of words takes fewer bytes than a call. So compact code compares them as every other code does. Two strings of any text are one call there, of the stub for two strings
 # FORM: Prepared
 # RUN: pass Select
 # RUN(SHAPES): code-shapes
@@ -39,4 +39,4 @@ function f2 name="haveSameText" parameters=[{type=string}, {type=string}, {type=
 }
 # SHAPES: f2 b1 Compact
 # CHECK-LABEL: function f2 name="haveSameText"
-# CHECK: = StrictEq v0, v1 form=Generic
+# CHECK: = StrictEq v0, v1 form=Strings

@@ -129,9 +129,9 @@ function f1 name="turn" module=m0 position=73 flags=[IsChecked, HasExplicitName]
 # BODY-COUNT-16: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-NOT: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# Where the turns share base + index * 8, a turn is seen to read what the turn before stored, and only the first two of the eight read it.
+# Where the turns share base + index * 8, a turn is seen to read what the turn before stored, and only the first of the eight reads it.
 # SHARED-LABEL: steps by 8
-# SHARED-COUNT-10: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# SHARED-COUNT-9: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # SHARED-NOT: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # SHARED-LABEL: end of loop
 # STORES-LABEL: steps by 8
@@ -148,4 +148,4 @@ function f1 name="turn" module=m0 position=73 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
 # X64: instructions: 27, patchpoints: 24, {{*}} steps by 8
-# ARM64: instructions: 33, patchpoints: 24, {{*}} steps by 8
+# ARM64: instructions: 31, patchpoints: 24, {{*}} steps by 8

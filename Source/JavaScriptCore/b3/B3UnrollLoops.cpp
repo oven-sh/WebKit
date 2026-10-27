@@ -88,6 +88,12 @@ private:
         int64_t farthestBoundWithRoom { 0 };
         bool startHasRoom { false };
         Vector<SumOfIntegers, 1> sums;
+        // They ask what the test at the top has asked, of the same two values.
+        struct RepeatedTest {
+            BasicBlock* block { nullptr };
+            unsigned stayingSuccessorIndex { 0 };
+        };
+        Vector<RepeatedTest, 2> repeatedTests;
     };
 
     struct Counter {
@@ -293,6 +299,62 @@ private:
         return evaluateComparison(plan.relation, start, farBound) != TriState::False;
     }
 
+    // Two reads of one place in front of the loop, with nothing between them that writes there.
+    static bool readsWhatBoundRead(Value* value, Value* bound)
+    {
+        MemoryValue* load = value->as<MemoryValue>();
+        MemoryValue* other = bound->as<MemoryValue>();
+        if (!load || !other || !load->isLoad() || load->hasFence() || load->kind() != other->kind() || load->type() != other->type() || load->offset() != other->offset() || load->range() != other->range())
+            return false;
+        if (!computesSameValue(load->lastChild(), other->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop))
+            return false;
+        auto nothingWritesBetween = [&](MemoryValue* first, MemoryValue* second) {
+            unsigned numberOfBlocks = 0;
+            for (BasicBlock* block = second->owner;; block = block->predecessor(0)) {
+                for (Value* between : *block) {
+                    if (between->effects().writes.overlaps(first->range()) || between->effects().fence)
+                        return false;
+                }
+                if (block == first->owner)
+                    return true;
+                if (block->numPredecessors() != 1 || ++numberOfBlocks > 2 * Limits::maxBlocksBesideTestOfUnrolledLoop)
+                    return false;
+            }
+        };
+        return nothingWritesBetween(load, other) || nothingWritesBetween(other, load);
+    }
+
+    // A range check against the bound of the loop is such a test. In the loop itself it falls to the test above it; where the turns are written out that test is gone.
+    static void findRepeatedTests(Plan& plan)
+    {
+        if (!plan.testsCounterBeforeStep)
+            return;
+        auto isBound = [&](Value* value) {
+            return value == plan.bound || readsWhatBoundRead(value, plan.bound);
+        };
+        for (BasicBlock* block : plan.blocks) {
+            if (block == plan.test || block->last()->opcode() != Branch)
+                continue;
+            DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
+            Value* comparison = condition.value->foldIdentity();
+            if (comparison->numChildren() != 2 || !invertedRelation(comparison->opcode()))
+                continue;
+            Value* left = comparison->child(0)->foldIdentity();
+            Value* right = comparison->child(1)->foldIdentity();
+            Opcode relation = comparison->opcode();
+            if (right == plan.tested) {
+                std::swap(left, right);
+                relation = flippedRelation(relation);
+            }
+            if (left != plan.tested || !isBound(right))
+                continue;
+            if (relation == plan.relation)
+                plan.repeatedTests.append({ block, condition.isNonZero ? 0u : 1u });
+            else if (relation == *invertedRelation(plan.relation))
+                plan.repeatedTests.append({ block, condition.isNonZero ? 1u : 0u });
+        }
+    }
+
     // A loop that looks for something is expected to find it.
     static bool isLikelyToLeaveOnlyAtTest(const IndexSet<BasicBlock*>& likelyBlocks, const Plan& plan)
     {
@@ -363,6 +425,13 @@ private:
                 continue;
             plan.sums.append(sum);
         }
+        // The end of a stretch is computed from wherever the counter stands.
+        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
+        IntegerInterval counter = intervalFor(m_proc, plan.tested, signedness).join(intervalFor(m_proc, plan.start, signedness));
+        IntegerInterval full = fullInterval(plan.tested->type(), signedness);
+        Int128 stretch = Int128 { plan.step } * (turnsOfStretch + plan.factor);
+        if (counter.min + stretch < full.min || counter.max + stretch > full.max)
+            plan.sums.clear();
         if (plan.sums.isEmpty())
             return;
         for (Value* value : m_proc.values()) {
@@ -509,7 +578,8 @@ private:
                 continue;
             if (!isLikelyToLeaveOnlyAtTest(likelyBlocks, plan))
                 return;
-            plan.factor = factorFor(numberOfValues, block->last()->origin());
+            findRepeatedTests(plan);
+            plan.factor = factorFor(numberOfValues - std::min<unsigned>(numberOfValues, 2 * plan.repeatedTests.size()), block->last()->origin());
             if (plan.factor && planFarBound(plan)) {
                 findSumsOfIntegers(phiChildren, plan);
                 // A loop that walks nothing and sums nothing up would only test less often.
@@ -668,17 +738,36 @@ private:
     }
 
     static constexpr int64_t greatestSumOfIntegers = 1ll << 52;
+    // So many integers of 32 bits add up to less than 2^52, with the turns that are written out once more.
+    static constexpr int64_t turnsOfStretch = 1ll << 20;
+
+    // The turns that are written out run in stretches. In front of each the sums are tested and the integers start at zero, so nothing in the loop looks at them.
+    struct Stretch {
+        BasicBlock* first { nullptr };
+        BasicBlock* tests { nullptr };
+        Variable* end { nullptr };
+        Vector<Variable*, 1> firstSums;
+        Vector<Value*, 1> sumsInFront;
+        Value* farBound { nullptr };
+    };
 
     // Adding 1.5 * 2^52 to a number under 2^51 rounds it to a whole number.
-    BasicBlock* appendTestsOfSums(const Plan& plan, std::span<Variable* const> integers, BasicBlock* unrolledHeader)
+    void appendTestsOfSums(const Plan& plan, Stretch& stretch, std::span<Variable* const> integers, const Bounds& bounds, BasicBlock* unrolledHeader)
     {
         Origin origin = plan.test->last()->origin();
-        BasicBlock* tests = m_proc.addBlock();
+        BasicBlock* tests = stretch.tests;
+        Type type = plan.bound->type();
+        stretch.first->appendNew<VariableValue>(m_proc, Set, origin, stretch.end, stretch.first->appendNew<Value>(m_proc, Add, origin, plan.start, stretch.first->appendIntConstant(m_proc, origin, type, turnsOfStretch * plan.step)));
+        stretch.first->appendNew<Value>(m_proc, Jump, origin);
+        stretch.first->setSuccessors(FrequentedBlock(tests));
+        Value* end = tests->appendNew<VariableValue>(m_proc, Get, origin, stretch.end);
+        stretch.farBound = tests->appendNew<Value>(m_proc, Select, origin, tests->appendNew<Value>(m_proc, plan.relation, origin, end, bounds.farBound), end, bounds.farBound);
         Value* rounding = tests->appendNew<ConstDoubleValue>(m_proc, origin, 1.5 * static_cast<double>(greatestSumOfIntegers));
         Value* greatestStart = tests->appendNew<ConstDoubleValue>(m_proc, origin, static_cast<double>(greatestSumOfIntegers / 2));
         Value* enters = nullptr;
         for (unsigned index = 0; index < plan.sums.size(); ++index) {
-            Value* start = plan.sums[index].start;
+            Value* start = tests->appendNew<VariableValue>(m_proc, Get, origin, stretch.firstSums[index]);
+            stretch.sumsInFront.append(start);
             Value* rounded = tests->appendNew<Value>(m_proc, Sub, origin, tests->appendNew<Value>(m_proc, Add, origin, start, rounding), rounding);
             Value* isWhole = tests->appendNew<Value>(m_proc, Equal, origin, rounded, start);
             Value* isSmall = tests->appendNew<Value>(m_proc, LessThan, origin, tests->appendNew<Value>(m_proc, Abs, origin, start), greatestStart);
@@ -693,7 +782,6 @@ private:
         }
         tests->appendNew<Value>(m_proc, Branch, origin, enters);
         tests->setSuccessors(FrequentedBlock(unrolledHeader), FrequentedBlock(plan.header, FrequencyClass::Rare));
-        return tests;
     }
 
     static Value* insertBehind(Value* place, Value* value)
@@ -771,10 +859,19 @@ private:
             }
         }
 
-        BasicBlock* entered = turns[0].get(plan.header);
-        if (!plan.sums.isEmpty())
-            entered = appendTestsOfSums(plan, integers.span(), entered);
-        Bounds bounds = appendBoundsAndEnter(plan, entered);
+        Stretch stretch;
+        if (!plan.sums.isEmpty()) {
+            stretch.first = m_proc.addBlock();
+            stretch.tests = m_proc.addBlock();
+            stretch.end = m_proc.addVariable(plan.tested->type());
+            for (const SumOfIntegers& sum : plan.sums) {
+                stretch.firstSums.append(m_proc.addVariable(Double));
+                plan.preHeader->appendNonTerminal(m_proc.add<VariableValue>(Set, origin, stretch.firstSums.last(), sum.start));
+            }
+        }
+        Bounds bounds = appendBoundsAndEnter(plan, stretch.first ? stretch.first : turns[0].get(plan.header));
+        if (stretch.tests)
+            appendTestsOfSums(plan, stretch, integers.span(), bounds, turns[0].get(plan.header));
         unsigned testingTurn = plan.testsCounterBeforeStep ? 0 : plan.factor - 1;
         const FrequentedBlock staying = plan.test->successor(plan.stayingSuccessorIndex);
         const FrequentedBlock leaving = plan.test->successor(1 - plan.stayingSuccessorIndex);
@@ -792,6 +889,12 @@ private:
                         value->replaceWithNop();
                 }
             }
+            for (const Plan::RepeatedTest& repeated : plan.repeatedTests) {
+                BasicBlock* copy = turns[turn].get(repeated.block);
+                BasicBlock* staying = copy->successorBlock(repeated.stayingSuccessorIndex);
+                copy->replaceLastWithNew<Value>(m_proc, Jump, origin);
+                copy->setSuccessors(FrequentedBlock(staying));
+            }
             BasicBlock* test = turns[turn].get(plan.test);
             FrequentedBlock stayingCopy = test->successor(plan.stayingSuccessorIndex);
             if (turn != testingTurn) {
@@ -803,30 +906,36 @@ private:
             BasicBlock* rest = plan.testsCounterBeforeStep ? plan.header : m_proc.addBlock();
             Value* tested = m_proc.add<VariableValue>(Get, origin, testedVariable);
             test->appendNonTerminal(tested);
-            Value* hasRoom = m_proc.add<Value>(plan.relation, origin, tested, bounds.farBound);
+            Value* hasRoom = m_proc.add<Value>(plan.relation, origin, tested, stretch.tests ? stretch.farBound : bounds.farBound);
             test->appendNonTerminal(hasRoom);
             test->last()->child(0) = hasRoom;
-            BasicBlock* nextTurn = stayingCopy.block();
-            for (Variable* integer : integers) {
-                BasicBlock* testOfSum = m_proc.addBlock();
-                Value* shifted = testOfSum->appendNew<Value>(m_proc, Add, origin, testOfSum->appendNew<VariableValue>(m_proc, Get, origin, integer), testOfSum->appendIntConstant(m_proc, origin, Int64, greatestSumOfIntegers));
-                Value* isSmall = testOfSum->appendNew<Value>(m_proc, BelowEqual, origin, shifted, testOfSum->appendIntConstant(m_proc, origin, Int64, 2 * greatestSumOfIntegers));
-                testOfSum->appendNew<Value>(m_proc, Branch, origin, isSmall);
-                testOfSum->setSuccessors(FrequentedBlock(nextTurn), FrequentedBlock(rest, FrequencyClass::Rare));
-                nextTurn = testOfSum;
-            }
-            test->setSuccessors(FrequentedBlock(nextTurn, staying.frequency()), FrequentedBlock(rest, leaving.frequency()));
+            test->setSuccessors(FrequentedBlock(stayingCopy.block(), staying.frequency()), FrequentedBlock(rest, leaving.frequency()));
             if (plan.testsCounterBeforeStep)
                 continue;
 
-            BasicBlock* behindTest = plan.header;
-            if (!plan.blocksBehindTest.isEmpty())
-                behindTest = cloner.cloneBlocks(plan.blocksBehindTest.span()).get(plan.blocksBehindTest[0]);
+            // Behind a stretch there may be room for another.
+            BasicBlock* headerBehindRest = plan.header;
+            if (stretch.tests) {
+                headerBehindRest = m_proc.addBlock();
+                Type type = plan.tested->type();
+                Value* nextEnd = headerBehindRest->appendNew<Value>(m_proc, Add, origin, headerBehindRest->appendNew<VariableValue>(m_proc, Get, origin, stretch.end), headerBehindRest->appendIntConstant(m_proc, origin, type, turnsOfStretch * plan.step));
+                headerBehindRest->appendNew<VariableValue>(m_proc, Set, origin, stretch.end, nextEnd);
+                headerBehindRest->appendNew<Value>(m_proc, Branch, origin, headerBehindRest->appendNew<Value>(m_proc, plan.relation, origin, headerBehindRest->appendNew<VariableValue>(m_proc, Get, origin, testedVariable), bounds.farBound));
+                headerBehindRest->setSuccessors(FrequentedBlock(stretch.tests, FrequencyClass::Rare), FrequentedBlock(plan.header));
+            }
+            BasicBlock* behindTest = headerBehindRest;
+            if (!plan.blocksBehindTest.isEmpty()) {
+                RegionCloner::BlockMap copies = cloner.cloneBlocks(plan.blocksBehindTest.span());
+                behindTest = copies.get(plan.blocksBehindTest[0]);
+                for (BasicBlock* block : plan.blocksBehindTest)
+                    copies.get(block)->replaceSuccessor(plan.header, headerBehindRest);
+            }
             for (unsigned index = 0; index < plan.sums.size(); ++index) {
                 Value* added = rest->appendNew<Value>(m_proc, IToD, origin, rest->appendNew<VariableValue>(m_proc, Get, origin, integers[index]));
-                Value* sum = rest->appendNew<Value>(m_proc, Add, origin, plan.sums[index].start, added);
+                Value* sum = rest->appendNew<Value>(m_proc, Add, origin, stretch.sumsInFront[index], added);
                 for (Variable* variable : variablesOf(plan, plan.sums[index].sum))
                     rest->appendNew<VariableValue>(m_proc, Set, origin, variable, sum);
+                rest->appendNew<VariableValue>(m_proc, Set, origin, stretch.firstSums[index], sum);
             }
             Value* testedInRest = rest->appendNew<VariableValue>(m_proc, Get, origin, testedVariable);
             Value* goesOn = rest->appendNew<Value>(m_proc, plan.relation, origin, testedInRest, bounds.bound);

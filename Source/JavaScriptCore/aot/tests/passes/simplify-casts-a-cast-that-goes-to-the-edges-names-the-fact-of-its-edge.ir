@@ -1,0 +1,34 @@
+# Two ways meet. One brings a word that an earlier way may have left unfilled, the other a number, and each brings the fact that says so: the facts meet in a parameter of the block too.
+# The cast at the head of the block names that parameter. Where the cast goes to the edge that needs it, it names the fact that this edge hands over
+# FORM: Prepared
+# RUN: pass SimplifyCasts VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="factsMeet" parameters=[{type=boolean}, {type=number}, {type=i32}] results=[{type=number}] {
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Unspecified valueType=number
+    Jump -> next b3(v3)
+  b3(v4: number|unspecified):
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    v5 = Specified
+    Jump -> next b6(v4, v5)
+  b5():
+    v6 = Integer integer=7
+    v7 = Specified
+    Jump -> next b6(v6, v7)
+  b6(v8: number|unspecified, v9: fact):
+    v10 = AssumeType v8, v9 provenType=number
+    Return v10
+# CHECK: b4():
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: [[filled]]: number = AssumeType v4, v5 provenType=number
+# CHECK-NEXT: Jump -> next b6([[filled]], v5)
+# CHECK: b5():
+# CHECK-NOT: AssumeType
+# CHECK: Jump -> next b6(v6, v7)
+}

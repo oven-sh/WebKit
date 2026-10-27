@@ -48,9 +48,8 @@ void ObjectCreationEmitter::generateDefineOwnProperty(const ValueContext& value)
     Boxed valueOrGetter = inOptional<Boxed>(definedValueID ? definedValueID : getterID).value_or(undefined());
     Boxed setter = inOptional<Boxed>(setterID).value_or(undefined());
     callVoidOperation(value, RuntimeOperation::DefineOwnProperty, { object, key, valueOrGetter, setter, word32(static_cast<int32_t>(descriptorBitsOf(flags))) });
-    if (representationOf(value.id()) == Boxed::representation)
-        define(value, object);
-    else
+    // A value of type never has no representation of an object.
+    if (!typeOf(value.id()).isNever())
         define(value, unboxCell(object));
 }
 

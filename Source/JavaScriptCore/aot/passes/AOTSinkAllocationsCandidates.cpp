@@ -12,6 +12,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -1784,7 +1785,7 @@ Vector<DescribedObject> AllocationSinking::collectAllocations()
             if (interpretedOf(m_function.at(id).opcode) != Interpretation::Allocation)
                 continue;
 
-            DescribedObject described = describeVirtualObject(m_analyses, id);
+            DescribedObject described = describeVirtualObject(m_analyses, id, m_policy.followsUndefinedAndNullInFields ? ListedValues::MayAlsoBeUndefinedOrNull : ListedValues::HaveTypesOfFields);
             switch (described.support) {
             case VirtualObjectSupport::ExceedsLimit:
                 if (m_policy.recordsLosses)
@@ -2142,10 +2143,22 @@ void AllocationSinking::refuseUnprovenValues(VirtualObjectID object)
     m_mustSolveAgain = true;
 }
 
+bool AllocationSinking::mayGetTests(BlockID block) const
+{
+    BlocksThatMayGetTests& blocks = *m_policy.blocksThatMayGetTests;
+    if (!blocks.asked.set(block.index()))
+        blocks.answers.set(block.index(), mayPlaceTestsOfAccessesByName(blocks.heat, m_analyses, block));
+    return blocks.answers.get(block.index());
+}
+
 // A store by name waits for PlaceTypeTests: the value that fits then goes on as a value of the field's type, and only the rare arm keeps the store by name.
 bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
-    return !m_inputs.hasOperationsOnSlots || m_inputs.isLargeForItsWork || m_function.at(block).frequency.predicted() == BlockFrequency::Normal;
+    if (m_inputs.isLargeForItsWork)
+        return true;
+    if (m_policy.blocksThatMayGetTests && !mayGetTests(block))
+        return false;
+    return !m_inputs.hasOperationsOnSlots || m_function.at(block).frequency.predicted() == BlockFrequency::Normal;
 }
 
 } } } // namespace JSC::AOT::Typed

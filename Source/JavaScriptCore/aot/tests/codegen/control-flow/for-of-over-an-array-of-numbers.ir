@@ -123,4 +123,4 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # HOT-LABEL: end of loop
 # Eight elements cost ten instructions on x86-64: eight additions from memory, the counter, the branch.
 # X64: instructions: 10, patchpoints: 0, {{*}} steps by 8
-# ARM64: instructions: 20, patchpoints: 0, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 0, {{*}} steps by 8

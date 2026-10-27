@@ -993,13 +993,41 @@ static void passUnknownOperandsTo(ValueFlowRuleContext& context, BuiltinID funct
     }
 }
 
+// No node lists what has escaped beside a value nobody knows. Where such a value is called, a loader or an evaluator that has escaped is called, with operands nobody knows.
+static void callWhatLetsInUnseenCode(ValueFlowRuleContext& context, ValueFlowObjectID callee)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    BuiltinID builtin = builtins.canonicalID(context.universe().builtinOf(callee));
+    std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusedCode());
+    if (!cause) {
+        // createRequire() returns a require function.
+        Vector<ValueFlowObjectID, 32> returned;
+        for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
+            for (const BuiltinTypePart& part : builtins.at(overload.result.type).parts) {
+                if (part.kind == BuiltinTypePartKind::Builtin && builtins.letsInUnseenCodeWhenCalled(builtins.canonicalID(part.builtin)))
+                    context.universe().appendObjectsOf(builtins.canonicalID(part.builtin), returned);
+            }
+        }
+        context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(returned.span())));
+        return;
+    }
+    context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
+    if (loadsOnlyLibraryModules(builtin))
+        handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+    else if (loadsModulesByName(*cause))
+        handLoadedModulesToNativeCode(context);
+    else
+        raiseEvent(context, builtin, *cause, { });
+}
+
 void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     const BuiltinTable& builtins = program.builtins();
 
-    ClimbingSet escaped = context.valueWithin(ClimbingSet(universe.builtinObjects()), ValueFlowProgramNodes::escaped());
+    ClimbingSet handedOut = context.valueWithin(ClimbingSet(universe.builtinObjects()), ValueFlowProgramNodes::escaped());
+    ClimbingSet escaped = context.unite(handedOut, context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatEvaluatedTextNames)));
     bool membersFollowHolders = isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
     bool callsWhateverHasEscaped = mayCallWhateverHasEscaped(context);
     ClimbingSet run = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
@@ -1013,6 +1041,10 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (!builtin)
             return;
         callsLoaderThatHasEscaped |= callsWhateverHasEscaped && builtins.at(builtins.canonicalID(builtin)).flags.contains(BuiltinFlag::LoadsModuleByName);
+        // A member of a holder of the realm that has escaped has not escaped with it: the program has to have taken it off its holder.
+        bool isInHandsOfProgram = builtins.at(builtin).origin != BuiltinOrigin::Host || context.contains(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames)), universe.objectOf(builtins.canonicalID(builtin)));
+        if (callsWhateverHasEscaped && builtins.letsInUnseenCode(builtins.canonicalID(builtin)) && context.contains(handedOut, object) && isInHandsOfProgram)
+            callWhatLetsInUnseenCode(context, object);
         bool isOfLanguage = builtins.at(builtin).origin != BuiltinOrigin::Host;
         if (!isOfLanguage && callsWhateverHasEscaped && context.contains(takenFromHolders, object))
             calledFunctionsOfHost.append(object);

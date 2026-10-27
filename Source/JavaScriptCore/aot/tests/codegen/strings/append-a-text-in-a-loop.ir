@@ -80,6 +80,7 @@ function f1 name="repeated" module=m0 flags=[IsChecked, HasExplicitName] length=
 # CHECK-LABEL: end of loop
 # HOT-LABEL: loop #
 # HOT-NOT: Reads:StringBuilderContents
+# HOT-NOT: Reads:AOTStackStringBuilder_fields
 # HOT-NOT: Reads:JSRopeString
 # HOT-NOT: Reads:StringImpl
 # HOT-NOT: Store

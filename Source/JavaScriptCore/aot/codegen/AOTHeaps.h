@@ -41,9 +41,11 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(counters)
 
 // AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
+// A word of AOTInstance_fieldsFilledOnce is zero until it gets its value and keeps that value. Whoever reads zero goes the way that needs no word, so a read may stand anywhere.
 #define FOR_EACH_AOT_IMMUTABLE_FIELD_HEAP(v) \
     v(AOTInstance_vm, AOT_INSTANCE_OFFSET(vm)) \
     v(AOTInstance_fixedFields, 0) \
+    v(AOTInstance_fieldsFilledOnce, 0) \
     v(AOTClosure_entry, offsetOfClosureEntry) \
     v(AOTCompiledStructure_flags, CompiledStructure::offsetOfFlags()) \
     v(AOTObject_shapeWord, offsetOfShapeWord) \
@@ -52,6 +54,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(JSGlobalObject_nullSetterStrictFunction, JSGlobalObject::offsetOfNullSetterStrictFunction()) \
     v(JSPropertyNameEnumerator_cachedOrderWord, JSPropertyNameEnumerator::cachedOrderWordOffset()) \
     v(JSPropertyNameEnumerator_cachedOrderWordMask, JSPropertyNameEnumerator::cachedOrderWordMaskOffset()) \
+    v(JSPropertyNameEnumerator_endOwnPropertyIndex, JSPropertyNameEnumerator::endOwnPropertyIndexOffset()) \
     v(AOTImage_tables, 0)
 
 #define FOR_EACH_AOT_MUTABLE_FIELD_HEAP(v) \
@@ -63,6 +66,9 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), TypedArrayStorage) \
+    v(AOTStringBuilderStorage_fields, 0, StringBuilderContents) \
+    v(AOTStackStringBuilder_fields, 0, StringBuilderContents) \
+    v(stringBuilderBytes, 0, StringBuilderContents) \
     v(weakTableStorage, 0, CollectionStorage) \
     v(weakTableEntries, 0, CollectionEntries) \
     v(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::globalLexicalBindingEpochOffset(), RuntimeState)

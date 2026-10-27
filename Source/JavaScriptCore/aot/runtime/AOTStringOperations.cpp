@@ -27,6 +27,7 @@
 #include "IntlObject.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "KeyAtomStringCacheInlines.h"
 #include "MathCommon.h"
 #include "NumberPrototype.h"
 #include "NumericStrings.h"
@@ -323,6 +324,17 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTCharactersEqualI
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTHashStringImpl(void* impl)
 {
     return static_cast<StringImpl*>(impl)->hash();
+}
+
+// jsSubstringOfResolved() keeps the string that it makes of two ASCII characters. Makes none: 0 where none is kept.
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTFindKeptStringOfTwoCharacters(void* vmPointer, uint32_t units)
+{
+    VM& vm = *static_cast<VM*>(vmPointer);
+    Latin1Character characters[] = { static_cast<Latin1Character>(units), static_cast<Latin1Character>(units >> 16) };
+    WTF::HashTranslatorCharBuffer<Latin1Character> buffer { std::span<const Latin1Character> { characters } };
+    return std::bit_cast<size_t>(vm.keyAtomStringCache.make(vm, buffer, [](VM&, auto&) -> JSString* {
+        return nullptr;
+    }));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLongSeparators8, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted))

@@ -10,6 +10,7 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
+#include "RegisterSet.h"
 #include <initializer_list>
 
 namespace JSC { namespace AOT {
@@ -141,6 +142,8 @@ struct FlatSubstringRegisters {
     GPRReg result;
     GPRReg firstScratch;
     GPRReg secondScratch;
+    // What else the caller holds in registers. result is the register in which a function returns its value.
+    RegisterSet alsoKept { };
 };
 // string is no rope, and bits 32 to 63 of start and length are zero.
 [[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);

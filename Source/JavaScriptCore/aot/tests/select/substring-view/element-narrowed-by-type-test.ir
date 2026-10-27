@@ -24,14 +24,14 @@ function f0 name="relations-after-string-test" parameters=[{type=string}, {type=
 # CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
 # CHECK-NOT: TypeTest
 # CHECK: [[undefined0]]: undefined = Undefined
-# CHECK: v5: boolean = GreaterEq v2, {{*}} form=Integers
-# CHECK-NEXT: TestAndBranch v5 -> taken b1(), notTaken b3()
+# CHECK: [[isUnit0]]: boolean = GreaterEq v2, {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch [[isUnit0]] -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
 # CHECK-NOT: ToUint32
-# CHECK: v7: boolean = GreaterEq v2, {{*}} form=Integers
-# CHECK: v8: boolean = LessEq v2, {{*}} form=Integers
+# CHECK: : boolean = GreaterEq v2, {{*}} form=Integers
+# CHECK: : boolean = LessEq v2, {{*}} form=Integers
 # CHECK: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: boolean = GreaterEq [[undefined0]], v3
+# CHECK-NEXT: : boolean = GreaterEq [[undefined0]], v3
 }
 
 function f1 name="comparison-after-undefined-test" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
@@ -45,14 +45,14 @@ function f1 name="comparison-after-undefined-test" parameters=[{type=string}, {t
     v7 = StrictEq v5, v6
     Return v7
 # CHECK-NOT: StringPrototypeAt
-# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK: [[undefined1]]: undefined = Undefined
-# CHECK: v3: boolean = Less v2, {{*}} form=Integers
-# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b2()
+# CHECK: [[isAbsent1]]: boolean = Less [[unit1]], {{*}} form=Integers
+# CHECK-NEXT: TestAndBranch [[isAbsent1]] -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return [[undefined1]]
 # CHECK-NEXT: b2():
-# CHECK: v7: boolean = StrictEq v2, {{*}} form=Integers
+# CHECK: : boolean = StrictEq [[unit1]], {{*}} form=Integers
 }
 
 function f2 name="proven-string-is-returned" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
@@ -139,11 +139,11 @@ function f6 name="two-tests" parameters=[{type=string}, {type=int}, {type=int}] 
     Return v7
   b6():
     Return v12
-# CHECK: v3: int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v1
+# CHECK: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v1
 # CHECK-NOT: TypeTest
 # CHECK: [[firstUndefined]]: undefined = Undefined
 # CHECK-NOT: TypeTest
-# CHECK: v8: int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v2
+# CHECK: : int[-1, 65535] = StringRangeCodeUnitOrMinusOne {{*}}, -, -, v2
 # CHECK-NOT: TypeTest
 # CHECK: [[secondUndefined]]: undefined = Undefined
 # CHECK-NOT: TypeTest

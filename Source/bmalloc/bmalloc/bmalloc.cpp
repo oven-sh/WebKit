@@ -29,6 +29,12 @@
 #include "ProcessCheck.h"
 #include "SystemHeap.h"
 #include "VMAllocate.h"
+#include <algorithm>
+#include <atomic>
+
+#if BOS(LINUX)
+#include <sys/mman.h>
+#endif
 
 #if BENABLE(LIBPAS)
 #include "bmalloc_heap_config.h"
@@ -152,6 +158,126 @@ void freeLargeVirtual(void* object, size_t size, HeapKind kind)
     ::free(object);
 #endif
 }
+
+#if BUSE(MIMALLOC)
+#if BOS(LINUX)
+static constexpr size_t sizeOfBallastPiece = 1024 * 1024;
+static constexpr size_t maxNumberOfBallastPieces = 64;
+static Mutex s_ballastLock;
+static void* s_ballastPieces[maxNumberOfBallastPieces];
+static size_t s_numberOfBallastPieces;
+#endif
+static std::atomic<bool> s_hasWholeBallast { false };
+static std::atomic<AddressSpaceBallastHandler> s_ballastHandler { nullptr };
+
+void setAddressSpaceBallastHandler(AddressSpaceBallastHandler handler)
+{
+    s_ballastHandler.store(handler, std::memory_order_relaxed);
+}
+
+void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft)
+{
+#if BOS(LINUX)
+    size_t wanted = std::min(size / sizeOfBallastPiece, maxNumberOfBallastPieces);
+    LockHolder locker(s_ballastLock);
+    while (s_numberOfBallastPieces < wanted) {
+        if (addressSpaceLeft < size + sizeOfBallastPiece)
+            break;
+        void* piece = mmap(nullptr, sizeOfBallastPiece, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (piece == MAP_FAILED)
+            break;
+        addressSpaceLeft -= sizeOfBallastPiece;
+        s_ballastPieces[s_numberOfBallastPieces++] = piece;
+    }
+    s_hasWholeBallast.store(s_numberOfBallastPieces >= wanted, std::memory_order_relaxed);
+#else
+    BUNUSED(size);
+    BUNUSED(addressSpaceLeft);
+#endif
+}
+
+bool hasWholeAddressSpaceBallast()
+{
+    return s_hasWholeBallast.load(std::memory_order_relaxed);
+}
+
+bool tryReleasePieceOfAddressSpaceBallast()
+{
+#if BOS(LINUX)
+    LockHolder locker(s_ballastLock);
+    if (!s_numberOfBallastPieces)
+        return false;
+    munmap(s_ballastPieces[--s_numberOfBallastPieces], sizeOfBallastPiece);
+    s_hasWholeBallast.store(false, std::memory_order_relaxed);
+    return true;
+#else
+    return false;
+#endif
+}
+
+#if BUSE(EXTERNAL_MIMALLOC)
+// patches/mimalloc/remember-the-request-that-found-no-memory.patch in oven-sh/bun. The vendored mimalloc does not have it, so it is declared here and not in mimalloc.h.
+#if !defined(MI_REMEMBERS_FAILED_REQUEST)
+extern "C" {
+typedef struct mi_failed_request_s {
+    void* block;
+    size_t size;
+    size_t alignment;
+} mi_failed_request_t;
+bool mi_last_failed_request(mi_failed_request_t*) noexcept;
+}
+#endif
+#endif
+
+template<typename Function>
+static void* askAgainWithBallast(const Function& tryAllocate)
+{
+#if BUSE(EXTERNAL_MIMALLOC)
+    mi_failed_request_t request;
+    if (!mi_last_failed_request(&request))
+        return nullptr;
+    void* memory = nullptr;
+    bool didRelease = false;
+    while (!memory && tryReleasePieceOfAddressSpaceBallast()) {
+        didRelease = true;
+        memory = tryAllocate(request);
+    }
+    if (didRelease) {
+        if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
+            handler();
+    }
+    return memory;
+#else
+    BUNUSED(tryAllocate);
+    return nullptr;
+#endif
+}
+
+void* mallocAgainWithBallast()
+{
+    return askAgainWithBallast([](auto& request) { return mi_malloc(request.size); });
+}
+
+void* zeroedMallocAgainWithBallast()
+{
+    return askAgainWithBallast([](auto& request) { return mi_zalloc(request.size); });
+}
+
+void* memalignAgainWithBallast()
+{
+    return askAgainWithBallast([](auto& request) { return mi_malloc_aligned(request.size, request.alignment); });
+}
+
+void* zeroedMemalignAgainWithBallast()
+{
+    return askAgainWithBallast([](auto& request) { return mi_zalloc_aligned(request.size, request.alignment); });
+}
+
+void* reallocAgainWithBallast()
+{
+    return askAgainWithBallast([](auto& request) { return mi_realloc(request.block, request.size); });
+}
+#endif // BUSE(MIMALLOC)
 
 void scavengeThisThread(bool force)
 {

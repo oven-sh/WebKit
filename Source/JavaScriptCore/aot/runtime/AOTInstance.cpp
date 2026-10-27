@@ -98,6 +98,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFConfig.h>
@@ -458,6 +459,20 @@ void Instance::captureCellHeaders()
     realm.emptyArgumentList = JSArray::create(*vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
 }
 
+#if USE(MIMALLOC)
+// The VM whose compiled code this thread runs.
+static thread_local VM* t_vmOfThread;
+
+static void didUseAddressSpaceBallastOnThisThread()
+{
+    static thread_local bool isTellingVM;
+    if (!t_vmOfThread || isTellingVM)
+        return;
+    SetForScope scope { isTellingVM, true };
+    MarkedBlockCage::didUseAddressSpaceBallast(*t_vmOfThread);
+}
+#endif
+
 Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
@@ -503,6 +518,11 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
+    keepAddressSpaceBallast();
+#if USE(MIMALLOC)
+    t_vmOfThread = &vm;
+    bmalloc::api::setAddressSpaceBallastHandler(didUseAddressSpaceBallastOnThisThread);
+#endif
     return instance;
 }
 
@@ -515,6 +535,10 @@ void Instance::destroy(Instance* instance)
         vmState.instances.removeFirst(instance);
         vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
+#if USE(MIMALLOC)
+        if (vmState.instances.isEmpty())
+            t_vmOfThread = nullptr;
+#endif
     }
     vmState.counters->add(instance->runtime.counters);
     if (instance->state) {
@@ -1120,6 +1144,7 @@ PagesForNewThread tryReservePagesForNewThread()
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
+    keepAddressSpaceBallast();
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
     void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
     if (!pages) {

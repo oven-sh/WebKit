@@ -103,9 +103,13 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure, bool requiresQui
         return false;
     }
 
-    // A Structure that has been a dictionary and is none has been flattened. In a compiled program one may have been a dictionary only while its object was given its names: that one is like any other.
     if (structure->hasBeenFlattenedBefore()) {
         dataLogLnIf(verbose, "target has flattened before");
+        return false;
+    }
+
+    if (structure->hasBeenDictionary()) {
+        dataLogLnIf(verbose, "target has been dictionary");
         return false;
     }
 

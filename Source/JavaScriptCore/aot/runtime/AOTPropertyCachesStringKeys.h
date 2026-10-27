@@ -143,7 +143,10 @@ public:
 
     size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
-    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
+    enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
+    // Calls nothing where equal hashes leave it undecided, which is then no answer.
+    template<EqualHashes equalHashes>
+    ALWAYS_INLINE std::optional<JSString*> lookUpCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t tableSize = m_cachedKeys.size();
         if (!tableSize) [[unlikely]]
@@ -154,10 +157,15 @@ public:
             entry = pair[1];
             if (entry >> 32 != hash)
                 return nullptr;
-        } else if (pair[1] >> 32 == hash) [[unlikely]]
-            return findAmongEqualHashes(pair, characters);
+        } else if (pair[1] >> 32 == hash) [[unlikely]] {
+            if constexpr (equalHashes == EqualHashes::LeaveUndecided)
+                return std::nullopt;
+            else
+                return findAmongEqualHashes(pair, characters);
+        }
         return matchingKey(entry, characters);
     }
+    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
     ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts)
     {
@@ -193,7 +201,8 @@ public:
 
     enum class Lookup : uint8_t { Found, Absent, AbsentIndex };
     // Integer keys are only cached by value. The hash is set when the result is Absent.
-    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
+    template<EqualHashes equalHashes = EqualHashes::AreToldApart>
+    ALWAYS_INLINE std::optional<Lookup> tryFindKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
     {
         ASSERT(characters.size() >= 2 && characters.size() <= m_maxCachedKeyLength);
         if (characters.size() <= maxIndexLength) {
@@ -203,9 +212,13 @@ public:
             }
         }
         hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-        key = tryFindCachedKey(characters, hash);
+        std::optional<JSString*> found = lookUpCachedKey<equalHashes>(characters, hash);
+        if (!found) [[unlikely]]
+            return std::nullopt;
+        key = *found;
         return key ? Lookup::Found : Lookup::Absent;
     }
+    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const { return *tryFindKeyForText(characters, key, hash); }
     JSString* caseConvertedString(VM&, std::span<const Latin1Character>);
     // What the conversion of this very string gave the last time: a program lowers the same header names and method names over and over. A string never changes, so the answer holds while both live.
     enum class LetterCase : uint8_t { Lower, Upper };

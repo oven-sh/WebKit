@@ -132,8 +132,8 @@ These are all the directives. `<P>` is `CHECK` for a `RUN:`, and the prefix for 
 ```
 RUN: <command> { argument }
 RUN(<prefix>): <command> { argument }
-REQUIRES: x86_64 | arm64
-REQUIRES(<prefix>): x86_64 | arm64
+REQUIRES: [ x86_64 | arm64 ] { word }
+REQUIRES(<prefix>): [ x86_64 | arm64 ] { word }
 FORM: ( AsRead | Prepared | Selected | Placed ) [ optimizing ]
 OPTIONS: <option word> { option word }
 <P>: p
@@ -184,6 +184,14 @@ malformed one fails everywhere. Check what all targets share under a prefix with
 # REQUIRES(X64): x86_64
 # X64: s22 boolean Boolean 8
 ```
+
+With or without an architecture, `REQUIRES` takes these words, for output that depends on something else about the target:
+
+- `unsanitized-code`: not AddressSanitizer, under which compiled code checks shadow memory before each access.
+- `not-windows`: on Windows, x86-64 code follows another calling convention.
+- `faulting-loop-polls`: a loop poll is a load that faults (x86-64 Linux). Elsewhere it is a comparison with a call on its slow path.
+- `no-jscvt`: a number is converted to an int32 by a truncation, a test and a slow path. ARM64 with FEAT_JSCVT (macOS) has one instruction for it.
+- `code-outside-image`: the engine may run code that is not in the image. A hardened engine never does.
 
 A run must report exactly the diagnostic kinds listed. Kinds are compared by name, never by message, and warnings and notes
 count too. A kind listed without a count must be reported at least once. With no `DIAGNOSTIC` line, the run must report no

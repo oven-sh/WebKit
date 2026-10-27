@@ -1,10 +1,10 @@
 # input(eval); input({ make: eval })
-# An evaluator that is handed to a callee nobody knows, by itself or inside an object, is a value like any other: the program mentions it and calls it nowhere, so nothing opens.
-# The run time refuses an evaluator in an image whose build saw no application of one.
+# No node lists what has escaped beside a value nobody knows. An evaluator that is handed to a callee nobody knows, by itself or inside an object, may come back as such a value,
+# and the program calls one: the evaluator counts as called.
 # evaluator-that-stays-in-the-hands-of-the-program-is-no-event.ir has the same reads without the calls
 # RUN: valueflow-solve unseen
-# CHECK-NOT: unseen EvaluatesText
-# CHECK: unseen-code no
+# CHECK: unseen EvaluatesText Eval
+# CHECK: unseen-code yes
 # RUN(WHY): valueflow-why escaped-builtin=Eval
 # WHY: escaped-builtin=Eval
 # WHY-NEXT: n0 escaped

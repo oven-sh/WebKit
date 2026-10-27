@@ -6,8 +6,9 @@
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
-# REQUIRES: unsanitized-code
+# REQUIRES: no-jscvt unsanitized-code
 # RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): no-jscvt
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

@@ -222,9 +222,16 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
 const Type& ArrayStorageBuiltinEmitter::typeOfArraysCreatedBy(const InlineCall& call)
 {
     if (const ValueContext* value = call.value()) {
-        std::optional<Use> use = analyses().useLists().singleUse(value->id());
-        if (use && use->kind == Use::Kind::Operand && m_function.at(use->user).opcode == Opcode::AssumeType)
-            return typeOf(use->user);
+        ValueID onlyCast;
+        for (const Use& use : analyses().useLists().usesOf(value->id())) {
+            if (use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard)
+                continue;
+            if (onlyCast || use.kind != Use::Kind::Operand || use.operandIndex || !isCast(m_function.at(use.user).opcode))
+                return resultTypeOf(call);
+            onlyCast = use.user;
+        }
+        if (onlyCast)
+            return typeOf(onlyCast);
     }
     return resultTypeOf(call);
 }

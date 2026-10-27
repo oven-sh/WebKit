@@ -85,20 +85,28 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v23
 }
 
-# `text.at(i) === ","` makes no text of one character either: the byte is compared with 44, and the index, which the loop's condition bounds, is not compared with the length again.
-# CHECK-LABEL: loop #
-# CHECK: Int32 b@[[unit]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8,
-# CHECK: Int32 b@[[isComma]] = Equal(b@[[unit]], $44(
-# CHECK-NEXT: Branch(b@[[isComma]], Terminal,
+# An index that is never negative counts from the start, so `text.at(i) === ","` is `text[i] === ","`: no text of one character is made, the byte is compared with 44, and the loop for 8-bit characters is written out eight times.
+# CHECK-LABEL: steps by 8
+# REPEAT: turn = 1..8
+# CHECK: Int32 b@[[unit%(turn)]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8,
+# CHECK: Int32 b@[[isComma%(turn)]] = Equal(b@[[unit%(turn)]], $44(
+# CHECK-NEXT: Branch(b@[[isComma%(turn)]], Terminal,
+# CHECK-NEXT: Successors: Then:Unlikely:#
+# END REPEAT
 # CHECK-LABEL: end of loop
-# HOT-LABEL: loop #
+# HOT-LABEL: steps by 8
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:StringImpl
 # HOT-NOT: Reads:JSRopeString
 # HOT-NOT: Reads:singleCharacterStrings
 # HOT-NOT: ExitsSideways
 # HOT-NOT: Select(
+# HOT-NOT: Below(
+# HOT-NOT: Shl(
+# HOT-NOT: Sub(
 # HOT-LABEL: end of loop
-# The loop is not written out, shifts the index by the width in every turn, and branches on (1 - i) + i.
-# X64: instructions: 14, patchpoints: 2
-# ARM64: instructions: 14, patchpoints: 2
+# x86-64 compares the byte in memory. ARM64 loads it first.
+# X64: instructions: 3, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

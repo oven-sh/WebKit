@@ -1,0 +1,28 @@
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="castToNumbersBesideAGuard" parameters=[{type=int[0, 1000]}, {type=number}] results=[{type=Array<number>}] {
+    v2 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0 [isDoneInPlace]
+    v3 = AllGuards v2
+    v4 = Upcast v2 castType=Array<number>
+    Return v4
+}
+# CHECK: f0:
+# CHECK: NewArrayWithLength.Double
+function f1 name="castToTexts" parameters=[{type=int[0, 1000]}] results=[{type=Array<string>}] {
+    v1 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0 [isDoneInPlace]
+    v2 = Upcast v1 castType=Array<string>
+    Return v2
+}
+# CHECK: f1:
+# CHECK: NewArrayWithLength.Contiguous
+function f2 name="usedTwice" parameters=[{type=int[0, 1000]}] results=[{type=anything}] {
+    v1 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0 [isDoneInPlace]
+    v2 = Upcast v1 castType=Array<number>
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK: f2:
+# CHECK: NewArrayWithLength.Contiguous

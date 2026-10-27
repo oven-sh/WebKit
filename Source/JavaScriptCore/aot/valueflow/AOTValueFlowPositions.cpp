@@ -287,6 +287,15 @@ bool ValueFlowPositions::turnsAwayConstructedObject(ValueSetID set, const Type& 
     return !m_inputs.sets().isSubset(maker().intersect(set, universe.constructedObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
+bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
+{
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    if (ValueSets::isComplement(set) || !type.isJavaScriptValue() || !type.layouts || type.anyObject || type.anyFunction || !type.classes.isEmpty() || !m_inputs.sets().meet(set, universe.objects()))
+        return false;
+    ValueSetID arriving = m_inputs.solver().withWhatMembersCover(set, maker());
+    return !ValueSets::isComplement(arriving) && !m_inputs.sets().meet(maker().intersect(arriving, universe.knownObjects()), universe.maskOf(maker(), m_inputs.program, type));
+}
+
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);

@@ -46,15 +46,16 @@ function f1 name="comesFirst" module=m0 flags=[IsChecked, HasExplicitName] lengt
     Return v3
 }
 
-# Two texts are put in order by the stub for any two values that are not both integers.
+# Two proven texts are put in order by the stub for two texts, which answers -1, 0 or 1.
 # CHECK-LABEL: name="comesFirst" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[left]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[right]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[answer]] = Patchpoint(b@[[left]]:Register({{*}}), b@[[right]]:Register({{*}}), resultConstraints = Register({{*}}:Less)
-# CHECK-NEXT: Int32 b@[[isLess]] = Trunc(b@[[answer]],
+# CHECK-NEXT: Int32 b@[[order]] = Trunc(b@[[answer]],
+# CHECK: Int32 b@[[isLess]] = LessThan(b@[[order]], $0(
 # CHECK-NEXT: Return(b@[[isLess]], Terminal)
 # CHECK-LABEL: end of function
 # CALLS-LABEL: f3: size=
-# CALLS-NEXT: stub BinaryOperation.LessAfterInt32Check x1
+# CALLS-NEXT: stub CompareStrings x1
 # CALLS-NEXT: f4: size=

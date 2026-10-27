@@ -1965,6 +1965,12 @@ std::optional<StringRangeSource> stringRangeSourceOf(const Program& program, con
             else if (type.isNever() || !type.hasOnlyPrimitives(Primitive::Undefined))
                 return std::nullopt;
         }
+        // A position that is never negative counts from the start.
+        if (source.method == StringRangeMethod::SingleRelativeIndex && source.first) {
+            const Type& position = program.typeOf(function, source.first);
+            if (position.isInteger() && position.integers.minimum >= 0)
+                source.method = StringRangeMethod::SingleIndex;
+        }
         return source;
     }
     if (value.opcode != Opcode::ElemGet)

@@ -195,6 +195,7 @@ protected:
     Pointer loadImmutablePointer(ptrdiff_t offsetInInstance);
     Word32 loadImmutable32(ptrdiff_t offsetInInstance);
     Integer loadImmutable64(ptrdiff_t offsetInInstance);
+    Word32 loadFilledOnce32(ptrdiff_t offsetInInstance);
     Word32 loadMutable32(ptrdiff_t offsetInInstance);
     Integer loadMutable64(ptrdiff_t offsetInInstance);
     TypedPointer instanceField(const B3::AbstractHeap&, ptrdiff_t offsetInInstance);

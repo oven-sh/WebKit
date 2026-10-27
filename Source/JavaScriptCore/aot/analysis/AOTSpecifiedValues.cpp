@@ -139,7 +139,9 @@ private:
         m_builder.setOrigin(origin);
         if (!m_factInBlock)
             m_factInBlock = m_builder.insertBefore(point, IRBuilder::make(Opcode::Specified));
-        ValueID cast = m_builder.insertBefore(point, makeCastBehindFact(m_function, m_types, operand, m_factInBlock));
+        // A fact that some way has not made is no word to look at: that it has been made where the use stands is what the new fact says.
+        bool isFact = m_types.at(m_function.at(operand).type).withoutPrimitives(Primitive::Unspecified).isOpaque(OpaqueKind::Fact);
+        ValueID cast = isFact ? m_factInBlock : m_builder.insertBefore(point, makeCastBehindFact(m_function, m_types, operand, m_factInBlock));
         casts.append({ point.block, cast });
         m_didChange = true;
         return cast;

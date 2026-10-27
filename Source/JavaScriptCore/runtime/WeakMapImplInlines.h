@@ -126,14 +126,10 @@ void WeakMapImpl<WeakMapBucket>::reconcileWeakReferencesAtGCEnd(VM& vm, Collecti
     if (shouldShrink())
         rehash(RehashMode::RemoveBatching);
 
-    // The visit reported the buffer as it was before the dead keys went, or did not come by because the table is old.
     if (m_buffer == emptyBuffer())
         return;
-    uint32_t capacity = hasOutOfLineBuffer() ? m_capacity : 0;
-    if (capacity != m_capacityCountedByHeap) {
-        heap()->didChangeVisitedExtraMemory(static_cast<size_t>(m_capacityCountedByHeap) * sizeof(WeakMapBucket), static_cast<size_t>(capacity) * sizeof(WeakMapBucket));
-        m_capacityCountedByHeap = capacity;
-    }
+    if (std::exchange(m_shouldReportBufferAtGCEnd, false) && hasOutOfLineBuffer())
+        heap()->reportExtraMemoryVisited(static_cast<size_t>(m_capacity) * sizeof(WeakMapBucket));
 }
 
 template<typename WeakMapBucket>

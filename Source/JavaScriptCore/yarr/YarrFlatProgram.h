@@ -34,6 +34,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -309,7 +310,9 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
 // Whether the pattern has a program of each form, and the one that counts turns keeps a table.
 bool hasFlatProgramsThatRememberFailedSearches(StringView pattern, OptionSet<Flags>);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
-bool jitCountsTurnsOf(const PatternTerm&);
+// It depends on whether the group has anything to go back into. What has been found out about a disjunction is kept, so that each is walked once however deep groups are nested.
+using KnownBacktrackableContent = UncheckedKeyHashMap<const PatternDisjunction*, bool>;
+bool jitCountsTurnsOf(const PatternTerm&, KnownBacktrackableContent&);
 void removeUnneededLogging(FlatProgram&);
 // For ops that run with nothing to undo: each becomes the form that pushes no undo frame.
 void removeLogging(std::span<FlatOp>);

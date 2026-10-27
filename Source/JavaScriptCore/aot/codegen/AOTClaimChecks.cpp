@@ -102,6 +102,8 @@ static bool saysWhatCountsOfUnchangingWord(AOTHeaps& heaps, const B3::MemoryValu
             return false;
         moved.bitsOfWordsThatCount = compiledObjectShapeBit;
     }
+    if (load.range() == heaps.rangeOf(heaps.AOTInstance_fieldsFilledOnce))
+        moved.mayGetFilled = true;
     return true;
 }
 

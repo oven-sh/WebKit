@@ -425,7 +425,12 @@ std::optional<Yarr::CharacterSetView> RegExp::specificCharacterClass() const
 static Yarr::PatternAnalysis patternAnalysisFor(VM& vm)
 {
     // The others: so that a shell without a compiled program can test the flat program, and what stands behind the code of an image.
-    return vm.hasCompiledCode() || Options::validateRegExpFlatProgram() || Options::useRegExpImageMode() ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;
+    bool isPerformed = vm.hasCompiledCode() || Options::validateRegExpFlatProgram();
+#if ENABLE(AOT)
+    // Where nothing compiles a pattern as for an image, the JIT takes the pattern as it is written.
+    isPerformed |= Options::useRegExpImageMode();
+#endif
+    return isPerformed ? Yarr::PatternAnalysis::Performed : Yarr::PatternAnalysis::Skipped;
 }
 
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, const String& source, Yarr::ErrorCode& errorCode)

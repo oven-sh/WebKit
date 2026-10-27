@@ -222,31 +222,33 @@ function f5 module=m0 position=97 kind=Initializer flags=[HasThis, IsChecked, Is
 # EMITTED-NEXT: Branch(b@[[isCircle]], Terminal
 # EMITTED: Load(b@{{*}}, offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # EMITTED-LABEL: end of function
-# Hoisting lifts the load of the shape word and the comparison out of the loop. It does not lift the load of the field, which is as invariant: no load of a field comes in front of the branch.
+# What the test leaves of the shape holds for the whole loop, so the test stands in front of two loops, one for each class. Hoisting lifts the load of the field out of the loop of the Circle, to where the loop is entered. No load of a field comes in front of the branch.
 # HOISTED-LABEL: name="total" role=Source
 # HOISTED-NOT: Reads:ObjectFields
 # HOISTED: Int32 b@[[word]] = Load(b@[[shape]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
 # HOISTED: Int32 b@[[isCircle]] = Equal(b@[[word]], $-{{*}}:TypeTest)
+# HOISTED-NEXT: Branch(b@[[isCircle]], Terminal
+# HOISTED-NEXT: Successors: Then:#[[behind]], Else:#
+# HOISTED-NEXT: BB#[[behind]]:
+# HOISTED-NEXT: Predecessors: #0
+# HOISTED-NOT: Phi(
+# HOISTED: Double b@{{*}} = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # HOISTED-NEXT: Jump(
 # HOISTED-NOT: Reads:ObjectFields
-# HOISTED: Branch(b@[[isCircle]], Terminal
-# HOISTED-NEXT: Successors: Then:#[[behind]], Else:Unlikely:#
-# HOISTED-NEXT: BB#[[behind]]:
-# HOISTED-NEXT: Predecessors:
-# HOISTED-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # HOISTED-LABEL: end of function
-# The loop is then made in two versions, chosen by the branch in front of them. Now the load can leave its loop, and it lands right behind the branch.
+# Nothing is left for the step that makes two versions of a loop: the load stays where it is.
 # VERSIONED-LABEL: name="total" role=Source
 # VERSIONED-NOT: Reads:ObjectFields
 # VERSIONED: Int32 b@[[isCircle]] = Equal(b@{{*}}, $-{{*}}:TypeTest)
-# VERSIONED-NOT: Reads:ObjectFields
-# VERSIONED: Branch(b@[[isCircle]], Terminal
-# VERSIONED-NEXT: Successors: Then:#[[behind]], Else:Rare:#
+# VERSIONED-NEXT: Branch(b@[[isCircle]], Terminal
+# VERSIONED-NEXT: Successors: Then:#[[behind]], Else:#
 # VERSIONED-NEXT: BB#[[behind]]:
-# VERSIONED-NEXT: Predecessors:
-# VERSIONED-NEXT: Double b@{{*}} = Load(b@{{*}}, offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# VERSIONED-NEXT: Predecessors: #0
+# VERSIONED-NOT: Phi(
+# VERSIONED: Double b@{{*}} = Load(b@{{*}}, offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# VERSIONED-NOT: Reads:ObjectFields
 # VERSIONED-LABEL: end of function
-# It is still there after the last step. The shape word is read once, and this is the only load of the field that is left.
+# It is still there after the last step. The shape word is read once, and this is the only load of the field that is left. It runs only if the loop has a turn.
 # CHECK-LABEL: name="total" role=Source
 # CHECK-NOT: Reads:ObjectFields
 # CHECK: Int32 b@[[word]] = Load(b@[[shape]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
@@ -254,10 +256,11 @@ function f5 module=m0 position=97 kind=Initializer flags=[HasThis, IsChecked, Is
 # CHECK: Int32 b@[[isCircle]] = Equal(b@[[word]], $-{{*}}:TypeTest)
 # CHECK-NOT: Reads:
 # CHECK: Branch(b@[[isCircle]], Terminal
-# CHECK-NEXT: Successors: Then:#[[behind]], Else:Rare:#
+# CHECK-NEXT: Successors: Then:#[[behind]], Else:#
 # CHECK-NEXT: BB#[[behind]]:
-# CHECK-NEXT: Predecessors:
-# CHECK-NEXT: Double b@[[radius]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NOT: Phi(
+# CHECK: Double b@[[radius]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NOT: Reads:ObjectFields
 # CHECK-NOT: Reads:AOTObject_shapeWord
 # CHECK-LABEL: end of function

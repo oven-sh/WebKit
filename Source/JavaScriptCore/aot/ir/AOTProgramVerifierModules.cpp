@@ -40,6 +40,7 @@ struct ModuleKindRules {
     bool canHaveData { false };
     bool hasRuntimeModule { false };
     bool hasReferrer { false };
+    bool hasUniquePath { false };
 };
 
 struct VerifiedRequestTargets {
@@ -55,13 +56,13 @@ static ModuleKindRules rulesOf(ModuleKind kind)
 {
     switch (kind) {
     case ModuleKind::SourceText:
-        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasRequiredNames = true };
+        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasRequiredNames = true, .hasUniquePath = true };
     case ModuleKind::CommonJs:
-        return { .body = BodyRule::Required, .forbiddenBodyFlags = FunctionFlags::HasThis, .hasRequests = true };
+        return { .body = BodyRule::Required, .forbiddenBodyFlags = FunctionFlags::HasThis, .hasRequests = true, .hasUniquePath = true };
     case ModuleKind::Data:
-        return { .body = BodyRule::Optional, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasExportTable = true, .canHaveData = true };
+        return { .body = BodyRule::Optional, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasExportTable = true, .canHaveData = true, .hasUniquePath = true };
     case ModuleKind::RuntimeSource:
-        return { .body = BodyRule::Required, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasRuntimeModule = true };
+        return { .body = BodyRule::Required, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasRuntimeModule = true, .hasUniquePath = true };
     case ModuleKind::Runtime:
         return { .body = BodyRule::Absent, .hasRuntimeModule = true };
     case ModuleKind::External:
@@ -256,7 +257,7 @@ void ProgramVerifier::verifyModules()
     BitVector usedExportsVariables(m_program.variables.size());
     for (unsigned index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
-        if (isFoundByPathOf(module.kind) && usedPaths.quickSet(module.path.index()))
+        if (rulesOf(module.kind).hasUniquePath && usedPaths.quickSet(module.path.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
         if (module.body && usedBodies.quickSet(module.body.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .function = module.body, .count = index });

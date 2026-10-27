@@ -50,12 +50,13 @@ function f1 name="isAbsolute" module=m0 flags=[IsChecked, HasExplicitName] lengt
     Return v7
 }
 
-# `path.charCodeAt(0) === 47` on a flat 8-bit text is five loads: the cell's word, the length (an empty text has no first unit: that way is rare), the characters, the width, the unit. The unit stays an integer: the comparison is one of integers.
+# `path.charCodeAt(0) === 47` on a flat 8-bit text: the empty text alone has no first unit, and there is one empty text, so the cell is compared with it (that way is rare) and the length is not read. Then four loads: the cell's word, the characters, the width, the unit. The unit stays an integer: the comparison is one of integers.
 # CHECK-LABEL: name="isAbsolute" role=Source
-# CHECK: Int64 b@[[word]] = Load(b@[[path]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0,
-# CHECK: Int32 b@[[length]] = Load(b@[[word]], offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length,
-# CHECK: Branch(b@[[length]], Terminal,
+# CHECK: Int64 b@[[empty]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields,
+# CHECK: Int32 b@[[hasUnits]] = NotEqual(b@[[path]], b@[[empty]],
+# CHECK-NEXT: Branch(b@[[hasUnits]], Terminal,
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK: Int64 b@[[word]] = Load(b@[[path]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0,
 # CHECK: Load(b@[[word]], offset = 8, ControlDependent|ReadsImmutable|Reads:StringImpl_data,
 # CHECK: Load(b@[[word]], offset = 16, ControlDependent|Reads:StringImpl_hashAndFlags,
 # CHECK: Int32 b@{{*}} = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
@@ -66,6 +67,7 @@ function f1 name="isAbsolute" module=m0 flags=[IsChecked, HasExplicitName] lengt
 # NONE-LABEL: name="isAbsolute" role=Source
 # NONE-NOT: IToD
 # NONE-NOT: Double
+# NONE-NOT: Reads:StringImpl_length
 # NONE-LABEL: end of function
 # CALLS-LABEL: f3: size=
 # CALLS-NEXT: stub RopeCharacters x1

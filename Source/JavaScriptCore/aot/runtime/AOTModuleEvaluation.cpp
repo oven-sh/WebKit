@@ -803,7 +803,7 @@ void Modules::resumeDeferredLoadsWithoutImporter(ModuleID fileOrFace)
         TRY_CLEAR_EXCEPTION(scope, void());
     }
     auto rethrow = makeScopeExit([&] {
-        if (exception && !scope.exception())
+        if (!scope.exception() && exception)
             throwException(m_instance.globalObject, scope, exception);
     });
     // From the end of makeModule() to ModuleLoadingContext::Step::Cached.
@@ -2192,7 +2192,22 @@ JSValue Modules::execute(ModuleID module)
     return value;
 }
 
-JSValue Modules::require(ModuleID target)
+JSValue Modules::require(ModuleID target, ModuleID referrer)
+{
+    // Only a program that names a way from one module object to another can tell.
+    if (!referrer || !m_showsWaysBetweenModuleObjects) [[likely]]
+        return answerRequire(target);
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    recordRequire(target, referrer);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue required = answerRequire(target);
+    RETURN_IF_EXCEPTION(scope, { });
+    recordRequire(target, referrer);
+    RETURN_IF_EXCEPTION(scope, { });
+    return required;
+}
+
+JSValue Modules::answerRequire(ModuleID target)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2317,19 +2332,83 @@ JSValue Modules::exportsSeenByLoader(ModuleID module)
     return loaded->requirer->get(m_instance.globalObject, m_instance.vm->propertyNames->exports);
 }
 
-// `bun run` gives the id "." to the first CommonJS file that its loader of ES modules fetches: the entry point, or the first such file in the graph of an entry point that is an ES module.
-std::optional<ModuleID> Modules::mainCommonJSModule() const
+// `bun run` gives the id "." to the CommonJS file that its loader of ES modules comes to while no file has a module object: the entry point, the first such file in the graph of an entry point that is an ES module,
+// or the first in the graph of an import(), unless a require() of a file came before.
+std::optional<ModuleID> Modules::mainCommonJSModule()
 {
-    if (!m_firstModuleRequestedByHost)
+    lookForMainCommonJSModule();
+    return m_mainCommonJSModule;
+}
+
+void Modules::decideMainCommonJSModule(std::optional<ModuleID> file)
+{
+    m_mainCommonJSModule = file;
+    m_isMainCommonJSModuleDecided = true;
+    m_modulesFirstRequiredByCallsInProgress.clear();
+    m_firstFilesOfLoads.clear();
+    m_modulesSearchedForFirstFile = { };
+}
+
+// The loader asks for a graph level by level, and in a level for what each module requests in the order of the text.
+std::optional<ModuleID> Modules::firstFileThatLoaderFindsBelow(ModuleID root)
+{
+    if (isCommonJSFileOrFace(root))
+        return fileOf(root);
+    // There is no file below a module that an earlier search has come to.
+    m_modulesSearchedForFirstFile.ensureSize(m_table.size());
+    if (!isLoadedWithRequests(root) || m_modulesSearchedForFirstFile.quickSet(root.index()))
         return std::nullopt;
-    ModuleID entryPoint = *m_firstModuleRequestedByHost;
-    if (data(entryPoint).kind == ModuleKind::CommonJs)
-        return entryPoint;
-    auto imports = m_table.imports(entryPoint);
-    if (imports.begin() == imports.end())
-        return std::nullopt;
-    ModuleID first = (*imports.begin()).targetModule();
-    return data(first).kind == ModuleKind::CommonJs ? std::optional(first) : m_table.fileBehindFace(first);
+    Vector<ModuleID, 16> importers { root };
+    for (size_t index = 0; index < importers.size(); ++index) {
+        for (const ModuleRequestData& request : m_table.requests(importers[index])) {
+            if (request.isHoisted || request.isRequire || request.isDeferred)
+                continue;
+            ModuleID target = request.targetModule();
+            if (isCommonJSFileOrFace(target)) {
+                for (ModuleID importer : importers)
+                    m_modulesSearchedForFirstFile.quickClear(importer.index());
+                return fileOf(target);
+            }
+            if (isLoadedWithRequests(target) && !m_modulesSearchedForFirstFile.quickSet(target.index()))
+                importers.append(target);
+        }
+    }
+    return std::nullopt;
+}
+
+// Asked in front of every require() that makes a module object, and by whoever wants to know.
+void Modules::lookForMainCommonJSModule()
+{
+    if (m_isMainCommonJSModuleDecided)
+        return;
+    // Nothing of the program runs before the loader has come to the first file below the entry point.
+    if (m_firstModuleRequestedByHost && !std::exchange(m_didSearchBelowEntryPoint, true)) {
+        if (std::optional<ModuleID> file = firstFileThatLoaderFindsBelow(*m_firstModuleRequestedByHost))
+            return decideMainCommonJSModule(file);
+    }
+    for (ModuleID file : m_firstFilesOfLoads) {
+        if (!wasRequestedByLoader(file))
+            continue;
+        // A require() that throws leaves no module object behind.
+        bool someFileHasModuleObject = std::ranges::any_of(m_modulesFirstRequiredByCallsInProgress, [&](ModuleID required) {
+            return status(required) != ModuleStatus::Failed;
+        });
+        return decideMainCommonJSModule(someFileHasModuleObject ? std::nullopt : std::optional(file));
+    }
+}
+
+// The loader comes to what lies below the root some steps later.
+void Modules::noteLoadOfGraph(ModuleID root)
+{
+    if (!m_showsWaysBetweenModuleObjects)
+        return;
+    lookForMainCommonJSModule();
+    if (m_isMainCommonJSModuleDecided)
+        return;
+    if (std::optional<ModuleID> file = firstFileThatLoaderFindsBelow(root)) {
+        m_firstFilesOfLoads.append(*file);
+        lookForMainCommonJSModule();
+    }
 }
 
 JSObject* Modules::moduleObject(ModuleID module)
@@ -2360,6 +2439,29 @@ JSObject* Modules::moduleObject(ModuleID module)
     return objects.module;
 }
 
+// What require() keeps of a file that is no CommonJS file. `import.meta.require` of an ES module is bound to another object.
+JSObject* Modules::moduleObjectMadeByRequire(ModuleID module)
+{
+    if (data(module).kind == ModuleKind::CommonJs)
+        return moduleObject(module);
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSObject* made = ensureLoaded(module).objectMadeByRequire)
+        return made;
+
+    JSValue answered = answerRequire(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    OptionSet<ModuleObjectTrait> traits { ModuleObjectTrait::IsNoCommonJSFile };
+    if (data(module).kind == ModuleKind::SourceText)
+        traits.add(ModuleObjectTrait::IsESModule);
+    ModuleObjects objects;
+    host().createModuleObject(m_instance.globalObject, pathString(module), module, traits, objects);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    objects.module->putDirect(vm, vm.propertyNames->exports, answered);
+    ensureLoaded(module).objectMadeByRequire.set(*this, objects.module);
+    return objects.module;
+}
+
 JSObject* Modules::mainModuleObject()
 {
     if (!m_firstModuleRequestedByHost || data(*m_firstModuleRequestedByHost).kind != ModuleKind::CommonJs || !mayHandOutModuleObject(*m_firstModuleRequestedByHost))
@@ -2367,28 +2469,50 @@ JSObject* Modules::mainModuleObject()
     return moduleObject(*m_firstModuleRequestedByHost);
 }
 
+// `bun run` keeps the module object of every file that a require() has named, whatever the file holds, and of every CommonJS file that its loader of ES modules has come to. Whoever asks first makes the object.
+// A require() that makes it leaves the requiring file in it as the parent. A require() that returns lists it among the children of the requiring file, but for the one that has made the object of an ES module.
 void Modules::recordRequire(ModuleID target, ModuleID referrer)
 {
-    if (data(target).kind != ModuleKind::CommonJs) {
+    const ModuleData& targetData = data(target);
+    bool isCommonJSFile = targetData.kind == ModuleKind::CommonJs;
+    if (!isCommonJSFile)
         markNamespaceAsRequired(target);
+    if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || targetData.kind == ModuleKind::Data))
         return;
-    }
     // A require() is recorded in front of the evaluation and behind it. The module has its parent from the first record on. It is a child from the second on, which a call that throws does not reach.
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
     auto recorded = m_recordedRequires.add(pair, RecordedRequire::Begun);
     if (recorded.isNewEntry) {
+        lookForMainCommonJSModule();
         LoadedModule& required = ensureLoaded(target);
-        if (!required.firstRequirer && !wasRequestedByLoader(target))
-            required.firstRequirer = referrer;
+        if (required.firstRequirer || (isCommonJSFile && wasRequestedByLoader(target)))
+            return;
+        required.firstRequirer = referrer;
+        if (targetData.kind == ModuleKind::SourceText)
+            recorded.iterator->value = RecordedRequire::BegunAndMadeObjectOfESModule;
+        if (!m_isMainCommonJSModuleDecided)
+            m_modulesFirstRequiredByCallsInProgress.append(target);
         return;
     }
     // Code that holds the module object may have read its list of children or stored something in the place of the list. That is asked about the file at every call that returns.
     switch (recorded.iterator->value) {
+    case RecordedRequire::BegunAndMadeObjectOfESModule:
+        if (status(target) == ModuleStatus::Failed)
+            return;
+        recorded.iterator->value = RecordedRequire::ReturnedAndNotListed;
+        if (!m_isMainCommonJSModuleDecided)
+            decideMainCommonJSModule(std::nullopt);
+        return;
+    case RecordedRequire::ReturnedAndNotListed:
+        recorded.iterator->value = RecordedRequire::Begun;
+        return;
     case RecordedRequire::Begun: {
         if (status(target) == ModuleStatus::Failed)
             return;
         recorded.iterator->value = RecordedRequire::Returned;
+        if (!m_isMainCommonJSModuleDecided)
+            decideMainCommonJSModule(std::nullopt);
         LoadedModule& requirer = ensureLoaded(referrer);
         requirer.requiredModules.append(target);
         if (requirer.requirer && host().showChildren)
@@ -2399,8 +2523,9 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         // The module has run, so no code runs between this record and the one behind the call.
         LoadedModule* requirer = loadedIfExists(referrer);
         LoadedModule* required = loadedIfExists(target);
-        if (requirer && required && requirer->requirer && required->requirer && host().showChildren) {
-            host().showChildren(m_instance.globalObject, requirer->requirer, required->requirer);
+        JSObject* objectOfRequired = !required ? nullptr : isCommonJSFile ? required->requirer.get() : required->objectMadeByRequire.get();
+        if (requirer && requirer->requirer && objectOfRequired && host().showChildren) {
+            host().showChildren(m_instance.globalObject, requirer->requirer, objectOfRequired);
             RETURN_IF_EXCEPTION(scope, void());
         }
         m_recordedRequires.set(pair, RecordedRequire::BegunAgain);
@@ -2503,7 +2628,7 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     }
     // The functor may run code of the program, which may require more.
     while (loaded->numberOfChildrenShown < loaded->requiredModules.size()) {
-        JSObject* childObject = moduleObject(loaded->requiredModules[loaded->numberOfChildrenShown++]);
+        JSObject* childObject = moduleObjectMadeByRequire(loaded->requiredModules[loaded->numberOfChildrenShown++]);
         RETURN_IF_EXCEPTION(scope, true);
         functor(childObject);
         RETURN_IF_EXCEPTION(scope, true);

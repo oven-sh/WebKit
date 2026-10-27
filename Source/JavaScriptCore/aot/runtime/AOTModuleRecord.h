@@ -67,7 +67,7 @@ public:
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests();
     void didLoad();
-    static void didFailToLoad(const ModuleGraphLoadingState&);
+    static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
     static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);

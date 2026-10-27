@@ -67,6 +67,8 @@ bool picksOwnRepresentation(const Function&, ValueID);
 bool isForwardedOperand(const Value& user, uint32_t operandIndex);
 bool readsDoubleOutOfBytes(const Value&);
 bool readsDoubleOutOfBytes(const Terminator&);
+// A read that does not keep the bits, and the built-in that an inline read falls back on.
+bool makesTheOneNaNOfBytes(const RepresentationInputs&, const Value&);
 
 Representation wantedRepresentationOf(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);

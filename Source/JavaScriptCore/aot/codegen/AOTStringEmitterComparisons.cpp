@@ -125,12 +125,11 @@ void StringEmitter::branchOnEqualsLiteralByStub(const OperationContext& context,
 void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, BranchTargets targets, bool subjectIsFlat, bool everyCellIsString)
 {
     String text = textOf(literal);
-    if (text.isEmpty() && operand == ComparedOperand::String) {
-        branch(isZero(lengthOf(CellPointer(subject))), targets);
+    if (text.isEmpty()) {
+        branch(equal(Boxed(subject), boxCell(emptyString())), targets);
         return;
     }
-    bool asksForLengthInPlace = text.isEmpty() && context.shape() == CodeShape::Fast;
-    if (!asksForLengthInPlace && !comparesLiteralInPlace(context, text)) {
+    if (!comparesLiteralInPlace(context, text)) {
         branchOnEqualsLiteralByStub(context, operand, subject, literal, targets);
         return;
     }
@@ -143,10 +142,6 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
         string = unboxCell(boxed);
         if (!everyCellIsString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
-    }
-    if (asksForLengthInPlace) {
-        branch(isZero(lengthOf(string)), targets);
-        return;
     }
 
     // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.
@@ -169,8 +164,8 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
 Condition StringEmitter::equalsLiteral(const OperationContext& context, ComparedOperand operand, LValue subject, StringID literal, bool subjectIsFlat, bool everyCellIsString)
 {
     String text = textOf(literal);
-    if (text.isEmpty() && operand == ComparedOperand::String)
-        return isZero(lengthOf(CellPointer(subject)));
+    if (text.isEmpty())
+        return equal(Boxed(subject), boxCell(emptyString()));
     if (fitsInRegister(text) || comparesLiteralInPlace(context, text)) {
         return asBoolean([&](BranchTargets targets) {
             branchOnEqualsLiteral(context, operand, subject, literal, targets, subjectIsFlat, everyCellIsString);

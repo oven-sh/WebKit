@@ -102,14 +102,12 @@ function f1 name="turn" module=m0 position=37 flags=[IsChecked, HasExplicitName]
 # LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[offset]], [[read]]:GetTypedArrayElement)
 # LOWERED-NEXT: Int32 b@[[element]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
-# `sum` is a number, and the unrolled loop adds the elements as 64-bit integers: no conversion and no floating-point addition. Its second branch leaves the loop before the integer sum gets too large for a double to hold exactly.
+# `sum` is a number, and the unrolled loop adds the elements as 64-bit integers: no conversion and no floating-point addition. It runs in stretches too short for the integer sum to get too large for a double to hold exactly, so its one branch is the test of the counter.
 # BODY-LABEL: steps by 8
 # BODY-COUNT-8: Int32 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-NOT: Int32 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-LABEL: end of loop
 # BRANCHES-LABEL: steps by 8
-# BRANCHES-NOT: Branch(
-# BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
@@ -120,5 +118,5 @@ function f1 name="turn" module=m0 position=37 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: IToD
 # HOT-NOT: Double
 # HOT-LABEL: end of loop
-# X64: instructions: 21, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 22, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

@@ -357,7 +357,7 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
     });
     if (!number) {
         number = static_cast<uint32_t>(m_masks.size());
-        RELEASE_ASSERT(*number < 1u << 23);
+        RELEASE_ASSERT(*number < 1u << 22);
         m_numberOfMask.add(hash, *number);
         mask.lowMembersAdmitted = lowMembersOf(admitted, *m_makers[0]);
         m_masks.append(mask);

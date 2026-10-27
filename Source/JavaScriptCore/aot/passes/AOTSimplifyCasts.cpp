@@ -141,6 +141,9 @@ struct CastSimplification : Rewrite {
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // Where the ways that meet here bring a fact each, the cast on an edge names the one that its own way brings.
+                    if (size_t factIndex = cast.opcode == Opcode::AssumeType && cast.factOperand() ? at(candidate.block).parameters.find(cast.factOperand()) : notFound; factIndex != notFound)
+                        castOnEdge.setFactOperand(targetOf(function, edge).arguments[factIndex]);
                     // A check that nothing on its edge passes has the whole type that it asks for.
                     joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
@@ -240,6 +243,7 @@ struct CastSimplification : Rewrite {
             return changed;
         }
         if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            claimsKeptBehindChecks.append(id);
             noteCastThatStays(id);
             return changed;
         }

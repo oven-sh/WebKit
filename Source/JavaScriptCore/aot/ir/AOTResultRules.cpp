@@ -442,6 +442,9 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
 {
     ValueID operand = value.operand(operandIndex);
     const Type& source = context.typeOf(operand);
+    // The definition throws for what is no object.
+    if (value.opcode == Opcode::DefineOwnProperty)
+        return source.withOnlyObjects();
     if (value.opcode != Opcode::Convert)
         return source;
     return typeOfConvert(context, source, context.types.at(context.function.at(operand).type), value.declared());
@@ -826,7 +829,7 @@ struct ResultRulesWithoutType {
 
     TypeID sameAs(const Value& value, uint32_t operandIndex)
     {
-        if (value.opcode == Opcode::Convert)
+        if (value.opcode == Opcode::Convert || value.opcode == Opcode::DefineOwnProperty)
             return { };
         return idInArena(context.typeIDOf(value.operand(operandIndex)));
     }

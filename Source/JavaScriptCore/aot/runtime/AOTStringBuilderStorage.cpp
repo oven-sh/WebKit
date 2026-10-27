@@ -1077,28 +1077,51 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
     OPERATION_RETURN(scope, instance->state->stringKeys->makeKey(vm, characters, hash, { }));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey);
+
+template<StringKeyCache::EqualHashes equalHashes>
+static ALWAYS_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStack(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
 {
-    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    if (stackBuilder.isOnStack()) [[likely]] {
-        std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
-        if (characters.size() < 2)
-            return { characters.empty() ? jsEmptyString(*instance->vm) : jsSingleCharacterString(*instance->vm, characters[0]), nullptr };
-        const StringKeyCache& keys = *instance->state->stringKeys;
-        if (characters.size() <= keys.maxCachedKeyLength()) [[likely]] {
-            JSString* key;
-            unsigned hash;
-            switch (keys.findKeyForText(characters, key, hash)) {
-            case StringKeyCache::Lookup::Found:
-                return { key, nullptr };
-            case StringKeyCache::Lookup::Absent:
-                [[clang::musttail]] return finishStackStringBuilderWithNewKey(instance, builder, cursor, hash);
-            case StringKeyCache::Lookup::AbsentIndex:
-                [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, true);
-            }
+    const StringKeyCache& keys = *instance->state->stringKeys.getIfCreated();
+    std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
+    if (characters.size() <= keys.maxCachedKeyLength()) [[likely]] {
+        JSString* key;
+        unsigned hash;
+        std::optional<StringKeyCache::Lookup> lookup = keys.tryFindKeyForText<equalHashes>(characters, key, hash);
+        if constexpr (equalHashes == StringKeyCache::EqualHashes::LeaveUndecided) {
+            if (!lookup) [[unlikely]]
+                [[clang::musttail]] return finishTextOnStackWithCalls(instance, builder, cursor, isLikelyKey);
+        }
+        switch (*lookup) {
+        case StringKeyCache::Lookup::Found:
+            return { key, nullptr };
+        case StringKeyCache::Lookup::Absent:
+            [[clang::musttail]] return finishStackStringBuilderWithNewKey(instance, builder, cursor, hash);
+        case StringKeyCache::Lookup::AbsentIndex:
+            [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, true);
         }
     }
     [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, isLikelyKey);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
+{
+    instance->state->stringKeys.operator*();
+    [[clang::musttail]] return finishTextOnStack<StringKeyCache::EqualHashes::AreToldApart>(instance, builder, cursor, isLikelyKey);
+}
+
+// The usual road calls nothing, so it saves no registers.
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
+{
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    if (!stackBuilder.isOnStack()) [[unlikely]]
+        [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, isLikelyKey);
+    std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
+    if (characters.size() < 2)
+        return { characters.empty() ? jsEmptyString(*instance->vm) : jsSingleCharacterString(*instance->vm, characters[0]), nullptr };
+    if (!instance->state->stringKeys.getIfCreated()) [[unlikely]]
+        [[clang::musttail]] return finishTextOnStackWithCalls(instance, builder, cursor, isLikelyKey);
+    [[clang::musttail]] return finishTextOnStack<StringKeyCache::EqualHashes::LeaveUndecided>(instance, builder, cursor, isLikelyKey);
 }
 
 template<uint32_t count>

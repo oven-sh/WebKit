@@ -110,7 +110,7 @@ struct EnumeratorCacheEntry {
 };
 
 static constexpr uint32_t numberOfCachedEnumerators = 256;
-static constexpr unsigned enumeratorHashShift = 6;
+static constexpr unsigned enumeratorHashShift = 4;
 static constexpr uint32_t indexOfCachedEnumerator(uint32_t structureID, uint32_t orderWord) { return ((structureID >> enumeratorHashShift) + orderWord) % numberOfCachedEnumerators; }
 
 // What lies in front of the first element is made with it.

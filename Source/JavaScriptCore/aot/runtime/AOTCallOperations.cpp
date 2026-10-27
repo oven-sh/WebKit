@@ -288,18 +288,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTApply);
-    // As operationAOTNewArgumentList: the list first.
-    MarkedArgumentBuffer arguments;
-    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
-    EXCEPTION_ASSERT(didAppend == !scope.exception());
-    if (!didAppend) [[unlikely]]
-        OPERATION_RETURN(scope, encodedJSValue());
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
         throwNotAFunctionError(globalObject, scope, function);
         OPERATION_RETURN(scope, encodedJSValue());
     }
+    MarkedArgumentBuffer arguments;
+    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
+    EXCEPTION_ASSERT(didAppend == !scope.exception());
+    if (!didAppend) [[unlikely]]
+        OPERATION_RETURN(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
@@ -425,25 +424,23 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
-// Function.prototype.apply up to the call. Bytecode lays the list on the stack and then looks at what it calls.
+// Function.prototype.apply up to the call: the callee is tested before the list is read.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
-    JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike));
-    if (!list) {
-        MarkedArgumentBuffer arguments;
-        bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
-        EXCEPTION_ASSERT(didAppend == !scope.exception());
-        if (!didAppend) [[unlikely]]
-            OPERATION_RETURN(scope, nullptr);
-        list = constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments);
-        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    if (JSValue function = JSValue::decode(callee); !function.isCallable()) {
+    JSValue function = JSValue::decode(callee);
+    if (!function.isCallable()) {
         throwNotAFunctionError(globalObject, scope, function);
         OPERATION_RETURN(scope, nullptr);
     }
-    OPERATION_RETURN(scope, list);
+    if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
+        OPERATION_RETURN(scope, list);
+    MarkedArgumentBuffer arguments;
+    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
+    EXCEPTION_ASSERT(didAppend == !scope.exception());
+    if (!didAppend) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    OPERATION_RETURN(scope, constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list))

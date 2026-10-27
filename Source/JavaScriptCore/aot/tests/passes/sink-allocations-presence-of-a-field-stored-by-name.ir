@@ -20,6 +20,9 @@ function f0 name="storedOnBothPaths" parameters=[{type=anything}] results=[{type
     v6 = IsSlotFilled v1 key="n" receivers=[L0] level=Proven
     Return v6
 # CHECK-NOT: NewObject
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: [[stored0]]: undefined|null|boolean|number|string|object = AssumeType v0 provenType=undefined|null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b3([[stored0]])
 # CHECK-NOT: BitAnd
 # CHECK: [[present0]]: true = Boolean boolean=true
 # CHECK-NEXT: v6: boolean = Upcast [[present0]]
@@ -39,7 +42,7 @@ function f1 name="storedOnTheRarePathAlone" parameters=[{type=anything}] results
     Return v5
 # CHECK-NOT: NewObject
 # CHECK: b1() frequency=Rare:
-# CHECK-NEXT: [[present1]]: true = Boolean boolean=true
+# CHECK: [[present1]]: true = Boolean boolean=true
 # CHECK-NEXT: v4: boolean = Upcast [[present1]]
 # CHECK: b2():
 # CHECK-NEXT: [[absent1]]: false = Boolean
@@ -81,8 +84,10 @@ function f3 name="readBySlotBehindTheTest" parameters=[{type=anything}, {type=bo
     Return v6
   b3():
     Return v1
-# CHECK: v2: L0 = NewObject layout=L0
-# CHECK-NEXT: PropSet v2, v0 key="n"
-# CHECK-NEXT: v4: boolean = IsSlotFilled v2 key="n"
-# CHECK: = GetSlot v2, v5 key="n"
+# CHECK-NOT: NewObject
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[stored3]]: undefined|null|boolean|number|string|object = AssumeType v0 provenType=undefined|null|boolean|number|string|object
+# CHECK-NOT: GetSlot
+# CHECK: v6: undefined|null|boolean|number|string|object = Upcast [[stored3]]
+# CHECK-NEXT: Return v6
 }

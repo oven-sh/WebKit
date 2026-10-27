@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bmalloc/bmalloc.h>
 #include <limits>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
@@ -57,6 +58,18 @@ inline size_t availableAddressSpace()
 inline bool hasAddressSpaceLimit()
 {
     return availableAddressSpace() != std::numeric_limits<size_t>::max();
+}
+
+// What requests to malloc that may not fail fall back on when all the address space has been taken: bmalloc::api::keepAddressSpaceBallast().
+static constexpr size_t sizeOfAddressSpaceBallast = 8 * MB;
+
+// Called where address space may have come back: a thread has started or ended, a collection has freed storage.
+inline void keepAddressSpaceBallast()
+{
+#if USE(MIMALLOC)
+    if (hasAddressSpaceLimit() && !bmalloc::api::hasWholeAddressSpaceBallast())
+        bmalloc::api::keepAddressSpaceBallast(sizeOfAddressSpaceBallast, addressSpaceLeft());
+#endif
 }
 
 // malloc, stacks and mapped files get 1/N of the address space still free under RLIMIT_AS.

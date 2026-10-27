@@ -465,7 +465,13 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::tryKeepReleasedReserveAgain()
 {
-    if (!m_hasReleasedReserve || !m_numberOfChunksReleased || m_exhaustedHeap != ExhaustedHeap::Cells)
+    if (m_exhaustedHeap == ExhaustedHeap::Structures) {
+        if (m_hasReleasedReserve || !StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain())
+            return false;
+        m_exhaustedHeap = ExhaustedHeap::Cells;
+        return true;
+    }
+    if (!m_hasReleasedReserve || !m_numberOfChunksReleased)
         return false;
     size_t numberOfChunksKept = m_reserve.size();
     while (m_reserve.size() < numberOfChunksKept + m_numberOfChunksReleased) {
@@ -483,13 +489,26 @@ bool MarkedBlockCage::tryKeepReleasedReserveAgain()
     return true;
 }
 
+bool MarkedBlockCage::tryKeepBallastAgain()
+{
+#if USE(MIMALLOC)
+    keepAddressSpaceBallast();
+    if (!bmalloc::api::hasWholeAddressSpaceBallast())
+        return false;
+#endif
+    m_exhaustedHeap = ExhaustedHeap::Cells;
+    return true;
+}
+
 bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
 {
     if (!m_owesCollection || vm.heap.isDeferred())
         return false;
     m_owesCollection = false;
     vm.heap.collectForExhaustedCage();
-    if (!vm.traps().needsOutOfMemoryError() || !tryKeepReleasedReserveAgain())
+    if (!vm.traps().needsOutOfMemoryError())
+        return false;
+    if (m_exhaustedHeap == ExhaustedHeap::Storage ? !tryKeepBallastAgain() : !tryKeepReleasedReserveAgain())
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -506,12 +525,13 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (m_hasReleasedReserve) {
+    if (m_hasReleasedReserve || m_exhaustedHeap == ExhaustedHeap::Structures) {
         if (!tryKeepReleasedReserveAgain())
             return false;
-    } else if (m_exhaustedHeap != ExhaustedHeap::Cells)
-        return false;
-    else {
+    } else if (m_exhaustedHeap == ExhaustedHeap::Storage) {
+        if (!tryKeepBallastAgain())
+            return false;
+    } else {
         // How much the program can allocate now says whether this collection was barren too.
         m_numberOfBarrenCollections = barrenCollectionsUntilError - 1;
     }
@@ -650,6 +670,15 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
     m_stackPointerAtError = currentStackPointer();
 }
 
+void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
+{
+    didCreateOutOfMemoryError();
+    if (m_exhaustedHeap != ExhaustedHeap::Storage)
+        return;
+    m_exhaustedHeap = ExhaustedHeap::Cells;
+    vm.traps().setNeedsOutOfMemoryError(false);
+}
+
 void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
 {
     ASSERT(isRequired());
@@ -692,6 +721,15 @@ void MarkedBlockCage::logExhaustion(ExhaustedHeap exhaustedHeap)
         handler();
 }
 
+void* tryMallocAgainWithAddressSpaceBallast()
+{
+#if USE(MIMALLOC)
+    return bmalloc::api::mallocAgainWithBallast();
+#else
+    return nullptr;
+#endif
+}
+
 void logExhaustedAddressSpace()
 {
     if (s_isGrowable)
@@ -710,6 +748,17 @@ void MarkedBlockCage::willUseLastReserve(VM& vm)
     // Loops of the run time that make many cells look for the error that is owed, not for a termination. A thread that is to end leaves them at once.
     if (vm.hasPendingTermination())
         vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
+{
+    // An error that is owed already has found no place to be thrown.
+    if (vm.traps().needsOutOfMemoryError())
+        willUseLastReserve(vm);
+    MarkedBlockCage& cage = vm.heap.cage();
+    cage.setExhaustedHeap(ExhaustedHeap::Storage);
+    cage.didFindNoRoomWhereNothingCollects();
+    vm.traps().setNeedsOutOfMemoryError(true);
 }
 
 void MarkedBlockCage::setLastReserveHandler(LastReserveHandler handler)

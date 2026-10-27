@@ -64,18 +64,23 @@ static bool canBeDeferred(const EffectsOnEdges& effects, VirtualObjectKind kind)
     return normal.isUnobservable() && normal.reads.containsOnly(bookkeepingHeaps);
 }
 
-static bool writesOnlyWhatSlotTypesAdmit(const Program& program, const Function& function, const Value& allocation)
+static bool writesOnlyWhatSlotsAdmit(const Program& program, const Function& function, const Value& allocation, ListedValues listedValues)
 {
     const Layout& layout = program.at(allocation.layout());
     std::span<const ValueID> values = allocation.variadicOperands();
     for (uint32_t index = 0; index < values.size(); ++index) {
-        if (!program.typeOf(function, values[index]).isSubsetOf(program.at(slotTypeOf(program, layout.fields[allocation.fields()[index]])), program))
+        uint32_t field = allocation.fields()[index];
+        const Type& listed = program.typeOf(function, values[index]);
+        const Type& slotType = program.at(slotTypeOf(program, layout.fields[field]));
+        if (listed.isSubsetOf(slotType, program))
+            continue;
+        if (listedValues == ListedValues::HaveTypesOfFields || !slotHoldsUndefinedAndNull(program, { allocation.layout(), field }) || !listed.withoutNullish().isSubsetOf(slotType, program))
             return false;
     }
     return true;
 }
 
-static DescribedObject describeObject(const Program& program, const Function& function, const Value& value, VirtualObjectDescription description)
+static DescribedObject describeObject(const Program& program, const Function& function, const Value& value, VirtualObjectDescription description, ListedValues listedValues)
 {
     if (value.storage() != AllocationStorage::Heap)
         return unsupported(VirtualObjectSupport::HasChosenStorage);
@@ -98,7 +103,7 @@ static DescribedObject describeObject(const Program& program, const Function& fu
     case LayoutKind::Record:
     case LayoutKind::Instance:
     case LayoutKind::Container:
-        if (!writesOnlyWhatSlotTypesAdmit(program, function, value))
+        if (!writesOnlyWhatSlotsAdmit(program, function, value, listedValues))
             return unsupported(VirtualObjectSupport::Unknown);
         description.kind = VirtualObjectKind::Object;
         description.hasKeyOrder = true;
@@ -247,11 +252,11 @@ static DescribedObject describeBuiltinResult(FunctionAnalyses& analyses, const V
     return supported(description);
 }
 
-static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Value& value, VirtualObjectDescription description)
+static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Value& value, VirtualObjectDescription description, ListedValues listedValues)
 {
     switch (value.opcode) {
     case Opcode::NewObject:
-        return describeObject(analyses.program(), analyses.function(), value, description);
+        return describeObject(analyses.program(), analyses.function(), value, description, listedValues);
     case Opcode::NewClosure:
         return describeClosure(value, description);
     case Opcode::NewArray:
@@ -289,14 +294,14 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
     }
 }
 
-DescribedObject describeVirtualObject(FunctionAnalyses& analyses, ValueID allocation)
+DescribedObject describeVirtualObject(FunctionAnalyses& analyses, ValueID allocation, ListedValues listedValues)
 {
     const Function& function = analyses.function();
     const Value& value = function.at(allocation);
     if (interpretedOf(value.opcode) != Interpretation::Allocation)
         return unsupported(VirtualObjectSupport::NotAnAllocation);
 
-    DescribedObject described = describeAllocation(analyses, value, { .allocation = allocation, .type = value.type });
+    DescribedObject described = describeAllocation(analyses, value, { .allocation = allocation, .type = value.type }, listedValues);
     if (described.support != VirtualObjectSupport::Supported || described.description.staysInPlace)
         return described;
 

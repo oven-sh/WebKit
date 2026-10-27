@@ -161,8 +161,8 @@ function f5 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CHECK-NEXT: Double b@[[y]] = Load(b@[[vector]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@[[yy]] = Mul(b@[[y]], b@[[y]],
 # CHECK-NEXT: Double b@[[sum]] = Add(b@[[xx]], b@[[yy]],
-# What a getter answered is returned as any value: the sum is boxed on the way out.
-# CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@[[sum]]:
+# Every way out returns a number, so the sum is returned as the double that it is.
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="squaredLengthOf" role=Source
 # NONE-NOT: :CallDirect)
@@ -172,5 +172,5 @@ function f5 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CALLS: f1: size={{*}} frame=none
 # CALLS-NOT: function f
 # CALLS: f{{*}}: size=
-# X64: instructions: 6, patchpoints: 1
-# ARM64: instructions: 15, patchpoints: 1
+# X64: instructions: 6, patchpoints: 0
+# ARM64: instructions: 6, patchpoints: 0

@@ -271,7 +271,8 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
 
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true };
+    BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests };
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = PassOutcome::Unchanged;

@@ -15,9 +15,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -102,7 +102,7 @@ function f1 name="unwrap" module=m0 position=88 flags=[IsChecked, HasExplicitNam
     Return v12
 }
 
-# A tag of true and false is one byte in the object. `if (result.ok)` loads the byte and branches on it. The tag decides the layout, so the fields of either arm are plain loads with no shape test. Each arm returns a boxed value.
+# A tag of true and false is one byte in the object. `if (result.ok)` loads the byte and branches on it. The tag decides the layout, so the fields of either arm are plain loads with no shape test. Each arm returns a double.
 # CHECK-LABEL: name="unwrap" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[result]] = ArgumentReg(
@@ -112,19 +112,18 @@ function f1 name="unwrap" module=m0 position=88 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: BB#[[success]]:
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Double b@[[value]] = Load(b@[[result]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@[[value]]:
+# CHECK-NEXT: Return(b@[[value]], Terminal)
 # CHECK: BB#[[failure]]:
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Double b@[[code]] = Load(b@[[result]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@[[twice]] = Add(b@[[code]], b@[[code]]
-# CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@[[twice]]:
+# CHECK-NEXT: Return(b@[[twice]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="unwrap" role=Source
 # NONE-NOT: AOTObject_shapeWord
 # NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="unwrap" role=Source
-# X64-NEXT: instructions: 6, patchpoints: 2
+# X64-NEXT: instructions: 6, patchpoints: 0
 # ARM64-LABEL: name="unwrap" role=Source
-# ARM64-NEXT: instructions: 25, patchpoints: 2
+# ARM64-NEXT: instructions: 7, patchpoints: 0

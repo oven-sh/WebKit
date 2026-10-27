@@ -48,7 +48,7 @@ auto StringBuilderPartEmitter::builderOf(const ValueContext& value) -> Builder
 void StringBuilderPartEmitter::appendString(const OperationContext& context, Builder builder, CellPointer string)
 {
     if (builder.onStack) {
-        builders().setCursor(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders().addressOf(*builder.onStack).value(), builders().cursorOf(*builder.onStack).value(), string.value() }).first));
+        builders().setCursorBehindCall(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders().addressOf(*builder.onStack).value(), builders().cursorOf(*builder.onStack).value(), string.value() }).first));
         return;
     }
     callStub(context, stringBuilderAppendString(), { builder.storage.value(), string.value() });
@@ -105,7 +105,7 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Bu
 void StringBuilderPartEmitter::appendPrimitive(const OperationContext& context, Builder builder, Boxed primitive, bool isOnRarePath)
 {
     if (builder.onStack) {
-        builders().setCursor(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
+        builders().setCursorBehindCall(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
         return;
     }
     callVoidOperation(context, RuntimeOperation::StringBuilderAppend, { builder.storage, word32(1), argumentBuffer(singleElementSpan(primitive)) }, { .isOnRarePath = isOnRarePath });
@@ -180,7 +180,11 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
 
 void StringBuilderPartEmitter::generateStringBuilderAppendString(const ValueContext& value)
 {
-    appendString(value, builderOf(value), in<CellPointer>(value->valueOperand()));
+    Builder builder = builderOf(value);
+    CellPointer string = in<CellPointer>(value->valueOperand());
+    appendString(value, builder, string);
+    if (builder.onStack && builder.onStack->firstPart)
+        builders().didAppendString(*builder.onStack, value.id(), string);
 }
 
 void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const ValueContext& value)
@@ -208,7 +212,7 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
 
     m_out.appendTo(byCall);
     if (builder.onStack)
-        builders().setCursor(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
+        builders().setCursorBehindCall(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
     else
         callVoidOperation(value, RuntimeOperation::StringBuilderAppendStringRange, { builder.storage, string, range.start, range.end }, { .isOnRarePath = true });
     m_out.jump(done);

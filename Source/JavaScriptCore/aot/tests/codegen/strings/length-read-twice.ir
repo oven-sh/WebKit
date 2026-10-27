@@ -55,7 +55,7 @@ function f1 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
     Return v8
 }
 
-# Two reads of the length of one text are one: one load of the cell's word, one test for a rope, one load of the length on either side.
+# Two reads of the length of one text are one: one load of the cell's word, one test for a rope, one load of the length on either side, and one value where the two sides meet.
 # CHECK-LABEL: name="half" role=Source
 # CHECK: Load(b@[[text]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0,
 # CHECK-NOT: Reads:JSRopeString_fiber0
@@ -63,8 +63,10 @@ function f1 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK-NOT: Branch(
 # CHECK: Reads:StringImpl_length
 # CHECK-NOT: Reads:StringImpl_length
-# CHECK: Int32 b@[[half]] = SShr(b@{{*}}, $1(
-# CHECK: Int32 b@{{*}} = Sub(b@{{*}}, b@[[half]],
+# CHECK: Int32 b@[[length]] = Phi(
+# CHECK-NOT: Phi(
+# CHECK: Int32 b@[[half]] = SShr(b@[[length]], $1(
+# CHECK: Int32 b@{{*}} = Sub(b@[[length]], b@[[half]],
 # CHECK-NOT: Branch(
 # CHECK: Reads:JSRopeString_fiber1
 # CHECK-NOT: Reads:JSRopeString_fiber1
@@ -75,7 +77,6 @@ function f1 name="half" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function
 # X64-LABEL: name="half" role=Source
-# Both reads keep a value of their own where the two sides meet. On x86-64 that costs three moves.
-# X64-NEXT: instructions: 12, patchpoints: 2
+# X64-NEXT: instructions: 11, patchpoints: 2
 # ARM64-LABEL: name="half" role=Source
 # ARM64-NEXT: instructions: 9, patchpoints: 2

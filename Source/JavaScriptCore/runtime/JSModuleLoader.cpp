@@ -1256,7 +1256,10 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
         // 3.a. Set state.[[IsLoading]] to false.
         state->setIsLoading(false);
 #if ENABLE(AOT)
-        AOT::ModuleRecord::didFailToLoad(*state);
+        if (vm.hasCompiledCode()) {
+            AOT::ModuleRecord::didFailToLoad(globalObject, *state);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
 #endif
         // 3.b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
         state->promise()->reject(vm, std::get<Exception*>(moduleCompletion)->value());
@@ -1312,8 +1315,8 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     // 4. Perform InnerModuleLoading(state, module).
     innerModuleLoading(globalObject, state, module);
 #if ENABLE(AOT)
-    if (scope.exception()) [[unlikely]]
-        AOT::ModuleRecord::didFailToLoad(*state);
+    if (scope.exception() && vm.hasCompiledCode()) [[unlikely]]
+        AOT::ModuleRecord::didFailToLoad(globalObject, *state);
 #endif
     RETURN_IF_EXCEPTION(scope, nullptr);
     // 5. Return pc.[[Promise]].

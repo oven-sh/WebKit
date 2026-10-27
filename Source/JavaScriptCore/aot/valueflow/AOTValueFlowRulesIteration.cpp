@@ -18,6 +18,7 @@ struct BuiltinIteration {
     BuiltinClassID iteratorClass;
     IterationKind kind { IterationKind::Values };
     ValueSetID containers { ValueSets::nothing };
+    ValueSetID receivers { ValueSets::nothing };
 };
 
 // The unknown value stands for everything else that the unknown object holds.
@@ -145,10 +146,14 @@ static std::optional<BuiltinIteration> iterationOverReceiverBy(ValueFlowRuleCont
         if (overload.mode != BuiltinCallMode::Call || !overload.result.iteratedOperand || !overload.result.iteratedOperand->isReceiver() || !goesOverContainer(classOfResult(builtins, overload)))
             continue;
         if (!iteration)
-            iteration = BuiltinIteration { classOfResult(builtins, overload), overload.result.iterationKind, ValueSets::nothing };
+            iteration = BuiltinIteration { classOfResult(builtins, overload), overload.result.iterationKind };
         RELEASE_ASSERT(iteration->iteratorClass == classOfResult(builtins, overload) && iteration->kind == overload.result.iterationKind);
         bool takesAnything = !overload.receiver || !overload.receiver->accepted;
         iteration->containers = takesAnything ? ValueSets::anything : context.maker().unite(iteration->containers, tables.maskOf(overload.receiver->accepted));
+        ValueSetID accepted = tables.acceptedValues(overload.receiver);
+        if (overload.receiver && overload.receiver->refused)
+            accepted = context.maker().intersect(accepted, ValueSets::complement(tables.membersSurelyOf(overload.receiver->refused)));
+        iteration->receivers = context.maker().unite(iteration->receivers, accepted);
     }
     return iteration;
 }
@@ -179,9 +184,9 @@ static void takeValues(ValueFlowRuleContext& context, ClimbingSet containers, Bu
             target.take(context.read(containers, *indexInPattern ? valueOfEntriesPair : keyOfEntriesPair));
             return;
         }
-        ClimbingSet objects = context.restrict(containers, universe.objects());
-        target.take(context.lookup(objects, elementsName));
-        context.lookup(context.restrict(objects, ValueSets::complement(universe.sureInstancesOf(BuiltinClasses::Array))), nameOf(context, BuiltinNames::length));
+        ClimbingSet arrayLikes = context.restrict(containers, ValueSets::complement(universe.strings()));
+        target.take(context.lookup(arrayLikes, elementsName));
+        context.lookup(context.restrict(arrayLikes, ValueSets::complement(universe.sureInstancesOf(BuiltinClasses::Array))), nameOf(context, BuiltinNames::length));
         if (context.meet(containers, universe.strings()))
             target.take(kinds(context, { PrimitiveSet::String }));
     } else
@@ -550,7 +555,7 @@ void holdContentsIteratedByResult(BuiltinID builtin, const ValueFlowBuiltinCall&
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet iterator = only(context, call.resultObject ? call.resultObject : universe.resultOf(builtin, 0));
     StepTarget held { context, IteratorKind::Sync, context.written(iterator, steppedValuesName) };
-    takeContents(context, context.restrict(context.valueOf(call.thisValue), iteration->containers), *iteration, call.contentsObject ? call.contentsObject : universe.resultOf(builtin, 1), held);
+    takeContents(context, context.restrict(context.valueOf(call.thisValue), iteration->receivers), *iteration, call.contentsObject ? call.contentsObject : universe.resultOf(builtin, 1), held);
     context.add(context.written(iterator, returnedValueName), universe.undefinedValue());
 }
 

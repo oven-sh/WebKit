@@ -697,6 +697,8 @@ private:
         }
     }
 
+    bool isWrittenInProgram() const { return !isLibraryCode(m_program, m_function) && m_function.role != FunctionRole::Model; }
+
     void describeUnsoundOperation(BlockID block, ValueID id, const Value& value)
     {
         size_t numberOfEdges = m_edges.size();
@@ -900,6 +902,10 @@ private:
         if (value.opcode == Opcode::PropGet) {
             const BuiltinTable& builtins = m_program.builtins();
             BuiltinID named = entryNamedByOperations(m_program, m_function, id);
+            if (const Value& holder = m_function.at(definitionThroughSameValues(m_function, value.objectOperand())); !named && holder.opcode == Opcode::ModuleBuiltin)
+                named = findOwnMember(m_program, builtins.canonicalID(holder.builtin()), value.key());
+            if (named && builtins.letsInUnseenCode(builtins.canonicalID(named)) && isWrittenInProgram())
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), constantOf({ ValueFlowObjectKind::Builtin, builtins.canonicalID(named).index(), { } }), 0 });
             if (named && builtins.at(named).origin == BuiltinOrigin::Host && isCallableBuiltin(builtins, named))
                 m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), constantOf({ ValueFlowObjectKind::Builtin, builtins.canonicalID(named).index(), { } }), 0 });
         }
@@ -958,6 +964,8 @@ private:
             else
                 setConstant(id, constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }));
             m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::BuiltinsThatStatementsName), constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }), 0 });
+            if (builtins.letsInUnseenCode(builtin) && isWrittenInProgram())
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), constantOf({ ValueFlowObjectKind::Builtin, builtin.index(), { } }), 0 });
             return;
         }
         case Opcode::ModuleBuiltin: {
@@ -965,6 +973,8 @@ private:
                 return setConstant(id, constantOfType(type));
             uint32_t object = constantOf({ ValueFlowObjectKind::ModuleBuiltin, m_program.builtins().canonicalID(value.builtin()).index(), value.module() });
             setConstant(id, object);
+            if (m_program.builtins().letsInUnseenCode(m_program.builtins().canonicalID(value.builtin())) && isWrittenInProgram())
+                m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), constantOf({ ValueFlowObjectKind::Builtin, m_program.builtins().canonicalID(value.builtin()).index(), { } }), 0 });
             if (m_program.builtins().canonicalID(value.builtin()) == Builtins::ModuleObject)
                 m_body.seedsOnceReached.append({ NodeName::ofHost(ValueFlowHostNode::ModuleObjectsHandedOut), object, 0 });
             return;

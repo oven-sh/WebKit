@@ -88,10 +88,16 @@ function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=
     Return v27
 }
 
-# The sum of two texts is a rope. It is made flat once, ahead of the loop, and there its characters, length and width are read, once each.
+# The sum of two texts is a rope unless one of them is empty, so the side that makes it flat is the likely one. It is made flat once, ahead of the loop, and there its characters, length and width are read, once each.
 # CHECK-LABEL: name="checksum" role=Source
 # CHECK: Int64 b@[[rope]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}:Add)
 # CHECK: Int64 b@[[word]] = Load(b@[[rope]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0, {{*}}:FlattenString)
+# CHECK: Int64 b@[[isRope]] = BitAnd(b@[[word]], $1(
+# CHECK-NEXT: Branch(b@[[isRope]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[flatten]], Else:Unlikely:#
+# CHECK-NEXT: BB#[[flatten]]:
+# CHECK: Int64 b@[[flat]] = Patchpoint(b@[[rope]]:Register({{*}}), resultConstraints = Register({{*}}:FlattenString)
+# CHECK: Load(b@[[flat]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0, {{*}}:FlattenString)
 # CHECK-NOT: Reads:JSRopeString_fiber0
 # CHECK: Load(b@[[header]], offset = 8, ControlDependent|ReadsImmutable|Reads:StringImpl_data, {{*}}:FlattenString)
 # CHECK-NEXT: Load(b@[[header]], offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length, {{*}}:FlattenString)

@@ -93,5 +93,5 @@ function f1 name="commasIn" module=m0 flags=[IsChecked, HasExplicitName] length=
 # CHECK-NOT: Reads:characters8
 # CHECK-LABEL: end of loop
 # The patchpoints keep the string alive and are no code.
-# X64: loop #{{*}}, instructions: 44, patchpoints: 8
-# ARM64: loop #{{*}}, instructions: 43, patchpoints: 8
+# X64: loop #{{*}}, instructions: 40, patchpoints: 8
+# ARM64: loop #{{*}}, instructions: 40, patchpoints: 8

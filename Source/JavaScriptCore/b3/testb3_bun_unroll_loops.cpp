@@ -151,6 +151,61 @@ static void testUnrollLoopsBoundWithoutRoomForOtherTurns()
     }
 }
 
+static void testUnrollLoopsDropsBranchThatRepeatsTestAtTop()
+{
+    // The bound as the test has it, and read once more from where the test's bound was read.
+    for (bool readsBoundAgain : { false, true }) {
+        for (bool storesBetweenReads : { false, true }) {
+            if (storesBetweenReads && !readsBoundAgain)
+                continue;
+            Procedure proc(loopPolicy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* header = proc.addBlock();
+            BasicBlock* body = proc.addBlock();
+            BasicBlock* stays = proc.addBlock();
+            BasicBlock* out = proc.addBlock();
+            BasicBlock* exit = proc.addBlock();
+            Variable* index = proc.addVariable(Int64);
+            Variable* sum = proc.addVariable(Int64);
+            auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+            Value* pointer = arguments[1];
+            Value* bound = graph.load(root, Int64, pointer, 0, firstHeap);
+            if (storesBetweenReads)
+                graph.store(root, arguments[2], pointer, 0, firstHeap);
+            Value* limit = readsBoundAgain ? graph.load(root, Int64, pointer, 0, firstHeap) : bound;
+            graph.set(root, index, graph.int64(root, 0));
+            graph.set(root, sum, graph.int64(root, 0));
+            graph.jump(root, header);
+            graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
+            graph.branch(body, graph.make(body, GreaterThan, limit, graph.get(body, index)), FrequentedBlock(stays), rarely(out));
+            graph.increase(stays, sum, graph.get(stays, index));
+            graph.increase(stays, sum, CountedSum::zeroReadAt(graph, stays, index));
+            graph.increase(stays, index, 1);
+            graph.jump(stays, header);
+            graph.ret(out, graph.make(out, Sub, graph.int64(out, -1), graph.get(out, sum)));
+            graph.ret(exit, graph.get(exit, sum));
+            proc.resetReachability();
+            fixSSA(proc);
+            validate(proc);
+
+            CHECK(unrollLoopsAndValidate(proc));
+            if (storesBetweenReads)
+                checkValueCountInEachLoop(proc, Branch, { 2, 1 + Limits::maxTurnsPerUnrolledLoop });
+            else
+                checkValueCountInEachLoop(proc, Branch, { 1, 2 });
+            auto code = compileProc(proc);
+            for (int64_t turnsOfLoop = 0; turnsOfLoop < 40; ++turnsOfLoop) {
+                for (int64_t stored : { 0, 5, 100 }) {
+                    int64_t word = turnsOfLoop;
+                    int64_t limitInRun = storesBetweenReads ? stored : turnsOfLoop;
+                    CHECK_EQ(run(*code, 0, &word, stored), limitInRun < turnsOfLoop ? -1 - sumBelow(limitInRun) : sumBelow(turnsOfLoop));
+                }
+            }
+        }
+    }
+}
+
 static void testUnrollLoopsKeepsOtherWaysOut()
 {
     for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
@@ -516,6 +571,10 @@ struct SumOfIntegersLoop {
         graph.ret(exit, graph.make(exit, BitwiseCast, graph.get(exit, sum)));
         proc.resetReachability();
         fixSSA(proc);
+        for (Value* value : proc.values()) {
+            if (value->type() == Int64 && value->opcode() == Phi)
+                proc.setKnownRange(value, IntRange(0, 1ll << 40));
+        }
         validate(proc);
     }
 
@@ -551,8 +610,9 @@ static void testUnrollLoopsAddsSumOfIntegersAsIntegers()
         SumOfIntegersLoop loop(operation);
         CHECK(unrollLoopsAndValidate(loop.proc));
         eliminateDeadCode(loop.proc);
-        checkValueCountInEachLoop(loop.proc, IToD, { 0, 1 });
-        checkValueCountInEachLoop(loop.proc, SExt32, { 0, 8 });
+        // The turns that are written out, the loop itself, and the loop of stretches around the turns, which makes a double of the integer behind each.
+        checkValueCountInEachLoop(loop.proc, IToD, { 0, 1, 1 });
+        checkValueCountInEachLoop(loop.proc, SExt32, { 0, 8, 8 });
         auto code = compileProc(loop.proc);
         for (double start : { 0.0, -0.0, 1.0, -7.0, 0.5, 0.1, -1e-300, 1e15, -1e15, 2251799813685247.0, 2251799813685248.0, -2251799813685248.5, 4503599627370497.0, 9007199254740992.0, -9007199254740994.0, 1e300, infinity, -infinity, std::numeric_limits<double>::quiet_NaN() }) {
             for (int64_t bound = -1; bound <= 40; ++bound)
@@ -575,7 +635,8 @@ static void testUnrollLoopsAddsSumOfIntegersAsIntegers()
 static void testUnrollLoopsGoesOnWithDoublesWhereSumOfIntegersGrowsLarge()
 {
     constexpr int64_t bound = (1ll << 22) + 1001;
-    for (int32_t word : { std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() + 1 }) {
+    // Small words go through several stretches as integers.
+    for (int32_t word : { std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() + 1, 3 }) {
         Vector<int32_t> words;
         words.fill(word, 2 + bound);
         for (B3::Opcode operation : { Add, Sub }) {
@@ -611,6 +672,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testUnrollLoopsEveryRelation());
     RUN(testUnrollLoopsBoundWithoutRoomForOtherTurns());
+    RUN(testUnrollLoopsDropsBranchThatRepeatsTestAtTop());
     RUN(testUnrollLoopsKeepsOtherWaysOut());
     RUN(testUnrollLoopsLeavesRareBlocksToLoopItself());
     RUN(testUnrollLoopsSkipsLoopWithCall());

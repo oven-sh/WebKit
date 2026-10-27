@@ -12,9 +12,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -99,32 +99,24 @@ function f2 name="Failure" module=m0 position=6 kind=DerivedConstructor flags=[H
     Return v5
 }
 
-# The parameter is a class that extends Error. In the typed body Error.isError is a call of the built-in, and the answer is branched on: both arms are kept.
-# CHECK-LABEL: name="next" role=Source
-# CHECK-NEXT: BB#0:
-# CHECK: Int64 b@[[failure]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[answer]] = Patchpoint(b@{{*}}, b@{{*}}, b@[[failure]]:{{*}}:CallBuiltin)
-# CHECK-NEXT: Int32 b@[[word]] = Trunc(b@[[answer]])
-# CHECK: Int32 b@[[isError]] = BitAnd(b@[[word]], $1(
-# CHECK: Branch(b@[[isError]], Terminal
-# CHECK-NEXT: Successors: Then:#[[error]], Else:#
-# CHECK-NEXT: BB#[[error]]:
-# CHECK: Double b@[[sum]] = Add(b@[[count]], b@[[count]], {{*}}:Add)
-# CHECK-NEXT: Return(b@[[sum]], Terminal)
-# CHECK-LABEL: end of function
-# The call cannot throw.
-# NONE-LABEL: name="next" role=Source
-# NONE-NOT: ExitsSideways
-# NONE: Branch(
-# NONE-LABEL: end of function
 # The generic body asks in place: it compares the type byte of the cell.
 # CHECK-LABEL: name="next" role=GenericVersion
 # CHECK: Int32 b@[[type]] = Load8Z(b@{{*}}, offset = 5, ControlDependent|ReadsImmutable|Reads:JSCell_typeInfoType
 # CHECK: Int32 b@[[isErrorCell]] = Equal(b@[[type]], $
 # CHECK-NEXT: Branch(b@[[isErrorCell]], Terminal
 # CHECK-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
+# The parameter is a class that extends Error, and Error makes its objects. In the typed body Error.isError is true at build time: one arm is left, and the object is not looked at.
+# CHECK-LABEL: name="next" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[count]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[count]], b@[[count]], {{*}}:Add)
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="next" role=Source
+# NONE-NOT: Patchpoint(
+# NONE-NOT: Branch(
+# NONE-LABEL: end of function
 # X64-LABEL: name="next" role=Source
-# X64-NEXT: instructions: 17, patchpoints: 5
+# X64-NEXT: instructions: 2, patchpoints: 0
 # ARM64-LABEL: name="next" role=Source
-# ARM64-NEXT: instructions: 21, patchpoints: 5
+# ARM64-NEXT: instructions: 2, patchpoints: 0

@@ -74,24 +74,38 @@ function f1 name="row" module=m0 flags=[IsChecked, HasExplicitName] length=1 thi
 }
 
 # Nine constant characters are two stores of immediates: eight bytes (0x64742f3c3e64743c, "<td></td" from the lowest byte up) and one. The cursor goes up by nine.
-# CHECK-LABEL: steps by 9
+# CHECK-LABEL: name="row" role=Source
+# CHECK: Int64 b@[[limit]] = Phi(
 # CHECK: Int64 b@[[cursor]] = Phi(
-# CHECK: Store($7238462436882543676(b@{{*}}), b@[[cursor]], ControlDependent|Writes:StringBuilderContents, {{*}}:StringBuilderAppendConstant)
-# CHECK: Store8($62(b@{{*}}), b@[[cursor]], offset = 8, ControlDependent|Writes:StringBuilderContents, {{*}}:StringBuilderAppendConstant)
+# CHECK: Store($7238462436882543676(b@{{*}}), b@[[cursor]], ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
+# CHECK: Store8($62(b@{{*}}), b@[[cursor]], offset = 8, ControlDependent|Writes:stringBuilderBytes, {{*}}:StringBuilderAppendConstant)
+# CHECK-NOT: Load(
 # CHECK: Int64 b@[[next]] = Add(b@[[cursor]], $9(
-# CHECK: Int32 b@[[fits]] = BelowEqual(b@[[next]], b@
+# CHECK: Int32 b@[[fits]] = BelowEqual(b@[[next]], b@[[limit]],
 # CHECK-NEXT: Branch(b@[[fits]], Terminal,
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK-LABEL: end of loop
-# Nothing is called but the poll, and the characters of the literal are not read from memory.
-# HOT-LABEL: steps by 9
+# There is one loop. Nothing is called in it but the poll and, in the rare block for a full buffer, the stub that makes room, behind which the limit is read again. No cell is made or loaded for the literal, and its characters are not read from memory.
+# HOT-LABEL: name="row" role=Source
 # HOT-NOT: Reads:characters
 # HOT-NOT: Reads:AOTInstance
-# HOT-NOT: AllocatorState
-# HOT-NOT: ExitsSideways
-# HOT: isLoopPoll
+# HOT-NOT: :String)
 # HOT-NOT: Patchpoint(
-# HOT-LABEL: end of loop
+# HOT: Successors: Then:#{{*}}, Else:Rare:#[[full]]
+# HOT-NOT: Patchpoint(
+# HOT: Void b@{{*}} = Patchpoint({{*}}isLoopPoll
+# HOT-NOT: Patchpoint(
+# HOT: BB#[[full]]:
+# HOT: = Patchpoint(
+# HOT-NEXT: Load(b@{{*}}, ControlDependent|Reads:AOTStackStringBuilder_fields,
+# HOT-NEXT: Upsilon(
+# HOT-NEXT: Upsilon(
+# HOT-NEXT: Jump(
+# HOT: end of loop
+# HOT-NOT: loop #
+# HOT-LABEL: end of function
 # The loop holds a poll, so x86-64 is counted where the calling convention is not that of Windows.
-# X64: instructions: 6, patchpoints: 1, {{*}} steps by 9
-# ARM64: instructions: 7, patchpoints: 1, {{*}} steps by 9
+# X64-LABEL: name="row" role=Source
+# X64-NEXT: instructions: 6, patchpoints: 1, rare instructions: 3
+# ARM64-LABEL: name="row" role=Source
+# ARM64-NEXT: instructions: 6, patchpoints: 1, rare instructions: 3

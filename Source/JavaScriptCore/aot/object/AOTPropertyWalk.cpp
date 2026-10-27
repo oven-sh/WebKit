@@ -146,6 +146,26 @@ static std::optional<Result> tryVisitCachedList(VM& vm, const Object& typed, JSO
     return Result::Completed;
 }
 
+const CachedPropertyList* tryGetListOfOwnProperties(VM& vm, JSObject* object, JSObject*& extra)
+{
+    Object* typed = compiledObjectOrNull(object);
+    extra = typed ? typed->extraProperties() : nullptr;
+    if (!extra)
+        return nullptr;
+    if (CachedPropertyList* found = findCachedPropertyList(vm, *typed, extra); found && found->holdsOnlyPlainData) [[likely]]
+        return found;
+    if (extraPropertiesNeedGenericPath(extra))
+        return nullptr;
+    Structure* structure = extra->structure();
+    if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->hasNonConfigurableProperties())
+        return nullptr;
+    ASSERT(vm.heap.isDeferred());
+    CachedPropertyList* list = cachedPropertyList(vm, *typed);
+    if (list)
+        list->holdsOnlyPlainData = true;
+    return list;
+}
+
 static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JSObject* extra)
 {
     validateKeyListing(vm, typed);

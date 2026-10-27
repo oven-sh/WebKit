@@ -371,6 +371,25 @@ static bool rejectsNullishValues(const Value& test)
     return test.opcode == Opcode::IsSlotFilled && test.holdsDeclaredType();
 }
 
+static bool staysInSlot(const Program& program, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
+    return layoutField && staysInSlot(program, { description.layout, *layoutField });
+}
+
+static bool hasUnprovenFieldThatMayLeaveSlot(const ShapeContext& context, const VirtualShape& shape)
+{
+    if (!hasUnprovenField(context.family, shape))
+        return false;
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    for (size_t index : shape.stored) {
+        const VirtualField& field = context.family.fieldAt(static_cast<uint32_t>(index));
+        if (field.kind == VirtualFieldKind::UnprovenNamed && !staysInSlot(context.objects.program, description, field))
+            return true;
+    }
+    return false;
+}
+
 static KnownBoolean evaluateFieldTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
     const VirtualObjectDescription& description = context.family.descriptionOf(shape);
@@ -401,8 +420,7 @@ static KnownBoolean evaluateFieldTest(const ShapeContext& context, const Virtual
         // A failed test of the declared type is followed by a lookup by name. A failed test of a field that may leave its slot says nothing without HasNoFieldOutsideSlot.
         if (rejectsNullishValues(test))
             return KnownBoolean::False;
-        std::optional<uint32_t> layoutField = layoutFieldOf(context.objects.program, description, access.field);
-        return knownBoolean(layoutField && staysInSlot(context.objects.program, { description.layout, *layoutField }));
+        return knownBoolean(staysInSlot(context.objects.program, description, access.field));
     }
     return access.whenAbsent == AbsentField::FindsNothing ? KnownBoolean::False : KnownBoolean::Unknown;
 }
@@ -622,6 +640,8 @@ static KnownBoolean evaluateBirthTest(const ShapeContext& context, const Virtual
             continue;
         PropertyKeyID key = layout.fields[index].key;
         std::optional<uint32_t> field = key ? context.family.findField(VirtualField::named(key)) : std::nullopt;
+        if (field && !hasStored(shape, *field) && hasStoredCounterpart(context.family, shape, *field))
+            field = context.family.findCounterpart(*field);
         if (!field || !hasStored(shape, *field))
             return KnownBoolean::Unknown;
         if (holdsRawValueFromBirth(program, { description.layout, index }) && mayBeUndefinedOrNull(program, contentsOf(context, description, *field)))
@@ -662,14 +682,14 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
         return evaluateBoundsTest(context, shape, test);
     case Opcode::HasNoExtraProperties:
     case Opcode::HasNoFieldOutsideSlot:
-        if (hasUnprovenField(context.family, shape))
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
             return KnownBoolean::False;
         [[fallthrough]];
     case Opcode::IsNotFrozen:
     case Opcode::BelongsToInstance:
         return isLayoutObject(description) ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasBirthFieldsFilled:
-        if (hasUnprovenField(context.family, shape))
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
             return KnownBoolean::False;
         return evaluateBirthTest(context, shape);
     case Opcode::HasLayoutPrototype:
@@ -677,8 +697,8 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::IsPristine:
         return isArray(description) && test.builtinClass() == BuiltinClasses::Array ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasKeyOrder:
-        if (hasUnprovenField(context.family, shape))
-            return KnownBoolean::False;
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
+            return KnownBoolean::Unknown;
         return evaluateKeyOrderTest(context, shape, test);
     case Opcode::IsClosureOf:
         return knownBoolean(description.kind == VirtualObjectKind::Closure && description.function == test.function());

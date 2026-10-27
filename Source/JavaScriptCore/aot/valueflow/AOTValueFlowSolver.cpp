@@ -322,10 +322,8 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             ValueSetID holders = m_input.universe->builtinTables().heap().holdersOfReplaceableMembers();
             takenByRetiredNodes = maker.unite(takenByRetiredNodes, holders);
             keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, holders);
-            // Whoever lists the own keys of the prototype object of a library class has the names of its members. So a node lists such an object whether it arrives before the unknown object or after it, and a read off the unknown object lists none.
-            ValueSetID prototypeObjects = m_input.universe->prototypeObjectsOfLibraryClasses();
-            takenByRetiredNodes = maker.unite(takenByRetiredNodes, prototypeObjects);
-            keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, prototypeObjects);
+            // Whoever lists the own keys of the prototype object of a library class has the names of its members. A read off the unknown object lists no such object.
+            keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, m_input.universe->prototypeObjectsOfLibraryClasses());
         }
         ValueSetID wholeUnknownValue = m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone;
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
@@ -368,7 +366,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         }
     }
     if (m_input.nodes && m_input.universe) {
-        for (ValueFlowHostNode taking : { ValueFlowHostNode::ClosuresThatStatementsMayRename, ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach }) {
+        for (ValueFlowHostNode taking : { ValueFlowHostNode::ClosuresThatStatementsMayRename, ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach, ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed }) {
             m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(taking), [](const void* solver, ValueFlowNodeID node) {
                 return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
             }, this);
@@ -4233,6 +4231,7 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed), m_input.universe->prototypeObjectsOfLibraryClasses());
             }
         },
         [&] {

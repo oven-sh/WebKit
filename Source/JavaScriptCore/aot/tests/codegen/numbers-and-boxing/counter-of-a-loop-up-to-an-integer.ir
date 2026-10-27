@@ -99,15 +99,15 @@ function f1 name="countMultiples" module=m0 flags=[IsChecked, HasExplicitName] l
 # HOT: Int32 b@[[next]] = Add(b@[[k]], $1(b@{{*}}), {{*}}:Increment)
 # HOT-NEXT: Int32 b@[[goesOn]] = GreaterThan(b@{{*}}, b@[[next]], {{*}}:Less)
 # HOT-NEXT: Branch(b@[[goesOn]], Terminal, {{*}}:Less)
-# The count of matches is kept as a double: one is added to it on the arm of a match.
-# HOT: Double b@{{*}} = Add(b@{{*}}, {{*}}:Increment)
+# The count of matches cannot outrun k, so it is an integer too: one is added to it on the arm of a match. It may stand one step above 32 bits, so it has 64.
+# HOT: Int64 b@{{*}} = Add(b@{{*}}, $1(b@{{*}}), {{*}}:Increment)
 # HOT-LABEL: end of loop
-# Nothing tests for overflow, widens the counter or converts it.
+# Nothing tests for overflow, widens the counter or converts it, and no double is added.
 # NONE-LABEL: steps by 1
 # NONE-NOT: CheckAdd
 # NONE-NOT: SExt32
 # NONE-NOT: IToD
-# NONE-NOT: Int64 b@{{*}} = Add(
+# NONE-NOT: Double b@{{*}} = Add(
 # NONE-LABEL: end of loop
 # X64: instructions: 5, patchpoints: 1, {{*}} steps by 1
 # ARM64: instructions: 6, patchpoints: 1, {{*}} steps by 1

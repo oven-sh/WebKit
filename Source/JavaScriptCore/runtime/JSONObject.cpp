@@ -53,11 +53,13 @@
 #if ENABLE(AOT)
 #include "AOTJSONHooks.h"
 #include "AOTJSONTextWriter.h"
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTStringBuilderStorage.h"
 #include "DateInstance.h"
 #include "DateTimeWriter.h"
+#include "DeferGC.h"
 #endif
 
 // Turn this on to log information about fastStringify usage, with a focus on why it failed.
@@ -841,6 +843,7 @@ private:
     void appendDate(DateInstance&);
     bool datesHaveBuiltinToJSON(JSObject& datePrototype);
     template<HasGap hasGap> void appendCompiledObject(JSObject&);
+    bool tryAppendObjectWithExtraProperties(JSObject&);
     bool mayCompiledObjectHaveToJSON(JSObject&);
     bool mayHaveOwnOrInheritedToJSON(JSObject&);
     // Where the next character goes, and where the buffer ends. While one is in use m_length is out of date.
@@ -2135,6 +2138,10 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JSObject& object)
 {
+    if constexpr (hasGap == HasGap::No && std::same_as<CharType, Latin1Character>) {
+        if (AOT::PropertyWalk::hasExtraProperties(&object) && tryAppendObjectWithExtraProperties(object))
+            return;
+    }
     // All of this is asked of the Structure. The one that is remembered has answered.
     if (!isCompiledStructureKnown(object)) {
         if (object.isCallable()) [[unlikely]] {
@@ -2275,6 +2282,137 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JS
     if (needNewLine)
         appendNewLineAndIndentUnchecked();
     buffer()[m_length++] = '}';
+}
+
+struct ListedPropertiesWritten {
+    enum class Status : uint8_t { All, NeedsRoom, FoundOtherValue, FoundAbsentField };
+
+    Status status;
+    unsigned index;
+    Latin1Character* next;
+    size_t roomNeeded { 0 };
+    JSValue otherValue { };
+};
+
+static const AOT::CachedPropertyList* listOfPropertiesForJSON(VM& vm, JSObject& object, JSObject*& extraProperties)
+{
+    Structure& structure = *object.structure();
+    if (object.isCallable() || structure.hasPolyProto() || structure.hasNonReifiedStaticProperties()) [[unlikely]]
+        return nullptr;
+    const AOT::CachedPropertyList* list = AOT::PropertyWalk::tryGetListOfOwnProperties(vm, &object, extraProperties);
+    return list && !list->hasToJSON && !list->endsOfJSONKeys.isEmpty() ? list : nullptr;
+}
+
+static NEVER_INLINE ListedPropertiesWritten writeListedProperties(const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, unsigned index, Latin1Character* next, const Latin1Character* limit)
+{
+    using Status = ListedPropertiesWritten::Status;
+    constexpr size_t blockSize = AOT::FieldAsProperty::jsonKeyBlockSize;
+    const AOT::PropertyListEntry* properties = list.properties.span().data();
+    const uint32_t* endsOfKeys = list.endsOfJSONKeys.span().data();
+    const Latin1Character* keys = list.jsonKeys.span().data();
+    unsigned count = list.properties.size();
+    for (; index < count; ++index) {
+        JSValue value = AOT::PropertyWalk::readListedProperty(&object, properties[index], extraProperties);
+        if (!value) [[unlikely]]
+            return { Status::FoundAbsentField, index, next };
+        if (value.isUndefined()) [[unlikely]]
+            continue;
+        uint32_t startOfKey = index ? endsOfKeys[index - 1] : 0;
+        const Latin1Character* key = keys + startOfKey;
+        size_t keySize = endsOfKeys[index] - startOfKey;
+        size_t room = limit - next;
+        size_t roomForScalar = keySize + blockSize + AOT::maxJSONNumberLength;
+        if (room < roomForScalar) [[unlikely]]
+            return { Status::NeedsRoom, index, next, roomForScalar };
+        memcpy(next, key, blockSize);
+        if (keySize > blockSize) [[unlikely]] {
+            for (size_t offset = blockSize; offset < keySize; offset += blockSize)
+                memcpy(next + offset, key + offset, blockSize);
+        }
+        Latin1Character* afterKey = next + keySize;
+        if (value.isInt32())
+            next = AOT::appendJSONInteger(afterKey, value.asInt32());
+        else if (value.isCell()) {
+            const StringImpl* string = value.asCell()->type() == StringType ? asString(value.asCell())->tryGetValueImpl() : nullptr;
+            if (!string || !string->is8Bit()) [[unlikely]]
+                return { Status::FoundOtherValue, index, afterKey, 0, value };
+            size_t length = string->length();
+            if (room < keySize + 1 + length + 1) [[unlikely]]
+                return { Status::NeedsRoom, index, next, keySize + 1 + length + 1 };
+            *afterKey = '"';
+            if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]]
+                return { Status::FoundOtherValue, index, afterKey, 0, value };
+            afterKey[1 + length] = '"';
+            next = afterKey + 1 + length + 1;
+        } else if (value.isDouble())
+            next = AOT::appendJSONNumber(afterKey, value.asDouble());
+        else if (value.isBoolean())
+            next = AOT::appendJSONBoolean(afterKey, value.isTrue());
+        else
+            next = AOT::appendJSONLiteral(afterKey, "null"_s);
+    }
+    return { Status::All, index, next };
+}
+
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE bool FastStringifier<CharType, bufferMode>::tryAppendObjectWithExtraProperties(JSObject& object)
+{
+    if constexpr (std::same_as<CharType, Latin1Character>) {
+        using Status = ListedPropertiesWritten::Status;
+        DeferGC deferGC(m_vm);
+        JSObject* extraProperties;
+        const AOT::CachedPropertyList* list = listOfPropertiesForJSON(m_vm, object, extraProperties);
+        if (!list) [[unlikely]]
+            return false;
+        JSValue prototype = object.structure()->storedPrototype();
+        if (prototype.isObject() && mayHaveToJSON(*asObject(prototype))) [[unlikely]]
+            return false;
+
+        unsigned count = list->properties.size();
+        unsigned brace = m_length;
+        bool hasPublished = false;
+        Cursor cursor = cursorAtEnd();
+        for (unsigned index = 0;;) {
+            if (!reserve(cursor, 2)) [[unlikely]]
+                return true;
+            ListedPropertiesWritten written = writeListedProperties(object, extraProperties, *list, index, cursor.next, cursor.limit - 2);
+            cursor.next = written.next;
+            index = written.index;
+            if (written.status == Status::All) [[likely]]
+                break;
+            if (written.status == Status::FoundAbsentField) {
+                if (!hasPublished)
+                    return false;
+                recordFailure("a listed field of a compiled object is absent"_s);
+                return true;
+            }
+            hasPublished = true;
+            if (written.status == Status::NeedsRoom) {
+                if (!reserve(cursor, written.roomNeeded + 2)) [[unlikely]]
+                    return true;
+                continue;
+            }
+            publishLength(cursor);
+            append<HasGap::No>(written.otherValue);
+            if (haveFailure()) [[unlikely]]
+                return true;
+            list = listOfPropertiesForJSON(m_vm, object, extraProperties);
+            if (!list || list->properties.size() != count) [[unlikely]] {
+                recordFailure("the list of a compiled object's properties was replaced"_s);
+                return true;
+            }
+            cursor = cursorAtEnd();
+            ++index;
+        }
+        cursor.next += static_cast<size_t>(cursor.next - buffer()) == brace;
+        buffer()[brace] = '{';
+        *cursor.next++ = '}';
+        publishLength(cursor);
+        return true;
+    } else {
+        UNUSED_PARAM(object);
+        return false;
+    }
 }
 
 template<typename CharType, BufferMode bufferMode>
@@ -2904,10 +3042,54 @@ static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSV
     RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl()), holders.span()));
 }
 
+static bool tryAppendScalarsOfObjectWithExtraProperties(JSGlobalObject& globalObject, AOT::StringBuilderStorage& builder, JSObject& object)
+{
+    using Status = ListedPropertiesWritten::Status;
+    VM& vm = globalObject.vm();
+    DeferGC deferGC(vm);
+    JSObject* extraProperties;
+    const AOT::CachedPropertyList* list = listOfPropertiesForJSON(vm, object, extraProperties);
+    if (!list) [[unlikely]]
+        return false;
+    JSValue prototype = object.structure()->storedPrototype();
+    if (prototype.isObject()) {
+        JSValue toJSON = asObject(prototype)->structure()->cachedSpecialProperty(CachedSpecialPropertyKey::ToJSON);
+        if (!toJSON || !toJSON.isUndefined()) [[unlikely]]
+            return false;
+    }
+
+    size_t room = 2 * (list->jsonKeys.size() + list->properties.size() * AOT::maxJSONNumberLength);
+    for (;;) {
+        Latin1Character* brace = builder.reserve(&globalObject, room + 2);
+        if (!brace) [[unlikely]]
+            return false;
+        ListedPropertiesWritten written = writeListedProperties(object, extraProperties, *list, 0, brace, brace + room);
+        if (written.status == Status::NeedsRoom) [[unlikely]] {
+            room = 2 * (room + written.roomNeeded);
+            continue;
+        }
+        if (written.status != Status::All) [[unlikely]]
+            return false;
+        Latin1Character* next = written.next;
+        next += next == brace;
+        *brace = '{';
+        *next++ = '}';
+        builder.commit(next);
+        return true;
+    }
+}
+
 bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property, const JSONHolderRecord* holders)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isCell() && value.asCell()->type() == CompiledObjectType && AOT::PropertyWalk::hasExtraProperties(asObject(value))) {
+        bool isAppended = tryAppendScalarsOfObjectWithExtraProperties(*globalObject, builder, *asObject(value));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isAppended)
+            return true;
+    }
 
     std::optional<FailureReason> failureReason;
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= std::bit_cast<uint8_t*>(vm.softStackLimit())) [[likely]] {

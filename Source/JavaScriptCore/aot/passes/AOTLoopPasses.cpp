@@ -12,6 +12,7 @@
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTFlowApply.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
@@ -23,6 +24,7 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -285,6 +287,164 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     return narrowedCounters;
 }
 
+namespace {
+
+// By how much a value differs from what the loop had at the head of the turn.
+struct ChangeInTurn {
+    int64_t least { 0 };
+    int64_t most { 0 };
+};
+
+struct TallyFinder {
+    AOT_CLASS_THRESHOLD(unsigned, mostValuesBetweenTurns, 256);
+
+    FunctionPassContext& context;
+    const LoopInduction& loop;
+    ValueID parameter;
+    std::optional<unsigned> cycle { context.analyses.blockCycles().innermostCycleOf(loop.header) };
+    unsigned numberOfValues { 0 };
+
+    std::optional<ChangeInTurn> plus(ValueID base, std::optional<int64_t> constant, bool isSubtracted)
+    {
+        std::optional<ChangeInTurn> change = constant && Range::int32().contains(*constant) ? changeOf(base) : std::nullopt;
+        if (!change)
+            return std::nullopt;
+        int64_t step = isSubtracted ? -*constant : *constant;
+        return ChangeInTurn { change->least + step, change->most + step };
+    }
+
+    std::optional<ChangeInTurn> changeOfJoin(ValueLocation location)
+    {
+        // A join of an inner loop takes what that loop has made of the value in any number of turns.
+        FunctionAnalyses& analyses = context.analyses;
+        if (location.block == loop.header || analyses.blockCycles().innermostCycleOf(location.block) != cycle || context.function.at(location.block).isHandlerBlock())
+            return std::nullopt;
+        std::optional<ChangeInTurn> joined;
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(context.function, edge, location.index);
+            std::optional<ChangeInTurn> change = incoming.kind == IncomingValue::Kind::Argument ? changeOf(incoming.argument) : std::nullopt;
+            if (!change)
+                return std::nullopt;
+            joined = joined ? ChangeInTurn { std::min(joined->least, change->least), std::max(joined->most, change->most) } : *change;
+        }
+        return joined;
+    }
+
+    std::optional<ChangeInTurn> changeOf(ValueID id)
+    {
+        if (id == parameter)
+            return ChangeInTurn { };
+        if (++numberOfValues > mostValuesBetweenTurns)
+            return std::nullopt;
+        const Function& function = context.function;
+        const Value& value = function.at(id);
+        auto constant = [&](uint32_t index) { return integerConstantThroughCasts(context.program, function, value.operand(index)); };
+        if (value.opcode == Opcode::Parameter)
+            return changeOfJoin(context.analyses.useLists().locationOf(id));
+        if (value.opcode == Opcode::Increment || value.opcode == Opcode::Decrement)
+            return plus(value.operand(0), 1, value.opcode == Opcode::Decrement);
+        if (value.opcode == Opcode::Add)
+            return constant(1) ? plus(value.operand(0), constant(1), false) : plus(value.operand(1), constant(0), false);
+        if (value.opcode == Opcode::Sub)
+            return plus(value.operand(0), constant(1), true);
+        return isCastWithoutTest(value.opcode) ? changeOf(value.operand(0)) : std::nullopt;
+    }
+};
+
+struct Tally {
+    uint32_t parameterIndex;
+    Range range;
+    Vector<Edge, 2> edgesOfNextTurns;
+};
+
+} // anonymous namespace
+
+// An integer counter takes each value of its range at most once.
+static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context, const LoopInduction& loop)
+{
+    std::optional<int64_t> fewest;
+    for (const InductionVariable& variable : loop.variables) {
+        const Type& type = context.program.typeOf(context.function, variable.parameter);
+        if (!type.isInteger() || !type.integers.isSubsetOf(Range::exact()) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+            continue;
+        int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
+        fewest = fewest ? std::min(*fewest, turns) : turns;
+    }
+    return fewest;
+}
+
+// `if (..) count++` in a loop over a list: nothing tests the tally, and it cannot outrun the counter.
+static Vector<Tally, 2> findTallies(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<Tally, 2> tallies;
+    for (const LoopInduction& loop : analyses.inductionVariables().loops()) {
+        std::optional<int64_t> turns;
+        const NaturalLoop& naturalLoop = analyses.naturalLoops().loop(loop.loopIndex);
+        const CompactList<ValueID>& parameters = function.at(loop.header).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            const Type& type = context.program.typeOf(function, parameters[index]);
+            if (!type.isNumberWithoutFraction() || type.isInteger())
+                continue;
+            if (!turns && !(turns = mostTurnsBehindFirst(context, loop)))
+                break;
+            Range starts = Range::empty();
+            ChangeInTurn change;
+            Vector<Edge, 2> edgesOfNextTurns;
+            bool isTally = std::ranges::all_of(analyses.cfg().incomingEdges(loop.header), [&](Edge edge) {
+                IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(function, edge, index);
+                if (incoming.kind != IncomingValue::Kind::Argument)
+                    return false;
+                if (!analyses.naturalLoops().belongsTo(edge.from, naturalLoop)) {
+                    const Type& start = context.program.typeOf(function, incoming.argument);
+                    starts = starts.unionWith(start.integers);
+                    return start.isInteger();
+                }
+                // Typing has left the join wider than the bound that its edges were given. Where the block may also leave the loop, what it holds need not reach a next turn.
+                if (context.program.typeOf(function, incoming.argument).isInteger() || function.at(edge.from).terminator.kind != TerminatorKind::Jump)
+                    return false;
+                std::optional<ChangeInTurn> onEdge = TallyFinder { context, loop, parameters[index] }.changeOf(incoming.argument);
+                if (!onEdge)
+                    return false;
+                edgesOfNextTurns.append(edge);
+                change = { std::min(change.least, onEdge->least), std::max(change.most, onEdge->most) };
+                return true;
+            });
+            if (!isTally || starts.isEmpty() || !starts.isSubsetOf(Range::int32()) || *turns > UINT32_MAX)
+                continue;
+            // Each factor has at most 32 bits and a sign.
+            Range range { starts.minimum + change.least * *turns, starts.maximum + change.most * *turns };
+            if (range.isSubsetOf(Range::exact()))
+                tallies.append({ index, range, WTF::move(edgesOfNextTurns) });
+        }
+    }
+    return tallies;
+}
+
+// What a turn hands to the next lies within the bounds. What it has added to may stand one step outside, where the loop is left in the same turn.
+static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& builder, std::span<const Tally> tallies)
+{
+    Function& function = context.function;
+    Vector<ValueID, 4> bounded;
+    for (const Tally& tally : tallies) {
+        TypeID type = context.types.intern(Type::integer(tally.range));
+        for (Edge edge : tally.edgesOfNextTurns) {
+            ValueID handedOn = targetOf(function, edge).arguments[tally.parameterIndex];
+            ProgramPoint end = pointBeforeTerminatorOf(function, edge.from);
+            builder.setOrigin(function.at(edge.from).terminator.origin());
+            if (context.build.validates())
+                builder.insertBefore(end, makeValidateType(handedOn, type));
+            ValueID turnEndsHere = builder.insertBefore(end, IRBuilder::make(Opcode::Specified));
+            bounded.append(builder.insertBefore(end, makeAssumeType(handedOn, turnEndsHere, Proven::behindFact(type))));
+            replaceUse(function, Use { .kind = Use::Kind::EdgeArgument, .block = edge.from, .operandIndex = tally.parameterIndex, .targetIndex = edge.targetIndex }, bounded.last());
+        }
+    }
+    builder.applyInsertions();
+    context.analyses.didChangeValues();
+    return bounded;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasCycle() || !hasNumberParameter(context.program, context.function))
@@ -296,8 +456,17 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     for (;;) {
         Vector<CounterCandidate, 4> candidates = findCounterCandidates(context, parametersOverStepLimit);
-        if (candidates.isEmpty())
-            break;
+        if (candidates.isEmpty()) {
+            Vector<Tally, 2> tallies = findTallies(context);
+            if (tallies.isEmpty())
+                break;
+            Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
+            outcome = PassOutcome::Changed;
+            numberOfConvertedCounters += tallies.size();
+            if (narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span()).didChangeControlFlow())
+                parametersOverStepLimit.clearAll();
+            continue;
+        }
         Vector<ValueID, 4> narrowedCounters = passCountersOnEdges(context, builder, candidates.span());
         outcome = PassOutcome::Changed;
 

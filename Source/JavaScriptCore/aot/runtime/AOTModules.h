@@ -66,6 +66,7 @@ struct LinkContext {
     macro(JSObject*, deferredNamespaceObject) \
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
+    macro(JSObject*, objectMadeByRequire) \
     macro(JSValue, requireFunction) \
     macro(JSValue, requiredValue) \
     macro(JSObject*, exportsWhileRequired) \
@@ -215,7 +216,8 @@ public:
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
-    JSValue require(ModuleID);
+    // A whole require(): who required whom is recorded here, whoever asks. Without a referrer it is the evaluation and its answer alone: for the host's own loads, and for a site with operations around it that record.
+    JSValue require(ModuleID, ModuleID referrer = { });
     void evaluateCommonJS(ModuleID);
     JSValue commonJSExports(ModuleID) const;
     JSValue exportsSeenByLoader(ModuleID);
@@ -372,13 +374,18 @@ private:
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
     bool isPassedOverByEvaluationInProgress(ModuleID) const;
 
-    std::optional<ModuleID> mainCommonJSModule() const;
+    std::optional<ModuleID> mainCommonJSModule();
+    void decideMainCommonJSModule(std::optional<ModuleID>);
+    std::optional<ModuleID> firstFileThatLoaderFindsBelow(ModuleID root);
+    void lookForMainCommonJSModule();
+    void noteLoadOfGraph(ModuleID root);
+    JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
+    JSValue answerRequire(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
-    std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -416,8 +423,16 @@ private:
     Structure* m_namespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen.
-    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain };
+    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
+    std::optional<ModuleID> m_mainCommonJSModule;
+    bool m_isMainCommonJSModuleDecided { false };
+    bool m_didSearchBelowEntryPoint { false };
+    // While no file has the id "." and no require() of a file has returned.
+    Vector<ModuleID, 4> m_modulesFirstRequiredByCallsInProgress;
+    // The first CommonJS file below each root that import() was called for in that time.
+    Vector<ModuleID, 2> m_firstFilesOfLoads;
+    BitVector m_modulesSearchedForFirstFile;
     // `bun run` makes the module object of a file for whoever asks for the file first, and only a require() leaves a parent in it.
     BitVector m_filesRequestedByLoader;
     struct FilesBeingRun {

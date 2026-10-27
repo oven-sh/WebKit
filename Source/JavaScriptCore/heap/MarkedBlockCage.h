@@ -103,11 +103,14 @@ public:
     };
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
-    enum class ExhaustedHeap : bool { Cells, Structures };
+    // Storage: what arrays and objects keep outside their cells. It comes from malloc.
+    enum class ExhaustedHeap : uint8_t { Cells, Structures, Storage };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
+    // This error also tells the program what it is owed for storage.
+    JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
         size_t sizeWithinBudget { 0 };
@@ -124,12 +127,15 @@ public:
     // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.
     static void willUseLastReserve(VM&);
+    // Called on the thread of the VM when a request of that thread to malloc that may not fail has used the ballast (bmalloc::api::keepAddressSpaceBallast()).
+    JS_EXPORT_PRIVATE static void didUseAddressSpaceBallast(VM&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 
 private:
     void didAllocate(const void*, size_t);
     bool tryKeepReleasedReserveAgain();
+    bool tryKeepBallastAgain();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
 

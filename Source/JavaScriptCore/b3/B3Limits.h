@@ -142,6 +142,7 @@ inline constexpr unsigned maxBlocksBesideTestOfUnrolledLoop = 4;
 inline constexpr unsigned maxDepthOfAddressInUnrolledLoop = 6;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
+inline constexpr unsigned maxValuesBesideSecondTestOfInterval = 4;
 inline constexpr unsigned blocksPerConstantStretch = 1024;
 
 inline constexpr unsigned minCasesToGrowSwitchInPlace = 128;

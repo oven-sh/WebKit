@@ -19,9 +19,9 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -180,28 +180,22 @@ function f5 module=m0 position=97 kind=Initializer flags=[HasThis, IsChecked, Is
     Return v4
 }
 
-# `shape instanceof Circle` walks no prototype chain: the class is read off the shape word of the object. The word is loaded once and compared with that of each class in turn, and behind each comparison the field is a plain load. A word that is neither leaves the typed body.
+# `shape instanceof Circle` walks no prototype chain: the class is read off the shape word of the object. The word is loaded once and compared once: what is no Circle is a Square, so neither arm tests again. In each arm the field is a plain load, and it is returned as the double that it is.
 # CHECK-LABEL: name="size" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[shape]] = ArgumentReg(
 # CHECK-NEXT: Int32 b@[[word]] = Load(b@[[shape]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
-# CHECK: Int32 b@[[isSquare]] = Equal(b@[[word]], $-
-# CHECK: Branch(b@[[isSquare]], Terminal
-# CHECK-NEXT: Successors: Then:#[[square]], Else:#[[notSquare]]
-# CHECK-NEXT: BB#[[square]]:
+# CHECK: Int32 b@[[isOne]] = Equal(b@[[word]], $-
+# CHECK: Branch(b@[[isOne]], Terminal
+# CHECK-NEXT: Successors: Then:#[[one]], Else:#[[other]]
+# CHECK-NEXT: BB#[[one]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: BB#[[notSquare]]:
+# CHECK-NEXT: Double b@[[first]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[first]], Terminal)
+# CHECK-NEXT: BB#[[other]]:
 # CHECK-NEXT: Predecessors: #0
-# CHECK: Int32 b@[[isCircle]] = Equal(b@[[word]], $-
-# CHECK: Branch(b@[[isCircle]], Terminal
-# CHECK-NEXT: Successors: Then:#[[circle]], Else:#[[neither]]
-# CHECK-NEXT: BB#[[circle]]:
-# CHECK-NEXT: Predecessors: #[[notSquare]]
-# CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: BB#[[neither]]:
-# CHECK-NEXT: Predecessors: #[[notSquare]]
-# CHECK: Patchpoint({{*}}Terminal
+# CHECK-NEXT: Double b@[[second]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[second]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="size" role=Source
 # NONE-NOT: PrototypeLinks
@@ -211,8 +205,8 @@ function f5 module=m0 position=97 kind=Initializer flags=[HasThis, IsChecked, Is
 # NONE-NOT: PrototypeLinks
 # NONE-NOT: JSCell_structureID
 # NONE-LABEL: end of function
-# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
+# Both arms load from the same offset, so the back end makes one of them.
 # X64-LABEL: name="size" role=Source
-# X64-NEXT: instructions: 8, patchpoints: 3
+# X64-NEXT: instructions: 3, patchpoints: 0
 # ARM64-LABEL: name="size" role=Source
-# ARM64-NEXT: instructions: 26, patchpoints: 3
+# ARM64-NEXT: instructions: 4, patchpoints: 0

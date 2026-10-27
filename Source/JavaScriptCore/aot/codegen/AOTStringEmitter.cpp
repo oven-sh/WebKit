@@ -167,6 +167,8 @@ CharacterView StringEmitter::viewOf(const OperationContext& context, ValueID str
 
 CharacterView StringEmitter::subview(const CharacterView& view, CodeUnitRange range)
 {
+    if (range.start.value()->isInt32(0))
+        return { view.characters, range.end, view.is8Bit, view.owner };
     Integer offset(m_out.shl(zeroExtended(range.start).value(), logicalNot(view.is8Bit).value()));
     return { offsetBy(view.characters, offset, 0), sub(range.end, range.start), view.is8Bit, view.owner };
 }
@@ -354,6 +356,8 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
     Range range = x.value()->hasInt() ? Range::one(x.value()->asInt()) : position.range;
     if (range.minimum >= 0 || range.maximum < 0) {
         build().statistics().count(StatisticID::StringPositionsWithKnownSign);
+        if (range == Range::one(0))
+            return word32(0);
         return range.minimum >= 0 ? countedFromStart() : countedFromEnd();
     }
 
@@ -396,6 +400,8 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
         if (!second)
             return { from, length };
         Word32 to = clampToLength(*second, length, true);
+        if (from.value()->isInt32(0))
+            return { from, to };
         return { from, select(lessThan(to, from), from, to) };
     }
     case StringRangeMethod::Substring: {
@@ -403,6 +409,8 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
         if (!second)
             return { from, length };
         Word32 to = clampToLength(*second, length, false);
+        if (from.value()->isInt32(0))
+            return { from, to };
         Condition isReversed = greaterThan(from, to);
         return { select(isReversed, to, from), select(isReversed, from, to) };
     }
@@ -452,8 +460,11 @@ void StringEmitter::generateFlattenString(const ValueContext& value)
     LBasicBlock isRope = newBlock();
     LBasicBlock continuation = newBlock();
 
+    // A text that was just put together of two or more is a rope unless all but one were empty.
+    Opcode producer = m_function.at(value->stringOperand()).opcode;
+    bool isLikelyRope = producer == Opcode::Add || producer == Opcode::Strcat;
     Pointer fiber = loadField<Pointer>(string, m_heaps.JSString_value);
-    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), normalEdge(isFlat), unlikelyEdge(isRope));
+    m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), isLikelyRope ? unlikelyEdge(isFlat) : normalEdge(isFlat), isLikelyRope ? normalEdge(isRope) : unlikelyEdge(isRope));
 
     m_out.appendTo(isFlat);
     ValueFromBlock cellWhenFlat = m_out.anchor(string.value());

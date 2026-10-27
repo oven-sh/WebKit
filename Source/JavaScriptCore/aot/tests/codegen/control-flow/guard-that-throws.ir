@@ -79,5 +79,5 @@ function f1 name="rootOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CHECK: Patchpoint({{*}}Terminal|ExitsSideways{{*}}:ThrowNewError)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 4, patchpoints: 0, rare instructions: 3
-# ARM64: instructions: 3, patchpoints: 0, rare instructions: 3
+# X64: instructions: 4, patchpoints: 0, rare instructions: 2
+# ARM64: instructions: 3, patchpoints: 0, rare instructions: 2

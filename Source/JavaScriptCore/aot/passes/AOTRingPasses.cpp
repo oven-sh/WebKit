@@ -38,6 +38,7 @@
 #include "AOTStringArena.h"
 #include "AOTStringTable.h"
 #include "AOTStronglyConnectedComponents.h"
+#include "AOTSwitchWindow.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
@@ -1957,40 +1958,63 @@ struct ControlFlowSimplifier {
     {
         std::optional<TypeTestBranches> typeTests;
         std::optional<SlotValueTests> slotValueTests;
+        std::optional<TestsOfSameValues> testsOfSameValues;
         if (context.mayDecideTestsAcrossBlocks) {
             typeTests.emplace(analyses);
             slotValueTests.emplace(analyses, builder.types(), typeTests->blocksThatBranchOnTypeTest());
+            testsOfSameValues.emplace(analyses, builder.types());
         }
-        Vector<Edge> decided;
-        for (BlockID block : reachableBlocks) {
-            if (function.at(block).terminator.kind != TerminatorKind::Branch)
-                continue;
-            Edge edge { block, 0 };
-            switch (typeTests ? evaluateCondition(analyses, *typeTests, *slotValueTests, block) : evaluateConditionByDefinitions(analyses, block)) {
-            case KnownBoolean::Unknown:
-                continue;
-            case KnownBoolean::True:
-                break;
-            case KnownBoolean::False:
-                edge.targetIndex = 1;
-                break;
+        auto decide = [&](std::span<const BlockID> blocks, NOESCAPE const Invocable<KnownBoolean(BlockID)> auto& evaluate) {
+            Vector<Edge> decided;
+            for (BlockID block : blocks) {
+                if (function.at(block).terminator.kind != TerminatorKind::Branch)
+                    continue;
+                Edge edge { block, 0 };
+                switch (evaluate(block)) {
+                case KnownBoolean::Unknown:
+                    continue;
+                case KnownBoolean::True:
+                    break;
+                case KnownBoolean::False:
+                    edge.targetIndex = 1;
+                    break;
+                }
+                if (canDecide(edge))
+                    decided.append(edge);
             }
-            if (canDecide(edge))
-                decided.append(edge);
-        }
-        mayFindMoreAtOnce |= typeTests && typeTests->gaveUpOnLongWays();
-        if (decided.isEmpty())
-            return;
+            if (decided.isEmpty())
+                return false;
 
-        for (Edge edge : decided)
-            raiseFrequenciesBehind(analyses, function, edge);
-        for (Edge edge : decided)
-            decideTerminator(builder, edge.from, edge.targetIndex);
-        bool validates = context.build.validates();
-        for (Edge edge : decided)
-            castArgumentsToParameters(builder, edge.from, validates);
+            for (Edge edge : decided)
+                raiseFrequenciesBehind(analyses, function, edge);
+            for (Edge edge : decided)
+                decideTerminator(builder, edge.from, edge.targetIndex);
+            bool validates = context.build.validates();
+            for (Edge edge : decided)
+                castArgumentsToParameters(builder, edge.from, validates);
+            builder.applyInsertions();
+            numberOfChanges += decided.size();
+            return true;
+        };
+        bool didDecide = decide(reachableBlocks.span(), [&](BlockID block) {
+            return typeTests ? evaluateCondition(analyses, *typeTests, *slotValueTests, *testsOfSameValues, block) : evaluateConditionByDefinitions(analyses, block);
+        });
+        mayFindMoreAtOnce |= typeTests && typeTests->gaveUpOnLongWays();
+        // With an edge gone, a block may have come to stand behind one edge of a test.
+        while (didDecide && testsOfSameValues && testsOfSameValues->hasTests()) {
+            analyses.didChangeControlFlow();
+            testsOfSameValues->didChangeControlFlow();
+            didDecide = decide(Vector<BlockID>(analyses.cfg().reversePostOrder()).span(), [&](BlockID block) {
+                return testsOfSameValues->outcomeBehindDominatingTests(block);
+            });
+        }
+        if (!testsOfSameValues)
+            return;
+        auto provenExpectations = testsOfSameValues->takeProvenExpectations();
+        for (const auto& proven : provenExpectations)
+            proveExpectation(builder, proven);
         builder.applyInsertions();
-        numberOfChanges += decided.size();
+        numberOfChanges += provenExpectations.size();
     }
 
     bool simplifyTerminator(BlockID block)
@@ -2058,21 +2082,51 @@ struct ControlFlowSimplifier {
 
         const Type& subjectType = program.typeOf(function, subject);
         Vector<uint32_t, 8> remainingIndexes;
+        uint64_t numberOfListedSubjects = 0;
+        bool sharesWayOfRest = false;
         for (uint32_t index = 0; index < cases.size(); ++index) {
             bool mayMatch = mayStrictlyEqual(subjectType, cases[index]);
+            numberOfListedSubjects += mayMatch;
             if constexpr (std::is_same_v<Case, int64_t>)
                 mayMatch = mayMatch && !isRuledOutByDefinition(program, function, subject, KnownValue::integer(cases[index]));
             if (mayMatch && terminator.targets[index] != terminator.otherwise())
                 remainingIndexes.append(index);
+            else
+                sharesWayOfRest |= mayMatch;
         }
         if (remainingIndexes.isEmpty()) {
             decideTerminator(builder, block, static_cast<uint32_t>(cases.size()));
             return true;
         }
-        if (remainingIndexes.size() == cases.size())
+        // A subject that by its type is one of the listed integers leaves nothing for the rest. The way that most cases take is asked for no more: whatever the other cases let pass goes there.
+        // Where several of many integers go one way, the bits of a window or the rows of a table tell them apart, and those want each of them listed.
+        std::optional<uint32_t> caseThatTakesRest;
+        if constexpr (std::is_same_v<Case, int64_t>) {
+            if (!sharesWayOfRest && subjectType.isInteger() && numberOfListedSubjects == static_cast<uint64_t>(subjectType.integers.maximum - subjectType.integers.minimum) + 1) {
+                size_t greatestNumberOfCases = 0;
+                for (uint32_t index : remainingIndexes) {
+                    size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
+                    if (numberOfCases >= greatestNumberOfCases) {
+                        greatestNumberOfCases = numberOfCases;
+                        caseThatTakesRest = index;
+                    }
+                }
+                if (hasEdgeResults(function, Edge { block, *caseThatTakesRest }) || (greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases))
+                    caseThatTakesRest = std::nullopt;
+            }
+        }
+        if (caseThatTakesRest) {
+            remainingIndexes.removeAllMatching([&](uint32_t index) { return terminator.targets[index] == terminator.targets[*caseThatTakesRest]; });
+            if (remainingIndexes.isEmpty()) {
+                decideTerminator(builder, block, *caseThatTakesRest);
+                return true;
+            }
+        } else if (remainingIndexes.size() == cases.size())
             return false;
 
         Terminator& edited = function.edit(block, terminatorAndEdges).terminator;
+        if (caseThatTakesRest)
+            edited.otherwise() = WTF::move(edited.targets[*caseThatTakesRest]);
         Vector<Case, 8> remainingCases;
         Vector<Target, 2> remainingTargets;
         for (uint32_t index : remainingIndexes) {

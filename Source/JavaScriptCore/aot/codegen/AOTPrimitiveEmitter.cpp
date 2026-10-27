@@ -145,6 +145,11 @@ Integer PrimitiveEmitter::loadImmutable64(ptrdiff_t offset)
     return Integer(m_out.load64(instanceField(m_heaps.AOTInstance_fixedFields, offset)));
 }
 
+Word32 PrimitiveEmitter::loadFilledOnce32(ptrdiff_t offset)
+{
+    return Word32(m_out.load32(instanceField(m_heaps.AOTInstance_fieldsFilledOnce, offset)));
+}
+
 Word32 PrimitiveEmitter::loadMutable32(ptrdiff_t offset)
 {
     return Word32(m_out.load32(mutableInstanceField(offset)));

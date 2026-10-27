@@ -106,7 +106,7 @@ function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=
 # HOT-NEXT: Branch(b@[[isPlain]], Terminal,
 # HOT-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # HOT-LABEL: end of loop
-# X64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
 # X64: instructions: 4, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8
 # ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1

@@ -159,26 +159,20 @@ function f4 module=m0 position=63 kind=Initializer flags=[HasThis, IsChecked, Is
 }
 
 # Calls are inlined everywhere but in the body of the module. The body of the getter stands in place of the read: two loads and a product, no call of the getter.
-# The function hands the product back as a boxed value: it asks whether the double is a 32-bit integer and boxes it as the one or the other.
+# Every way out returns a number, so the product is returned as the double that it is.
 # CHECK-LABEL: name="areaOf" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[box]] = ArgumentReg(
 # CHECK-NEXT: Double b@[[width]] = Load(b@[[box]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@[[height]] = Load(b@[[box]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-NEXT: Double b@[[area]] = Mul(b@[[width]], b@[[height]],
-# CHECK-NEXT: Int64 b@[[truncated]] = Patchpoint(b@[[area]]:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction
-# CHECK-NEXT: Int32 b@[[integer]] = Trunc(b@[[truncated]])
-# CHECK-NEXT: Double b@[[back]] = IToD(b@[[integer]])
-# CHECK: Int32 b@[[isInteger]] = Equal(b@
-# CHECK: Branch(b@[[isInteger]], Terminal)
-# CHECK: Int64 b@[[boxed]] = Phi(
-# CHECK-NEXT: Return(b@[[boxed]], Terminal)
+# CHECK-NEXT: Return(b@[[area]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="areaOf" role=Source
 # NONE-NOT: :CallDirect
 # NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function
 # X64-LABEL: name="areaOf" role=Source
-# X64-NEXT: instructions: 12, patchpoints: 1
+# X64-NEXT: instructions: 3, patchpoints: 0
 # ARM64-LABEL: name="areaOf" role=Source
-# ARM64-NEXT: instructions: 13, patchpoints: 1
+# ARM64-NEXT: instructions: 4, patchpoints: 0

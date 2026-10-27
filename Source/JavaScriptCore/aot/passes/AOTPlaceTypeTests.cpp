@@ -361,6 +361,35 @@ static Expected<bool> readsMemberUnderSymbolOfProgram(FunctionPassContext& conte
     return false;
 }
 
+// A test buys a fast path and costs a copy of what stands behind it.
+static bool paysToTestIn(HeatClass heatClass, bool isCompactFunction, bool paysInColdCode)
+{
+    return heatClass != HeatClass::RunsOnce && (heatClass != HeatClass::Cold || (!isCompactFunction && paysInColdCode));
+}
+
+static bool getsNoTests(const Heat& heat, FunctionAnalyses& analyses)
+{
+    const AnalysisContext& context = analyses.context();
+    const Function& function = analyses.function();
+    // No block runs more often than the function is entered unless it is in a cycle.
+    if (heat.of(context.program, context.id).predicted() == HeatClass::RunsOnce && !analyses.cfg().hasCycle())
+        return true;
+    // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
+    if (function.runsOnlyBehindFailedTest())
+        return true;
+    // The method table calls a selector's lookup only for a receiver that does not match the class definitions, so a guess here would fail.
+    // A guessed direct call would also be one more caller of the method, which keeps the table from naming the method itself.
+    return function.role == FunctionRole::TableLookup;
+}
+
+bool mayPlaceTestsOfAccessesByName(const Heat& heat, FunctionAnalyses& analyses, BlockID block)
+{
+    const AnalysisContext& context = analyses.context();
+    if (!context.build.recordedOptions().usesExpectedTypes() || getsNoTests(heat, analyses))
+        return false;
+    return paysToTestIn(heatClassOf(heat, analyses, block).predicted(), heat.isCompact(context.program, context.id).predicted(), true);
+}
+
 static TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -381,7 +410,6 @@ static TestSites collectTestSites(FunctionPassContext& context)
     TestSites sites = reporter.takeSites();
     for (const TestSite& site : sites.sites)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
-    // A test buys a fast path and costs a copy of what stands behind it.
     BitVector receiversThatMayHaveNoLayout = findReceiversAskedOnlyForNamesDefinedWithoutLayout(context, sites);
     sites.sites.removeAllMatching([&](const TestSite& site) {
         if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
@@ -393,10 +421,9 @@ static TestSites collectTestSites(FunctionPassContext& context)
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use).predicted())
             return true;
-        Expected<HeatClass> heatClass = heatClassOf(context, site.point.block);
         // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
         bool paysInColdCode = site.rule != TestSiteRuleID::ElementAccess && site.rule != TestSiteRuleID::Operator;
-        return heatClass.predicted() == HeatClass::RunsOnce || (heatClass.predicted() == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
+        return !paysToTestIn(heatClassOf(context, site.point.block).predicted(), isCompactFunction, paysInColdCode);
     });
     const CFG& cfg = context.analyses.cfg();
     AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
@@ -3754,15 +3781,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     auto placesTestsBehindRounds = [&] { return heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted(); };
     if (context.isBehindRounds ? !hasUsesLeftByLastRound && !placesTestsBehindRounds() : context.isInRounds && placesTestsBehindRounds())
         return PassOutcome::Unchanged;
-    // No block runs more often than the function is entered unless it is in a cycle.
-    if (heat.of(context.program, context.id).predicted() == HeatClass::RunsOnce && !context.analyses.cfg().hasCycle())
-        return PassOutcome::Unchanged;
-    // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
-    if (context.function.runsOnlyBehindFailedTest())
-        return PassOutcome::Unchanged;
-    // The method table calls a selector's lookup only for a receiver that does not match the class definitions, so a guess here would fail.
-    // A guessed direct call would also be one more caller of the method, which keeps the table from naming the method itself.
-    if (context.function.role == FunctionRole::TableLookup)
+    if (getsNoTests(heat, context.analyses))
         return PassOutcome::Unchanged;
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);

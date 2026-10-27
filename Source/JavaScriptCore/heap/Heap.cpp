@@ -25,6 +25,7 @@
 #include "JSCJSValueInlines.h"
 
 #include "AOTRemovableFeature.h"
+#include "AddressSpaceBudget.h"
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "ButterflyInlines.h"
@@ -2398,6 +2399,9 @@ void Heap::runCollectionEpilogue()
     if (shouldSweepSynchronously())
         sweepSynchronously();
 
+    if (MarkedBlockCage::isRequired())
+        keepAddressSpaceBallast();
+
     if (Options::logGC()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
         dataLog((after - before).milliseconds(), "ms]\n");
@@ -2944,6 +2948,15 @@ bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocat
 {
     if (!MarkedBlockCage::isRequired())
         return false;
+#if USE(MIMALLOC)
+    // Storage comes from malloc.
+    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get()) {
+        if (!bmalloc::api::tryReleasePieceOfAddressSpaceBallast())
+            return false;
+        MarkedBlockCage::didUseAddressSpaceBallast(vm());
+        return true;
+    }
+#endif
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())
             return false;
@@ -2969,19 +2982,6 @@ size_t Heap::memoryLimitForGrowth()
 bool Heap::currentThreadIsDoingGCWork()
 {
     return Thread::mayBeGCThread() || mutatorState() != MutatorState::Running;
-}
-
-void Heap::didChangeVisitedExtraMemory(size_t reported, size_t current)
-{
-    size_t* counter = &m_extraMemorySize;
-    for (;;) {
-        size_t oldSize = *counter;
-        CheckedSize checkedNewSize = oldSize - std::min(oldSize, reported);
-        checkedNewSize += current;
-        size_t newSize = checkedNewSize.hasOverflowed() ? std::numeric_limits<size_t>::max() : checkedNewSize.value();
-        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
-            return;
-    }
 }
 
 void Heap::reportExtraMemoryVisited(size_t size)

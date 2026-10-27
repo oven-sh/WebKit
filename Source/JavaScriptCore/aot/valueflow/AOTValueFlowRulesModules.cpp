@@ -632,6 +632,15 @@ static bool mayCaptureDefaultMember(SyntheticExportRule rule)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The children of a module object that is handed out hold, under `exports`, what its require() has answered for a file that is no CommonJS file.
+static void showAnswerOfRequireAmongChildren(ValueFlowRuleContext& context, ModuleID required)
+{
+    const Module& module = context.program().at(required);
+    bool hasObjectMadeByRequire = !module.flags.contains(ModuleFlags::IsLibrary) && (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::Data);
+    if (hasObjectMadeByRequire && namesWaysToModuleObjects(context.program()))
+        connect(context, requiredValueOf(context, required), ValueFlowProgramNodes::escaped());
+}
+
 static void followModuleObject(ValueFlowRuleContext& context, ModuleID id)
 {
     const Module& module = context.program().at(id);
@@ -655,6 +664,10 @@ static void followModuleObject(ValueFlowRuleContext& context, ModuleID id)
         context.connect(variable, context.written(moduleObject, ValueFlowName::property(key)));
         connect(context, ownPropertyOf(context, moduleObject, key), variable);
         context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), children);
+        for (const ModuleRequest& request : module.requests) {
+            if (request.kind == ModuleRequestKind::Require)
+                showAnswerOfRequireAmongChildren(context, request.target);
+        }
     }
     if (!objectsOfRequiredModules.isEmpty() && context.holdsAnyOf(children, handedOut))
         context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), moduleObject);
@@ -701,6 +714,26 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         connect(context, ownPropertyOf(context, values, key), variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
     }
+}
+
+// A require() that the run time answers: the file has no request for the module.
+static void followModuleObjectsOfRequire(ValueFlowRuleContext& context, ModuleID referrer, ModuleID required)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (!referrer || !context.program().at(referrer).exportsVariable)
+        return;
+    ValueFlowObjectID parent = universe.objectOf(Builtins::ModuleObject, referrer);
+    ValueFlowObjectID child = universe.objectOf(Builtins::ModuleObject, required);
+    if (!parent)
+        return;
+    ValueFlowNodeID handedOut = context.nodes().ofHost(ValueFlowHostNode::ModuleObjectsHandedOut);
+    if (context.holdsAnyOf(only(context, parent), handedOut)) {
+        if (child)
+            context.add(context.nodes().ofHost(ValueFlowHostNode::ChildrenOfModuleObjects), only(context, child));
+        showAnswerOfRequireAmongChildren(context, required);
+    }
+    if (child && context.holdsAnyOf(only(context, child), handedOut))
+        context.add(context.nodes().ofHost(ValueFlowHostNode::ParentsOfModuleObjects), only(context, parent));
 }
 
 static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
@@ -770,8 +803,11 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
     }
 
     ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::UnseenCode);
+    // The text alone can name what stands in its scope: nobody has handed it to a value nobody knows.
+    ValueSetID lettingInUnseenCode = context.universe().builtinTables().heap().objectsThatLetInUnseenCode();
     auto open = [&](ValueFlowNodeID location) {
-        context.connect(location, ValueFlowProgramNodes::escaped());
+        context.connect(context.masked(location, ValueSets::complement(lettingInUnseenCode)), ValueFlowProgramNodes::escaped());
+        context.connect(context.masked(location, lettingInUnseenCode), nodes.ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatEvaluatedTextNames));
         context.add(location, unknown);
     };
 
@@ -840,6 +876,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
     }
     case Opcode::RequireModule:
         requireModule(statement, context, operation.module());
+        followModuleObjectsOfRequire(context, operation.referrer(), operation.module());
         return;
     case Opcode::EvaluateModule:
         noteRequest(context, statement.function, operation.module());

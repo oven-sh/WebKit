@@ -10,6 +10,10 @@
 # RUN(NONE): lower-to-b3 optimized f1
 # REQUIRES(NONE): unsanitized-code
 # RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -51,7 +55,7 @@ function f1 name="isHttp" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v8
 }
 
-# `url.slice(0, 4) === "http"` makes no text for the slice: its bounds are clamped by selects, its length is compared with 4, and four bytes of the subject are compared with one immediate (0x70747468 is "http").
+# `url.slice(0, 4) === "http"` makes no text for the slice: its end is the smaller of the length and 4, its length is compared with 4, and four bytes of the subject are compared with one immediate (0x70747468 is "http").
 # CHECK-LABEL: name="isHttp" role=Source
 # CHECK: Int32 b@[[flatLength]] = Load(b@{{*}}, offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length,
 # CHECK: Select(b@{{*}}:StringRange)
@@ -60,14 +64,20 @@ function f1 name="isHttp" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CHECK: Int32 b@[[four]] = Load(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:StringRangeEqualsLiteral)
 # CHECK: Int32 b@{{*}} = Equal(b@[[four]], $1886680168(
 # CHECK-LABEL: end of function
-# No substring is made and no two texts are compared.
+# No substring is made, no two texts are compared, no cell is made for the literal, and a range that starts at 0 adds nothing to the address of the characters.
 # NONE-LABEL: name="isHttp" role=Source
 # NONE-NOT: :StrictEq)
 # NONE-NOT: :StringEqualsLiteral)
 # NONE-NOT: :CallInline)
+# NONE-NOT: :String)
+# NONE-NOT: Shl($0(
 # NONE-LABEL: end of function
-# A cell is made for the literal on either way to the comparison.
+# The one call is for a rope.
 # CALLS-LABEL: f3: size=
-# CALLS-NEXT: stub CreateConstant.NewString x2
 # CALLS-NEXT: stub RopeCharacters x1
 # CALLS-NEXT: f4: size=
+# That call follows the calling convention, so the counts leave Windows out.
+# X64-LABEL: name="isHttp" role=Source
+# X64-NEXT: instructions: 37, patchpoints: 4
+# ARM64-LABEL: name="isHttp" role=Source
+# ARM64-NEXT: instructions: 38, patchpoints: 4

@@ -95,7 +95,7 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
 
     EnumeratorFields fields = loadFields(enumerator);
     Integer nameIndex = nameIndexOf(fields, position);
-    branch(isInStructurePart(fields, nameIndex), { normalEdge(isStructureName), normalEdge(isNotStructureName) });
+    branch(isOwnName(fields, nameIndex), { normalEdge(isStructureName), normalEdge(isNotStructureName) });
 
     m_out.appendTo(isStructureName);
     takeSlowPathUnless(m_out, isCell(object), slowPath);
@@ -128,6 +128,7 @@ ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
         .cachedStructureID = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID),
         .indexedLength = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength),
         .endStructurePropertyIndex = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex),
+        .endOwnPropertyIndex = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex),
         .endGenericPropertyIndex = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex),
     };
 }

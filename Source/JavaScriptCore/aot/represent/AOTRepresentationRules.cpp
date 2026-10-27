@@ -652,6 +652,14 @@ bool readsDoubleOutOfBytes(const Terminator& terminator)
     return builtin && builtinsThatMoveBytes.contains(*builtin);
 }
 
+bool makesTheOneNaNOfBytes(const RepresentationInputs& inputs, const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return readsDoubleOutOfBytes(value) && value.representation != Representation::ImpureDouble;
+    std::optional<InlineBuiltin> builtin = inputs.program.builtins().at(value.overload()).code.implementation.inlineBuiltin;
+    return builtin && builtinsThatMoveBytes.contains(*builtin);
+}
+
 // Arithmetic hands the sign and the payload of a NaN on to its result.
 template<typename User>
 static bool handsBitsOfNaNOnToResult(const User& user)

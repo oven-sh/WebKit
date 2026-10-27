@@ -98,7 +98,13 @@ function f5 name="takeArgument" parameters=[{type=undefined|null|L1 flags=[IsExp
 function f6 name="calleeOutOfAVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g1
     v2 = Call v1, -, v0 calleeName="parse"
-    v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType
-    v4 = PropGet v3 key="otherId"
-    Return v4
+    v3 = Boolean boolean=true
+    Branch v3 -> taken b1(v2), notTaken b2()
+  b1(v4):
+    v5 = Convert v4 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="otherId"
+    Return v6
+  b2():
+    v7 = NewObject layout=L0
+    Jump -> next b1(v7)
 }
