@@ -91,6 +91,24 @@ inline bool isLikelySuccessor(const BasicBlock* block, const FrequentedBlock& su
     return isLikelySuccessor(likeliestSuccessorClass(block), successor);
 }
 
+// Whether the poll may leave the turns of its loop for a place that is passed once in many turns.
+JS_EXPORT_PRIVATE bool canPollBetweenStretches(const Procedure&, const Value*);
+
+enum class BoundLiesBeyond : bool { No, Yes };
+
+// A counter goes from a place towards a bound, one step a turn, for as long as relation(counter, bound) holds.
+struct StretchOfTurns {
+    Value* from { nullptr };
+    Value* bound { nullptr };
+    Opcode relation { Oops };
+    int64_t step { 0 };
+    // Whether relation(from, bound) is known to hold.
+    BoundLiesBeyond boundLiesBeyond { BoundLiesBeyond::No };
+};
+
+// The bound, or the place that the counter reaches in Limits::maxTurnsWithoutPoll turns, whichever is nearer. A loop that is tested against it may go without a poll.
+JS_EXPORT_PRIVATE Value* appendBoundOfStretch(Procedure&, BasicBlock*, Origin, const StretchOfTurns&);
+
 JS_EXPORT_PRIVATE BasicBlock* findPreHeader(const NaturalLoops&, const NaturalLoop&);
 JS_EXPORT_PRIVATE IndexSet<BasicBlock*> findLikelyBlocks(const NaturalLoops&, const NaturalLoop&);
 JS_EXPORT_PRIVATE bool hasLikelyBackEdge(const NaturalLoop&, const IndexSet<BasicBlock*>& likelyBlocks);

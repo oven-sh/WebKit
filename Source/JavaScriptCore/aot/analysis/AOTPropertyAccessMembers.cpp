@@ -250,6 +250,11 @@ static MemberMutability linkMutabilityOf(const ClassFlow& classFlow, ClassSide s
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool mayReplacePrototypeObject(const Layout& classLayout)
+{
+    return classLayout.has(LayoutFlags::IsConstructorFunction) && classLayout.classFlow.prototypeProperty != MemberMutability::Fixed;
+}
+
 NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide side, MemberConditions& conditions)
 {
     const Layout& layout = program.at(classLayout);
@@ -260,6 +265,9 @@ NextHolder nextHolderOf(const Program& program, LayoutID classLayout, ClassSide 
     switch (layout.flow.baseState) {
     case BaseState::Layout:
         next = { ChainStep::CompiledClass, layout.flow.base, { } };
+        // A class is linked to the object that the prototype property of its parent holds when the class is defined.
+        if (side == ClassSide::Prototype && mayReplacePrototypeObject(program.at(layout.flow.base)))
+            link = MemberMutability::Unknown;
         break;
     case BaseState::BuiltinClass:
         next = { ChainStep::BuiltinClass, { }, layout.flow.baseClass };

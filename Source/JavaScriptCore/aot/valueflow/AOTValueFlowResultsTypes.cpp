@@ -1436,34 +1436,54 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         for (const Write& write : ledger.writersOf(Place::field(program, id, index))->seen().predicted()) {
             if (write.form != WriteForm::AtCreation || !write.site)
                 continue;
-            auto liesInside = [&] {
-                if (ValueSets::isComplement(write.arrives))
-                    return false;
-                ValueSetID primitives = maker.intersect(write.arrives, inputs.universe().primitives());
-                if (!storedNumbers.mayBeOtherThanIntegers)
-                    primitives = maker.intersect(primitives, ValueSets::complement(numbersThatAreNoIntegers));
-                if (!inputs.sets().isSubset(primitives, primitivesInside))
-                    return false;
-                return everyObjectLiesInside || positions.isSurelyInside(maker.intersect(write.arrives, inputs.universe().objects()), asRead);
-            };
-            if (!liesInside())
-                update.valuesListedWithOtherTypes.append({ index, write.function, write.site });
+            if (ValueSets::isComplement(write.arrives)) {
+                update.valuesListedWithOtherTypes.append({ .field = index, .function = write.function, .allocation = write.site, .primitivesOutside = Primitive::All });
+                continue;
+            }
+            ValueSetID primitives = maker.intersect(write.arrives, inputs.universe().primitives());
+            if (!storedNumbers.mayBeOtherThanIntegers)
+                primitives = maker.intersect(primitives, ValueSets::complement(numbersThatAreNoIntegers));
+            ValueSetID outside = maker.intersect(primitives, ValueSets::complement(primitivesInside));
+            if (inputs.sets().isEmpty(outside) && (everyObjectLiesInside || positions.isSurelyInside(maker.intersect(write.arrives, inputs.universe().objects()), asRead)))
+                continue;
+            uint16_t primitivesOutside = 0;
+            inputs.sets().anyMember(outside, [&](ValueFlowObjectID member) {
+                primitivesOutside |= positions.typeOfObject(member).primitives;
+                return false;
+            });
+            update.valuesListedWithOtherTypes.append({ .field = index, .function = write.function, .allocation = write.site, .primitivesOutside = primitivesOutside });
         }
     };
+    ValueSetID fractions = maker.of(ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber));
     for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+        const Field& field = layout.fields[index];
         FieldFlow& flow = update.fields[index].flow;
-        const Type& asRead = program.at(layout.fields[index].declared.written());
         if (flow.location.writers != WriterState::AllKnown) {
-            ValueSetID primitivesInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.written());
+            const Type& asRead = program.at(field.declared.written());
+            ValueSetID primitivesInside = inputs.universe().membersSurelyInside(maker, program, field.declared.written());
             if (asRead.primitives & Primitive::Integer && contents.storedNumbers[id.index()][index].integers.isSubsetOf(asRead.integers))
                 primitivesInside = maker.unite(primitivesInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
             noteValuesListedWithOtherTypes(index, asRead, primitivesInside, false);
             continue;
         }
         ValueSetID stored = contents.stored[id.index()][index];
+        const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
+        auto primitivesAmong = [&](ValueSetID values) {
+            ValueSetID primitives = maker.intersect(values, inputs.universe().primitives());
+            return storedNumbers.mayBeOtherThanIntegers ? primitives : maker.intersect(primitives, ValueSets::complement(numbersThatAreNoIntegers));
+        };
+        // A field that was narrowed to integers which the numbers stored into it outgrow has the type again that it had before, where that type holds all that is stored.
+        // Every sum of integers may be a whole number. A field that is counted with stays an integer, which is added to in memory and is an index as it stands, until a fraction arrives.
+        DeclaredType declared = field.declared;
+        if (TypeID before = field.typeBeforeNarrowing) {
+            ValueSetID numbersThatOutgrowField = field.flags.contains(FieldFlags::IsCountedWith) ? fractions : numbersThatAreNoIntegers;
+            if (inputs.sets().meet(primitivesAmong(stored), numbersThatOutgrowField) && positions.isSurelyInside(stored, program.at(before), before))
+                declared.changeType(Proven::byTestsAtStores(ExpectedType(before)));
+        }
+        const Type& asRead = program.at(declared.written());
         bool startsAbsent = asRead.primitives & Primitive::Absent && !inputs.sets().isEmpty(stored);
         auto resultWith = [&](ValueSetID held) {
-            return positions.resultAt(layout.fields[index].declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
+            return positions.resultAt(declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
         };
         ValueFlowPositionResult result = resultWith(stored);
         bool hasUnobservedDefinition = fieldsWithUnobservedDefinition.get(index);
@@ -1473,21 +1493,19 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             result = resultWith(stored);
         }
         update.fields[index].position = positions.updateFrom(result, asRead);
+        if (declared != field.declared && !update.fields[index].position.type)
+            update.fields[index].position.type = declared.written();
 
-        ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.written());
+        ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, declared.written());
         bool storesOnlyObjectsOfType = (result.proof == ValueFlowProof::Proven && !positions.holdsObjectThatMayLieOutside(stored, asRead)) || result.proof == ValueFlowProof::NothingArrives
             || positions.isSurelyInside(maker.intersect(stored, inputs.universe().objects()), asRead);
-        const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
         Range storedIntegers = storedNumbers.integers;
         bool isNeverEmptied = flow.location.initialization == InitializationState::SetAtCreation && flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined });
         bool leavesRoomForMarkers = asRead.hasOnlyPrimitives(Primitive::Integer) && asRead.integers == Range { minInlineInt32, INT32_MAX };
         bool needsNoMarkers = isNeverEmptied && leavesRoomForMarkers && storedIntegers.isSubsetOf(Range::int32());
         if (asRead.primitives & Primitive::Integer && (storedIntegers.isSubsetOf(asRead.integers) || needsNoMarkers))
             surelyInside = maker.unite(surelyInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
-        ValueSetID storedPrimitives = maker.intersect(stored, inputs.universe().primitives());
-        if (!storedNumbers.mayBeOtherThanIntegers)
-            storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(numbersThatAreNoIntegers));
-        bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(storedPrimitives, surelyInside);
+        bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(primitivesAmong(stored), surelyInside);
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
         else
@@ -1499,7 +1517,7 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         if (needsNoMarkers && !storedIntegers.isSubsetOf(asRead.integers) && flow.stability.contains(FieldStability::IsNeverStoredWithOtherType))
             update.fields[index].position = { .type = types.intern(Type::integer(Range::int32())), .isProven = true };
         bool isEverFilled = hasUnobservedDefinition || !inputs.sets().isEmpty(stored) || !asRead.isJavaScriptValue();
-        bool slotStaysWide = slotTakesEveryValue(program, layout.fields[index]) && !inputs.sets().meet(stored, inputs.universe().closures());
+        bool slotStaysWide = slotTakesEveryValue(program, field) && !inputs.sets().meet(stored, inputs.universe().closures());
         bool staysInSlot = flow.stability.containsAll({ FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined }) && (flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || slotStaysWide);
         if (isEverFilled && flow.location.initialization == InitializationState::SetAtCreation && staysInSlot) {
             flow.occupancy = Occupancy::AlwaysFilled;

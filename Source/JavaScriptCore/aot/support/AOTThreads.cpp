@@ -640,7 +640,7 @@ ChunksOfIndices divideIntoChunks(unsigned count, std::span<const uint32_t> longe
 void sortRunsAndMerge(const ParallelLoops& loops, const SortSteps& steps, char* list, size_t count)
 {
     constexpr size_t numberOfRuns = 16;
-    size_t elementSize = steps.elementSize;
+    size_t elementSize = steps.elementSize();
     size_t numberOfWords = (count * elementSize + sizeof(uint64_t) - 1) / sizeof(uint64_t);
     Vector<uint64_t> scratchBuffer = createVectorWithCapacityInParallel<uint64_t>(loops, numberOfWords);
     scratchBuffer.grow(numberOfWords);
@@ -672,7 +672,7 @@ void sortRunsAndMerge(const ParallelLoops& loops, const SortSteps& steps, char* 
                 size_t inSecond = 0;
                 for (size_t length = part ? sizeOfSecond : 0; length;) {
                     size_t half = length / 2;
-                    if (steps.isLess(steps.order, second + (inSecond + half) * elementSize, first + inFirst * elementSize)) {
+                    if (steps.isLess(second + (inSecond + half) * elementSize, first + inFirst * elementSize)) {
                         inSecond += half + 1;
                         length -= half + 1;
                     } else
@@ -682,7 +682,7 @@ void sortRunsAndMerge(const ParallelLoops& loops, const SortSteps& steps, char* 
             };
             auto [firstBegin, secondBegin] = beginOf(index % partsPerMerge);
             auto [firstEnd, secondEnd] = beginOf(index % partsPerMerge + 1);
-            steps.merge(steps.order, first + firstBegin * elementSize, first + firstEnd * elementSize, second + secondBegin * elementSize, second + secondEnd * elementSize, to + (startOfFirst + firstBegin + secondBegin) * elementSize);
+            steps.merge(first + firstBegin * elementSize, first + firstEnd * elementSize, second + secondBegin * elementSize, second + secondEnd * elementSize, to + (startOfFirst + firstBegin + secondBegin) * elementSize);
         });
         std::swap(from, to);
     }

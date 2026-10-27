@@ -1,0 +1,6 @@
+# The built-in members of a function type are functions
+# RUN: print
+# DIAGNOSTIC: IdOutOfRange
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="step" role=Signature results=[{type=anything}] builtinMembers=[Math]

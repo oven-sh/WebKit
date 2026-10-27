@@ -2406,6 +2406,9 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         unit.function = editor.addFunctionLike(unit.body, WTF::move(head));
         created.append(unit.function);
         unitOfCreated.append(index);
+        // Flow saw the body take these as values. The function reads them.
+        for (const ValueOfVariable& taken : unit.valuesOfVariables)
+            editor.at(taken.variable).flow.reads = ReadState::Unknown;
         for (VariableID id : unit.variables) {
             plan.unitOf[id.index()] = index;
             ++numberOfVariablesFilled;

@@ -78,6 +78,7 @@
 #include "ObjectPrototype.h"
 #include "Opcode.h"
 #include "Options.h"
+#include "ReservedRangeHeap.h"
 #include "SlotVisitorInlines.h"
 #include "Symbol.h"
 #include "VM.h"
@@ -537,6 +538,10 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
+#if USE(MIMALLOC)
+    if (!t_vmOfThread)
+        g_numberOfVMsWithAddressSpaceBallast.fetch_add(1, std::memory_order_relaxed);
+#endif
     keepAddressSpaceBallast();
 #if USE(MIMALLOC)
     t_vmOfThread = &vm;
@@ -563,8 +568,8 @@ void Instance::destroy(Instance* instance)
         vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
 #if USE(MIMALLOC)
-        if (vmState.instances.isEmpty())
-            t_vmOfThread = nullptr;
+        if (vmState.instances.isEmpty() && std::exchange(t_vmOfThread, nullptr))
+            g_numberOfVMsWithAddressSpaceBallast.fetch_sub(1, std::memory_order_relaxed);
 #endif
     }
     vmState.counters->add(instance->runtime.counters);
@@ -741,12 +746,6 @@ static ALWAYS_INLINE void* operationAddress()
         return tagCFunctionPtr<void*, OperationPtrTag>(operation);
 }
 
-template<Entry entry, auto operation, typename Function>
-struct CountedCall {
-    static constexpr auto call = operation;
-};
-
-#if HAVE_MUST_TAIL_CALL
 static ALWAYS_INLINE VM& vmFor(VM* vm) { return *vm; }
 static ALWAYS_INLINE VM& vmFor(Instance* instance) { return *instance->vm; }
 static ALWAYS_INLINE VM& vmFor(JSGlobalObject* globalObject) { return globalObject->vm(); }
@@ -755,9 +754,28 @@ static ALWAYS_INLINE VM& vmFor(const JSCell* cell) { return cell->vm(); }
 template<typename First>
 concept CanFindVM = requires(First first) { vmFor(first); };
 
+// No primary definition: an operation whose calling convention matches no specialization fails to compile instead of going uncounted.
+template<Entry entry, auto operation, typename Function>
+struct CountedCall;
+
+template<Entry entry, auto operation, typename Result, typename... Parameters, bool isNoexcept>
+struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (Parameters...) noexcept(isNoexcept)> {
+    static constexpr bool isCounted = false;
+    static constexpr auto call = operation;
+};
+
+#if AOT_LEAVES_PRESERVE_MOST
+template<Entry entry, auto operation, typename Result, typename... Parameters, bool isNoexcept>
+struct CountedCall<entry, operation, Result AOT_PRESERVE_MOST_LEAF_ATTRIBUTES (Parameters...) noexcept(isNoexcept)> {
+    static constexpr bool isCounted = false;
+    static constexpr auto call = operation;
+};
+#endif
+
 template<Entry entry, auto operation, typename Result, typename First, typename... Rest, bool isNoexcept>
     requires CanFindVM<First>
-struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)> {
+struct CountedCall<entry, operation, Result JIT_OPERATION_ATTRIBUTES (First, Rest...) noexcept(isNoexcept)> {
+    static constexpr bool isCounted = true;
     static Result JIT_OPERATION_ATTRIBUTES call(First first, Rest... rest) noexcept(isNoexcept)
     {
         vmFor(first).aotState().runtimeTable->didCall(entry);
@@ -765,10 +783,9 @@ struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)
             if (ArrivalCounts* arrivals = first->state ? first->state->arrivalCounts.get() : nullptr)
                 arrivals->didCallOperation(entry);
         }
-        MUST_TAIL_CALL return operation(first, rest...);
+        AOT_MUST_TAIL_CALL return operation(first, rest...);
     }
 };
-#endif
 
 // A leaf that preserves most registers is handed characters and numbers and no instance.
 static constexpr bool isCalledWithoutCollection(Entry entry)
@@ -788,11 +805,22 @@ static constexpr auto functionInTable = [] {
         return operation;
 }();
 
+template<Entry entry, auto operation>
+using CountedCallInTable = CountedCall<entry, functionInTable<entry, operation>, std::remove_pointer_t<decltype(operation)>>;
+
+static constexpr bool isHandedWhatLeadsToVM(Entry entry)
+{
+    if (std::optional<RuntimeOperation> operation = runtimeOperationOf(entry))
+        return !isLeaf(*operation);
+    return entry != Entry::operationAOTReportBrokenClaim;
+}
+
 template<bool countsCalls>
 static void fillOperations(void** entries)
 {
 #define AOT_FILL_OPERATION(name) \
-    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, functionInTable<Entry::name, &name>, std::remove_pointer_t<decltype(&name)>>::call : functionInTable<Entry::name, &name>>();
+    static_assert(CountedCallInTable<Entry::name, &name>::isCounted || !isHandedWhatLeadsToVM(Entry::name)); \
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCallInTable<Entry::name, &name>::call : functionInTable<Entry::name, &name>>();
 #define AOT_FILL_SCHEMA_OPERATION(name) AOT_FILL_OPERATION(operationAOT##name)
 #define AOT_TRAP_ENTRY(name) \
     entries[static_cast<unsigned>(Entry::name)] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
@@ -803,14 +831,14 @@ static void fillOperations(void** entries)
 #undef AOT_FILL_OPERATION
 }
 
-#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+#if USE(MIMALLOC)
 // Stores that leave the stubs' own roads may add a property, and what the engine then asks of malloc may not fail. While pieces of the ballast are missing such work would live on the rest of it.
 // So the thread gets its error ahead of the operation, where nothing has been changed yet. Only the table of a process under a limit on address space has these, and the operations have no test for it.
 template<Entry entry, auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
 struct CallWithWholeBallast;
 
 template<Entry entry, auto operation, typename Result, typename... Rest, bool isNoexcept>
-struct CallWithWholeBallast<entry, operation, Result(Instance*, Rest...) noexcept(isNoexcept)> {
+struct CallWithWholeBallast<entry, operation, Result JIT_OPERATION_ATTRIBUTES (Instance*, Rest...) noexcept(isNoexcept)> {
     static Result JIT_OPERATION_ATTRIBUTES call(Instance* instance, Rest... rest) noexcept(isNoexcept)
     {
         if (!bmalloc::api::hasWholeAddressSpaceBallast()) [[unlikely]] {
@@ -823,7 +851,7 @@ struct CallWithWholeBallast<entry, operation, Result(Instance*, Rest...) noexcep
                     OPERATION_RETURN(scope);
             }
         }
-        MUST_TAIL_CALL return operation(instance, rest...);
+        AOT_MUST_TAIL_CALL return operation(instance, rest...);
     }
 };
 
@@ -901,14 +929,14 @@ static size_t entryPagesSize()
 RuntimeTable::RuntimeTable(VM& vm)
 #if defined(BUN_HARDENED)
     : m_entries(static_cast<void**>(reserveGuardedPages(entryPagesSize(), OSAllocator::UnknownUsage)))
-    , m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
+    , m_countsCalls(!!Options::aotCountsPath())
 #else
-    : m_countsCalls(HAVE_MUST_TAIL_CALL && Options::aotCountsPath())
+    : m_countsCalls(!!Options::aotCountsPath())
 #endif
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
-#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+#if USE(MIMALLOC)
     if (hasAddressSpaceLimit() && !m_countsCalls)
         callStoresWithWholeBallast(m_entries);
 #endif
@@ -1213,15 +1241,19 @@ PagesForNewThread tryReservePagesForFirstThread()
     return { pages, !pages };
 }
 
-PagesForNewThread tryReservePagesForNewThread()
+PagesForNewThread tryReservePagesForNewThread(bool threadsAreEnding)
 {
     // The stack of the thread, and what the threads that run take meanwhile.
-    AOT_THRESHOLD(size_t, sizeToLeaveFree, 10 * MB);
+    AOT_THRESHOLD(size_t, sizeToLeaveFreeForThread, 10 * MB);
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
     keepAddressSpaceBallast();
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
+    size_t sizeToLeaveFree = sizeToLeaveFreeForThread;
+    // Once every thread that is starting has its stack, the range of the cells can still take more.
+    if (threadsAreEnding)
+        sizeToLeaveFree = numberOfThreads * sizeToLeaveFreeForThread + ReservedRangeHeap::addressSpaceToGrow();
     void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
     if (!pages) {
         --s_numberOfThreadsStarting;
@@ -1277,7 +1309,7 @@ static void* tryTakePagesOfThread(size_t bytes)
 }
 #else
 PagesForNewThread tryReservePagesForFirstThread() { return { }; }
-PagesForNewThread tryReservePagesForNewThread() { return { }; }
+PagesForNewThread tryReservePagesForNewThread(bool) { return { }; }
 void releasePagesForNewThread(void*) { }
 void adoptPagesForNewThread(void*) { }
 void releaseUnusedPagesOfThread() { }

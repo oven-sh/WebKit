@@ -443,6 +443,7 @@ private:
         options.validatesBackEnd = hasFlag(checks, CheckSet::ValidateBackEnd);
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
+        options.checksDecidedComparisons = hasFlag(checks, CheckSet::DecidedComparisons);
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);

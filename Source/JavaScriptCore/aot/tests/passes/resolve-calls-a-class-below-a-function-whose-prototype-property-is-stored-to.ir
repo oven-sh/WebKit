@@ -1,0 +1,75 @@
+# function Meter() {}  Meter.prototype = other  class Fine extends Meter {}
+# The prototype object of Fine inherits from whatever Meter.prototype holds when Fine is defined. Where the property may be stored to, that it is the prototype object of Meter's class is tested,
+# though nobody changes the link afterwards. Below a function that keeps its prototype object there is nothing to test
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Meter" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true members=[{key="read" function=f1 mutability=Fixed}, {key="size" kind=Getter function=f2 mutability=Fixed}] namedMembers=[{key="read" function=f1 mutability=Fixed}, {key="size" kind=Getter function=f2 mutability=Fixed}]}
+layout L1 kind=Instance name="Fine" base=L0 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Finer" base=L1 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Scale" constructor=f5 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true members=[{key="read" function=f1 mutability=Fixed}] namedMembers=[{key="read" function=f1 mutability=Fixed}]}
+layout L4 kind=Instance name="Coarse" base=L3 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Meter" flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+    Return
+}
+function f1 name="read" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="Fine" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Finer" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Scale" flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+    Return
+}
+function f6 name="Coarse" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f7 name="super-call" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f3}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="read"
+    v4 = Call v3, v0 calleeKey="read"
+    Return v4
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: v3: f1 = NewClosure function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="read"
+}
+function f8 name="super-getter" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f3}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="size"
+    Return v3
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: v3: number = CallDirect v0 function=f2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="size"
+}
+function f9 name="super-call-two-classes-below" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f4}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="read"
+    v4 = Call v3, v0 calleeKey="read"
+    Return v4
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
+# CHECK: v3: f1 = NewClosure function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v2, v0 key="read"
+}
+function f10 name="call-on-an-instance" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="read"
+    v2 = Call v1, v0 calleeKey="read"
+    Return v2
+# CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberNotHidden layout=L1 key="read"}]
+# CHECK: = CallDirect v0 function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="read"
+}
+function f11 name="super-call-below-a-function-that-keeps-its-prototype-object" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=f6}] results=[{type=anything}] {
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="read"
+    v4 = Call v3, v0 calleeKey="read"
+    Return v4
+# CHECK-NOT: AreMembersUnchanged
+}

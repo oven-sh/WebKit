@@ -711,6 +711,65 @@ static void testContentsOfArray()
     checkValidationFails(leakedArray, ValidationFailureKind::ContainerContents, "globalThis.after = () => { }; globalThis.sink = function () { this.k[0] = 'text'; };"_s);
 }
 
+// As leakedArray, with a loop that reads the first hundred elements.
+static constexpr ASCIILiteral leakedArrayReadInLoop = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="random"
+    v2 = Call v1, v0 calleeKey="random"
+    v3 = NewArray v2, v2 contents=anything holes=[]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = NewObject -, v3, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="toLocaleString"
+    v9 = Call v8, v7 calleeKey="toLocaleString"
+    v10 = Integer integer=0
+    Jump -> next b1(v10, v2)
+  b1(v11, v12):
+    LoopHint
+    v14 = Integer integer=100
+    v15 = Less v11, v14
+    Branch v15 -> taken b2(), notTaken b3()
+  b2():
+    v16 = ElemGet v3, v11
+    v17 = Mul v16, v12
+    v18 = Integer integer=1
+    v19 = Add v11, v18
+    Jump -> next b1(v19, v17)
+  b3():
+    v20 = TypeOf v12
+    v21 = PropGet v4 key="print" [isFreeName]
+    v22 = Call v21, -, v20
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
+}
+runtimefunction id=$toLocaleString function=f1
+)IR"_s;
+
+// A long array is sampled. The samples that a loop takes move along the array, so they find an element that the loop never reads.
+static void testContentsOfLongArray()
+{
+    for (ASCIILiteral statements : {
+        "globalThis.sink = function () { while (this.k.length < 1000) this.k.push(0.5); this.k[777] = 'text'; };"_s,
+        "globalThis.sink = function () { while (this.k.length < 1000) this.k.push(0.5); this.k[961] = 'text'; };"_s,
+        "globalThis.sink = function () { while (this.k.length < 700) this.k.push(0.5); this.k[101] = 'text'; };"_s,
+    })
+        checkValidationFails(leakedArrayReadInLoop, ValidationFailureKind::ContainerContents, statements);
+
+    UTF8CString numberedText = withNumbersOfModels(leakedArrayReadInLoop);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "validate"_s }, "globalThis.sink = function () { while (this.k.length < 1000) this.k.push(0.5); };"_s);
+}
+
 // As leakedArray, with integers: the array never escapes and nothing but integers is stored, so it keeps the storage for integers that it was made with.
 static constexpr ASCIILiteral leakedArrayOfIntegers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
@@ -956,6 +1015,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/read-replaced-by-effects-of-call"_s, testReadReplacedByEffectsOfCall },
         { "proof-validation/slot-access-behind-dropped-test"_s, testSlotAccessBehindDroppedTest },
         { "proof-validation/contents-of-array"_s, testContentsOfArray },
+        { "proof-validation/contents-of-long-array"_s, testContentsOfLongArray },
         { "proof-validation/contents-of-map"_s, testContentsOfMap },
         { "proof-validation/storage-of-array"_s, testStorageOfArray },
         { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },

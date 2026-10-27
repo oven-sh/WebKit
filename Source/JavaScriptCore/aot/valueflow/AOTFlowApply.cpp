@@ -87,6 +87,8 @@ static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
         if (!fieldUpdate.accessor.isAccessor())
             applyPosition(field.declared, fieldUpdate.position);
         field.flow = fieldUpdate.flow;
+        field.typeBeforeNarrowing = { };
+        field.flags.remove(FieldFlags::IsCountedWith);
 
         bool wasAnalyzed = field.flow.location.writers == WriterState::AllKnown;
         if (wasAnalyzed && !field.flow.stability.contains(FieldStability::IsNeverDeleted) && field.flags.contains(FieldFlags::IsRequired)) {

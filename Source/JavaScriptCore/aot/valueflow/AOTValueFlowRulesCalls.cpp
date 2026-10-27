@@ -1164,13 +1164,17 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
 
 void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    if (!statement.result)
-        return;
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet holders = context.valueOf(context.operandsOf(statement)[0]);
     ValueSetID null = context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Null));
     ValueSetID answers = statement.opcode == Opcode::ResolveHeritage ? context.maker().unite(universe.objects(), null) : universe.objects();
-    context.connect(context.masked(context.lookup(holders, prototypeProperty(context)), answers), statement.result);
+    // A getter runs, and the operation throws, whether or not anybody takes the answer.
+    ValueFlowNodeID held = context.lookup(holders, prototypeProperty(context));
+    if (statement.thrown)
+        context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
+    if (!statement.result)
+        return;
+    context.connect(context.masked(held, answers), statement.result);
     switch (statement.opcode) {
     case Opcode::ResolveHeritage:
         if (context.meet(holders, null) || context.contains(holders, ValueFlowUniverse::unknownObject()))
@@ -1189,8 +1193,6 @@ void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRu
     default:
         break;
     }
-    if (statement.thrown)
-        context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
 
 } } } // namespace JSC::AOT::Typed

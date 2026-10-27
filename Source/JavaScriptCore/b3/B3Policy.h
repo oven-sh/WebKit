@@ -41,12 +41,15 @@ struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
+    bool logsDecidedComparisons { false };
     bool keepsOriginsOfAccessesThatTakeTraps { false };
     // These break a phase on purpose, for the tests of the checks.
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
     bool omitsStridedLimitGuard { false };
     bool overlooksWritesBehindWordsReadAgain { false };
+    bool takesAccessesOfVectorTurnsToLieApart { false };
+    bool setsUpFrameBehindWrites { false };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -122,8 +125,8 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
-    // The fast version of a loop whose counter stays below the length of an array, a view or a string does not poll.
-    bool omitsPollsFromLoopsThatEndWithinData { false };
+    // A loop whose turns can be counted runs at most Limits::maxTurnsWithoutPoll of them between two polls, instead of polling on every turn.
+    bool pollsBetweenStretches { false };
     bool vectorizes { false };
     bool unrolls { false };
     double minFrequencyOfUnrolledLoop { 1 };
@@ -232,6 +235,8 @@ struct Policy {
     Vector<ClientPhase, 4> clientPhases;
     // False: the load is not logged. The collector's threads write some words, and some writes change no operation's result.
     RefPtr<SharedTask<bool(const MemoryValue&, MovedLoad&)>> saysWhatCountsOfMovedLoad;
+    // For a phase that puts its own check where it moves loads. `found` and `given` are what the check compared.
+    RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportsMovedLoad;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 

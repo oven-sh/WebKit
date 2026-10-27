@@ -42,6 +42,7 @@ struct StackCheckState {
     bool isEnteredWithoutStackCheck { true };
 };
 
+unsigned smallestFrameTestedAtSetup(StackCheck);
 void setStackCheckGenerator(B3::Procedure&, StackCheck, const FrameRequirements&, StackCheckState&);
 void emitStackOverflowPaths(CCallHelpers&, CodeRecords&, StackCheckState&);
 Vector<PrologueCheck, 1> linkStackChecks(LinkBuffer&, FunctionID, const CodeRecords&);

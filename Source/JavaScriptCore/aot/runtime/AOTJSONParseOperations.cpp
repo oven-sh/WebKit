@@ -1650,7 +1650,9 @@ static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm,
         return { jsBoolean(true), start + 4 };
     else if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *start == 'f')
         return { jsBoolean(false), start + 5 };
-    if (shapeOfObject)
+    else if (WTF::unalignedLoad<uint32_t>(start) == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
+        return { jsNull(), start + 4 };
+    if (shapeOfObject && *start == '{')
         return parseLearnedObjectInside(instance, vm, shapeOfObject, start);
     return parseJSONValueAt(instance, vm, instance.globalObject, start);
 }
@@ -1772,8 +1774,14 @@ static bool learnObjectInside(Instance& instance, VM& vm, uint32_t shape, const 
     const uint8_t* firstName = skipWhitespace(brace + 1);
     if (!shape || depth == maxDepthOfLearnedObjects || *firstName != '"')
         return false;
-    JSONRuntime::LearnedObject* inner = instance.json.runtime->learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName));
-    return inner && learnObject(instance, vm, *inner, shape, firstName, depth + 1);
+    JSONRuntime& runtime = *instance.json.runtime;
+    uint64_t firstWord = JSONRuntime::startOfName(firstName);
+    if (JSONRuntime::LearnedObject* inner = runtime.learnedObjectToReplace(shape, firstWord))
+        return learnObject(instance, vm, *inner, shape, firstName, depth + 1);
+    // Objects around this one fill both entries. If one of them begins alike, this one is expected to have its names; the parse that follows finds out.
+    JSONRuntime::LearnedObjects& table = *runtime.learnedObjects();
+    unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
+    return table[index].isFor(shape, firstWord) || table[index ^ 1].isFor(shape, firstWord);
 }
 
 static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName, unsigned depth)
@@ -1831,9 +1839,9 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
             kindsOfFields.append(*value == '"' ? Learned::String : *value == 't' || *value == 'f' ? Learned::Boolean : tryParseSmallJSONInteger(value, integer) ? Learned::SmallInteger : Learned::OtherKind);
             if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields)
                 return false;
-            if ((*value == '{' || *value == '[') && !layouts.typeOf(*field).acceptsEveryObject()) {
-                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : 0;
-                if (!learnObjectInside(instance, vm, member.shapeOfValue, value, depth))
+            if (!layouts.typeOf(*field).acceptsEveryObject()) {
+                member.shapeOfValue = instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field));
+                if (*value == '[' || (*value == '{' && !learnObjectInside(instance, vm, member.shapeOfValue, value, depth)))
                     return false;
             }
             positionExtraNames();
@@ -1861,7 +1869,8 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         quote = skipWhitespace(end + 1);
     }
     positionExtraNames();
-    if (!depth && (!numberOfRuns || numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
+    // Compiled code parses an object without undeclared members faster.
+    if (!numberOfRuns || (!depth && numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
         return false;
 
     learned.plan = ObjectBuilder::tryCreatePlan(*instance.state, layout, fieldNames.span());
@@ -2091,13 +2100,16 @@ static NEVER_INLINE const uint8_t* learnAndParseObject(Instance& instance, VM& v
     }
     if (!runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName, 0) || !seenOnce->shape)
         return nullptr;
-    return tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
+    const uint8_t* end = tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
+    if (!end)
+        seenOnce->members.shrink(0);
+    return end;
 }
 
 static NEVER_INLINE ParsedJSONValue parseLearnedObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace)
 {
     JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects();
-    if (*brace != '{' || !table || !vm.isSafeToRecurse()) [[unlikely]]
+    if (!table || !vm.isSafeToRecurse()) [[unlikely]]
         return { };
     const uint8_t* firstName = skipWhitespace(brace + 1);
     uint64_t firstWord = JSONRuntime::startOfName(firstName);

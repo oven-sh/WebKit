@@ -1082,7 +1082,7 @@ bool provesSlotFilled(const Program& program, const Function& function, const Gu
         case GuardSource::SwitchCase:
             return false;
         case GuardSource::Allocation:
-            return fact.proves(Proof::SlotFilled) && listsFieldWithKey(program, function.at(origin.test), key);
+            return (fact.proves(Proof::SlotFilled) || fact.proves(Proof::KeyOrder)) && listsFieldWithKey(program, function.at(origin.test), key);
         }
         RELEASE_ASSERT_NOT_REACHED();
     });

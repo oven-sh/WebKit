@@ -12,6 +12,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
+#include "B3IntRange.h"
 #include "B3MemoryValueInlines.h"
 #include "B3PatchpointValue.h"
 #include "B3ProcedureInlines.h"
@@ -136,6 +137,62 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
     return check;
 }
 
+static CCallHelpers::RelationalCondition conditionOf(Opcode opcode)
+{
+    switch (opcode) {
+    case Equal:
+        return CCallHelpers::Equal;
+    case NotEqual:
+        return CCallHelpers::NotEqual;
+    case LessThan:
+        return CCallHelpers::LessThan;
+    case GreaterThan:
+        return CCallHelpers::GreaterThan;
+    case LessEqual:
+        return CCallHelpers::LessThanOrEqual;
+    case GreaterEqual:
+        return CCallHelpers::GreaterThanOrEqual;
+    case Above:
+        return CCallHelpers::Above;
+    case Below:
+        return CCallHelpers::Below;
+    case AboveEqual:
+        return CCallHelpers::AboveOrEqual;
+    case BelowEqual:
+        return CCallHelpers::BelowOrEqual;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+PatchpointValue* createDecidedComparisonCheck(Procedure& proc, Opcode opcode, Origin origin, Value* left, Value* right, bool answer, RefPtr<DifferenceReport> report)
+{
+    RELEASE_ASSERT(left->type() == right->type() && left->type().isInt());
+    PatchpointValue* check = proc.add<PatchpointValue>(Void, origin);
+    check->append(ConstrainedValue(left, ValueRep::SomeRegister));
+    check->append(ConstrainedValue(right, ValueRep::SomeRegister));
+    check->clobber(RegisterSet::macroClobberedGPRs());
+    check->effects = Effects::none();
+    check->effects.writesLocalState = true;
+    check->setRunsWithoutFrame(true);
+    MovedLoad comparison { opcode, left->type(), 0, origin, HeapRange() };
+    check->setGenerator([comparison, answer, report = WTF::move(report)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg left = params[0].gpr();
+        GPRReg right = params[1].gpr();
+        CCallHelpers::RelationalCondition otherAnswer = answer ? CCallHelpers::invert(conditionOf(comparison.opcode)) : conditionOf(comparison.opcode);
+        CCallHelpers::Jump differs = comparison.type == Int64 ? jit.branch64(otherAnswer, left, right) : jit.branch32(otherAnswer, left, right);
+        params.addLatePath([=](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            differs.link(&jit);
+            if (report)
+                report->run(jit, comparison, left, right);
+            jit.breakpoint();
+        });
+    });
+    return check;
+}
+
 static bool staysInPlace(const Value* value)
 {
     Effects effects = value->effects();
@@ -156,13 +213,33 @@ void MovedLoadLog::rename(Value*& named, Value* replacement, unsigned entry)
     name(replacement, entry);
 }
 
+Value* MovedLoadLog::lastValueThatStaysInFrontOf(BasicBlock* block, unsigned index)
+{
+    while (index--) {
+        if (staysInPlace(block->at(index)))
+            return block->at(index);
+    }
+    return nullptr;
+}
+
+void MovedLoadLog::append(const Entry& entry)
+{
+    unsigned index = m_entries.size();
+    m_entries.append(entry);
+    for (Value* value : { entry.address, entry.givenToUsers, entry.store, entry.before })
+        name(value, index);
+}
+
+void MovedLoadLog::addDecidedComparison(const Procedure& proc, const Value* comparison, BasicBlock* block, unsigned index, Value* left, Value* right, bool answer)
+{
+    if (!proc.policy().validation.logsDecidedComparisons || !isIntegerComparison(comparison->opcode()) || !left->type().isInt() || left->type() != right->type())
+        return;
+    append(Entry { MovedLoad { comparison->opcode(), left->type(), 0, comparison->origin(), HeapRange() }, left->foldIdentity(), right->foldIdentity(), nullptr, lastValueThatStaysInFrontOf(block, index), block, answer });
+}
+
 void MovedLoadLog::add(const MovedLoad& load, BasicBlock* block, unsigned index, Value* address, Value* givenToUsers, Value* store)
 {
-    Value* before = nullptr;
-    while (index-- && !before) {
-        if (staysInPlace(block->at(index)))
-            before = block->at(index);
-    }
+    Value* before = lastValueThatStaysInFrontOf(block, index);
     // What an address is computed from outlives the address.
     int64_t offset = load.offset;
     for (;; address = address->child(0)) {
@@ -172,11 +249,8 @@ void MovedLoadLog::add(const MovedLoad& load, BasicBlock* block, unsigned index,
             break;
         offset += address->child(1)->asInt64();
     }
-    unsigned entry = m_entries.size();
-    m_entries.append(Entry { load, address, givenToUsers, store, before, block });
+    append(Entry { load, address, givenToUsers, store, before, block });
     m_entries.last().load.offset = static_cast<int32_t>(offset);
-    for (Value* value : { address, givenToUsers, store, before })
-        name(value, entry);
 }
 
 void MovedLoadLog::addBehindEachValueThatStaysIn(BasicBlock* block, const MovedLoad& load, Value* address, Value* givenToUsers)
@@ -380,6 +454,23 @@ void MovedLoadLog::willDelete(BasicBlock* block)
     }
 }
 
+void MovedLoadLog::willAppendValuesOf(BasicBlock* block, BasicBlock* predecessor)
+{
+    if (isEmpty())
+        return;
+    Value* before = lastValueThatStaysInFrontOf(predecessor, predecessor->size());
+    for (unsigned index = 0; index < m_entries.size(); ++index) {
+        Entry& entry = m_entries[index];
+        if (entry.block != block)
+            continue;
+        entry.block = predecessor;
+        if (entry.before || !before || !entry.address)
+            continue;
+        entry.before = before;
+        name(before, index);
+    }
+}
+
 void MovedLoadLog::willMove(Value* write)
 {
     if (isEmpty())
@@ -392,7 +483,7 @@ void MovedLoadLog::willMove(Value* write)
         drop(m_entries[index]);
 }
 
-bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report)
+bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report, RefPtr<DifferenceReport> reportForDecidedComparisons)
 {
     Vector<Entry> entries = std::exchange(m_entries, { });
     m_entriesNaming.clear();
@@ -442,7 +533,10 @@ bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report
         };
         if (!isThere(entry.address) || !isThere(entry.givenToUsers) || (entry.store && !isThere(entry.store)) || entry.givenToUsers->type() != entry.load.type)
             continue;
-        checks.append({ place, createMovedLoadCheck(proc, entry.load, entry.address, entry.givenToUsers, report) });
+        if (entry.answerOfComparison)
+            checks.append({ place, createDecidedComparisonCheck(proc, entry.load.opcode, entry.load.origin, entry.address, entry.givenToUsers, *entry.answerOfComparison, reportForDecidedComparisons) });
+        else
+            checks.append({ place, createMovedLoadCheck(proc, entry.load, entry.address, entry.givenToUsers, report) });
     }
 
     std::ranges::stable_sort(checks, [](const Check& a, const Check& b) {

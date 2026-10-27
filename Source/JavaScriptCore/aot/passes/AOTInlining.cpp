@@ -264,7 +264,7 @@ static std::optional<IntegerComparison> findIntegerComparison(FunctionAnalyses& 
 
 static unsigned estimateSwitchBytes(Vector<std::pair<int64_t, BlockID>, 8>& cases)
 {
-    std::ranges::sort(cases, { }, [](const auto& entry) { return entry.first; });
+    AOT::sort(cases, { }, [](const auto& entry) { return entry.first; });
     unsigned bytes = CodeSize::branch;
     for (size_t begin = 0; begin < cases.size();) {
         size_t end = begin;

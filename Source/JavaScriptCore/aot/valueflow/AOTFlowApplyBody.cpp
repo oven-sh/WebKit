@@ -277,18 +277,38 @@ static void replaceDefinedValues(const FlowCastInsertion& insertion, const FlowB
     }
 }
 
-static bool hasProvenInitialValues(const FlowBodyApplication& body, FieldReference reference)
+// Flow leaves out of the type of a slot the primitives that stores turn away. An allocation turns nothing away.
+// Typing may have renumbered the values, so an allocation is found by its stamp.
+static bool mayListPrimitiveOfOtherType(const FlowBodyApplication& body, const Value& allocation, FieldReference declaration, const Type& listedType)
 {
-    FieldReference declaration = declarationOf(body.program, reference);
+    auto withLiterals = [](uint16_t primitives) {
+        if (primitives & Primitive::AnyString)
+            primitives |= Primitive::AnyString;
+        if (primitives & Primitive::AnySymbol)
+            primitives |= Primitive::AnySymbol;
+        return primitives;
+    };
+    std::span<const FlowAllocationStamp> stamps = body.application.bodies[body.id.index()].allocations.span();
+    return std::ranges::any_of(body.application.layouts[declaration.layout.index()].valuesListedWithOtherTypes, [&](const FlowListedValue& listed) {
+        if (listed.field != declaration.field || listed.function != body.id || !(withLiterals(listed.primitivesOutside) & withLiterals(listedType.primitives)))
+            return false;
+        const FlowAllocationStamp* stamp = findByValue(stamps, listed.allocation, &FlowAllocationStamp::value);
+        return !stamp || stamp->site == allocation.allocationSite();
+    });
+}
+
+static bool hasProvenInitialValue(const FlowBodyApplication& body, const Value& allocation, uint32_t valueIndex, const Type& listedType)
+{
+    FieldReference declaration = declarationOf(body.program, { allocation.layout(), allocation.fields()[valueIndex] });
     if (fieldAt(body.program, declaration).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType))
         return true;
     if (body.fieldsExpectedAsRead[declaration.layout.index()].get(declaration.field))
         return false;
     const Vector<FlowFieldUpdate>& updates = body.application.layouts[declaration.layout.index()].fields;
-    return declaration.field < updates.size() && updates[declaration.field].position.isProven;
+    return declaration.field < updates.size() && updates[declaration.field].position.isProven && !mayListPrimitiveOfOtherType(body, allocation, declaration, listedType);
 }
 
-static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& user, uint32_t operandIndex)
+static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& user, uint32_t operandIndex, const Type& operandType)
 {
     if (body.provesEverything)
         return true;
@@ -297,7 +317,7 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
     case RequiredTypeHolder::StoredSlot:
         return false;
     case RequiredTypeHolder::InitializedSlot:
-        return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
+        return hasProvenInitialValue(body, user, *user.variadicOperandIndex(operandIndex), operandType);
     case RequiredTypeHolder::PositionThatFlowFollows:
     case RequiredTypeHolder::ContentsOfLiteral:
         return true;
@@ -394,7 +414,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
             TypeID required = requiredTypeOfOperand(typing, value, operandIndex);
             if (!required || hasRequiredType(operand, required))
                 continue;
-            bool mayAssume = mayAssumeRequiredType(body, value, operandIndex);
+            bool mayAssume = mayAssumeRequiredType(body, value, operandIndex, typing.typeOf(operand));
 
             Origin origin = value.origin();
             ValueID cast = mayAssume ? insert(point, origin, makeAssumeType(operand, provenOfPosition(body, predicted(), operand, required))) : checkRequiredType(point, origin, operand, required);

@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCallPlan.h"
 #include "AOTCoroutines.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
@@ -812,6 +813,84 @@ static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const Bu
     return static_cast<unsigned>(matches.size());
 }
 
+struct DefinitionOfPlainProperty {
+    ValueSite call;
+    ValueID object;
+    PropertyKeyID key;
+    ValueID value;
+};
+
+static bool isSeenOnlyByCall(FunctionPassContext& context, ValueID value, ValueID call)
+{
+    const Function& function = context.function;
+    return std::ranges::all_of(context.analyses.useLists().usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        if (handsObjectOn(function.at(use.user).opcode))
+            return isSeenOnlyByCall(context, use.user, call);
+        return use.user == call && std::ranges::count(function.at(call).argumentsOperands(), value) == 1;
+    });
+}
+
+static bool holdsObjectsOfLayoutsAlone(const Type& type)
+{
+    return type.layouts && !type.primitives && !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty();
+}
+
+static std::optional<DefinitionOfPlainProperty> matchDefinitionOfPlainProperty(FunctionPassContext& context, const ValueSite& site)
+{
+    using Flag = PropertyDescriptorFlags;
+    constexpr OptionSet<Flag> flagsOfPlainProperty { Flag::HasValue, Flag::HasWritable, Flag::IsWritable, Flag::HasEnumerable, Flag::IsEnumerable, Flag::HasConfigurable, Flag::IsConfigurable };
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Value& call = function.at(site.value);
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole || call.receiverOperand())
+        return std::nullopt;
+    const BuiltinTable& builtins = program.builtins();
+    if (builtins.canonicalID(builtins.at(call.overload()).builtin) != Builtins::ObjectDefineProperty || builtins.at(call.overload()).mode != BuiltinCallMode::Call)
+        return std::nullopt;
+    std::span<const ValueID> arguments = call.argumentsOperands();
+    if (arguments.size() != 3 || !holdsObjectsOfLayoutsAlone(program.typeOf(function, arguments[0])))
+        return std::nullopt;
+    PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, call), program.typeOf(function, arguments[1])));
+    if (!key || keyLookupOf(program, key) != KeyLookup::Ordinary)
+        return std::nullopt;
+
+    ValueID literal = findObjectHandedOn(function, arguments[2]);
+    if (!listsMembersOfDescriptor(program, function.at(literal)) || !isSeenOnlyByCall(context, literal, site.value))
+        return std::nullopt;
+    std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literal));
+    if (!descriptor || descriptor->flags != flagsOfPlainProperty || !descriptor->value)
+        return std::nullopt;
+    return DefinitionOfPlainProperty { site, arguments[0], key, descriptor->value };
+}
+
+static unsigned definePlainPropertiesByName(FunctionPassContext& context, const BuiltinCallSites& calls)
+{
+    Function& function = context.function;
+    Vector<DefinitionOfPlainProperty> matches;
+    for (const ValueSite& site : calls) {
+        if (std::optional<DefinitionOfPlainProperty> match = matchDefinitionOfPlainProperty(context, site))
+            matches.append(*match);
+    }
+    if (matches.isEmpty())
+        return 0;
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (const DefinitionOfPlainProperty& match : matches) {
+        builder.setOrigin(function.at(match.call.value).origin());
+        Value definition = IRBuilder::make(Opcode::PropDefine, { match.object, match.value });
+        definition.setKey(match.key);
+        builder.insertBefore(match.call.point(), WTF::move(definition));
+    }
+    builder.applyInsertions();
+
+    for (const DefinitionOfPlainProperty& match : matches)
+        replaceKeepingType(context, match.call.value, makeIdentityCast(function, match.object));
+    context.analyses.didChangeValues();
+    return static_cast<unsigned>(matches.size());
+}
+
 PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
 {
     unsigned rewrites = 0;
@@ -860,6 +939,7 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
     didRewrite(expandRangesOfViews(context, calls));
+    didRewrite(definePlainPropertiesByName(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));
 
     PassOutcome outcome = rewrites ? PassOutcome::Changed : PassOutcome::Unchanged;

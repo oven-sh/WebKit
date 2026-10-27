@@ -1490,6 +1490,8 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     handCountedImportsToLoader();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    VM& vm = *m_instance.vm;
+    SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
     JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));

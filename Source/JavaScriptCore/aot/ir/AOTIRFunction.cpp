@@ -13,6 +13,7 @@
 #include "AOTObservableOperations.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
@@ -422,7 +423,7 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
             written.value = written.value.index() < newID.size() ? newID[written.value.index()] : ValueID();
             return !written.value;
         });
-        std::ranges::sort(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });
+        AOT::sort(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });
     }
     return newID;
 }

@@ -11,6 +11,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
@@ -171,7 +172,7 @@ private:
         for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
             uint32_t begin = components.firstMemberOf[component];
             std::span<uint32_t> positions = components.members.mutableSpan().subspan(begin, components.firstMemberOf[component + 1] - begin);
-            std::ranges::sort(positions);
+            AOT::sort(positions);
             blocks.shrink(0);
             for (uint32_t position : positions)
                 blocks.append(postOrder[position]);

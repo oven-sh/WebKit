@@ -64,6 +64,8 @@ public:
     };
     // Whether each of so many threads that have taken nothing from the range yet can take all these. Takes address space if that is what it needs.
     bool tryEnsureRoomForNewThreads(unsigned numberOfThreads, std::span<const Pieces>);
+    // The least address space that must be left for a full range to take more.
+    JS_EXPORT_PRIVATE static size_t addressSpaceToGrow();
 
 private:
     enum class BackEnd : uint8_t { Malloc, Granules };

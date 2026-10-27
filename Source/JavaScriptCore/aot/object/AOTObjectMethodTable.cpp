@@ -672,18 +672,18 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     const LayoutData& layout = object->layout();
     validateKeyListing(vm, *object);
     std::span<const FieldData> fields = layout.fields();
-    // No object has two keys of one name, so only a list that has the keys of another object is searched.
-    bool listsOnlyThisObject = names.canAddKnownUniqueForStructure();
-    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
-        if (listsOnlyThisObject) [[likely]]
-            names.addUnchecked(name);
-        else
-            names.add(name);
-    };
     JSObject* extra = object->extraProperties();
     ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
+    // The keys of one object are unique, so an empty list needs no lookups. add() does not find what addUnchecked() appended after it.
+    bool knownUnique = names.canAddKnownUniqueForStructure();
+    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        if (knownUnique) [[likely]]
+            names.addUnchecked(name);
+        else
+            names.add(name);
+    };
     if (names.includeStringProperties() || names.includeSymbolProperties())
         forEachOwnKey(vm, state, *object, static_cast<KeysListed>(names.includeStringProperties() | names.includeSymbolProperties() << 1), mode, add);
     if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]

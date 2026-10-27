@@ -155,7 +155,8 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
-    loops.omitsPollsFromLoopsThatEndWithinData = true;
+    loops.pollsBetweenStretches = true;
+    loops.vectorizes = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
@@ -176,6 +177,8 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
     validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
+    validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
+    validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
     return validation;
 }
 
@@ -187,6 +190,7 @@ static B3::Air::RegisterPolicy registerPolicyFor(const FunctionBackEndTraits& tr
     registers.hintsTwoAddressOperands = true;
     registers.usesSecondPreferredRegister = true;
     registers.evictsHolderOfPreferredRegister = true;
+    registers.patchpointsKeepOnlyLowerHalvesOfVectors = true;
     registers.unsavedCalleeSaves = unsavedCalleeSaves();
     switch (traits.convention) {
     case BackEndConvention::Function:
@@ -220,10 +224,11 @@ static B3::Air::FramePolicy framePolicyFor(const BuildContext& build, const Func
 {
     B3::Air::FramePolicy frame;
     frame.emitsFrame = true;
-    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may have done something, and may stand in a try of its own, which the error would pass by.
+    // The stack is tested where the frame is set up, and a frame that does not fit is an error at the call in the caller. Behind the entry the function may stand in a try of its own, which the error would pass by.
     frame.shrinkWraps = !traits.savesFrameOnSuspend;
     frame.setsUpFrameAtEntry = traits.hasHandlers || traits.rejectsOnThrow;
     frame.maxBytesAllocatedBeforeStackCheck = maxBytesAllocatedBeforeStackCheck;
+    frame.smallestFrameTestedAtSetup = traits.smallestFrameTestedAtSetup;
     if constexpr (isARM64())
         frame.registersClobberedByFrameSetup = RegisterSet::macroClobberedGPRs();
     frame.mayPlaceSlotsAboveFrameRecord = !traits.readsCallerFrame && !traits.isAsync && !traits.savesFrameOnSuspend;

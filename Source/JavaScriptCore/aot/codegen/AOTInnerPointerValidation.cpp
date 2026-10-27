@@ -10,6 +10,7 @@
 
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStubRegisters.h"
 #include "AirCode.h"
 #include "AirCustom.h"
@@ -870,7 +871,7 @@ private:
         m_choicesOfNotedBlock.shrink(0);
         for (unsigned choice = m_firstChoiceOfBlock[block]; choice != none; choice = m_facts[choice].nextHeadInBlock)
             m_choicesOfNotedBlock.append({ find(choice), choice });
-        std::ranges::sort(m_choicesOfNotedBlock);
+        AOT::sort(m_choicesOfNotedBlock);
     }
 
     // The load that made a pointer whose owner is last read in front of the position, if there is one.
@@ -976,7 +977,7 @@ private:
             if (m_unitOfOffset.contains(word >> 2) || m_unitOfOffset.contains((word + 4) >> 2))
                 spilledWords.append(word);
         }
-        std::ranges::sort(spilledWords);
+        AOT::sort(spilledWords);
         // A register that callees save may be written where this function has saved it, and any other everywhere.
         uint64_t savedRegisters = 0;
         for (const RegisterAtOffset& entry : m_code.calleeSaveRegisterAtOffsetList()) {
@@ -1029,7 +1030,7 @@ private:
 
     void report()
     {
-        std::ranges::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
+        AOT::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
         m_blockOfEnd.fill(none, m_facts.size());
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());

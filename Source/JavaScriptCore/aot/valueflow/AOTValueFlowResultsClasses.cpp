@@ -541,7 +541,7 @@ static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inp
     list(inputs.universe().prototypeOf(classLayout));
     for (ValueFlowObjectID stored : ledger.prototypeObjectsStoredFor(classLayout))
         list(stored);
-    std::ranges::stable_sort(assigned, { }, &AssignedValue::key);
+    AOT::stableSort(assigned, { }, &AssignedValue::key);
     return assigned;
 }
 
