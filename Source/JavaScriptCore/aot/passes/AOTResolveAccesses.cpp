@@ -1854,7 +1854,7 @@ PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext& context)
 static bool testsCoverPlan(std::span<const Value> tests, const PropertyAccessPlan& plan, PropertyKeyID key)
 {
     auto findsWhatPlanExpectsInSlot = [&](const Value& test) {
-        return test.key() == key && (!plan.testsDeclaredType || test.holdsDeclaredType());
+        return test.key() == key && (plan.stores() || !plan.testsDeclaredType || test.holdsDeclaredType());
     };
     bool coverProofs = std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
         return !plan.requiredProofs.contains(proof) || std::ranges::any_of(tests, [&](const Value& test) {

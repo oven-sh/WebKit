@@ -277,15 +277,6 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
     RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
-static JSValue constructParent(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue parent, JSValue newTarget, const ArgList& arguments)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue made = constructValue<true>(globalObject, vm, parent, newTarget, arguments);
-    RETURN_IF_EXCEPTION(scope, { });
-    instance->state->objects->classes.didConstructParent(newTarget, made);
-    return made;
-}
-
 // The argument values lie in the stack of the caller for as long as the call lasts.
 JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
 {
@@ -297,17 +288,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, EncodedJSValue list))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTApply);
+    // As operationAOTNewArgumentList: the list first.
+    MarkedArgumentBuffer arguments;
+    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
+    EXCEPTION_ASSERT(didAppend == !scope.exception());
+    if (!didAppend) [[unlikely]]
+        OPERATION_RETURN(scope, encodedJSValue());
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
         throwNotAFunctionError(globalObject, scope, function);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    MarkedArgumentBuffer arguments;
-    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(list));
-    EXCEPTION_ASSERT(didAppend == !scope.exception());
-    if (!didAppend) [[unlikely]]
-        OPERATION_RETURN(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
@@ -433,23 +425,25 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
     return list;
 }
 
-// Function.prototype.apply up to the call: the callee is tested before the list is read.
+// Function.prototype.apply up to the call. Bytecode lays the list on the stack and then looks at what it calls.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instance, EncodedJSValue callee, EncodedJSValue arrayLike))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
-    JSValue function = JSValue::decode(callee);
-    if (!function.isCallable()) {
+    JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike));
+    if (!list) {
+        MarkedArgumentBuffer arguments;
+        bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
+        EXCEPTION_ASSERT(didAppend == !scope.exception());
+        if (!didAppend) [[unlikely]]
+            OPERATION_RETURN(scope, nullptr);
+        list = constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (JSValue function = JSValue::decode(callee); !function.isCallable()) {
         throwNotAFunctionError(globalObject, scope, function);
         OPERATION_RETURN(scope, nullptr);
     }
-    if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
-        OPERATION_RETURN(scope, list);
-    MarkedArgumentBuffer arguments;
-    bool didAppend = appendArrayLike(globalObject, vm, arguments, JSValue::decode(arrayLike));
-    EXCEPTION_ASSERT(didAppend == !scope.exception());
-    if (!didAppend) [[unlikely]]
-        OPERATION_RETURN(scope, nullptr);
-    OPERATION_RETURN(scope, constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments));
+    OPERATION_RETURN(scope, list);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConstructWithArray, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list))
@@ -472,7 +466,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* 
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    OPERATION_RETURN(scope, JSValue::encode(constructParent(instance, globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list))
@@ -484,7 +478,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     EXCEPTION_ASSERT(didAppend == !scope.exception());
     if (!didAppend) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(constructParent(instance, globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite)
@@ -512,6 +506,16 @@ StringView instanceofExpressionOnTop(VM& vm)
     if (!frames || frames->isAtEnd())
         return { };
     return nameOfCalleeAt(frames->callSite());
+}
+
+bool readOnTopTestsObjectOfUpdate(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return false;
+    const CallSiteCache::Entry& callSite = frames->callSite();
+    std::optional<SourcePosition> position = Image::current()->positionOf(callSite.code.index(), callSite.site.callSite);
+    return position && position->startIsForCallers;
 }
 
 StringView nameOfConstructorThatRunsOnTop(VM& vm)

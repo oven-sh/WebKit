@@ -174,11 +174,15 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     const Program& program = context.program();
     const Function& function = context.function();
     const Value& call = function.at(id);
-    if (context.isOnSlowPath(id) || call.builtinCallForm() != BuiltinCallForm::Whole)
+    if (context.isOnSlowPath(id) || (call.builtinCallForm() != BuiltinCallForm::Whole && call.builtinCallForm() != BuiltinCallForm::AnyReceiver))
         return std::nullopt;
 
     std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
-    if (!operands || !context.typeOf(operands->object).isObject() || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+    if (!operands || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+        return std::nullopt;
+    // The operation hands what is no object to the built-in, which refuses it. Its result is its operand, which says less than the result of the call where the operand may be something else.
+    const Type& typeOfObject = context.typeOf(operands->object);
+    if (!typeOfObject.hasObjects() || !typeOfObject.isJavaScriptValue() || (!typeOfObject.isObject() && context.analyses().useLists().useCount(id)))
         return std::nullopt;
 
     ValueID finishID = operands->descriptor;

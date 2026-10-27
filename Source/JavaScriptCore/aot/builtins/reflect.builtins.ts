@@ -178,11 +178,11 @@ export default b.declarations(
           args: { ...keyedArguments, value: b.any, receiver: b.any },
           returns: b.bool,
           throws: true,
-          // As in `get`: the setter that is found on the target runs with the receiver as `this`.
+          // As in `get`: the setter that is found on the target runs with the receiver as `this`. Where none is found the value is defined on the receiver.
           uses: {
             target: [b.everything, b.accessorReadByKey("Setter", key, b.nativeMemory)],
             value: [b.everything],
-            receiver: [b.everything],
+            receiver: [b.everything, b.definesName(key, b.operand("value"))],
           },
           implementation: b.hostCall,
         },

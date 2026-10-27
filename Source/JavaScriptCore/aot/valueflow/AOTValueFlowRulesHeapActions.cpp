@@ -162,19 +162,8 @@ void HeapRule::compareWithPropertyThatIsThere(const ValueFlowOperand& defined)
     connect(defined, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare));
 }
 
-// The modules of the run time name only function objects that they make themselves.
-void HeapRule::noteNameDefinedThroughObjectsNobodyFollows(const ValueFlowOperand& object, const HeapKey& key)
-{
-    if (key.keyClass != HeapKeyClass::Name || key.name != m_tables.nameKey() || !isInProgramCode())
-        return;
-    if (ClimbingSet placeholders = m_context.restrict(m_context.valueOf(object), m_universe.placeholdersAlone()); holdsAnything(placeholders))
-        add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName), placeholders);
-}
-
 void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
 {
-    if (definedObject == DefinedObject::MayHoldProperty)
-        noteNameDefinedThroughObjectsNobodyFollows(object, key);
     auto define = [&](HeapPropertyPart part, BuiltinName member) {
         ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program, m_program.keyOf(member)));
         if (part != HeapPropertyPart::Value && !m_context.meet(m_context.valueOf(described), ValueSets::complement(m_universe.undefinedValue())))
@@ -266,14 +255,12 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         forEachKey([&](const HeapKey& key) {
             define(object, key, HeapPropertyPart::Value, value);
             markRedefinition(m_context.valueOf(object), key);
-            noteNameDefinedThroughObjectsNobodyFollows(object, key);
         }, &value);
         return;
     case BuiltinPropertyActionKind::DefinesGetter:
     case BuiltinPropertyActionKind::DefinesSetter:
         forEachKey([&](const HeapKey& key) {
             define(object, key, action.kind == BuiltinPropertyActionKind::DefinesGetter ? HeapPropertyPart::Getter : HeapPropertyPart::Setter, value);
-            noteNameDefinedThroughObjectsNobodyFollows(object, key);
         }, &value);
         compareWithPropertyThatIsThere(value);
         return;

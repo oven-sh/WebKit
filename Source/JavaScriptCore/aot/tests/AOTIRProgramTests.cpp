@@ -260,15 +260,14 @@ static void wellKnownTypeIDs()
         { TypeTable::guard, Type::forOpaque(OpaqueKind::Guard) },
         { TypeTable::length, Type::integer(Range::length()) },
     };
-    // Behind them stand what a boxed location with a dead zone holds, and the type of a fact.
-    constexpr size_t numberOfTypesInNewTable = std::size(wellKnownTypes) + 2;
+    // Behind them stands one type without a name: what a boxed location with a dead zone holds.
+    constexpr size_t numberOfTypesInNewTable = std::size(wellKnownTypes) + 1;
     AOT_TEST_CHECK(types.size() == numberOfTypesInNewTable);
     for (unsigned index = 0; index < std::size(wellKnownTypes); ++index) {
         const WellKnownType& expected = wellKnownTypes[index];
         AOT_TEST_CHECK(expected.id == TypeID(index) && types.intern(expected.type) == expected.id && types.find(types.at(expected.id)) == expected.id);
     }
     AOT_TEST_CHECK(types.intern(Type::anything().withPrimitives(Primitive::Absent)) == TypeID(static_cast<unsigned>(std::size(wellKnownTypes))));
-    AOT_TEST_CHECK(types.intern(Type::forOpaque(OpaqueKind::Fact)) == TypeTable::fact && TypeTable::fact == TypeID(static_cast<unsigned>(std::size(wellKnownTypes)) + 1));
     AOT_TEST_CHECK(types.size() == numberOfTypesInNewTable);
     AOT_TEST_CHECK(types.at(TypeTable::never).isNever() && types.at(TypeTable::anything).isAnything() && types.at(TypeTable::guard).isOpaque(OpaqueKind::Guard));
 }

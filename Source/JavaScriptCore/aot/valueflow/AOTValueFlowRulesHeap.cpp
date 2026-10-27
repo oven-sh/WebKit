@@ -247,12 +247,13 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
     if (mayBeUntracked)
         connect(value, m_context.written(untrackedObjectAlone(), name));
     bool writesIntoRealm = mayBeUntracked && hasBeenLost(ClimbingSet(m_tables.objectsOfRealm()));
-    m_context.forEachMember(m_context.restrict(objects, m_universe.builtinObjects()), [&](ValueFlowObjectID object) {
+    ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
+    auto noteWriteTo = [&](ValueFlowObjectID object) {
         if (m_universe.kindOf(object) != ValueFlowObjectKind::Builtin)
             return;
         const ValueFlowNamesReadByNativeCode* listed = m_tables.namesReadByNativeCodeOn(object);
         if (!listed) {
-            bool isSeenByStatementsAlone = object == m_universe.objectOf(Builtins::GlobalThis) && namesProperty && namesObjectOfAccess()
+            bool isSeenByStatementsAlone = object == globalObject && namesProperty && namesObjectOfAccess()
                 && isNameThatTableDoesNotListOnGlobalObject({ HeapKeyClass::Name, PropertyKeyID(name.payload) }) && holdsGlobalObjectOnlyWhatStatementsHaveStored();
             writesIntoRealm |= !isSeenByStatementsAlone;
             return;
@@ -264,7 +265,20 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
         }
         const ValueFlowNameReadByNativeCode* read = namesProperty ? listed->find(PropertyKeyID(name.payload)) : nullptr;
         writesIntoRealm |= !namesProperty || (read && (name.kind != ValueFlowNameKind::Property || !read->isOnlyInspected));
-    });
+    };
+    // Retired nodes list built-in objects by the hundred. But for a prototype link, and for what the global object is asked, a written object says only whether the write goes into the realm: one that does says it for all.
+    ClimbingSet builtinObjects = m_context.restrict(objects, m_universe.builtinObjects());
+    if (name.kind == ValueFlowNameKind::PrototypeLink)
+        m_context.forEachMember(builtinObjects, noteWriteTo);
+    else {
+        if (m_context.contains(builtinObjects, globalObject))
+            noteWriteTo(globalObject);
+        m_context.anyMember(builtinObjects, [&](ValueFlowObjectID object) {
+            if (!writesIntoRealm && object != globalObject)
+                noteWriteTo(object);
+            return writesIntoRealm;
+        });
+    }
     if (writesIntoRealm)
         connect(value, ValueFlowProgramNodes::escaped());
     if (!mayBeUnknownObject(objects))

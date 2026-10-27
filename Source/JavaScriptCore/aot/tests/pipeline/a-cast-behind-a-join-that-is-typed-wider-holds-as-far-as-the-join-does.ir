@@ -1,0 +1,77 @@
+# function fill(target, key) { target[key] = 1; return target }
+# function pick(size: number, key) { return fill(size > 0 ? { a: undefined } : {}, key) }  function keep(size: number, key) { return fill(size > 0 ? { a: size } : {}, key) }  pick(given, key)  keep(given, key)
+# The empty literal takes a name under a key nobody knows, so it is made as an ordinary object, and the join of the two literals is typed wider than before. The cast behind the join goes on saying what the join was typed as.
+# In `pick` the check of `size` decides which literal is made, and neither literal is made from what it lets through: what the cast says holds in every version.
+# In `keep` one literal takes the checked number: what the cast says holds behind that check.
+# RUN: pipeline ApplyFlowResults
+# OPTIONS: check=VerifyEachPass
+
+typesite w0 module=m0 position=1 kind=Parameter function=f1
+typesite w1 module=m0 position=2 kind=Parameter function=f2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="a" declared={type=undefined flags=[IsExpected]}}] ownFieldCount=1
+layout L1
+layout L2 fields=[{key="a" declared={type=number flags=[IsExpected]}}] ownFieldCount=1
+layout L3
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v0 key="key" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1, v2
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v1, v2
+    Return v6
+}
+function f1 name="pick" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=number site=w0}
+    v3 = Integer
+    v4 = Greater v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    Jump -> next b3(v6)
+  b2():
+    v7 = NewObject layout=L1
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v9, v1
+    Return v11
+# CHECK: = Check v0 expectedType=number
+# CHECK: = NewDictionary
+# CHECK: ([[join]]: object):
+# CHECK-NEXT: = AssumeType [[join]] provenType=L0|Object
+# CHECK-NOT: isBehindChecks
+}
+function f2 name="keep" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=number site=w1}
+    v3 = Integer
+    v4 = Greater v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewObject -, v2 layout=L2 fields=[0]
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewObject layout=L3
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Convert v7 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v8, v1
+    Return v10
+# CHECK: = Check v0 expectedType=number
+# CHECK: = NewDictionary
+# CHECK: ([[joinOfKept]]: object):
+# CHECK-NEXT: = AssumeType [[joinOfKept]] provenType=L2|Object [isBehindChecks]
+}
+function f3 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    Return v0
+}

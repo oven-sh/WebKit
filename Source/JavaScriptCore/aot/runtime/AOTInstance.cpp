@@ -1235,8 +1235,15 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
 {
     auto* words = reinterpret_cast<uint64_t*>(m_instance.statics());
     std::span<const StaticsRun> runs = m_tables.staticsRuns();
-    for (auto run = std::ranges::lower_bound(runs, firstWord, { }, &StaticsRun::firstWord); run != runs.end() && run->firstWord < endWord; ++run)
-        std::ranges::fill(std::span { words + run->firstWord, run->numberOfWords }, run->bits());
+    auto run = std::ranges::upper_bound(runs, firstWord, { }, &StaticsRun::firstWord);
+    if (run != runs.begin())
+        --run;
+    for (; run != runs.end() && run->firstWord < endWord; ++run) {
+        uint32_t first = std::max(run->firstWord, firstWord);
+        uint32_t end = std::min(run->firstWord + run->numberOfWords, endWord);
+        if (first < end)
+            std::ranges::fill(std::span { words + first, end - first }, run->bits());
+    }
 }
 
 uint32_t ProgramStatics::groupWithWord(uint32_t word) const
@@ -1264,7 +1271,7 @@ void ProgramStatics::fillVariablesOfFiles(uint32_t first)
     Vector<uint32_t, 32> pending { first };
     while (!pending.isEmpty()) {
         uint32_t group = pending.takeLast();
-        initializeStatics(groups[group].firstWord, groups[group].firstWord + groups[group].numberOfWords);
+        initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
         for (uint32_t imported : importedGroups.subspan(groups[group].firstImportedGroup, groups[group + 1].firstImportedGroup - groups[group].firstImportedGroup)) {
             if (!std::exchange(m_filledFiles[imported], true))
                 pending.append(imported);
@@ -1277,7 +1284,7 @@ void ProgramStatics::fillVariablesOfAllFiles()
     std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
     for (uint32_t group = 0; group + 1 < groups.size(); ++group) {
         if (!std::exchange(m_filledFiles[group], true))
-            initializeStatics(groups[group].firstWord, groups[group].firstWord + groups[group].numberOfWords);
+            initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
     }
 }
 
@@ -1419,7 +1426,7 @@ ProgramStatics::ProgramStatics(State& state)
         // Nothing behind them starts as anything but zero.
         endOfWordsFilledNow = m_firstWordFilledWithFiles = files.front().firstWord;
         m_numberOfWordsFilledWithFiles = files.back().firstWord - files.front().firstWord;
-        m_filledFiles = statics + files.back().numberOfWords;
+        m_filledFiles = statics + files.back().firstWord * sizeof(uint64_t);
     }
     initializeStatics(filled / sizeof(uint64_t), endOfWordsFilledNow);
     // Compiled code may load from anywhere in the statics ahead of the branch that needs the value, so only stores are caught until the program is entered.

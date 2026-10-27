@@ -1,0 +1,146 @@
+# type Leaf = { op: 0; value: number };
+# type Pair = { op: 1; left: number; right: number };
+# function total(node: Leaf | Pair): number {
+#   if (node.op === 0) return node.value;
+#   return node.left + node.right;
+# }
+# declare const input: any;
+# const leaf: Leaf = { op: 0, value: +input };
+# const pair: Pair = { op: 1, left: +input, right: +input };
+# (globalThis as any).answer = total(input ? leaf : pair);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=241 kind=Variable
+typesite w1 module=m0 position=286 kind=Variable
+typesite w2 module=m0 position=105 kind=Parameter function=f1
+typesite w3 module=m0 position=90 kind=Result
+typesite w4 module=m0 position=368 kind=CallResult
+layout L0 name="Leaf" module=m0 position=5 fields=[{key="op" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="Pair" module=m0 position=43 fields=[{key="left" declared={type=number} flags=[IsRequired]}, {key="op" declared={type=1} flags=[IsRequired]}, {key="right" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = ToNumber v6
+    v8 = Convert v7 declared={type=number}
+    v9 = NewObject -, v3, v8 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Integer integer=1
+    v13 = Convert v12 declared={type=1}
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Convert v17 declared={type=number}
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="input" [isFreeName]
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = ToNumber v21
+    v23 = Convert v22 declared={type=number}
+    v24 = NewObject -, v13, v18, v23 layout=L1 fields=[1, 0, 2]
+    v25 = FinishObject v24
+    v26 = Convert v25 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="globalThis" [isFreeName]
+    v29 = Convert v28 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v30 = Convert v29 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = ToBoolean v32
+    Branch v33 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v34):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v11)
+  b4(v35):
+    Jump -> next b5()
+  b5():
+    Jump -> next b6(v26)
+  b6(v36):
+    v37 = Call v1, -, v36 calleeName="total"
+    v38 = Convert v37 declared={type=number site=w4}
+    PropSet v30, v38 key="answer"
+    v40 = Undefined
+    Return v40
+}
+function f1 name="total" module=m0 position=90 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="op"
+    v2 = Integer
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    v5 = NarrowByField v0, v4 key="op"
+    Jump -> next b3()
+  b3():
+    v6 = Convert v5 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v7 = PropGet v6 key="value"
+    v8 = Convert v7 declared={type=number site=w3}
+    Return v8
+  b4(v9):
+    v10 = NarrowByField v0, v9 key="op"
+    Jump -> next b5()
+  b5():
+    v11 = Convert v10 declared={type=undefined|null|L1} illTypedCause=Assertion
+    v12 = PropGet v11 key="left"
+    v13 = PropGet v11 key="right"
+    v14 = Add v12, v13
+    v15 = Convert v14 declared={type=number site=w3}
+    Return v15
+}
+
+# The tag is loaded once and branched on. A tag of the literal type 0 is kept as a 32-bit number whose value is not known, so a tag that is not 0 does not decide the layout: the arm of the Pair tests the shape word before it reads.
+# CHECK-LABEL: name="total" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[node]] = ArgumentReg(
+# CHECK-NEXT: Int32 b@[[op]] = Load(b@[[node]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Branch(b@[[op]], Terminal
+# CHECK-NEXT: Successors: Then:#[[notZero]], Else:#[[leaf]]
+# CHECK-NEXT: BB#[[notZero]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@[[word]] = Load(b@[[node]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord
+# CHECK: Int32 b@[[isPair]] = Equal(b@[[word]], $-
+# CHECK-NEXT: Branch(b@[[isPair]], Terminal
+# CHECK-NEXT: Successors: Then:#[[pair]], Else:Unlikely:#
+# CHECK-NEXT: BB#[[pair]]:
+# CHECK-NEXT: Predecessors: #[[notZero]]
+# CHECK-NEXT: Double b@[[left]] = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[right]] = Load(b@[[node]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@{{*}} = Add(b@[[left]], b@[[right]]
+# The arm of the Leaf needs no test: no other member can have the tag 0.
+# CHECK: BB#[[leaf]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Double b@{{*}} = Load(b@[[node]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="total" role=Source
+# NONE-NOT: ExitsSideways
+# NONE-COUNT-1: AOTObject_shapeWord
+# NONE-NOT: AOTObject_shapeWord
+# NONE-NOT: ExitsSideways
+# NONE-LABEL: end of function
+# Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
+# X64-LABEL: name="total" role=Source
+# X64-NEXT: instructions: 9, patchpoints: 3
+# ARM64-LABEL: name="total" role=Source
+# ARM64-NEXT: instructions: 32, patchpoints: 4

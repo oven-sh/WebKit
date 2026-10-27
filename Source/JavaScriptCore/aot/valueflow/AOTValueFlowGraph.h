@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
@@ -210,10 +211,15 @@ private:
         IsCoveredNode = 1 << 3,
     };
 
+    AOT_CLASS_THRESHOLD(unsigned, mostCoverings, 5);
+
+    // coveringsFlowedInto: one bit a covering: the node flows into its covered node.
     struct Gate {
-        uint32_t mask : 24;
-        uint32_t flags : 8;
+        uint32_t mask : 23;
+        uint32_t flags : 4;
+        uint32_t coveringsFlowedInto : mostCoverings;
     };
+    static_assert(sizeof(Gate) == sizeof(uint32_t));
 
     struct Row {
         uint64_t low;
@@ -299,7 +305,7 @@ private:
         uint64_t lowMembersNotCoverable { 0 };
         uint64_t lowMembersHeldByCoveredNode { 0 };
         uint32_t setHeldByCoveredNode { 0 };
-        BitVector flowsIntoCovered;
+        uint8_t bitInGates { 0 };
         Vector<uint32_t> nodesJustRetired;
         BitVector isRetired;
         BitVector hasStoppedAt;
@@ -384,6 +390,14 @@ private:
     void layPredecessorsInRows();
 
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
+    bool flowsIntoCovered(const Covering& covering, uint32_t node) const { return m_gates[node].coveringsFlowedInto & covering.bitInGates; }
+    bool noteFlowIntoCovered(const Covering& covering, uint32_t node)
+    {
+        bool didFlowBefore = flowsIntoCovered(covering, node);
+        m_gates[node].coveringsFlowedInto |= covering.bitInGates;
+        return didFlowBefore;
+    }
+    void append(Covering&&);
     bool takesNoMore(uint32_t node) const;
     void noteWhatCoveredNodesHold();
     bool didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const;

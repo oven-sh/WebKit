@@ -132,7 +132,6 @@ private:
     void verifyOwnType(BlockID, ValueID, const Value&);
     void verifyParameterTypes(BlockID, const Block&);
     void verifyOperands(BlockID, ValueID, const Value&);
-    void verifyCastsWithoutFacts();
     void verifyOperands(BlockID, const Terminator&);
     void verifyOperandKind(BlockID, ValueID user, uint32_t operandIndex, ValueID operand, OperandKind, LayoutID layoutPayload);
     void verifyRequiredTypes(BlockID, ValueID, const Value&);

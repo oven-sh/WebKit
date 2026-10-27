@@ -108,7 +108,7 @@ enum ResumeMode { Next Throw Return }
 enum IteratorKind { Sync Async }
 enum IteratorCompletion { Normal Throw }
 enum HomeObjectKind { Object ClassPrototype }
-enum NullishAccess { Read Write Iterate Spread }
+enum NullishAccess { Read Write Iterate Spread Update }
 enum ErrorKind { Error EvalError RangeError ReferenceError SyntaxError TypeError URIError AggregateError }
 enum RuntimeErrorKind {
     UninitializedBinding ConstantAssignment UninitializedThis ThisAlreadyBound DeleteSuperProperty UnresolvableReference ImportAssignment NotDestructurable

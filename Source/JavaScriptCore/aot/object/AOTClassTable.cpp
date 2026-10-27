@@ -76,7 +76,6 @@ ClassTable::ClassTable(State& state)
     , m_tables(state.tables)
 {
     state.instance.classes.classPrototypes = state.tableArena.allocate<JSCell*>(m_tables.numberOfClasses());
-    state.instance.classes.structuresOfInstancesMadeByBuiltins = state.tableArena.allocate<uint32_t>(m_tables.numberOfClasses());
     state.instance.classes.placesOfPrototypeProperties = m_placesOfPrototypeProperties.data();
     state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
     state.instance.classes.instancesOfClassesBelow = m_instancesOfClassesBelow.data();
@@ -379,30 +378,6 @@ void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject*
         MemberGuardWatchpoints::MethodTableUpdate update(m_state);
         m_state.objects->caches->memberGuardWatchpoints.didCreateHolder(classLayout, ClassSide::Prototype);
     }
-}
-
-// Compiled code takes a cell with this Structure for an object of the class that has the prototype object of the class and no property of its own.
-void ClassTable::didConstructParent(JSValue newTarget, JSValue made)
-{
-    if (!made.isObject() || made.asCell()->type() == CompiledObjectType)
-        return;
-    // The address is compared and never followed.
-    Structure* structure = asObject(made)->structure();
-    if (structure == m_structureLookedAtLast || structure->maxOffset() != invalidOffset)
-        return;
-    m_structureLookedAtLast = structure;
-    auto* classObject = newTarget.isCell() ? dynamicDowncast<Closure>(newTarget.asCell()) : nullptr;
-    const LayoutData* classLayout = classObject ? classObject->classData() : nullptr;
-    if (!classLayout || classLayout->evaluation() != EvaluationState::ProvenOnce)
-        return;
-    uint32_t& word = m_state.instance.classes.structuresOfInstancesMadeByBuiltins[m_tables.rankOfClass(classLayout->index)];
-    if (word)
-        return;
-    JSObject* prototype = classPrototypeIfExists(*classLayout);
-    if (!prototype || structure->storedPrototype() != JSValue(prototype) || structure->isDictionary())
-        return;
-    m_state.immortalCells->add(structure);
-    word = structure->id().bits();
 }
 
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const

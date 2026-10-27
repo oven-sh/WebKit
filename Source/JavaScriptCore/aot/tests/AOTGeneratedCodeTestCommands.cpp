@@ -252,6 +252,12 @@ static void printCode(PrintStream& out, const CompiledCode& code)
     });
     if (numberOfTailCallSites)
         out.print(" tailCallSites=", numberOfTailCallSites);
+    if (!sites.constructedCallees.isEmpty()) {
+        out.print(" constructedCallees=");
+        CommaPrinter comma(","_s);
+        for (const ConstructedCallee& row : sites.constructedCallees)
+            out.print(comma, "f", code.body.callees[row.callee].index());
+    }
     if (code.frame.isEnteredWithoutStackCheck)
         out.print(" enteredWithoutStackCheck");
     if (code.frame.isProvenToFitOnStack)
@@ -453,7 +459,11 @@ static std::optional<B3DumpRequest> parseB3DumpRequest(TestCommandContext& conte
     bool takesPoint = defaultPoint != B3DumpRequest::Point::Air;
     for (const String& word : context.arguments) {
         if (word == "loops"_s) {
-            request.scope = B3DumpScope::LoopsOnly;
+            request.scope = request.scope == B3DumpScope::SizeOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::LoopsOnly;
+            continue;
+        }
+        if (!takesPoint && word == "size"_s) {
+            request.scope = request.scope == B3DumpScope::LoopsOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::SizeOnly;
             continue;
         }
         if (takesPoint && word == "optimized"_s) {
@@ -472,10 +482,10 @@ static std::optional<B3DumpRequest> parseB3DumpRequest(TestCommandContext& conte
     return request;
 }
 
-static bool isRequested(const B3DumpRequest& request, const Program& program, FunctionID id)
+static bool isRequested(const B3DumpRequest& request, const BuildContext& build, const Program& program, FunctionID id)
 {
     if (request.functions.isEmpty())
-        return program.at(id).role != FunctionRole::Library;
+        return program.at(id).role != FunctionRole::Library && build.shouldDump(id);
     return request.functions.contains(id) || request.functions.contains(findFunctionAsRead(&program, id));
 }
 
@@ -485,9 +495,7 @@ static void printFunctionHeading(PrintStream& out, const Program& program, Funct
     out.print("function f", id.index());
     if (function.name)
         out.print(" name=\"", String::fromUTF8(program.string(function.name)), "\"");
-    if (function.role != FunctionRole::Source)
-        out.print(" role=", nameOf(function.role));
-    out.println();
+    out.println(" role=", nameOf(function.role));
 }
 
 static void lowerFunctionToB3(PrintStream& out, FunctionCodeGenerator& generator, const Function& function, const B3DumpRequest& request)
@@ -545,22 +553,21 @@ static void lowerAllFunctionsToB3(PrintStream& out, const PipelineOutput& output
     CodeGenerationTotals totals;
     ScratchTypeArena types(program.types);
     CodeGenerationWorker worker { build, types.arena(), build.backEndScratch(0) };
-    StringPrintStream ignored;
+    build.resolveFunctionToDump(program);
     Vector<FunctionID> ids = collectFunctionsWithBody(program);
     AOT::stableSort(ids, { }, [&](FunctionID id) {
         return findFunctionAsRead(&program, id).index();
     });
     for (FunctionID id : ids) {
-        bool isPrinted = isRequested(request, program, id);
-        if (isPrinted)
-            printFunctionHeading(out, program, id);
-        std::unique_ptr<FunctionCodeGenerator> generator = FunctionCodeGenerator::create(worker, inputs, id, totals);
-        if (!generator)
+        if (!isRequested(request, build, program, id))
             continue;
-        generator->procedure().setSubjectOfClient(findFunctionAsRead(&program, id).index() + 1);
-        ignored.reset();
-        lowerFunctionToB3(isPrinted ? out : ignored, *generator, program.at(id), request);
-        generator->finish();
+        printFunctionHeading(out, program, id);
+        if (std::unique_ptr<FunctionCodeGenerator> generator = FunctionCodeGenerator::create(worker, inputs, id, totals)) {
+            generator->procedure().setSubjectOfClient(findFunctionAsRead(&program, id).index() + 1);
+            lowerFunctionToB3(out, *generator, program.at(id), request);
+            generator->finish();
+        }
+        out.println("end of function f", id.index());
     }
 }
 

@@ -1,0 +1,124 @@
+# type Point = { x: number; y: number; z: number };
+# function sum(point: Point): number {
+#   let total = 0;
+#   for (const key of Object.keys(point)) total += point[key as keyof Point];
+#   return total;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sum({ x: +input, y: +input, z: +input });
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN(LOOP): lower-to-b3 optimized loops f1
+# REQUIRES(LOOP): unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized loops f1
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 not-windows unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 not-windows unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=63 kind=Parameter function=f1
+typesite w1 module=m0 position=50 kind=Result
+typesite w2 module=m0 position=253 kind=CallResult
+typesite w3 module=m0 position=93 kind=Variable
+typesite w4 module=m0 position=124 kind=CallResult
+typesite w5 module=m0 position=117 kind=Element
+typesite w6 module=m0 position=166 kind=Assertion
+layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Convert v9 declared={type=number}
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = ToNumber v13
+    v15 = Convert v14 declared={type=number}
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = ToNumber v18
+    v20 = Convert v19 declared={type=number}
+    v21 = NewObject -, v10, v15, v20 layout=L0 fields=[0, 1, 2]
+    v22 = FinishObject v21
+    v23 = Call v1, -, v22 calleeName="sum"
+    v24 = Convert v23 declared={type=number site=w2}
+    PropSet v5, v24 key="answer"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="sum" module=m0 position=50 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w3}
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectKeys
+    v5 = Call v4, v3, v0 calleeName="Object.keys"
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v7 = IteratorOpen v6
+    Jump -> next b2(v2)
+  b2(v8: number):
+    LoopHint
+    v10 = IteratorResume v7
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Convert v8 declared={type=number site=w1}
+    Return v13
+  b4():
+    Jump -> next b5()
+  b5() handler=b7():
+    v14 = Convert v12 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v15 = Convert v14 declared={type=undefined|null|"x"|"y"|"z" site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v16 = ElemGet v0, v15
+    v17 = Add v8, v16
+    v18 = Convert v17 declared={type=number site=w3}
+    Jump -> next b6()
+  b6() handler=b7():
+    Jump -> next b2(v18)
+  b7() role=IterationCleanup subject=v7:
+    v19 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v19
+}
+
+# The loop over the names of a layout walks the list that Object.keys made. Each turn loads a name and asks one pure function which of the names of the layout it is.
+# LOOP-LABEL: steps by 1
+# LOOP-LABEL: steps by 1
+# LOOP: Int64 b@[[key]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
+# LOOP: Int64 b@[[which]] = Patchpoint(b@[[key]]:Register({{*}}), resultConstraints = Register({{*}}), pureFunction = {{*}}(children), ControlDependent, {{*}}:TypeTest)
+# The answer is compared with one name after the other, and each arm is one load of a double from its slot: no lookup by name.
+# LOOP-NEXT: Int32 b@[[isFirst]] = Equal(b@[[which]], ${{*}}, {{*}}:TypeTest)
+# LOOP-NEXT: Branch(b@[[isFirst]], Terminal, {{*}}:TypeTest)
+# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# LOOP: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
+# LOOP: Int32 b@{{*}} = Equal(b@[[which]], ${{*}}, {{*}}:TypeTest)
+# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# LOOP-LABEL: end of loop
+# Nothing in this loop can throw or allocate, and the length of the list is not loaded again.
+# CALLS-LABEL: steps by 1
+# CALLS-LABEL: steps by 1
+# CALLS-NOT: ExitsSideways
+# CALLS-NOT: Reads:Butterfly_publicLength
+# CALLS-NOT: Reads:JSObject_butterfly
+# CALLS-LABEL: end of loop
+# The counts hold a call, whose moves follow the calling convention: not for Windows.
+# X64: loop #{{*}}, instructions: 12, patchpoints: 2, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 2, {{*}} steps by 1

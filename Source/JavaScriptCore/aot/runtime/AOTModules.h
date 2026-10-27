@@ -28,6 +28,7 @@ namespace JSC {
 
 class JSCellButterfly;
 class JSModuleLoader;
+class ModuleLoadingContext;
 class ScriptFetchParameters;
 class ThrowScope;
 
@@ -130,6 +131,8 @@ public:
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     // `bun run` loads the entry point as the one import of the module bun:main: the graph is loaded one step of the loader behind the entry point. Says so once.
     bool takeStepOfMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !std::exchange(m_didTakeStepOfMainModule, true); }
+    // An import() that loads the entry point ahead of the program loads it as any other module, and bun:main finds it loaded.
+    void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= m_firstModuleRequestedByHost == module; }
     // Ahead of that step bun:main waits for one promise and whoever else asks for the entry point for another. Says so once.
     bool takeLoadPromiseBelowMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
@@ -191,6 +194,14 @@ public:
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     void noteLoadOfFile(ModuleID fileOrFace);
+    bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
+    bool importsFileBeingEvaluated(ModuleID root) const;
+    std::optional<ModuleID> fileToWaitFor(const Identifier& key);
+    JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
+    bool hasDeferredLoads() const { return !m_deferredRequests.isEmpty() || !m_deferredImports.isEmpty(); }
+    void didRequestModule(const Identifier& key, JSCell* payload);
+    void didSettleLoad(const ModuleGraphLoadingState&);
+    void didFailToMakeModule(const Identifier& key);
     bool isNotLoaded(ModuleID);
     // Of an ES module of the program that has neither a record nor a status.
     bool isNotLoadedWithoutStatus(ModuleID, const ModuleData&);
@@ -218,7 +229,9 @@ public:
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
-    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
+    enum class ImportCaller : bool { CompiledCode, Host };
+    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
@@ -404,6 +417,18 @@ private:
     // The pairs of a requiring and a required module that recordRequire() has seen.
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
+    // `bun run` makes the module object of a file for whoever asks for the file first, and only a require() leaves a parent in it.
+    BitVector m_filesRequestedByLoader;
+    struct FilesBeingRun {
+        ModuleID root;
+        // Without one, the start of the root calls them.
+        std::optional<ModuleID> fileOrFace;
+        FilesBeingRun* outer;
+    };
+    FilesBeingRun* m_innermostFilesBeingRun { nullptr };
+    void noteRequestByLoader(ModuleID fileOrFace);
+    bool wasRequestedByLoader(ModuleID file);
+    bool hasReachedLevelOf(const FilesBeingRun&, ModuleID file);
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
@@ -413,6 +438,7 @@ private:
     bool m_admitsCodeOutsideImage;
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
+    const bool m_showsWaysBetweenModuleObjects;
     bool m_loadsModulesByName;
     const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
@@ -531,6 +557,29 @@ private:
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
+    struct DeferredRequest {
+        ModuleID file;
+        Strong<JSCell> context;
+        Strong<JSPromise> promise;
+        bool useImportMap;
+        Strong<JSCell> importerLoad { };
+    };
+    Vector<DeferredRequest> m_deferredRequests;
+    struct DeferredImport {
+        ModuleID file;
+        Strong<JSPromise> promise;
+    };
+    Vector<DeferredImport> m_deferredImports;
+    ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
+    void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
+    bool isEvaluatedByLoader(ModuleID file) const;
+    bool hasDeferredLoads(ModuleID fileOrFace) const;
+    void resumeDeferredRequests(ModuleID file);
+    void resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded);
+    void resumeDeferredLoadsWithoutImporter(ModuleID fileOrFace);
+    void resumeDeferredLoadsOfFinishedFiles();
+    bool hasKey(ModuleID file, const Identifier& key);
+    std::optional<ModuleID> fileWithDeferredLoads(const Identifier& key);
     // The loader goes through its graph, and comes to files that have run.
     std::optional<ModuleID> m_rootWhoseFilesRanAhead;
     RefPtr<MicrotaskQueue> m_jobsThatWaitForLoader;

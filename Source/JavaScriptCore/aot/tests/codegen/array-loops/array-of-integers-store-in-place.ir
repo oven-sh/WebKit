@@ -132,6 +132,6 @@ function f1 name="turn" module=m0 position=73 flags=[IsChecked, HasExplicitName]
 # STORES-NOT: Writes:indexedInt32Properties
 # STORES-LABEL: end of loop
 # X64-NOT: loop #
-# X64: loop #{{*}}, instructions: 16, patchpoints: 2
+# X64: loop #{{*}}, instructions: 11, patchpoints: 1
 # ARM64-NOT: loop #
-# ARM64: loop #{{*}}, instructions: 21, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 11, patchpoints: 1

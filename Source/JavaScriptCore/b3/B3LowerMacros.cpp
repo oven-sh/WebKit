@@ -1373,6 +1373,11 @@ private:
         return arm;
     }
 
+    static bool staysInsideTable(Value* subject, int64_t firstValue, size_t tableSize)
+    {
+        return !firstValue && subject->opcode() == BitAnd && subject->child(1)->hasInt() && static_cast<uint64_t>(subject->child(1)->asInt()) < tableSize;
+    }
+
     static bool coversEveryValueOf(Value* subject, std::span<const SwitchCase> cases, size_t tableSize)
     {
         if (cases.size() + 1 != tableSize || cases.front().caseValue())
@@ -1616,7 +1621,8 @@ private:
                 size_t tableSize = static_cast<size_t>(range.value()) + 1; // + 1 for fallthrough
                 Value* index = before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, firstValue.value()));
                 Value* fallthroughIndex = before->appendIntConstant(m_proc, m_origin, type, tableSize - 1);
-                index = before->appendNew<B3::Value>(m_proc, Select, m_origin, before->appendNew<Value>(m_proc, AboveEqual, m_origin, index, fallthroughIndex), fallthroughIndex, index);
+                if (!policy.usesValueTables || !staysInsideTable(child, firstValue.value(), tableSize))
+                    index = before->appendNew<B3::Value>(m_proc, Select, m_origin, before->appendNew<Value>(m_proc, AboveEqual, m_origin, index, fallthroughIndex), fallthroughIndex, index);
 
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);

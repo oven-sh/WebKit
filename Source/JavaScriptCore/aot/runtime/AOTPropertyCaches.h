@@ -417,6 +417,9 @@ private:
 };
 
 FirstAdditions& firstAdditionsOf(State&);
+void didFinishFilling(Structure*);
+// The names that an object has are copied into the table in which it is filled. An object that is given a name between two looks, again and again, is filled again and again: it may be so while it has few names.
+bool hasFewEnoughNamesToBeFilled(Structure*);
 
 } } // namespace JSC::AOT
 

@@ -342,6 +342,39 @@ static void testCallsOfOwnFunctionObjects()
     AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
 }
 
+static void testConstructedCallees()
+{
+    static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
+    static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
+    static constexpr std::array<uint32_t, 2> ownFunctionObjects { 2, 130 };
+    static constexpr std::array<std::pair<uint32_t, uint32_t>, 4> listed { { { 1, 5 }, { 2, 0 }, { 130, 70000 }, { 70000, 3 } } };
+
+    SideTableInputs inputs { };
+    inputs.handlers = handlers;
+    inputs.callsOfOwnFunctionObjects = ownFunctionObjects;
+    inputs.callSites = callSites;
+    Vector<uint8_t> without;
+    SideTableParts::append(without, inputs);
+    AOT_TEST_CHECK(!inputs.flags().contains(ImageFunctionFlag::HasConstructedCallees));
+    SideTableParts none = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), without.span().data());
+    for (uint32_t site : { 0u, 1u, 130u })
+        AOT_TEST_CHECK(!none.constructedCalleeAt(site));
+
+    inputs.constructedCallees = listed;
+    Vector<uint8_t> stream;
+    SideTableParts::append(stream, inputs);
+    AOT_TEST_CHECK(inputs.flags().contains(ImageFunctionFlag::HasConstructedCallees));
+    SideTableParts parts = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), stream.span().data());
+    for (auto [site, function] : listed)
+        AOT_TEST_CHECK(parts.constructedCalleeAt(site) == function);
+    for (uint32_t site : { 0u, 3u, 129u, 131u, 69999u, 70001u })
+        AOT_TEST_CHECK(!parts.constructedCalleeAt(site));
+    for (uint32_t site : ownFunctionObjects)
+        AOT_TEST_CHECK(parts.callsOwnFunctionObjectAt(site));
+    AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));
+    AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
+}
+
 static Vector<uint8_t> streamWithFrameChanges(std::initializer_list<uint32_t> changes)
 {
     Vector<uint8_t> frameRanges;
@@ -1059,6 +1092,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/format/frame-ranges"_s, testFrameRanges },
         { "image/format/frame-range-without-end"_s, testFrameRangeWithoutEnd },
         { "image/format/calls-of-own-function-objects"_s, testCallsOfOwnFunctionObjects },
+        { "image/format/constructed-callees"_s, testConstructedCallees },
         { "image/format/register-packing"_s, testRegisterPacking },
         { "image/format/image-frame-bits"_s, testImageFrameBits },
         { "image/format/function-record-words"_s, testFunctionRecordWords },

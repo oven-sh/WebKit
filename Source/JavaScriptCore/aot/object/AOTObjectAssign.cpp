@@ -362,6 +362,8 @@ ALWAYS_INLINE bool FieldStoreRun::isAccepted(AssignmentPlan::FieldStore& store, 
 {
     if (store.sourceAlwaysFits)
         return true;
+    if (store.sourceFitsUnlessUndefinedOrNull && !value.isUndefinedOrNull())
+        return true;
     if (value.isObject())
         return value.asCell()->structureID() == store.lastAcceptedStructure || acceptsObject(store, asObject(value));
     bool isKindAccepted = store.acceptedKinds.containsAny(valueKindOf(value));
@@ -640,11 +642,55 @@ static uint32_t offsetInExtensionWith(uint64_t granuleBits, uint32_t offset)
     return offsetOfFirstExtensionSlot + std::popcount(granuleBits & (granuleBitOf(offset) - 1)) * extensionGranuleSize + offsetInGranule(offset);
 }
 
-MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, bool isTested)
+// An integer keeps its value from one form to another. Each of these kinds takes the other way for a marker.
+static MappedCopy::MoveKind moveKindBetweenFormsOfIntegers(SlotRepresentation from, SlotRepresentation to)
 {
     using Kind = MappedCopy::MoveKind;
-    if (isTested)
+    ASSERT(from != to);
+    if (from == SlotRepresentation::OptionalInt32) {
+        if (to == SlotRepresentation::JSValue)
+            return Kind::BoxedOptionalInt32;
+        if (to == SlotRepresentation::OptionalDouble)
+            return Kind::OptionalInt32AsDouble;
+        if (to == SlotRepresentation::OptionalInt64)
+            return Kind::OptionalInt32AsOptionalInt64;
+    }
+    if (from == SlotRepresentation::OptionalInt64) {
+        if (to == SlotRepresentation::JSValue)
+            return Kind::BoxedOptionalInt64;
+        if (to == SlotRepresentation::OptionalDouble)
+            return Kind::OptionalInt64AsDouble;
+        if (to == SlotRepresentation::OptionalInt32)
+            return Kind::OptionalInt64AsOptionalInt32;
+    }
+    return Kind::OtherForm;
+}
+
+static MappedCopy::MoveKind moveKindUnlessMarker(SlotRepresentation from, SlotRepresentation to)
+{
+    using Kind = MappedCopy::MoveKind;
+    if (from != to)
+        return moveKindBetweenFormsOfIntegers(from, to);
+    if (from == SlotRepresentation::OptionalInt32)
+        return Kind::Int32AsOptionalInt32;
+    if (from == SlotRepresentation::OptionalInt64)
+        return Kind::OptionalInt64UnlessMarker;
+    if (from == SlotRepresentation::OptionalDouble)
+        return Kind::OptionalDoubleUnlessMarker;
+    if (from == SlotRepresentation::OptionalBoolean)
+        return Kind::OptionalBooleanUnlessMarker;
+    if (from == SlotRepresentation::JSValue)
+        return Kind::JSValueUnlessMarker;
+    return Kind::OtherForm;
+}
+
+MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, SlotFit fit)
+{
+    using Kind = MappedCopy::MoveKind;
+    if (fit == SlotFit::IsTested)
         return Kind::Tested;
+    if (fit == SlotFit::UnlessUndefinedOrNull)
+        return moveKindUnlessMarker(from, to);
     auto isNarrowReference = [](SlotRepresentation representation) {
         return representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
     };
@@ -659,17 +705,15 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
             return Kind::WideNarrowReference;
         if ((from == SlotRepresentation::JSValue || from == SlotRepresentation::Cell) && isNarrowReference(to))
             return Kind::NarrowWideReference;
-        if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::JSValue)
-            return Kind::BoxedOptionalInt32;
         if (from == SlotRepresentation::Int32 && to == SlotRepresentation::JSValue)
             return Kind::BoxedInt32;
         if (from == SlotRepresentation::Int32 && to == SlotRepresentation::OptionalInt32)
             return Kind::Int32AsOptionalInt32;
-        if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::OptionalDouble)
-            return Kind::OptionalInt32AsDouble;
         if (from == SlotRepresentation::Int32 && isDouble(to))
             return Kind::Int32AsDouble;
-        return Kind::OtherForm;
+        if (from == SlotRepresentation::Int32 && (to == SlotRepresentation::Int64 || to == SlotRepresentation::OptionalInt64))
+            return Kind::Int32AsInt64;
+        return moveKindBetweenFormsOfIntegers(from, to);
     }
     switch (from) {
     case SlotRepresentation::OptionalInt32:
@@ -748,10 +792,19 @@ static bool tryDescribeForStub(MappedCopy::Move& move)
         return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalInt64).absentBits, 1);
     case Kind::OptionalDouble:
         return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalDouble).absentBits, 1);
+    case Kind::OptionalInt64UnlessMarker:
+        return isMadeIn(Run::Words, undefinedInteger, absentInteger - undefinedInteger + 1);
+    case Kind::OptionalDoubleUnlessMarker:
+        return isMadeIn(Run::Words, undefinedDouble, absentDouble - undefinedDouble + 1);
+    case Kind::JSValueUnlessMarker:
+        return isMadeIn(Run::Words, JSValue::ValueEmpty, JSValue::ValueUndefined + 1);
     case Kind::Byte:
         return isMadeIn(Run::Bytes, 0, 0);
     case Kind::ByteUnlessZero:
         return isMadeIn(Run::Bytes, 0, 1);
+    // All but the two booleans: the stub counts in 32 bits.
+    case Kind::OptionalBooleanUnlessMarker:
+        return isMadeIn(Run::Bytes, JSValue::ValueTrue + 1, UINT32_MAX - 1);
     case Kind::OptionalInt32AsDouble:
         return isMadeIn(Run::Int32sAsDoubles, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
     case Kind::Int32AsDouble:
@@ -763,6 +816,11 @@ static bool tryDescribeForStub(MappedCopy::Move& move)
     case Kind::WideNarrowReference:
         return isMadeIn(Run::WidenedReferences, 0, 1);
     case Kind::QuarterWord:
+    case Kind::OptionalInt32AsOptionalInt64:
+    case Kind::Int32AsInt64:
+    case Kind::BoxedOptionalInt64:
+    case Kind::OptionalInt64AsOptionalInt32:
+    case Kind::OptionalInt64AsDouble:
     case Kind::OtherForm:
     case Kind::Tested:
         return false;
@@ -880,22 +938,20 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     for (uint16_t index : entries) {
         if (index >= sourceLayout.numberOfFields)
             return false;
-        uint16_t& entry = map->entries[index];
-        if (entry == FieldMap::isUnknown)
+        FieldMap::Entry& entry = map->entries[index];
+        if (entry.state == FieldMap::isUnknown)
             entry = plans.describeMappedField(vm, targetLayout, sourceLayout.fields()[index], excludedRunNumberPlusOne);
-        if (entry == FieldMap::isNotServed)
+        if (entry.state == FieldMap::isNotServed)
             return false;
-        if (entry == FieldMap::isLeftOut)
+        if (entry.state == FieldMap::isLeftOut)
             continue;
-        uint16_t key = (entry & ~FieldMap::isTested) - FieldMap::firstField;
+        uint16_t key = entry.fieldOfTarget();
         const FieldData& from = sourceLayout.fields()[index];
         const FieldData& to = targetLayout.fields()[key];
-        bool isTested = entry & FieldMap::isTested;
-        uint8_t acceptedKinds = isTested ? kindsAlwaysAccepted(state.objects->layouts.typeOf(to)).toRaw() : 0;
         if (from.isOutOfLine() && !(copy.granuleBitsOfSource & granuleBitOf(from.slot.offset)))
             return false;
-        moves.append(MappedCopy::Move { from.slot.offset, to.slot.offset, moveKindFor(from.slot.representation(), to.slot.representation(), isTested), static_cast<uint8_t>(widthOf(to.slot.representation())),
-            from.isOutOfLine(), to.isOutOfLine(), from.slot.representation(), to.slot.representation(), acceptedKinds, key });
+        moves.append(MappedCopy::Move { from.slot.offset, to.slot.offset, entry.kind, static_cast<uint8_t>(widthOf(to.slot.representation())),
+            from.isOutOfLine(), to.isOutOfLine(), from.slot.representation(), to.slot.representation(), entry.acceptedKinds, key, false, !!(entry.state & FieldMap::testsUndefinedAndNull) });
         copy.mayStoreCells |= traitsOf(to.slot.representation()).holdsCell;
         if (to.isOutOfLine())
             copy.granuleBitsFilled |= granuleBitOf(to.slot.offset);
@@ -922,20 +978,14 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     return true;
 }
 
-static NEVER_INLINE bool tryReadInOtherForm(State& state, const MappedCopy::Move& move, const uint8_t* slot, uint64_t& bits)
-{
-    JSValue value = readSlot(move.representationOfSource, slot, *state.strings);
-    bits = 0;
-    return value && tryWriteSlot(*state.strings, move.representationOfTarget, &bits, value);
-}
-
-static NEVER_INLINE bool tryReadTested(State& state, const MappedCopy::Move& move, const FieldData& to, const uint8_t* slot, uint64_t& bits)
+static NEVER_INLINE bool tryReadInOtherWay(State& state, const MappedCopy::Move& move, std::span<const FieldData> fieldsOfTarget, const uint8_t* slot, uint64_t& bits)
 {
     JSValue value = readSlot(move.representationOfSource, slot, *state.strings);
     if (!value)
         return false;
-    if (!OptionSet<ValueKind>::fromRaw(move.acceptedKinds).containsAny(valueKindOf(value))) {
-        std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
+    bool isTested = move.kind == MappedCopy::MoveKind::Tested ? !OptionSet<ValueKind>::fromRaw(move.acceptedKinds).containsAny(valueKindOf(value)) : move.testsUndefinedAndNull && value.isUndefinedOrNull();
+    if (isTested) {
+        std::optional<AcceptedValue> accepted = state.objects->layouts.accept(fieldsOfTarget[move.fieldOfTarget], value);
         if (!accepted)
             return false;
         value = accepted->value();
@@ -989,7 +1039,7 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
         bool didRead = tryMove(state.instance.cellCageBase, move, slot, [&](uint64_t read) ALWAYS_INLINE_LAMBDA {
             bits = read;
         }, [&]() ALWAYS_INLINE_LAMBDA {
-            return move.kind == MappedCopy::MoveKind::Tested ? tryReadTested(state, move, fieldsOfTarget[move.fieldOfTarget], slot, bits) : tryReadInOtherForm(state, move, slot, bits);
+            return tryReadInOtherWay(state, move, fieldsOfTarget, slot, bits);
         });
         if (!didRead)
             return RepeatedCopy::IsNotDone;

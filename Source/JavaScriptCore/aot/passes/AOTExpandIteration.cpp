@@ -496,7 +496,7 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             .kind = form == IterationForm::Map ? JSC::IterationKind::Entries : JSC::IterationKind::Values,
             .builtinClass = part.builtinClass,
             .typedArrayType = builtins.typedArrayTypeOf(part.builtinClass),
-            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.contentsOfSlots())),
+            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.writtenContents.span())),
             .awaitsEachValue = planned.kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
         });
     };

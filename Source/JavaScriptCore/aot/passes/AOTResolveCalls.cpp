@@ -25,7 +25,6 @@
 #include "AOTHeat.h"
 #include "AOTInlineCopy.h"
 #include "AOTLayout.h"
-#include "AOTMemoryLocation.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
@@ -472,16 +471,6 @@ bool canConstructWithoutClosure(const Program& program, FunctionID id)
 static constexpr OpcodeSet validationsOfValues { Opcode::ValidateType, Opcode::ValidateCallee };
 static constexpr OpcodeSet readsOfMembers { Opcode::PropGet, Opcode::SuperGet };
 
-static bool readsWhatNoOtherCodeChanges(FunctionPassContext& context, ValueID id)
-{
-    const Value& value = context.function.at(id);
-    MemoryAccess access = memoryAccessOf(context.function, value);
-    if (access.kind != MemoryAccess::Kind::Read || stabilityOf(context.program, value, access) == LocationStability::Unknown)
-        return false;
-    const Effects& effects = context.analyses.effectsOf(id).normal;
-    return !effects.mayThrow && effects.writes.isEmpty();
-}
-
 static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSite> links, const ValueSite& call)
 {
     if (std::ranges::any_of(links, [&](const ValueSite& link) { return link.block != call.block; }))
@@ -495,7 +484,7 @@ static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSit
         Effects effectsOfRead = context.analyses.effectsOf(read.value).normal;
         for (uint32_t index = read.index + 1; index < call.index; ++index) {
             ValueID id = values[index];
-            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead) && !readsWhatNoOtherCodeChanges(context, id))
+            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead))
                 return false;
         }
     }
@@ -1756,14 +1745,6 @@ struct CallResolver {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    bool paysToDivideExpectedReceivers(const CallSite& site)
-    {
-        context.planAsksAboutPlace = true;
-        BlockID block = site.position.block;
-        Expected<HeatClass> heatClass = heatClassOf(context, block);
-        return function.at(block).frequency.predicted() == BlockFrequency::Normal && (isHot(heatClass).predicted() || heatClass.predicted() == HeatClass::Unknown);
-    }
-
     Plan planReceiverDispatch(const CallSite& site)
     {
         bool isCall = site.opcode == Opcode::Call;
@@ -1776,21 +1757,14 @@ struct CallResolver {
         ValueID receiver = access.objectOperand();
 
         ReceiverCandidates candidates = receiverCandidates(program, function, receiver, access.receivers());
-        bool dividesExpectedReceivers = !candidates.isProven() && isCall && candidates.expected.predicted().size() >= 2 && site.memberRead.canSinkToCall
-            && candidates.expected.predicted().size() <= context.limit(LimitID::MaxDispatchCases) && paysToDivideExpectedReceivers(site);
-        if (!candidates.isProven() && !dividesExpectedReceivers)
+        if (!candidates.isProven())
             return std::unexpected(!candidates.expected.predicted().isEmpty() ? CallDeclineReason::NeedsTest : isCall ? CallDeclineReason::UnknownMember : CallDeclineReason::None);
         bool checksReceiverAtRead = candidates.mayBeNullish;
         if (checksReceiverAtRead && !isCall)
             return declined;
 
-        MemberPartition partition = partitionMembers(accessContext(), (dividesExpectedReceivers ? candidates.expected.predicted() : candidates.proven).span(), key, accessOf(access.opcode));
+        MemberPartition partition = partitionMembers(accessContext(), candidates.proven.span(), key, accessOf(access.opcode));
         auto armsOfPartition = partition.arms.map<Vector<std::optional<CallArm>, 4>>([&](const MemberArm& arm) { return planReceiverArm(site, arm); });
-        if (dividesExpectedReceivers) {
-            bool everyArmEntersMethod = !partition.arms.isEmpty() && partition.rest.isEmpty() && std::ranges::all_of(armsOfPartition, [](const std::optional<CallArm>& arm) { return arm && arm->kind == CallArmKind::DirectCall; });
-            if (partition.arms.size() < 2 || !everyArmEntersMethod)
-                return std::unexpected(CallDeclineReason::NeedsTest);
-        }
         if (!armsOfPartition.containsIf([](const std::optional<CallArm>& arm) { return arm && arm->kind != CallArmKind::OriginalOperations; })) {
             if (partition.arms.containsIf([](const MemberArm& arm) { return !arm.answer.needsNoTest(); }))
                 return std::unexpected(CallDeclineReason::NeedsTest);

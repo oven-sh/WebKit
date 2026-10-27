@@ -1,0 +1,101 @@
+# function header(name: string): number {
+#   switch (name) {
+#     case "content-type": return 1;
+#     case "content-length": return 2;
+#     case "authorization": return 3;
+#     case "accept-encoding": return 4;
+#     default: return 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = header(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=16 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=288 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="header"
+    v10 = Convert v9 declared={type=number site=w2}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="header" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    SwitchString v0 strings=["content-type", "content-length", "authorization", "accept-encoding"] -> case b2(| 0), case b4(| 0), case b6(| 0), case b8(| 0), otherwise b10()
+  b2(v1):
+    Jump -> next b3()
+  b3():
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number site=w1}
+    Return v3
+  b4(v4):
+    Jump -> next b5()
+  b5():
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number site=w1}
+    Return v6
+  b6(v7):
+    Jump -> next b7()
+  b7():
+    v8 = Integer integer=3
+    v9 = Convert v8 declared={type=number site=w1}
+    Return v9
+  b8(v10):
+    Jump -> next b9()
+  b9():
+    v11 = Integer integer=4
+    v12 = Convert v11 declared={type=number site=w1}
+    Return v12
+  b10():
+    Jump -> next b11()
+  b11():
+    v13 = Integer
+    v14 = Convert v13 declared={type=number site=w1}
+    Return v14
+}
+
+# Cases longer than eight characters are told apart by their lengths first: 12, 13, 14, 15. Behind each length stands one comparison with the one case of that length, by the stub that only reads.
+# CHECK-LABEL: name="header" role=Source
+# CHECK: Int64 b@[[word]] = Load(b@[[name]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0
+# CHECK: Load(b@[[word]], offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length
+# CHECK: Int32 b@[[narrow]] = Phi(
+# CHECK: Int64 b@[[length]] = ZExt32(b@[[narrow]])
+# CHECK: Int32 b@{{*}} = LessThan(b@[[length]], $14(
+# CHECK: Int32 b@{{*}} = Equal(b@[[length]], $12(
+# CHECK: Int64 b@{{*}} = Patchpoint(b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Reads:{argumentBuffer, StringStorage})
+# CHECK: Int32 b@{{*}} = Equal(b@[[length]], $13(
+# CHECK: Int32 b@{{*}} = Equal(b@[[length]], $14(
+# CHECK: Int32 b@{{*}} = Equal(b@[[length]], $15(
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="header" role=Source
+# NONE-NOT: ExitsSideways
+# NONE-NOT: Writes:
+# NONE-LABEL: end of function
+# A subject goes through at most one of the four.
+# CALLS-LABEL: f3: size=
+# CALLS-NEXT: stub StringEqualsLiteral x4
+# CALLS-NEXT: f4: size=

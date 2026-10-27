@@ -111,8 +111,6 @@ std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID,
 LayoutID expectedBaseOf(const Layout&);
 LayoutID predictedHeritageOf(const Layout&);
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
-// The objects of the class are cells that a built-in constructor makes, with no property laid on them by that constructor, by the class or by a class above it: the Structure they are made with tells them.
-bool isToldByStructureOfBuiltin(const Program&, LayoutID);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);

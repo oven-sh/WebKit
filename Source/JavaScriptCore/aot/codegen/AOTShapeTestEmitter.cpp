@@ -13,7 +13,6 @@
 #include "AOTLayout.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTest.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "MarkedBlock.h"
 #include <algorithm>
@@ -53,45 +52,7 @@ Condition ShapeTestEmitter::hasNoExtraProperties(CellPointer cell)
     return hasNoBits(orderWordOf(cell), orderWordHasExtraProperties);
 }
 
-bool ShapeTestEmitter::isToldByStructuresOfBuiltins(const Type& type) const
-{
-    AOT_THRESHOLD(size_t, mostClasses, 4);
-    if (!type.hasOnlyLayouts())
-        return false;
-    std::span<const LayoutID> members = membersOf(m_program, type);
-    return !members.empty() && members.size() <= mostClasses && std::ranges::all_of(members, [&](LayoutID member) {
-        return isToldByStructureOfBuiltin(m_program, member) && m_placement.rankOfClass(member);
-    });
-}
-
-Condition ShapeTestEmitter::isAsBuiltinMadeIt(CellPointer cell, const Type& toldByStructures)
-{
-    Condition result;
-    for (LayoutID member : membersOf(m_program, toldByStructures))
-        result = logicalOr(result, hasStructureOfClass(cell, *m_placement.rankOfClass(member)));
-    return result;
-}
-
-Condition ShapeTestEmitter::hasStructureOfClass(CellPointer cell, uint32_t rankOfClass)
-{
-    Pointer structures = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.structuresOfInstancesMadeByBuiltins));
-    Word32 structure(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), structures.value(), static_cast<ptrdiff_t>(rankOfClass) * sizeof(uint32_t))));
-    return equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), structure);
-}
-
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
-{
-    Condition isCompiledObjectOfSet = hasShapeOfCompiledObjectIn(cell, tested, known);
-    for (LayoutID member : m_program.at(tested).completeMembers().value()) {
-        if (!isToldByStructureOfBuiltin(m_program, member))
-            continue;
-        if (std::optional<uint32_t> rank = m_placement.rankOfClass(member))
-            isCompiledObjectOfSet = logicalOr(isCompiledObjectOfSet, hasStructureOfClass(cell, *rank));
-    }
-    return isCompiledObjectOfSet;
-}
-
-Condition ShapeTestEmitter::hasShapeOfCompiledObjectIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
     const ShapeTable& shapes = m_placement.shapes();
     bool isKnownCompiledObject = hasOnlyCompiledObjects(known);

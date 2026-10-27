@@ -727,7 +727,7 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     return iter->value.m_module.get();
 }
 
-JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap)
+JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap, JSPromise* deferredPromise)
 {
     // HostLoadImportedModule(referrer, moduleRequest, loadState, payload)
     // https://html.spec.whatwg.org/multipage/webappapis.html#hostloadimportedmodule
@@ -908,8 +908,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #else
         JSPromise* promise = mapEntry->loadPromise();
 #endif
-        if (promise) {
-            if (mapEntry->record()) {
+        if (promise && (!deferredPromise || mapEntry->record())) {
+            if (mapEntry->record() && !deferredPromise) {
 #if ENABLE(AOT)
                 // Whoever asks for the entry point while its graph is loaded hears of it one step ahead of whoever asked for the program.
                 if (auto* compiled = promise->status() == JSPromise::Status::Pending ? dynamicDowncast<AOT::ModuleRecord>(mapEntry->record()) : nullptr; compiled && compiled->takeLoadPromiseBelowMainModule()) {
@@ -922,7 +922,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 RETURN_IF_EXCEPTION(scope, nullptr);
             } else {
                 auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-                JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+                JSPromise* resultPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
                 resultPromise->markAsHandled();
                 promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, resultPromise, context);
                 promise = resultPromise;
@@ -931,6 +931,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             return promise;
         }
     } else {
+#if ENABLE(AOT)
+        if (auto file = vm.hasCompiledCode() ? AOT::ModuleRecord::fileToWaitFor(globalObject, resolved) : std::nullopt) [[unlikely]]
+            return AOT::ModuleRecord::deferRequest(globalObject, *file, ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, nullptr, scriptFetcher), useImportMap);
+#endif
         mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
         m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
@@ -965,12 +969,20 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-    JSPromise* loadPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    JSPromise* loadPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
     loadPromise->markAsHandled();
 
     modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
 
-    mapEntry->setLoadPromise(vm, loadPromise);
+    if (!deferredPromise || !mapEntry->loadPromise())
+        mapEntry->setLoadPromise(vm, loadPromise);
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) {
+        AOT::ModuleRecord::didRequestModule(globalObject, resolved, payload);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+#endif
 
     return loadPromise;
 }
@@ -1118,6 +1130,10 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             });
             // 5.c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
             state->promise()->fulfill(vm, module);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::ModuleRecord::didSettleLoad(globalObject, *state);
+#endif
             break;
         }
     }
@@ -1222,6 +1238,12 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
                         loaded->setStatus(CyclicModuleRecord::Status::Unlinked);
                 });
                 state->promise()->fulfill(vm, *module);
+#if ENABLE(AOT)
+                if (vm.hasCompiledCode()) {
+                    AOT::ModuleRecord::didSettleLoad(globalObject, *state);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+#endif
             }
         } else if (state->drainingInnerLoad())
             state->enqueueInnerLoad(*module);

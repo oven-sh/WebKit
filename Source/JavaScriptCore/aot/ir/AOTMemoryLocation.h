@@ -169,6 +169,8 @@ public:
     {
         bool changed = !m_heaps.containsAll(other.m_heaps);
         m_heaps.add(other.m_heaps);
+        if (!other.m_heaps.containsAny(indexedHeaps))
+            return changed;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             uint64_t merged = m_masks[index] | other.m_masks[index];
             changed |= merged != m_masks[index];
@@ -212,7 +214,10 @@ public:
 
     constexpr bool overlaps(const LocationMasks& other) const
     {
-        if (!((m_heaps & other.m_heaps) - indexedHeaps).isEmpty())
+        AbstractHeapSet common = m_heaps & other.m_heaps;
+        if (common.isEmpty())
+            return false;
+        if (!(common - indexedHeaps).isEmpty())
             return true;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             if (m_masks[index] & other.m_masks[index])
@@ -227,6 +232,8 @@ public:
     {
         if (!other.m_heaps.containsAll(m_heaps))
             return false;
+        if (!m_heaps.containsAny(indexedHeaps))
+            return true;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index) {
             if (m_masks[index] & ~other.m_masks[index])
                 return false;
@@ -242,9 +249,18 @@ public:
 
     constexpr uint64_t mixedWords() const
     {
+        constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+        constexpr uint64_t multiplierForEmptyMasks = [] {
+            uint64_t product = 1;
+            for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
+                product *= multiplier;
+            return product;
+        }();
         uint64_t mixed = static_cast<uint64_t>(m_heaps.toRaw());
+        if (!m_heaps.containsAny(indexedHeaps))
+            return mixed * multiplierForEmptyMasks;
         for (unsigned index = 0; index < numberOfIndexedHeaps; ++index)
-            mixed = (mixed ^ m_masks[index]) * 0x9e3779b97f4a7c15ull;
+            mixed = (mixed ^ m_masks[index]) * multiplier;
         return mixed;
     }
 

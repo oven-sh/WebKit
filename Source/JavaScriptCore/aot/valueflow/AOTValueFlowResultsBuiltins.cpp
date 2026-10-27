@@ -71,11 +71,11 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
     }
 
     constexpr uint32_t objectsPerTask = 4096;
-    uint32_t numberOfObjects = universe.numberOfObjects();
+    uint32_t numberOfObjects = universe.numberOfObjectsMadeWithClassesByProgram();
     Vector<BitVector> allocatedClassesOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), (numberOfObjects + objectsPerTask - 1) / objectsPerTask, [&](unsigned task, unsigned worker) {
-        for (uint32_t index = task * objectsPerTask; index < std::min(numberOfObjects, (task + 1) * objectsPerTask); ++index) {
-            ValueFlowObjectID object(index);
+        for (uint32_t position = task * objectsPerTask; position < std::min(numberOfObjects, (task + 1) * objectsPerTask); ++position) {
+            ValueFlowObjectID object = universe.objectMadeWithClassByProgramAt(position);
             switch (universe.kindOf(object)) {
             case ValueFlowObjectKind::CoroutineResult:
             case ValueFlowObjectKind::RestArray:
@@ -865,7 +865,8 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
         }
     });
     // One object a built-in stands for all that it makes where native code calls it. The constructor of a typed array answers nothing else, and each allocation has noted its class there.
-    if (const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName)) {
+    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName);
+    if (written) {
         HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classMadeAs;
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {
             BuiltinClassID builtinClass(index);
@@ -917,6 +918,25 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
         auto result = classes.add(object.index(), builtinClass);
         if (result.iterator->value != builtinClass)
             result.iterator->value = BuiltinClassID();
+    }
+    // One object of a call stands for what every function that arrives there makes. It has the class that the rows name only where each allocation has noted that class.
+    for (const ValueFlowHeapIndex::WrittenNode& node : written ? written->nodes.span() : std::span<const ValueFlowHeapIndex::WrittenNode>()) {
+        if (ValueSets::isComplement(node.objects))
+            continue;
+        inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+            auto found = classes.find(object.index());
+            if (found == classes.end() || !found->value)
+                return;
+            ValueFlowObjectID standing = universe.builtinTables().objectStandingFor(found->value);
+            bool isNotedOtherwise = ValueSets::isComplement(node.value);
+            if (!isNotedOtherwise) {
+                inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID named) {
+                    isNotedOtherwise |= named != (standing ? standing : object);
+                });
+            }
+            if (isNotedOtherwise)
+                found->value = BuiltinClassID();
+        });
     }
     return classes;
 }

@@ -56,43 +56,9 @@ TypeID ClassPart::writtenContentsAt(const BuiltinTable& builtins, ContentsSlot s
     return indexInType ? writtenContentsAt(*indexInType) : TypeTable::anything;
 }
 
-ExpectedType ClassPart::expectedContentsAt(unsigned indexInType) const
-{
-    TypeID besideProof = expectsContentsBesideProof() ? writtenContentsAt(maxContentsSlots + indexInType) : TypeTable::anything;
-    return ExpectedType(besideProof != TypeTable::anything ? besideProof : writtenContentsAt(indexInType));
-}
-
 ExpectedType ClassPart::expectedContentsAt(const BuiltinTable& builtins, ContentsSlot slot) const
 {
-    std::optional<uint8_t> indexInType = indexInTypeOf(builtins, builtinClass, slot);
-    return indexInType ? expectedContentsAt(*indexInType) : ExpectedType(TypeTable::anything);
-}
-
-void ClassPart::expectContentsAt(unsigned indexInType, TypeID expected)
-{
-    RELEASE_ASSERT(contentsAreProven && indexInType < maxContentsSlots);
-    if (expected == TypeTable::never || expected == writtenContentsAt(indexInType))
-        expected = TypeTable::anything;
-    unsigned position = maxContentsSlots + indexInType;
-    if (position >= writtenContents.size()) {
-        if (expected == TypeTable::anything)
-            return;
-        size_t size = writtenContents.size();
-        writtenContents.grow(position + 1);
-        for (size_t index = size; index < position; ++index)
-            writtenContents[index] = TypeTable::anything;
-    }
-    writtenContents[position] = expected;
-}
-
-void ClassPart::forgetProofOfContents()
-{
-    contentsAreProven = false;
-    if (!expectsContentsBesideProof())
-        return;
-    for (unsigned index = 0; index < maxContentsSlots; ++index)
-        writtenContents[index] = expectedContentsAt(index).predicted();
-    writtenContents.shrink(maxContentsSlots);
+    return ExpectedType(writtenContentsAt(builtins, slot));
 }
 
 Type Type::fromPrimitives(uint16_t primitives)
@@ -385,12 +351,8 @@ Type Type::withLiteralStringsWidened() const
 Type Type::withContentsProven(bool areProven) const
 {
     Type type = *this;
-    for (ClassPart& part : type.classes) {
-        if (areProven)
-            part.contentsAreProven = true;
-        else
-            part.forgetProofOfContents();
-    }
+    for (ClassPart& part : type.classes)
+        part.contentsAreProven = areProven;
     return type;
 }
 
@@ -409,7 +371,7 @@ Type Type::withoutClassProofs() const
     Type type = *this;
     widenClassesWithoutInstanceTest(type);
     for (ClassPart& part : type.classes) {
-        part.forgetProofOfContents();
+        part.contentsAreProven = false;
         part.provenPristine = { };
         part.arrayStorage = ArrayStorage::Other;
     }
@@ -491,8 +453,7 @@ static void widenToObject(Type& type)
 
 static void mergeClassParts(ClassPart& part, const ClassPart& other)
 {
-    if (!other.contentsAreProven)
-        part.forgetProofOfContents();
+    part.contentsAreProven &= other.contentsAreProven;
     part.provenPristine = part.provenPristine & other.provenPristine;
     if (part.arrayStorage != other.arrayStorage)
         part.arrayStorage = ArrayStorage::Other;
@@ -526,8 +487,6 @@ static void canonicalizeClasses(ClassParts& classes)
 
 static void canonicalizeContents(ClassPart& part)
 {
-    if (!part.contentsAreProven && part.expectsContentsBesideProof())
-        part.writtenContents.shrink(ClassPart::maxContentsSlots);
     for (TypeID& contents : part.writtenContents) {
         if (!contents)
             contents = TypeTable::anything;

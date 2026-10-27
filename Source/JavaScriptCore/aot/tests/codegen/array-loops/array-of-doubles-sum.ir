@@ -137,4 +137,4 @@ function f1 name="turn" module=m0 position=89 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: Reads:JSObject_butterfly
 # HOT-LABEL: end of loop
 # X64: instructions: 10, patchpoints: 0, {{*}} steps by 8
-# ARM64: instructions: 25, patchpoints: 0, {{*}} steps by 8
+# ARM64: instructions: 20, patchpoints: 0, {{*}} steps by 8

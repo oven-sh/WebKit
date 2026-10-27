@@ -873,6 +873,7 @@ void generateInByValCached(StubAssembler& jit)
     needsOperation.append(jit.branchIfNotCell(base));
     // A read of a string, a symbol or a bigint fills a place too, and `in` throws for those.
     needsOperation.append(jit.branchIfNotObject(base));
+    Label asksBase = jit.label();
     JumpList hasNoPlace;
     JumpList placeIsOfNoField;
     JumpList isPresent;
@@ -906,7 +907,7 @@ void generateInByValCached(StubAssembler& jit)
 
     isNotField.link(&jit);
     JumpList kindDoesNotSay;
-    returnPresenceBySlot(jit, question, slot, base, kindDoesNotSay, KindOfProbedSlot::IsInT10);
+    returnPresenceBySlot(jit, question, slot, base, asksBase, kindDoesNotSay, KindOfProbedSlot::IsInT10);
 
     kindDoesNotSay.link(&jit);
     loadSlotKind(jit, slot, registers.uid);

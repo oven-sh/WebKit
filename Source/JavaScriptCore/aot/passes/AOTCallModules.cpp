@@ -608,7 +608,7 @@ static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& 
 }
 
 // `children` and `parent` of a module object say which `require` came first and which has run at all.
-static bool somebodyAsksWhoRequiredWhom(const Program& program, const FlowResults& flow)
+static bool asksWhoRequiredWhom(const Program& program, const FlowResults& flow)
 {
     if (!namesWaysToModuleObjects(program))
         return false;
@@ -727,6 +727,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     plan.isCalledWhereRequired.ensureSize(modules.size());
     Vector<ModuleID> moduleWithBody(program.functions.size());
     bool loadsTwoGraphsAtOnce = mayLoadTwoGraphsAtOnce(program, loops);
+    bool somebodyAsksWhoRequiredWhom = asksWhoRequiredWhom(program, flow);
     for (size_t index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
         if (!isEvaluatedWithImporter(program, module) || needsLoader.quickGet(index))
@@ -734,7 +735,9 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         plan.isWalkedByCode.quickSet(index);
         // Whoever enters a graph of modules in which something is to be linked goes through the loader: the host with an entry point, import(), require(). So does a require() of an ES module where another graph may be in the middle of its load: the run time knows whether one is.
         bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad));
-        if (!needsLink.quickGet(index) && isRequiredBetweenLoads)
+        // A file that the loader has asked for has no parent, and the run time knows which of several files it has asked for.
+        bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
+        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk)
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;
@@ -814,11 +817,23 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         for (const ModuleRequest& request : modules[index].requests)
             isStart.quickSet(request.target.index());
     }
+    // Whether the loader came to a file before a `require` did is read from the state of the file.
+    if (somebodyAsksWhoRequiredWhom) {
+        BitVector isImported(modules.size());
+        for (const ModuleList& imports : plan.imports) {
+            for (uint32_t target : imports)
+                isImported.quickSet(isFaceOfCommonJSFile(program, modules[target]) ? modules[target].requests[0].target.index() : target);
+        }
+        for (const ModuleCallSite& site : sites) {
+            if (site.kind == SiteKind::Record && isImported.quickGet(site.target.index()) && program.at(site.target).kind == ModuleKind::CommonJs)
+                isStart.quickSet(site.target.index());
+        }
+    }
     plan.hasNoState = findModulesWithoutState(plan, isStart);
 
     // What a program can tell of a `require` beyond the evaluation of the module.
     bool markIsSpelled = !recordsRequires || isMarkOfRequireSpelled(program, loops);
-    bool isAskedWhoRequiredWhom = !recordsRequires || somebodyAsksWhoRequiredWhom(program, flow);
+    bool isAskedWhoRequiredWhom = !recordsRequires || somebodyAsksWhoRequiredWhom;
     // What is recorded is who required whom and, of an ES module, the mark, which a module that exports the name itself does not get.
     auto recordsNothingThatIsSeen = [&](ModuleID target) {
         if (isAskedWhoRequiredWhom)

@@ -506,6 +506,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
     case ThrowKind::ErrorWithMessage:
         throwErrorWithMessage(instance, globalObject, scope, decoded);
         break;
+    case ThrowKind::NullishUpdate:
+        throwException(globalObject, scope, createUpdateOfNullishError(globalObject));
+        break;
     }
     OPERATION_RETURN(scope);
 }

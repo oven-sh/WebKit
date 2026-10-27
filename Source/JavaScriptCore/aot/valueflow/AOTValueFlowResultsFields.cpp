@@ -362,9 +362,9 @@ struct FieldResults {
     Vector<LayoutID> layoutsOfOtherSites(NOESCAPE const Invocable<bool(ValueFlowObjectID, const ValueFlowSite&)> auto& counts) const
     {
         const ValueFlowUniverse& universe = inputs.universe();
-        return collectInParallel<LayoutID>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<LayoutID>& layouts) {
-            ValueFlowObjectID object(index);
-            if (universe.kindOf(object) != ValueFlowObjectKind::Site || !universe.layoutOf(object) || isSiteOfTypedResultThatNothingAllocates(inputs, object))
+        return collectInParallel<LayoutID>(loops, universe.numberOfSiteObjects(), [&](unsigned position, Vector<LayoutID>& layouts) {
+            ValueFlowObjectID object = universe.siteObjectAt(position);
+            if (!universe.layoutOf(object) || isSiteOfTypedResultThatNothingAllocates(inputs, object))
                 return;
             const ValueFlowSite& site = *universe.siteOf(object);
             bool isAllocation = site.origin == ValueFlowSiteOrigin::Operation && !site.ordinal && program.at(universe.functionOf(object)).at(site.value).opcode == Opcode::NewObject;

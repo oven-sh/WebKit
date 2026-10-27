@@ -1,0 +1,40 @@
+# Promise.resolve(Symbol.iterator).then(Math.abs).catch(handler);  Promise.resolve(converted).then(Math.floor).catch(other);  function handler(caught) { return caught }
+# The row of Math.abs declares no throw: that covers the function once its operand is a number. The conversion of a symbol throws a TypeError, so the promise that `then` answers may be
+# rejected with an object that native code makes, and the handler is not proven to get undefined. A conversion also runs code of the operand, which throws any value.
+# RUN: valueflow-apply
+# CHECK: function f1 name="handler" {{*}}parameters=[{type=anything}]
+# CHECK: function f2 name="other" {{*}}parameters=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Builtin builtin=SymbolIterator
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=PromisePrototypeThen
+    v5 = Builtin builtin=MathAbs
+    v6 = Call v4, v3, v5
+    v7 = Builtin builtin=PromisePrototypeCatch
+    v8 = NewClosure function=f1
+    v9 = Call v7, v6, v8
+    v10 = NewClosure function=f3
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = Call v1, v0, v11
+    v13 = Builtin builtin=MathFloor
+    v14 = Call v4, v12, v13
+    v15 = NewClosure function=f2
+    v16 = Call v7, v14, v15
+    Return
+}
+function f1 name="handler" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="other" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="valueOf" kind=Method results=[{type=anything}] {
+    v0 = Integer integer=7
+    Throw v0
+}

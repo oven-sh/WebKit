@@ -412,6 +412,16 @@ static uint32_t ensureCalleeIndex(CodeBody& body, FunctionID callee)
     return static_cast<uint32_t>(body.callees.size() - 1);
 }
 
+static Vector<ConstructedCallee> collectConstructedCallees(const Vector<RecordedSite>& renumbered, CodeBody& body)
+{
+    Vector<ConstructedCallee> callees;
+    for (uint32_t i = 0; i < renumbered.size(); ++i) {
+        if (renumbered[i].constructedCallee)
+            callees.append({ i + 1, ensureCalleeIndex(body, renumbered[i].constructedCallee) });
+    }
+    return callees;
+}
+
 static Vector<AOT::InlineFrame> describeInlineFrames(const Function& function, const SiteRecords& sites, CodeBody& body)
 {
     const Vector<uint32_t>& inlineCallSites = sites.inlineCallSites;
@@ -443,6 +453,7 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     Vector<RecordedSite> renumbered = renumberSites(described, shownFunctions, records, linkBuffer, references.span(), sites);
     sites.positions = describePositions(described, shownFunctions, renumbered);
     sites.flaggedSites = collectFlaggedSites(renumbered, sites.numberOfSitesWithoutCode);
+    sites.constructedCallees = collectConstructedCallees(renumbered, body);
     // No walk of the stack can stand in a body without a site that has code, so nobody asks which functions it took in.
     size_t numberOfInlineCallSites = described.function.inlineFrames.isEmpty() ? 0 : described.function.inlineFrames.size() - 1;
     if (numberOfInlineCallSites && sites.numberOfSitesWithoutCode == numberOfInlineCallSites && sites.positions.size() == 1 + numberOfInlineCallSites) {

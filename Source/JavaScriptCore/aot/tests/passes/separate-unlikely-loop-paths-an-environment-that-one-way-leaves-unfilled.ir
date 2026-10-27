@@ -1,0 +1,77 @@
+# A loop reads and stores a variable of an environment in every turn. The environment comes through a merge, and one way into the merge leaves the position unfilled: inside the loop, behind the test of a
+# tag, a cast names the fact that it has been filled. Nothing looks at the environment in front of that cast, so the variable does not go around the loop in a parameter.
+# Where the cast stands ahead of the loop the variable goes around, and what is read ahead of the loop names the cast
+# FORM: Prepared
+# RUN: pass SeparateUnlikelyLoopPaths VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}]
+
+function f0 name="filledInsideTheLoop" parameters=[{type=i32}, {type=env L0}, {type=number}] results=[{type=anything}] {
+    Switch v0 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Unspecified valueType=env L0
+    Jump -> next b3(v3)
+  b3(v4: unspecified|env L0):
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Switch v0 cases=[1] -> case b5(), otherwise b7()
+  b5():
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=env L0
+    v8 = GetEnvironmentField v7 layout=L0 field=0
+    v9 = Add v8, v2
+    PutEnvironmentField v7, v9 layout=L0 field=0
+    v11 = Less v9, v2
+    Branch v11 -> taken b4(), notTaken b6()
+  b6():
+    Return v9
+  b7() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+# CHECK: b3(v4: unspecified|env L0):
+# CHECK-NOT: GetEnvironmentField
+# CHECK: b5():
+# CHECK-NEXT: v6: fact = Specified
+# CHECK-NEXT: v7: env L0 = AssumeType v4, v6 provenType=env L0
+# CHECK-NEXT: = GetEnvironmentField v7 layout=L0
+# CHECK: PutEnvironmentField v7,
+}
+
+function f1 name="filledAheadOfTheLoop" parameters=[{type=i32}, {type=env L0}, {type=number}] results=[{type=anything}] {
+    Switch v0 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Unspecified valueType=env L0
+    Jump -> next b3(v3)
+  b3(v4: unspecified|env L0):
+    Switch v0 cases=[1] -> case b4(), otherwise b7()
+  b4():
+    v5 = Specified
+    v6 = AssumeType v4, v5 provenType=env L0
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v8 = GetEnvironmentField v6 layout=L0 field=0
+    v9 = Add v8, v2
+    PutEnvironmentField v6, v9 layout=L0 field=0
+    v11 = Less v9, v2
+    Branch v11 -> taken b5(), notTaken b6()
+  b6():
+    Return v9
+  b7() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+# CHECK: b4():
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: v6: env L0 = AssumeType v4, v5 provenType=env L0
+# CHECK-NEXT: [[first]]: number = GetEnvironmentField v6 layout=L0
+# CHECK-NEXT: Jump -> next b5([[first]])
+# CHECK-NEXT: b5([[carried]]: number):
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = Add [[carried]], v2
+}

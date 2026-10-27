@@ -363,12 +363,17 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             encodePositions(positions[position], sites, callSites[position].span().data(), position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
             numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
         }
+        Vector<std::pair<uint32_t, uint32_t>> constructedCallees(sites.constructedCallees.size(), [&](size_t index) {
+            const ConstructedCallee& row = sites.constructedCallees[index];
+            return std::pair { row.site, functions[position].body.callees[row.callee].index() };
+        });
         SideTableInputs inputs {
             .frameRanges = frameRanges.span(),
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
             .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
+            .constructedCallees = constructedCallees.span(),
             .callSites = callSites[position].span(),
         };
         SideTableParts::append(streams[position], inputs);

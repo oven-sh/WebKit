@@ -16,6 +16,7 @@
 #include "AOTNaturalLoops.h"
 #include "AOTOperatorForms.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRepresentation.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -52,9 +53,6 @@ static constexpr std::array<TestedOperands, 3> testedOperandSets { { { true, fal
 
 static TypeID testedTypeContaining(const Type& expected)
 {
-    // Of an integer of which only its kind is known, few are beyond int32, and an operator on int32 needs no test of its result.
-    if (expected.isInteger() && expected.integers == Range::full())
-        return TypeTable::int32;
     if (expected.isNumber())
         return testedNumberTypeContaining(expected);
     if (expected.isAnyString())
@@ -295,6 +293,77 @@ static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& val
     });
 }
 
+static bool isExpectedToBeIntegerOfUnknownSize(TestSiteReporter& reporter, ValueID operand)
+{
+    std::optional<Type> expected = reporter.expectedPartOf(operand);
+    return expected && expected->isInteger() && expected->integers == Range::full();
+}
+
+// What a field, an array or a variable of numbers holds arrives as a number. An access for which a rule in front of this one has just asked for tests delivers behind them what is expected of it.
+static bool arrivesAsValueOfAnyType(TestSiteReporter& reporter, ValueID operand)
+{
+    ValueID identity = reporter.analyses().identityOf(operand);
+    const Value& definition = reporter.function().at(identity);
+    bool isAccessUnderTests = accessClassOf(definition.opcode) != AccessClass::None && reporter.isClaimed(identity);
+    return defaultRepresentationOf(reporter.types().at(isAccessUnderTests ? definition.expectedOrType().predicted() : definition.type)) == Representation::JSValue;
+}
+
+static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
+
+// Of a sum of int32s a bitwise operator takes the low half. A sum with an integer of unknown size is a number, and to convert that costs more than the test.
+static bool makesSumForBitwiseOperators(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, uint32_t operandIndex)
+{
+    if (!sums.contains(user.opcode))
+        return false;
+    TestedTypePerOperand tested;
+    TestedOperands isTested { };
+    tested[operandIndex] = TypeTable::int32;
+    isTested[operandIndex] = true;
+    if (chooseFormUnderTests(reporter, site, user, tested, isTested).form != OperatorForm::Integers)
+        return false;
+
+    const Function& function = reporter.function();
+    Vector<ValueID, maxNamesOfCounter> names { reporter.use() };
+    bool isTaken = false;
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
+            ValueID next;
+            if (use.kind == Use::Kind::EdgeArgument) {
+                const Block& target = function.at(targetOf(function, use.edge()).block);
+                if (use.operandIndex < target.parameters.size())
+                    next = target.parameters[use.operandIndex];
+            } else if (use.kind == Use::Kind::Operand) {
+                Opcode opcode = function.at(use.user).opcode;
+                if (testedBitwiseOperators.contains(opcode)) {
+                    isTaken = true;
+                    continue;
+                }
+                if (isCastWithoutTest(opcode) || sums.contains(opcode))
+                    next = use.user;
+            }
+            if (!next)
+                return false;
+            if (names.contains(next))
+                continue;
+            if (names.size() == maxNamesOfCounter)
+                return false;
+            names.append(next);
+        }
+    }
+    return isTaken;
+}
+
+// Of an integer of which only its kind is known, few are beyond int32, and an operator on int32 needs no test of its result. So a test for int32 takes the place of the test for a number that the operand gets anyway. In a value of any type an int32 is found as fast as a number, and is taken out faster. In a number it takes three to six instructions more, which most operators do not save.
+static TypeID narrowTestOfIntegerOfUnknownSize(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, uint32_t operandIndex, TypeID tested)
+{
+    ValueID operand = user.operand(operandIndex);
+    if (!tested || !isExpectedToBeIntegerOfUnknownSize(reporter, operand))
+        return tested;
+    if (!arrivesAsValueOfAnyType(reporter, operand) && !makesSumForBitwiseOperators(reporter, site, user, operandIndex))
+        return tested;
+    return operatorsThatTakeNullish.contains(user.opcode) ? admitExpectedNullish(reporter, operand, TypeTable::int32) : TypeTable::int32;
+}
+
 // What a function of the program does with an argument shows once the call is inlined.
 static bool staysCall(TestSiteReporter& reporter, BlockID block, ValueID call)
 {
@@ -412,7 +481,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         TestedTypePerOperand tested;
         for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
-            tested[operandIndex] = testedTypeFor(reporter, site, value, value.operand(operandIndex));
+            tested[operandIndex] = narrowTestOfIntegerOfUnknownSize(reporter, site, value, operandIndex, testedTypeFor(reporter, site, value, value.operand(operandIndex)));
         if (numberOfOperands == 2) {
             for (uint32_t operandIndex : { leftOperand, rightOperand }) {
                 if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)

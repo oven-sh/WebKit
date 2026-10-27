@@ -149,14 +149,11 @@ static void runVerify(TestCommandContext& context)
     PlacedTableSizes unboundedSizes { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
     VerifierInputs inputs { .placed = &unboundedSizes };
     for (const String& word : context.arguments) {
-        if (word == "optimizing"_s)
-            inputs.isOptimizing = true;
-        else if (word == "casts-name-their-facts"_s)
-            inputs.castsNameTheirFacts = true;
-        else {
+        if (word != "optimizing"_s) {
             printBadArgument(context.out, word);
             return;
         }
+        inputs.isOptimizing = true;
     }
 
     if (context.form == IRForm::AsRead)

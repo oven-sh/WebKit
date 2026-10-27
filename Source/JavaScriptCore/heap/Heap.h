@@ -790,6 +790,7 @@ private:
     void checkConn(GCConductor);
 
     void collectInMutatorThread();
+    void collectInMutatorThreadUntilDone();
     
     void stopThePeriphery();
     void resumeThePeriphery();

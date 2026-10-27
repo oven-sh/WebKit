@@ -199,6 +199,7 @@ private:
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
+    ValueSetID findPrototypesAtCreationOf(ClimbingSet);
 
     ValueFlowObjectID objectOfMember(BuiltinID member, ModuleID) const;
     BuiltinID memberUnder(BuiltinID holder, PropertyKeyID) const;
@@ -299,7 +300,6 @@ private:
     enum class DefinedObject : bool { IsNew, MayHoldProperty };
     void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject);
     void compareWithPropertyThatIsThere(const ValueFlowOperand& defined);
-    void noteNameDefinedThroughObjectsNobodyFollows(const ValueFlowOperand& object, const HeapKey&);
     void changePrototype(ClimbingSet objects, const ValueFlowOperand& prototype);
     enum class PropertySearch : uint8_t { OwnProperty, WholeChain };
     bool holdsOnlyWhatWasWritten(ClimbingSet receivers) { return !m_context.meet(receivers, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode()))); }

@@ -326,6 +326,16 @@ void HeapRule::appendPrototypeAtCreation(ValueFlowObjectID object, Members& prot
 
 ValueSetID HeapRule::prototypesAtCreationOf(ClimbingSet objects)
 {
+    AOT_THRESHOLD(uint32_t, mostMembersWalkedEachTime, 64);
+    if (!m_context.holdsMoreMembersThan(objects, mostMembersWalkedEachTime))
+        return findPrototypesAtCreationOf(objects);
+    return m_context.prototypesAtCreationRememberedOf(objects, [&] {
+        return findPrototypesAtCreationOf(objects);
+    });
+}
+
+ValueSetID HeapRule::findPrototypesAtCreationOf(ClimbingSet objects)
+{
     constexpr uint64_t isKnown = 1ull << 63;
     constexpr uint32_t mask = (1u << 31) - 1;
     Members prototypes;
@@ -1123,7 +1133,12 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
         above = m_context.unite(above, m_context.restrict(publicModulesThatMayBe(object), m_context.maker().intersect(holders, allButBunUnlessNamed(object))));
+        Vector<ClimbingSet, longestChain> walked;
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
+            // What a step finds hangs on where it starts: from here on the walk would go round.
+            if (std::ranges::any_of(walked, [&](ClimbingSet earlier) { return m_context.holdSameMembers(earlier, above); }))
+                break;
+            walked.append(above);
             found = m_context.unite(found, m_context.restrict(above, holders));
             if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(above, copiedFromName))
                 found = m_context.unite(found, m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))), m_context.maker().intersect(holders, allButBunUnlessNamed(operandOf(sourcesOfCopies)))));

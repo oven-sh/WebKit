@@ -196,7 +196,7 @@ private:
             }
             if (block == plan.test)
                 return true;
-            if (block->last()->opcode() != Jump || ++numberOfBlocks > Limits::maxBlocksBesideTestOfUnrolledLoop)
+            if (block->last()->opcode() != Jump || ++numberOfBlocks > plan.blocks.size())
                 return false;
         }
     }
@@ -390,7 +390,7 @@ private:
         return false;
     }
 
-    // The turns that are written out share one counter: each reads or writes at its own distance from it. A loop that walks nothing would only test less often.
+    // The turns that are written out share one counter: each reads or writes at its own distance from it.
     static bool walksData(const Plan& plan)
     {
         for (BasicBlock* block : plan.blocks) {
@@ -435,7 +435,7 @@ private:
             return;
         }
         PhiChildren& phiChildren = prepareToReadCounters();
-        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop || !walksData(plan))
+        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
         Dominators& dominators = m_proc.dominators();
         auto runsEveryTurn = [&](BasicBlock* block) {
@@ -453,7 +453,9 @@ private:
             plan.factor = factorFor(numberOfValues, block->last()->origin());
             if (plan.factor && planFarBound(plan)) {
                 findSumsOfIntegers(phiChildren, plan);
-                m_plans.append(WTF::move(plan));
+                // A loop that walks nothing and sums nothing up would only test less often.
+                if (!plan.sums.isEmpty() || walksData(plan))
+                    m_plans.append(WTF::move(plan));
             }
             return;
         }
@@ -570,10 +572,21 @@ private:
                 testOfFirstTurn->setSuccessors(FrequentedBlock(other), FrequentedBlock(found->blocksBehind[0]));
                 return { bound, farBound };
             }
-            Value* reached = startIsKnown ? constant(static_cast<int64_t>(start.min) + room) : append(m_proc.add<Value>(Add, origin, plan.start, constant(room)));
+            // Where only the nearest start is known, a bound that is too near even for that one is told by a comparison with a constant.
+            Int128 nearestStart = plan.step > 0 ? start.min : start.max;
+            IntegerInterval full = fullInterval(type, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed);
+            BasicBlock* behindFirstTest = entered;
+            bool saysSomething = plan.step > 0 ? nearestStart > full.min || !full.min : nearestStart < full.max;
+            if (!startIsKnown && saysSomething) {
+                behindFirstTest = m_proc.addBlock();
+                Value* reached = behindFirstTest->appendNew<Value>(m_proc, Add, origin, plan.start, behindFirstTest->appendIntConstant(m_proc, origin, type, room));
+                behindFirstTest->appendNew<Value>(m_proc, Branch, origin, behindFirstTest->appendNew<Value>(m_proc, plan.relation, origin, reached, bound));
+                behindFirstTest->setSuccessors(FrequentedBlock(entered), FrequentedBlock(plan.header));
+            }
+            Value* reached = startIsKnown || behindFirstTest != entered ? constant(static_cast<int64_t>(nearestStart) + room) : append(m_proc.add<Value>(Add, origin, plan.start, constant(room)));
             Value* enters = append(m_proc.add<Value>(plan.relation, origin, reached, bound));
             preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
-            preHeader->setSuccessors(FrequentedBlock(entered), FrequentedBlock(plan.header));
+            preHeader->setSuccessors(FrequentedBlock(behindFirstTest), FrequentedBlock(plan.header));
             return { bound, farBound };
         }
         Value* farBound = append(m_proc.add<Value>(Sub, origin, bound, constant(room)));

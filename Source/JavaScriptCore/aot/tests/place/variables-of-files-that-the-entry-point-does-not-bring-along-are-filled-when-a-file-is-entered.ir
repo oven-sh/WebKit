@@ -1,6 +1,6 @@
 # main.js imports eager.js and loads top.js and other.js with import(). top.js imports between.js, which imports leaf.js; other.js imports leaf.js too. All but between.js have variables that are read before they are stored.
-# The word of eager.js is filled when the program is entered. What the imports lead to from top.js is one group, with one run of words; other.js is a group of its own that lists the first, and no run goes on from one group into the next.
-# The loader comes to top.js and to other.js alone, by the function that evaluates what the file imports and by the entry in front of it: those four fill. What they call is entered behind them.
+# The word of eager.js is filled when the program is entered. What the imports lead to from top.js is one group; other.js is a group of its own that lists the first. Their words start alike, so one run goes through both.
+# The loader comes to top.js and to other.js alone: the functions that evaluate what those two import fill. The entry in front of each only calls it, and what they call is entered behind them.
 # RUN(STATICS): tables statics
 # RUN(PLACED): place statics
 
@@ -86,18 +86,15 @@ function f9 name="readsE" module=m5 results=[{type=anything}] {
 
 # STATICS: layout filledAtProgramEntry=8
 # STATICS-NEXT: run firstWord=0 words=1 bits=0xa
-# STATICS-NEXT: run firstWord=1 words=3 bits=0xa
-# STATICS-NEXT: run firstWord=4 words=1 bits=0xa
-# STATICS-NEXT: files firstWord=1 words=3 firstImportedGroup=0
-# STATICS-NEXT: files firstWord=4 words=1 firstImportedGroup=0
-# STATICS-NEXT: files firstWord=5 words={{*}} firstImportedGroup=1
+# STATICS-NEXT: run firstWord=1 words=4 bits=0xa
+# STATICS-NEXT: files firstWord=1 firstImportedGroup=0
+# STATICS-NEXT: files firstWord=4 firstImportedGroup=0
+# STATICS-NEXT: files firstWord=5 firstImportedGroup=1
 # STATICS-NEXT: importedFiles group=0
 # PLACED: files from m2 firstWord=1 words=3 imports=[]
 # PLACED-NEXT: files from m5 firstWord=4 words=1 imports=[0]
 # PLACED-NEXT: fills f2
 # PLACED-NEXT: fills f8
-# PLACED-NEXT: fills f16
-# PLACED-NEXT: fills f17
 # PLACED-NEXT: g0 offset=0 representation=JSValue {{*}}region=FilledAtProgramEntry
 # PLACED-NEXT: g1 offset=8 representation=JSValue {{*}}region=FilledWithFile
 # PLACED-NEXT: g2 offset=16 representation=JSValue {{*}}region=FilledWithFile

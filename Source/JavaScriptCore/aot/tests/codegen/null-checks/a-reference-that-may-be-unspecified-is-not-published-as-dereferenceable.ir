@@ -1,9 +1,9 @@
 # A word that may be anything takes the form of the rest of its type: here a reference. Nothing is published of it, in whichever way it comes to that form: as the parameter of a block, as one of two
-# results of a call, as the word of a variable that is read ahead of its store, and as that word handed around a loop. Published is what the callers hand over as a Node (2) and the object that is made (1).
+# results of a call or the only one, as the word of a variable that is read ahead of its store, and as that word handed around a loop. Published is what the callers hand over as a Node (2) and the objects that are made (2).
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end
 # RUN: generate-code ReferencesPublishedAsDereferenceable
-# CHECK: statistic ReferencesPublishedAsDereferenceable 3
+# CHECK: statistic ReferencesPublishedAsDereferenceable 4
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
@@ -79,4 +79,25 @@ function f4 name="handedAroundALoop" parameters=[{type=L0}, {type=i32}] results=
   b3():
     v12 = GetSlot v0 key="count" receivers=[L0] level=Proven
     Return v12
+}
+function f5 name="makesOrNot" parameters=[{type=i32}, {type=boolean}] results=[{type=unspecified|L0}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Null
+    v3 = NewObject -, v2, v0 layout=L0 fields=[0, 1]
+    Return v3
+  b2():
+    v4 = Unspecified valueType=L0
+    Return v4
+}
+function f6 name="theOnlyResult" parameters=[{type=i32}, {type=boolean}] results=[{type=i32}] {
+    v2 = CallDirect v0, v1 function=f5
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Specified
+    v4 = AssumeType v2, v3 provenType=L0
+    v5 = GetSlot v4 key="count" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    Return v0
 }

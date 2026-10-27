@@ -257,14 +257,11 @@ static Type withoutExpectedContents(const Type& type)
 {
     Type result = type;
     for (ClassPart& part : result.classes) {
-        if (part.contentsAreProven) {
-            part.writtenContents.shrink(part.contentsOfSlots().size());
+        if (part.contentsAreProven)
             continue;
-        }
         part.writtenContents.clear();
         part.arrayStorage = ArrayStorage::Other;
     }
-    result.canonicalize();
     return result;
 }
 

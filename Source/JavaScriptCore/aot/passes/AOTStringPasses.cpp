@@ -151,6 +151,8 @@ struct StringBuilderPlan {
 // One step of the pass. The builder gets no FunctionAnalyses: the graph and the use lists have to outlive split edges and queued insertions.
 struct StringBuilderStep {
     FunctionPassContext& context;
+    // The parameters that are typed as plain strings while the pass runs and that some way leaves unfilled.
+    const BitVector& statesReadAsStrings;
     const Program& program { context.program };
     Function& function { context.function };
     const CFG& cfg { context.analyses.cfg() };
@@ -169,6 +171,11 @@ struct StringBuilderStep {
     // Nobody reads what is Unspecified, so nothing is appended for it. It is asked what it stands in for.
     bool isPart(ValueID id) const { return isStringBuilderPart(function.at(id).opcode == Opcode::Unspecified ? typeOf(id).withoutPrimitives(Primitive::Unspecified) : typeOf(id)); }
     bool isEmptyString(ValueID id) const { return stringConstantOf(program, function, id) == program.strings.emptyString(); }
+    // As a state of a web such a word is never read where it is unfilled. As the text that a web begins with it would be.
+    bool mayBeUnfilled(ValueID id) const
+    {
+        return function.at(id).opcode != Opcode::Unspecified && (typeOf(id).mayBeUnspecified() || statesReadAsStrings.get(sameObjectThroughCasts(function, id).index()));
+    }
 
     void retype(Value& value)
     {
@@ -716,7 +723,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
         });
         // The builder is begun on the edge with an append of the first state: a read in front of whatever says whether that state is there.
         bool wouldReadUnspecifiedFirstState = std::ranges::any_of(web.entries, [&](const StringWebEntry& entry) {
-            return entry.edge && function.at(entry.value).opcode != Opcode::Unspecified && context.program.typeOf(function, entry.value).mayBeUnspecified();
+            return entry.edge && mayBeUnfilled(entry.value);
         });
         if (!wouldReadUnspecifiedFirstState)
             web.decision = web.hasTooFewAppends ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
@@ -782,7 +789,7 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
             return std::nullopt;
         // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
         bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
-            return function.at(entry.value).opcode != Opcode::Unspecified && context.program.typeOf(context.function, entry.value).mayBeUnspecified();
+            return mayBeUnfilled(entry.value);
         });
         if (wouldReadEmptyFirstState)
             return std::nullopt;
@@ -1680,12 +1687,12 @@ static bool markLikelyKeys(FunctionPassContext& context)
     return didChange;
 }
 
-static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context)
+static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     bool hasConcatenation = std::ranges::any_of(context.function.blocks.span(), [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) { return isStringConcatenation(context.program, context.function, context.function.at(id)); });
     });
-    return hasConcatenation ? StringBuilderStep { context }.findWebs() : StringBuilderPlan { };
+    return hasConcatenation ? StringBuilderStep { context, statesReadAsStrings }.findWebs() : StringBuilderPlan { };
 }
 
 // The parts of an append are written one after the other, and each of them may find that the text gets too long. A handler that goes on with the builder wants the text as it was in front of the append.
@@ -1753,13 +1760,13 @@ static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
-static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
+static PassOutcome createAndJoinBuilders(FunctionPassContext& context, const BitVector& statesReadAsStrings)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
-    StringBuilderPlan plan = analyzeStringBuilders(context);
-    while (StringBuilderStep { context }.mergeNestedWebs(plan) == PassOutcome::Changed || splitInFrontOfCoveredBlocks(context, plan)) {
+    StringBuilderPlan plan = analyzeStringBuilders(context, statesReadAsStrings);
+    while (StringBuilderStep { context, statesReadAsStrings }.mergeNestedWebs(plan) == PassOutcome::Changed || splitInFrontOfCoveredBlocks(context, plan)) {
         context.analyses.didChangeControlFlow();
-        plan = analyzeStringBuilders(context);
+        plan = analyzeStringBuilders(context, statesReadAsStrings);
         outcome = PassOutcome::Changed;
     }
     if (plan.webs.isEmpty())
@@ -1784,11 +1791,11 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
         }
     }
     if (!plan.createdWebs().empty()) {
-        Vector<ValueID, 8> appends = StringBuilderStep { context }.rewriteWebs(plan);
-        StringBuilderStep { context }.foldConversionsInto(appends.span());
+        Vector<ValueID, 8> appends = StringBuilderStep { context, statesReadAsStrings }.rewriteWebs(plan);
+        StringBuilderStep { context, statesReadAsStrings }.foldConversionsInto(appends.span());
         outcome = PassOutcome::Changed;
     }
-    outcome |= StringBuilderStep { context }.joinNestedBuilders();
+    outcome |= StringBuilderStep { context, statesReadAsStrings }.joinNestedBuilders();
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
     outcome |= expandAppendedStringRanges(context);
@@ -1807,6 +1814,7 @@ struct StatesReadAsStrings {
         ValueID cast;
     };
     Vector<State, 8> states;
+    BitVector parameters;
     Vector<std::pair<ValueID, Value>, 8> casts;
     Vector<ReplacedUse, 8> uses;
 
@@ -1862,6 +1870,7 @@ static StatesReadAsStrings readStatesThatBeginUnspecifiedAsStrings(FunctionPassC
     for (auto [block, index] : states) {
         ValueID parameter = function.at(block).parameters[index];
         result.states.append({ parameter, function.at(parameter).type });
+        result.parameters.set(parameter.index());
         for (const Use& use : useLists.usesOf(parameter)) {
             if (!isCastBehindFact(use))
                 continue;
@@ -1896,7 +1905,7 @@ static void putBack(FunctionPassContext& context, const StatesReadAsStrings& rea
 PassOutcome createStringBuilders(FunctionPassContext& context)
 {
     StatesReadAsStrings statesReadAsStrings = readStatesThatBeginUnspecifiedAsStrings(context);
-    PassOutcome outcome = createAndJoinBuilders(context);
+    PassOutcome outcome = createAndJoinBuilders(context, statesReadAsStrings.parameters);
     if (!statesReadAsStrings.isEmpty()) {
         if (outcome == PassOutcome::Unchanged)
             putBack(context, statesReadAsStrings);

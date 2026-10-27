@@ -54,7 +54,7 @@ function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v6)
   b3():
     Return v5
-# CHECK: v5: Array<int|string, proven, expected(int)> = Check
+# CHECK: v5: Array<int|string, proven> = Check
 }
 function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
     Jump -> next b1(v1)

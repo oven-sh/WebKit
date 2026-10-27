@@ -357,15 +357,14 @@ void encodeStaticsTables(TableEncoder& encoder)
     } });
     Vector<StaticsOfFiles> files;
     Vector<uint32_t> importedFiles;
-    // No run goes on from one group into the next.
-    BitVector beginsRun;
     for (const PlacedStaticsOfFiles& group : statics.groupsOfFilesFilledWhenEntered) {
-        files.append({ group.firstWord, group.numberOfWords, static_cast<uint32_t>(importedFiles.size()) });
+        files.append({ group.firstWord, static_cast<uint32_t>(importedFiles.size()) });
         importedFiles.appendVector(group.importedGroups);
-        beginsRun.set(group.firstWord);
     }
-    if (!files.isEmpty())
-        files.append({ statics.endWordFilledWithFiles, statics.offsetOfFilledFiles, static_cast<uint32_t>(importedFiles.size()) });
+    if (!files.isEmpty()) {
+        RELEASE_ASSERT(statics.offsetOfFilledFiles == statics.endWordFilledWithFiles * wordSize);
+        files.append({ statics.endWordFilledWithFiles, static_cast<uint32_t>(importedFiles.size()) });
+    }
     encoder.setTable(ProgramTableIndex::staticsOfFiles, files);
     encoder.setTable(ProgramTableIndex::staticsOfImportedFiles, importedFiles);
 
@@ -387,6 +386,11 @@ void encodeStaticsTables(TableEncoder& encoder)
         RELEASE_ASSERT(width == wordSize || !(placed.initialWord >> (bitsInByte * width)));
         parts.append({ placed.offset / wordSize, placed.initialWord << (bitsInByte * (placed.offset % wordSize)) });
     }
+    for (const PlacedStaticsPadding& padding : statics.paddingOfFilesFilledWhenEntered) {
+        if (traitsOf(padding.representation).isNarrowReference)
+            narrowRoots.append(padding.offset);
+        parts.append({ padding.offset / wordSize, padding.initialWord << (bitsInByte * (padding.offset % wordSize)) });
+    }
     AOT::sort(parts, { }, &InitialWord::index);
     Vector<InitialWord> initialWords;
     for (const InitialWord& part : parts) {
@@ -396,12 +400,13 @@ void encodeStaticsTables(TableEncoder& encoder)
             initialWords.append(part);
     }
 
-    // As ProgramStatics divides them: a word that lies on both sides is filled with the later ones, when the instance is created.
+    // As ProgramStatics divides them: a word that lies on both sides is filled with the later ones, when the instance is created. A run goes on from one group of files into the next.
     uint32_t firstWordFilledAtInstanceCreation = statics.sizeFilledAtProgramEntry / wordSize;
+    uint32_t firstWordFilledWithFiles = files.isEmpty() ? UINT32_MAX : statics.firstWordFilledWithFiles;
     Vector<StaticsRun> runs;
     for (unsigned first = 0; first < initialWords.size();) {
         unsigned end = first + 1;
-        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation && !beginsRun.get(initialWords[end].index))
+        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation && initialWords[end].index != firstWordFilledWithFiles)
             ++end;
         uint64_t bits = initialWords[first].bits;
         runs.append({ initialWords[first].index, end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });

@@ -1693,6 +1693,22 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
     return FlatProgramBuilder(pattern, form).build();
 }
 
+bool hasFlatProgramsThatRememberFailedSearches(StringView patternString, OptionSet<Flags> flags)
+{
+    ErrorCode errorCode { ErrorCode::NoError };
+    YarrPattern analyzed(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Performed);
+    if (hasError(errorCode))
+        return false;
+    auto fast = compileFlatProgram(analyzed);
+    if (!fast || !(*fast)->jitCountsTurns)
+        return false;
+    YarrPattern asWritten(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Skipped);
+    if (hasError(errorCode))
+        return false;
+    auto counting = compileFlatProgram(asWritten, FlatProgramForm::CountsTurns);
+    return counting && (*counting)->memoRows;
+}
+
 ASCIILiteral description(FlatProgramDecline reason)
 {
     switch (reason) {

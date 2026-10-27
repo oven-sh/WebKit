@@ -178,6 +178,17 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
     AOT::sort(entry.nodesOfMembers);
     entry.writtenThroughUnknownObject = maker.get().uniteAll(throughUnknownObject.span());
     entry.writtenThroughUntrackedObject = maker.get().uniteAll(throughUntrackedObject.span());
+    // A few sets hold nearly every object that has escaped, the others little: the small ones stand together, so that whoever is in none of them passes them by group.
+    AOT::sort(entry.nodesOfManyMembers, { }, [&](uint32_t index) {
+        return std::pair { sets.size(entry.nodes[index].objects), index };
+    });
+    for (size_t first = 0; first < entry.nodesOfManyMembers.size(); first += NodesWrittenUnderName::nodesInGroup) {
+        Vector<ValueSetID, NodesWrittenUnderName::nodesInGroup> setsOfGroup;
+        for (uint32_t index : entry.nodesOfManyMembers.subspan(first, std::min<size_t>(NodesWrittenUnderName::nodesInGroup, entry.nodesOfManyMembers.size() - first)))
+            setsOfGroup.append(entry.nodes[index].objects);
+        entry.membersOfGroupsOfNodes.append(maker.get().uniteAll(setsOfGroup.span()));
+    }
+    entry.membersOfNodesOfManyMembers = maker.get().uniteAll(entry.membersOfGroupsOfNodes.span());
     entry.isIndexed = true;
 }
 
@@ -288,9 +299,16 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
         parts.append(entry.writtenThroughUnknownObject);
     if (entry.writtenThroughUntrackedObject != ValueSets::nothing && sets.meet(objects, m_lost))
         parts.append(entry.writtenThroughUntrackedObject);
-    for (uint32_t index : entry.nodesOfManyMembers) {
-        if (sets.meet(entry.nodes[index].objects, objects))
-            parts.append(entry.nodes[index].value);
+    if (sets.meet(entry.membersOfNodesOfManyMembers, objects)) {
+        for (size_t group = 0; group < entry.membersOfGroupsOfNodes.size(); ++group) {
+            if (!sets.meet(entry.membersOfGroupsOfNodes[group], objects))
+                continue;
+            size_t first = group * NodesWrittenUnderName::nodesInGroup;
+            for (uint32_t index : entry.nodesOfManyMembers.subspan(first, std::min<size_t>(NodesWrittenUnderName::nodesInGroup, entry.nodesOfManyMembers.size() - first))) {
+                if (sets.meet(entry.nodes[index].objects, objects))
+                    parts.append(entry.nodes[index].value);
+            }
+        }
     }
     sets.forEachMember(objects, [&](ValueFlowObjectID member) {
         auto first = std::ranges::lower_bound(entry.nodesOfMembers, NodeOfMember { member.index(), 0 });

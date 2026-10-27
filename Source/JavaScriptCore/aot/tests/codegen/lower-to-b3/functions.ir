@@ -26,11 +26,13 @@ function f2 name="plain" module=m0 position=6 length=1 parameters=[{type=anythin
 
 # CHECK: function f0 name="main"
 # CHECK: function f1 name="checked" role=EntryChecks
-# CHECK: function f{{*}} name="checked"
-# CHECK: function f2 name="plain"
+# CHECK: end of function f1
+# CHECK: function [[body]] name="checked" role=Source
+# CHECK: end of function [[body]]
+# CHECK: function f2 name="plain" role=Source
 # CHECK-NOT: name="library"
 
 # ONE-NOT: name="main"
 # ONE: function f1 name="checked" role=EntryChecks
-# ONE: function f{{*}} name="checked"
+# ONE: function f{{*}} name="checked" role=Source
 # ONE-NOT: name="plain"

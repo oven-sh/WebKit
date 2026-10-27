@@ -246,8 +246,8 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
 
     ValueSetMakers makers(inputs);
     ValueFlowHeapView heap(inputs);
-    Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfObjects(), [&](unsigned index, ValueSetMaker& maker, Vector<Found>& found) {
-        ValueFlowObjectID object(index);
+    Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfSiteAndLayoutObjects(), [&](unsigned position, ValueSetMaker& maker, Vector<Found>& found) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object))
             return;
         LayoutID layout = universe.layoutOf(object);
@@ -335,8 +335,8 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, const Prototype
     };
 
     Vector<ValueFlowObjectID> objectsAskedAbout[std::size(mutationCauses)];
-    for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
-        ValueFlowObjectID object(index);
+    for (uint32_t position = 0; position < universe.numberOfSiteAndLayoutObjects(); ++position) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object) || flowOf(object).allocationClasses.isEmpty() || hasFunction(flowOf(object).witness))
             continue;
         if (const MutationCause* cause = std::ranges::find(mutationCauses, flowOf(object).cause, &MutationCause::cause); cause != std::end(mutationCauses))
@@ -428,7 +428,7 @@ static BitVector findWrittenFunctionsNamedWithSeveralTexts(const ValueFlowResult
 // A stack frame shows the own property `name` or `displayName` of the function object. What code that nobody has seen may do to a closure is written down as stores under unknown keys.
 struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector all;
-    // Of those: no statement is seen to rename a closure of the function. A displayName that is written, or a name that is defined, through an object nobody follows may.
+    // Of those: no statement is seen to rename a closure of the function. A displayName that is written through an object nobody follows may.
     BitVector onlyWhereNobodySees;
     // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
     BitVector outOfSight;
@@ -462,9 +462,8 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             });
         });
     };
-    ValueSetID namedByDefinitions = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName));
-    bool escapedClosuresMayBeRenamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::unknownObject()) || isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
-    bool lostClosuresMayBeRenamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::untrackedObject()) || isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
+    bool escapedClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
+    bool lostClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
 
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());

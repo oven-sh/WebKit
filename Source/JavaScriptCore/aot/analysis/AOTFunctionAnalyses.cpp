@@ -825,7 +825,7 @@ void FunctionAnalyses::dropIncompleteIdentitiesBeforePass()
 
 const ValueIdentities& FunctionAnalyses::identities()
 {
-    auto evaluation = asksForIdentitiesOnlyBeforeEditing(m_runningPass) ? ValueIdentities::Evaluation::OnDemand : ValueIdentities::Evaluation::Complete;
+    auto evaluation = !m_changes || asksForIdentitiesOnlyBeforeEditing(m_runningPass) ? ValueIdentities::Evaluation::OnDemand : ValueIdentities::Evaluation::Complete;
     if (!m_values.identities) {
         willComputeValueAnalysis();
         m_values.identities.emplace(m_function, cfg(), ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, &opcodesOfValues(), evaluation);

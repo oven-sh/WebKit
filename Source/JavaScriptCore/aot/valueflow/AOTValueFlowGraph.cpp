@@ -319,7 +319,6 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
         }
         m_hasMoved.ensureSize(capacity);
         for (Covering& covering : m_coverings) {
-            covering.flowsIntoCovered.ensureSize(capacity);
             covering.isRetired.ensureSize(capacity);
             covering.hasStoppedAt.ensureSize(capacity);
         }
@@ -358,7 +357,7 @@ void ValueFlowGraph::setMask(ValueFlowNodeID node, ValueSetID admitted, ValueFlo
     });
     if (!number) {
         number = static_cast<uint32_t>(m_masks.size());
-        RELEASE_ASSERT(*number < 1u << 24);
+        RELEASE_ASSERT(*number < 1u << 23);
         m_numberOfMask.add(hash, *number);
         mask.lowMembersAdmitted = lowMembersOf(admitted, *m_makers[0]);
         m_masks.append(mask);
@@ -779,6 +778,15 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
     });
 }
 
+void ValueFlowGraph::append(Covering&& covering)
+{
+    RELEASE_ASSERT(m_coverings.size() < mostCoverings);
+    covering.bitInGates = 1 << m_coverings.size();
+    covering.isRetired.ensureSize(m_capacity);
+    covering.hasStoppedAt.ensureSize(m_capacity);
+    m_coverings.append(WTF::move(covering));
+}
+
 void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable)
 {
     RELEASE_ASSERT(!m_hasSolved);
@@ -791,10 +799,7 @@ void ValueFlowGraph::retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFl
     covering.listedMembersOfWhole = m_makers[0]->intersect(whole, ValueSets::complement(m_lowMembers));
     covering.allButCoverable = ValueSets::complement(coverable);
     covering.lowMembersNotCoverable = lowMembersOf(covering.allButCoverable, *m_makers[0]);
-    covering.flowsIntoCovered.ensureSize(m_capacity);
-    covering.isRetired.ensureSize(m_capacity);
-    covering.hasStoppedAt.ensureSize(m_capacity);
-    m_coverings.append(WTF::move(covering));
+    append(WTF::move(covering));
 }
 
 void ValueFlowGraph::handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder isMadeForPlaceholder, const void* context)
@@ -807,10 +812,7 @@ void ValueFlowGraph::handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, I
     covering.contextOfIsMadeForPlaceholder = context;
     covering.covered = taking.index();
     covering.allButCoverable = ValueSets::anything;
-    covering.flowsIntoCovered.ensureSize(m_capacity);
-    covering.isRetired.ensureSize(m_capacity);
-    covering.hasStoppedAt.ensureSize(m_capacity);
-    m_coverings.append(WTF::move(covering));
+    append(WTF::move(covering));
 }
 
 void ValueFlowGraph::keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder isMadeForPlaceholder, const void* context)
@@ -827,7 +829,7 @@ bool ValueFlowGraph::flowsIntoNodeCoveredBy(ValueFlowObjectID placeholder, Value
 {
     for (const Covering& covering : m_coverings) {
         if (covering.placeholder == placeholder)
-            return covering.flowsIntoCovered.get(node.index());
+            return node.index() < m_numberOfNodes && flowsIntoCovered(covering, node.index());
     }
     return false;
 }
@@ -924,7 +926,7 @@ void ValueFlowGraph::connectStraightToCoveredNode(Covering& covering, uint32_t n
 bool ValueFlowGraph::isRetiredUnderNearerCovering(const Covering& covering, uint32_t node) const
 {
     return std::ranges::any_of(m_coverings, [&](const Covering& nearer) {
-        return nearer.covered != covering.covered && covering.flowsIntoCovered.quickGet(nearer.covered) && nearer.isRetired.quickGet(node);
+        return nearer.covered != covering.covered && flowsIntoCovered(covering, nearer.covered) && nearer.isRetired.quickGet(node);
     });
 }
 
@@ -957,12 +959,14 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
     Vector<uint32_t, 16> toVisit;
     auto lengthensFlowInto = [&](const Covering& covering, ValueFlowEdge edge) {
         uint32_t to = edge.to.index();
-        return covering.flowsIntoCovered.quickGet(to) && !covering.flowsIntoCovered.quickGet(edge.from.index()) && (to == covering.covered || passesEverythingOn(to)) && isFollowedBackThrough(covering, edge.from.index());
+        return flowsIntoCovered(covering, to) && !flowsIntoCovered(covering, edge.from.index()) && (to == covering.covered || passesEverythingOn(to)) && isFollowedBackThrough(covering, edge.from.index());
     };
     for (Covering& covering : m_coverings)
-        covering.flowsIntoCovered.quickSet(covering.covered);
+        noteFlowIntoCovered(covering, covering.covered);
     Vector<uint32_t> lengthening;
     findIndices(team, added.size(), lengthening, [&](size_t index) {
+        if (!(m_gates[added[index].to.index()].coveringsFlowedInto & ~m_gates[added[index].from.index()].coveringsFlowedInto))
+            return false;
         return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
             return lengthensFlowInto(covering, added[index]);
         });
@@ -970,7 +974,7 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
     for (Covering& covering : m_coverings) {
         auto markPredecessorsOf = [&](uint32_t node) {
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
-                if (isFollowedBackThrough(covering, predecessor) && !covering.flowsIntoCovered.quickSet(predecessor))
+                if (isFollowedBackThrough(covering, predecessor) && !noteFlowIntoCovered(covering, predecessor))
                     toVisit.append(predecessor);
             });
         };
@@ -985,11 +989,11 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
                 m_found.append(index);
         }
         for (uint32_t index : m_found) {
-            if (!covering.flowsIntoCovered.quickSet(added[index].from.index()))
+            if (!noteFlowIntoCovered(covering, added[index].from.index()))
                 toVisit.append(added[index].from.index());
         }
         for (uint32_t node : m_nodesWoken) {
-            if (!covering.flowsIntoCovered.quickGet(node) || !passesOnWhatIsCovered(node))
+            if (!flowsIntoCovered(covering, node) || !passesOnWhatIsCovered(node))
                 continue;
             covering.nodesToLookAt.append(node);
             markPredecessorsOf(node);
@@ -1010,13 +1014,13 @@ void ValueFlowGraph::retireNodesAmong(std::span<const ValueFlowNodeID> moved)
     Vector<uint32_t> retired;
     auto isToBeRetiredUnder = [&](const Covering& covering, uint32_t node) {
         if (covering.retiresNoNodeByItself)
-            return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && (m_gates[node].flags & IsRetired);
-        return covering.flowsIntoCovered.quickGet(node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
+            return flowsIntoCovered(covering, node) && !covering.isRetired.quickGet(node) && (m_gates[node].flags & IsRetired);
+        return flowsIntoCovered(covering, node) && !covering.isRetired.quickGet(node) && passesEverythingOn(node) && !(m_gates[node].flags & IsCoveredNode)
             && (m_rows[node].low & covering.lowMembersOfWhole) == covering.lowMembersOfWhole && m_sets.isSubset(covering.listedMembersOfWhole, ValueSetID(m_rows[node].set));
     };
     Vector<uint32_t> movedToBeRetired;
     findIndices(&team, moved.size(), movedToBeRetired, [&](size_t index) {
-        return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
+        return m_gates[moved[index].index()].coveringsFlowedInto && std::ranges::any_of(m_coverings, [&](const Covering& covering) {
             return isToBeRetiredUnder(covering, moved[index].index());
         });
     });
@@ -1131,8 +1135,9 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     ++worker.edgesLookedAt;
 
     Gate gate = m_gates[node];
-    bool bringsWhatIsKeptOut = m_isMadeForPlaceholder && ((low & m_lowMembersKeptOutOfNodesMadeForPlaceholders) || (set != ValueSets::nothing && !m_sets.isSubset(set, m_allButKeptOutOfNodesMadeForPlaceholders)));
-    if (bringsWhatIsKeptOut && m_isMadeForPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))) [[unlikely]] {
+    // Few nodes are made for a placeholder, and that is soon said. Whether a set brings what is kept out takes a walk over both.
+    bool isMadeForPlaceholder = m_isMadeForPlaceholder && (low || set != ValueSets::nothing) && m_isMadeForPlaceholder(m_contextOfIsMadeForPlaceholder, ValueFlowNodeID(node));
+    if (isMadeForPlaceholder && ((low & m_lowMembersKeptOutOfNodesMadeForPlaceholders) || (set != ValueSets::nothing && !m_sets.isSubset(set, m_allButKeptOutOfNodesMadeForPlaceholders)))) [[unlikely]] {
         uint64_t lowKeptOut = low & m_lowMembersKeptOutOfNodesMadeForPlaceholders;
         ValueSetID setKeptOut = maker.intersect(set, ValueSets::complement(m_allButKeptOutOfNodesMadeForPlaceholders));
         if (setKeptOut != ValueSets::nothing && (lowKeptOut & lowInNoSet))
@@ -1515,7 +1520,7 @@ void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
     bytes.add("graph: successors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
     bytes.add("graph: predecessors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
     bytes.add("graph: values of nodes"_s, numberOfNodes * sizeof(ValueSetID));
-    bytes.add("graph: bits of nodes"_s, (3 + 3 * m_coverings.size()) * (m_capacity / 8));
+    bytes.add("graph: bits of nodes"_s, (3 + 2 * m_coverings.size()) * (m_capacity / 8));
     bytes.addList("graph: masks"_s, m_masks);
     size_t wordsOfSuccessors = 0;
     size_t wordsOfPredecessors = 0;

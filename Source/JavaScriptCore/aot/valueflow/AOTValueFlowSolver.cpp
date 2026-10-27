@@ -3498,12 +3498,29 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
     };
     Vector<AnswersAboutLatestValues<ValueSetID>> leftOfValues(m_makers.size());
     bool hasWrittenUnderNamesOfReads = !m_writtenUnderNamesOfReads.isEmpty();
+    // Only a mark, a placeholder or a kind that covers keys takes something out of a value, and only beside the unknown object is something seen under the name of a read.
+    uint64_t lowMembersThatCover = 0;
+    bool allThatCoverAreLowMembers = true;
+    auto noteMemberThatCovers = [&](ValueFlowObjectID member) {
+        allThatCoverAreLowMembers &= member.index() < 64;
+        lowMembersThatCover |= 1ull << member.index() % 64;
+    };
+    if (m_allButMarks != ValueSets::anything) {
+        for (ValueFlowObjectID mark : { ValueFlowUniverse::markOfNamedBun(), ValueFlowUniverse::markOfMemberLeftOut(), ValueFlowUniverse::markOfLoadedBun() })
+            noteMemberThatCovers(mark);
+    }
+    for (const Covering& covering : m_coverings)
+        noteMemberThatCovers(covering.placeholder);
+    for (const KindThatCoversKeys& covering : m_kindsThatCoverKeys)
+        noteMemberThatCovers(covering.kind);
+    if (hasWrittenUnderNamesOfReads)
+        noteMemberThatCovers(m_input.placeholders.unknown);
     forEachIndexInParallel(m_loops, m_listedWithCoveredMembers.size(), [&](unsigned share, unsigned worker) {
         ValueSetMaker& maker = *m_makers[worker];
         for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
             ValueFlowNodeID node(index);
             ValueSetID value = m_graph.valueOf(node);
-            if (value == ValueSets::nothing || !isReadByResults(node))
+            if (value == ValueSets::nothing || (allThatCoverAreLowMembers && !(m_sets.membersBelow64(value) & lowMembersThatCover)) || !isReadByResults(node))
                 continue;
             if (hasWrittenUnderNamesOfReads && index < firstNodeOfHost)
                 value = maker.unite(value, writtenUnderNameOfReadSeenAt(node));
@@ -3529,14 +3546,24 @@ ValueSetID ValueFlowSolver::withoutMarks(ValueSetID value, ValueSetMaker& maker)
 
 ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueSetID value, ValueSetMaker& maker) const
 {
-    value = withoutMarks(value, maker);
+    // The marks, the placeholders and the kinds are among the lowest members, which a set holds in one word.
+    uint64_t lowestMembers = m_sets.membersBelow64(value);
+    auto holds = [&](ValueFlowObjectID member) {
+        return member.index() < 64 ? lowestMembers >> member.index() & 1 : m_sets.contains(value, member);
+    };
+    auto keep = [&](ValueSetID kept) {
+        value = maker.intersect(value, kept);
+        lowestMembers = m_sets.membersBelow64(value);
+    };
+    if (m_allButMarks != ValueSets::anything && (holds(ValueFlowUniverse::markOfNamedBun()) || holds(ValueFlowUniverse::markOfMemberLeftOut()) || holds(ValueFlowUniverse::markOfLoadedBun())))
+        keep(m_allButMarks);
     for (const Covering& covering : m_coverings) {
-        if (m_sets.contains(value, covering.placeholder))
-            value = maker.intersect(value, covering.allButCovered);
+        if (holds(covering.placeholder))
+            keep(covering.allButCovered);
     }
     for (const KindThatCoversKeys& covering : m_kindsThatCoverKeys) {
-        if (m_sets.contains(value, covering.kind))
-            value = maker.intersect(value, covering.allButKeys);
+        if (holds(covering.kind))
+            keep(covering.allButKeys);
     }
     return value;
 }

@@ -117,13 +117,13 @@ static bool typeAlwaysFits(const RuntimeLayoutTable& layouts, const FieldData& f
     return fromRange && fromRange->first >= toRange->first && fromRange->second <= toRange->second;
 }
 
-bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
+SlotFit fitOf(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
 {
-    if (to.keepsStateOfBirth && !from.keepsStateOfBirth)
-        return false;
+    if ((to.keepsStateOfBirth && !from.keepsStateOfBirth) || !typeAlwaysFits(layouts, from, to))
+        return SlotFit::IsTested;
     if (from.slotHoldsUndefinedAndNull && !(layouts.slotAdmits(to, jsUndefined()) && layouts.slotAdmits(to, jsNull())))
-        return false;
-    return typeAlwaysFits(layouts, from, to);
+        return SlotFit::UnlessUndefinedOrNull;
+    return SlotFit::Always;
 }
 
 std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)

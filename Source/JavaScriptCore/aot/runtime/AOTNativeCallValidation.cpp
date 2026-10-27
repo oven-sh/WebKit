@@ -24,6 +24,8 @@
 #include "InternalFunction.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSCustomGetterFunction.h"
+#include "JSCustomSetterFunction.h"
 #include "JSFunctionWithFields.h"
 #include "NativeExecutable.h"
 #include "NullGetterFunction.h"
@@ -112,6 +114,20 @@ static BuiltinID findConstructorOfHostClass(const BuiltinTable& table, JSGlobalO
             return constructor;
     }
     return { };
+}
+
+// Whoever asks for the description of an accessor of native code gets new function objects for its halves.
+static bool isSameHalfOfNativeAccessor(JSCell* found, JSObject* callee)
+{
+    if (auto* getter = dynamicDowncast<JSCustomGetterFunction>(callee)) {
+        auto* other = dynamicDowncast<JSCustomGetterFunction>(found);
+        return other && other->getter() == getter->getter() && other->propertyName() == getter->propertyName();
+    }
+    if (auto* setter = dynamicDowncast<JSCustomSetterFunction>(callee)) {
+        auto* other = dynamicDowncast<JSCustomSetterFunction>(found);
+        return other && other->setter() == setter->setter() && other->propertyName() == setter->propertyName();
+    }
+    return false;
 }
 
 static BuiltinCallMode modeOf(BuiltinCellKey::Kind kind, CodeSpecializationKind specialization)
@@ -258,6 +274,11 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
     Kind kind = name.startsWith("get "_s) ? Kind::Getter : name.startsWith("set "_s) ? Kind::Setter : Kind::Object;
     if (kind != Kind::Object)
         name = name.substring(4);
+    // The native code of such a half has the name of the property.
+    else if (call.callee->inherits<JSCustomGetterFunction>())
+        kind = Kind::Getter;
+    else if (call.callee->inherits<JSCustomSetterFunction>())
+        kind = Kind::Setter;
     BuiltinCallMode mode = modeOf(kind, call.kind);
     if (name.isEmpty()) {
         // Function.prototype is the one function of the realm that has no name.
@@ -282,7 +303,8 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
         BuiltinCellKey key = kind == Kind::Object ? BuiltinCellKey::object(candidate) : kind == Kind::Getter ? BuiltinCellKey::getter(candidate) : BuiltinCellKey::setter(candidate);
         // Compiled code has no cell for the function of an accessor that it never calls by itself. A generic read or store calls it all the same.
         bool canBeFound = mayBeInRealm(candidate) && (kind == Kind::Object ? key.hasCell(table) : table.at(candidate).kind == BuiltinKind::Accessor);
-        if (canBeFound && findInRealm(call.realm, key) == call.callee) {
+        auto found = canBeFound ? findInRealm(call.realm, key) : makeUnexpected(BuiltinLookupFailure::IsMissing);
+        if (found && (*found == call.callee || isSameHalfOfNativeAccessor(*found, call.callee))) {
             declare(CalleeInRealm, candidate, mode);
             return declaration;
         }
@@ -839,6 +861,31 @@ private:
         return uses;
     }
 
+    // A class of the host may give its objects a [[Set]], a [[Delete]] or a [[DefineOwnProperty]] of its own, and a property may have a setter of native code. To an entry that stores, deletes or defines by key they are what
+    // the traps of a proxy and the setters of the program are: the passes take the call for one that runs code nobody knows, and flow goes by what the table says of the object or of the accessor, as it does for a statement.
+    // Neither has a function object, so no call of it is checked, and none counts as code that ran. What it does to the properties of its own object is its own doing.
+    bool isDoneByNativeCodeOfObject(const Operand& operand, const OperandDifference& difference, OperandUses uses) const
+    {
+        constexpr OperandUses usesStoring { OperandUse::StoresByKey, OperandUse::AssignsFrom };
+        constexpr OperandUses usesDefining { OperandUse::DefinesName, OperandUse::TakesDescriptor };
+        if (difference.change != OperandChange::PropertyAdded && difference.change != OperandChange::PropertyRemoved && difference.change != OperandChange::PropertyStored && difference.change != OperandChange::AttributesChanged)
+            return false;
+        // The classes of the engine have types of their own, and what their methods do is the language's.
+        if (operand.object->type() == ObjectType) {
+            const MethodTable* methods = operand.object->methodTable();
+            if (uses.containsAny(usesStoring) && methods->put != JSObject::put)
+                return true;
+            MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
+            if (uses.contains(OperandUse::DeletesByKey) && methods->deleteProperty != ordinaryDelete)
+                return true;
+            if (uses.containsAny(usesDefining) && methods->defineOwnProperty != JSObject::defineOwnProperty)
+                return true;
+        }
+        return difference.key && uses.containsAny(usesStoring) && operand.before.properties.containsIf([&](const CapturedProperty& property) {
+            return property.key == difference.key && property.attributes & PropertyAttribute::CustomAccessorOrValue;
+        });
+    }
+
     void checkChanges(bool didRunCode)
     {
         AbstractHeaps declared = declaredWrites();
@@ -861,7 +908,7 @@ private:
 
                 if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
-                if (didRunCode)
+                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
                     continue;
                 OperandUses declaring = rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {

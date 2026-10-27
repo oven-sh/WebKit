@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTBuiltinTable.h"
 #include "AOTEdgeResults.h"
 #include "AOTIRProgram.h"
 #include "AOTLayoutUses.h"
@@ -311,23 +310,6 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
         current = baseOf(program.at(current), BaseChain::Proven);
     }
     return current ? builtinBaseClassOfLongRow(program, current) : BuiltinClassID();
-}
-
-static bool makesInstancesWithoutOwnNames(const BuiltinTable& builtins, BuiltinClassID builtinClass)
-{
-    for (BuiltinClassID current = builtinClass; current; current = builtins.at(current).parent) {
-        const BuiltinClass& entry = builtins.at(current);
-        if (!entry.listsNamesDefinedOnNewInstances || !entry.namesDefinedOnNewInstances.empty() || entry.hasClosureInstances)
-            return false;
-    }
-    return !!builtinClass;
-}
-
-bool isToldByStructureOfBuiltin(const Program& program, LayoutID id)
-{
-    const Layout& layout = program.at(id);
-    return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction) && layout.fields.isEmpty()
-        && layout.classFlow.evaluations == ExecutionCount::AtMostOnce && makesInstancesWithoutOwnNames(program.builtins(), builtinBaseClassOf(program, id));
 }
 
 bool isEvaluatedOnce(const Program& program, const Layout& layout)

@@ -571,9 +571,7 @@ private:
                     // However, we already model adding a constant as if it was free in other places
                     // so let's just roll with it. The alternative would mean having to do good use
                     // counts, which reduceStrength() currently doesn't have.
-                    m_value->child(0) =
-                        m_insertionSet.insert<Value>(
-                            m_index, Add, m_value->origin(), value, otherValue);
+                    m_value->child(0) = insertOrReusePartOfAddress(Add, value, otherValue);
                     m_value->child(1) = constant;
                     m_changed = true;
                     break;
@@ -590,9 +588,7 @@ private:
                 Value* constant = m_value->child(1)->child(1);
                 Value* otherValue = m_value->child(0);
                 // This creates a duplicate add. That's dangerous but probably fine, see above.
-                m_value->child(0) =
-                    m_insertionSet.insert<Value>(
-                        m_index, Add, m_value->origin(), value, otherValue);
+                m_value->child(0) = insertOrReusePartOfAddress(Add, value, otherValue);
                 m_value->child(1) = constant;
                 m_changed = true;
                 break;
@@ -1698,7 +1694,7 @@ private:
                 && m_value->child(0)->opcode() == Add
                 && m_value->child(0)->child(1)->hasInt()
                 && m_value->child(1)->hasInt32()) {
-                Value* shifted = m_insertionSet.insert<Value>(m_index, Shl, m_value->origin(), m_value->child(0)->child(0), m_value->child(1));
+                Value* shifted = insertOrReusePartOfAddress(Shl, m_value->child(0)->child(0), m_value->child(1));
                 Value* constant = m_value->child(0)->child(1)->shlConstant(m_proc, m_value->child(1));
                 m_insertionSet.insertValue(m_index, constant);
                 replaceWithNew<Value>(Add, m_value->origin(), shifted, constant);
@@ -4773,6 +4769,19 @@ private:
                 m_mayHaveUnfoldedPhis = true;
             }
         }
+    }
+
+    // The walk looks at a value once, so what a rule puts in front of a value is compared with nothing. The turns of a loop that are written out all get base + (index << shift) that way.
+    // An x86 address holds all of base + (index << shift) + offset, and each access takes its own copy in. Elsewhere the sum is an instruction.
+    Value* insertOrReusePartOfAddress(Opcode opcode, Value* left, Value* right)
+    {
+        Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), left, right);
+        if (!m_numbering || isX86())
+            return inserted;
+        Value* representative = m_numbering->ensureRepresentative(inserted);
+        if (representative != inserted)
+            inserted->replaceWithIdentity(representative);
+        return representative;
     }
 
     void replaceIfRedundant()

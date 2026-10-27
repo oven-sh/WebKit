@@ -117,6 +117,28 @@ public:
     ValueFlowObjectID objectNamed(FunctionID body, const ValueFlowObjectName&) const;
 
     uint32_t numberOfObjects() const { return m_numberOfObjects; }
+    // Objects are numbered kind by kind. A walk that looks for sites, or for sites and instances, goes over these alone, in the order of their numbers.
+    uint32_t numberOfSiteObjects() const { return m_firstKey - m_firstSite; }
+    ValueFlowObjectID siteObjectAt(uint32_t position) const { return ValueFlowObjectID(m_firstSite + position); }
+    uint32_t numberOfSiteAndLayoutObjects() const { return m_firstResultOfBuiltin - m_firstLayoutObject + numberOfSiteObjects(); }
+    ValueFlowObjectID siteOrLayoutObjectAt(uint32_t position) const
+    {
+        uint32_t numberOfLayoutObjects = m_firstResultOfBuiltin - m_firstLayoutObject;
+        return position < numberOfLayoutObjects ? ValueFlowObjectID(m_firstLayoutObject + position) : siteObjectAt(position - numberOfLayoutObjects);
+    }
+    // What has the class of a built-in without being one: what built-ins answer with, the results of coroutines, the arrays of rest parameters, the sites.
+    uint32_t numberOfObjectsMadeWithClasses() const { return m_firstClosure - m_firstResultOfBuiltin + numberOfObjectsMadeWithClassesByProgram(); }
+    ValueFlowObjectID objectMadeWithClassAt(uint32_t position) const
+    {
+        uint32_t numberOfResultsOfBuiltins = m_firstClosure - m_firstResultOfBuiltin;
+        return position < numberOfResultsOfBuiltins ? ValueFlowObjectID(m_firstResultOfBuiltin + position) : objectMadeWithClassByProgramAt(position - numberOfResultsOfBuiltins);
+    }
+    uint32_t numberOfObjectsMadeWithClassesByProgram() const { return m_firstFunctionPrototype - m_firstCoroutineResult + numberOfSiteObjects(); }
+    ValueFlowObjectID objectMadeWithClassByProgramAt(uint32_t position) const
+    {
+        uint32_t numberOfObjectsOfFunctions = m_firstFunctionPrototype - m_firstCoroutineResult;
+        return position < numberOfObjectsOfFunctions ? ValueFlowObjectID(m_firstCoroutineResult + position) : siteObjectAt(position - numberOfObjectsOfFunctions);
+    }
     ValueFlowObjectKind kindOf(ValueFlowObjectID) const;
     bool isObject(ValueFlowObjectID object) const { return object.index() >= numberOfPrimitiveKinds && object.index() < m_firstKey; }
 
@@ -344,13 +366,12 @@ enum class ValueFlowHostNode : uint8_t {
     SourcesOfCopiesIntoUntrackedObject,
     ClosuresThatDefinitionsCompare,
     PrototypeObjectsThatWritesUnderUnknownKeysReach,
-    ObjectsNobodyFollowsThatDefinitionsName,
     NamesReadOffValuesNobodyKnows,
     NamesFoundBelowValuesNobodyKnows,
     NamesOfReadsThatHandTheirValueOn,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 58;
+inline constexpr unsigned numberOfValueFlowHostNodes = 57;
 
 class ValueFlowProgramNodes {
 public:

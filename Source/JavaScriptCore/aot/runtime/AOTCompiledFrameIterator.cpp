@@ -334,9 +334,14 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
     enterMachineFrame(findFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
 
-bool isFrameOfConstructedCallee(CallFrame* plainFunctionConstructFrame, FunctionID function)
+bool constructsFrameOf(const Image& image, const CallSiteCache::Entry& caller, CallFrame* plainFunctionConstructFrame, FunctionID function)
 {
-    return isClosureOf(*std::bit_cast<JSCell**>(std::bit_cast<uintptr_t>(plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee), function);
+    if (!caller.site.isConstruct())
+        return false;
+    if (plainFunctionConstructFrame)
+        return isClosureOf(*std::bit_cast<JSCell**>(std::bit_cast<uintptr_t>(plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee), function);
+    std::optional<FunctionID> callee = image.constructedCalleeAt(caller.code.index(), caller.site.callSite);
+    return !callee || sourceFunctionOf(*callee) == sourceFunctionOf(function);
 }
 
 bool CompiledFrameIterator::RunEnd::constructs(FunctionID outermost) const
@@ -574,7 +579,7 @@ bool CompiledFrameIterator::isConstructCall()
         if (!entry)
             return runEnd.constructs(source);
         if (entry->site.isConstruct())
-            return !cursor.plainFunctionConstructFrame || isFrameOfConstructedCallee(cursor.plainFunctionConstructFrame, source);
+            return constructsFrameOf(*m_image, *entry, cursor.plainFunctionConstructFrame, source);
         if (entry->innermostVisibility == TraceVisibility::Visible)
             return false;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };

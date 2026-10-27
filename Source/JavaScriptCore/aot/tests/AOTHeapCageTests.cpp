@@ -154,7 +154,7 @@ static void testAnySize()
     Vector<std::pair<void*, size_t>> allocations;
     for (size_t size : { size_t { 16 }, 100 * KB, 40 * MB }) {
         void* memory = range.tryAllocate(size);
-        AOT_TEST_CHECK(memory && isInside(range, memory, size));
+        AOT_TEST_CHECK(memory && isInside(range, memory, size) && range.sizeOf(memory) >= size && isInside(range, memory, range.sizeOf(memory)));
         fill(memory, size, static_cast<uint8_t>(allocations.size()));
         allocations.append({ memory, size });
     }
@@ -512,10 +512,15 @@ static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
     }
     takeAllRoom(first);
 
+    // What a cage kept for itself goes back to the range. Whether that is room for such a cell is up to the range, so another cage takes it.
+    for (MarkedBlockCage& cage : cages) {
+        AOT_TEST_CHECK(!cage.tryAllocate(sizeOfCellLargerThanBlock) && cage.releaseLastReserve());
+        takeAllRoom(first);
+    }
+
     for (unsigned round = 0; round < 3; ++round) {
         for (unsigned index = 0; index < cages.size(); ++index) {
             MarkedBlockCage& cage = cages[index];
-            AOT_TEST_CHECK(round || (!cage.tryAllocate(sizeOfCellLargerThanBlock) && cage.releaseLastReserve()));
             cells[index] = cage.tryAllocate(sizeOfCellLargerThanBlock);
             AOT_TEST_CHECK(cells[index] && cage.contains(cells[index]));
             fill(cells[index], sizeOfCellLargerThanBlock, index);
@@ -530,6 +535,26 @@ static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
     void* largest = cages[0].tryAllocate(MB);
     AOT_TEST_CHECK(largest && !cages[1].tryAllocate(sizeOfCellLargerThanBlock));
     cages[0].free(largest);
+}
+
+// A cell that lies in the range grows where the range has no room: it gets what a new cell of that size gets.
+static void checkCellInFullRangeGrowsIntoSharedReserve()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage cage;
+    void* cell = cage.tryAllocate(sizeOfCellLargerThanBlock);
+    AOT_TEST_CHECK(cell);
+    fill(cell, sizeOfCellLargerThanBlock, 1);
+    takeAllRoom(first);
+
+    AOT_TEST_CHECK(!cage.tryReallocate(cell, 2 * sizeOfCellLargerThanBlock) && isFilled(cell, sizeOfCellLargerThanBlock, 1));
+    AOT_TEST_CHECK(cage.releaseLastReserve());
+    void* grown = cage.tryReallocate(cell, 2 * sizeOfCellLargerThanBlock);
+    AOT_TEST_CHECK(grown && grown != cell && cage.contains(grown) && isFilled(grown, sizeOfCellLargerThanBlock, 1));
+    cage.free(grown);
+    void* largest = cage.tryAllocate(MB);
+    AOT_TEST_CHECK(largest);
+    cage.free(largest);
 }
 #endif
 
@@ -1022,6 +1047,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-threw"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatThrew> },
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
         { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
+        { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },

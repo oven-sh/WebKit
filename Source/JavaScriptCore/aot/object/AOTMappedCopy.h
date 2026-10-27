@@ -26,6 +26,10 @@ struct MappedCopy {
         OptionalInt32,
         OptionalInt64,
         OptionalDouble,
+        OptionalInt64UnlessMarker,
+        OptionalDoubleUnlessMarker,
+        OptionalBooleanUnlessMarker,
+        JSValueUnlessMarker,
         Word,
         HalfWord,
         QuarterWord,
@@ -35,6 +39,11 @@ struct MappedCopy {
         Int32AsOptionalInt32,
         OptionalInt32AsDouble,
         Int32AsDouble,
+        OptionalInt32AsOptionalInt64,
+        Int32AsInt64,
+        BoxedOptionalInt64,
+        OptionalInt64AsOptionalInt32,
+        OptionalInt64AsDouble,
         WideNarrowReference,
         NarrowWideReference,
         OtherForm,
@@ -57,6 +66,8 @@ struct MappedCopy {
         uint16_t fieldOfTarget;
         // The target lists the field before the copy. Whoever makes the copy in another way, once a later move has failed, stores the same value there again.
         bool overwritesField { false };
+        // The slot of the target does not take both. No kind moves them but by the other way.
+        bool testsUndefinedAndNull { false };
         RunOfStub runOfStub { RunOfStub::HalfWords };
         // The stub leaves the copy to the operation where the bits that it has read, less the first, are below the number.
         uint64_t firstBitsRefusedByStub { 0 };

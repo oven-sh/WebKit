@@ -48,7 +48,12 @@ StringView instanceofExpressionOnTop(VM&);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
-JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
+// Without a member: the key is a value.
+JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier* member);
+// `o[k]++`, `o[k] += v`, `o[k] ??= v`: bytecode tests `o` by an operation of its own, ahead of the conversion of `k` and of the read.
+JSObject* createUpdateOfNullishError(JSGlobalObject*);
+// An operation runs in the top frame, for the read of such an update: the read makes that test.
+bool readOnTopTestsObjectOfUpdate(VM&);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);

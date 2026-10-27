@@ -76,6 +76,8 @@ struct ModuleHost {
     void (*showChildren)(JSGlobalObject*, JSObject* module, JSObject* requiredAgain);
     // The module of the image that an import of the path with these attributes gets. The build has named each module by the rules of the host. Null in a host where attributes choose nothing.
     std::optional<ModuleID> (*findModuleWithAttributes)(JSGlobalObject*, const String& path, const ScriptFetchParameters&);
+    // What lies under `resolve` on the `require` of the module object, if it does what the host put there does, or else another function that does. Null in a host whose `require` has no such member.
+    JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

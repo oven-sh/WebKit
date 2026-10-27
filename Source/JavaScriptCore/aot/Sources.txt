@@ -4,7 +4,6 @@ aot/analysis/AOTBodyIndex.cpp
 aot/analysis/AOTBorrowedParameters.cpp
 aot/analysis/AOTCFG.cpp
 aot/analysis/AOTCallGraph.cpp
-aot/analysis/AOTCastsWithoutFacts.cpp
 aot/analysis/AOTDefinitions.cpp
 aot/analysis/AOTDescriptorLiteral.cpp
 aot/analysis/AOTDominators.cpp

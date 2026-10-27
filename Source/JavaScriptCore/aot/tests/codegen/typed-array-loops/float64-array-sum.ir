@@ -94,6 +94,6 @@ function f1 name="total" module=m0 position=5 flags=[IsChecked] length=2 paramet
 # Eight elements cost ten instructions: eight additions from memory, the counter, the branch.
 # X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
 # X64-COUNT-8: AddDouble {{*}}(%{{*}},%{{*}},8), %xmm
-# ARM64 has no base + index * 8 + offset address, and seven of the eight loads compute base + index * 8 again.
-# ARM64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+# ARM64 has no base + index * 8 + offset address: the loads share base + index * 8.
+# ARM64: instructions: 20, patchpoints: 8, {{*}} steps by 8
 }

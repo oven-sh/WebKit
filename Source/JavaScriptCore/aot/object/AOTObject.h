@@ -372,6 +372,13 @@ ALWAYS_INLINE Object* compiledObjectOrNull(JSValue value)
     return uncheckedDowncast<Object>(value.asCell());
 }
 
+ALWAYS_INLINE Object* compiledObjectOrNull(const JSCell* cell)
+{
+    if (!cell || !isCompiledObject(cell))
+        return nullptr;
+    return uncheckedDowncast<Object>(const_cast<JSCell*>(cell));
+}
+
 inline Extension* Object::extension() const
 {
     std::optional<SlotData> slot = compiledStructure().extensionSlot();

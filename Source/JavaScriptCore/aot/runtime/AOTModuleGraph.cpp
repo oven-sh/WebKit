@@ -497,10 +497,6 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
     }
     for (const ModuleImportSite& site : sitesThatAskRunTime)
         nameRoot(site.importer, site.target);
-    for (uint32_t module = 0; module < numberOfModules; ++module) {
-        if (!graph[module].isImportedByModule() && !graph[module].mayBeginLoad())
-            nameRoot(outside, module);
-    }
     Vector<uint32_t> dominatorOf = computeImmediateDominators(successors, outside);
 
     // For each root the nearest root that has begun its load by the time somebody names it.
@@ -606,6 +602,13 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
     auto [firstRepeated, end] = std::ranges::unique(groupsAndGroupsLoadedWithThem);
     groupsAndGroupsLoadedWithThem.shrink(firstRepeated - groupsAndGroupsLoadedWithThem.begin());
 
+    auto groupsLoadedWith = [&](uint32_t group) {
+        return std::ranges::equal_range(groupsAndGroupsLoadedWithThem, group, { }, [](uint64_t pair) {
+            return static_cast<uint32_t>(pair >> 32);
+        });
+    };
+    // The group, and one more, that comes to it through another group of its list: whoever marks that one marks it. No group leads back to itself.
+    Vector<uint32_t> isListedBelow(FillWith { }, groups.size(), 0);
     Vector<uint32_t> lists;
     for (uint32_t module = 0; module < numberOfModules; ++module) {
         if (!isGrouped(module))
@@ -618,16 +621,22 @@ Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndR
             graph[module].referrerRuntimeModuleOrLoadGroup = Number24(headOf[group]);
             continue;
         }
-        auto loadedWithIt = std::ranges::equal_range(groupsAndGroupsLoadedWithThem, group, { }, [](uint64_t pair) {
-            return static_cast<uint32_t>(pair >> 32);
-        });
+        auto loadedWithIt = groupsLoadedWith(group);
         if (loadedWithIt.empty())
             continue;
+        for (uint64_t pair : loadedWithIt) {
+            for (uint64_t below : groupsLoadedWith(static_cast<uint32_t>(pair)))
+                isListedBelow[static_cast<uint32_t>(below)] = group + 1;
+        }
         RELEASE_ASSERT(numberOfModules + lists.size() < Number24::max);
         graph[module].referrerRuntimeModuleOrLoadGroup = Number24(numberOfModules + lists.size());
-        lists.append(static_cast<uint32_t>(loadedWithIt.size()));
-        for (uint64_t pair : loadedWithIt)
-            lists.append(headOf[static_cast<uint32_t>(pair)]);
+        size_t placeOfLength = lists.size();
+        lists.append(0);
+        for (uint64_t pair : loadedWithIt) {
+            if (isListedBelow[static_cast<uint32_t>(pair)] != group + 1)
+                lists.append(headOf[static_cast<uint32_t>(pair)]);
+        }
+        lists[placeOfLength] = lists.size() - placeOfLength - 1;
     }
     return lists;
 }

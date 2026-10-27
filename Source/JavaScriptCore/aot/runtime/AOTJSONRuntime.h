@@ -10,15 +10,21 @@
 #include "AOTJSONKeyOrder.h"
 #include "AOTJSONSource.h"
 #include "AOTJSONValueParser.h"
+#include "AOTJSONWords.h"
+#include "AOTSlotRepresentation.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "Allocator.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
 #include <array>
+#include <limits>
 #include <memory>
 #include <wtf/FastMalloc.h>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -71,6 +77,105 @@ public:
         return m_finishedObjects[((structureAtBirth->id().bits() ^ extraStructure->id().bits()) >> 4) % m_finishedObjects.size()];
     }
 
+    struct LearnedName {
+        static constexpr unsigned wordsOfText = 4;
+        static constexpr size_t maxTextLength = wordsOfText * sizeof(uint64_t);
+
+        ALWAYS_INLINE bool standsAt(const uint8_t* quote) const
+        {
+            uint64_t difference = ((WTF::unalignedLoad<uint64_t>(quote) & mask[0]) ^ text[0]) | ((WTF::unalignedLoad<uint64_t>(quote + sizeof(uint64_t)) & mask[1]) ^ text[1]);
+            if (textLength > 2 * sizeof(uint64_t)) [[unlikely]]
+                difference |= ((WTF::unalignedLoad<uint64_t>(quote + 2 * sizeof(uint64_t)) & mask[2]) ^ text[2]) | ((WTF::unalignedLoad<uint64_t>(quote + 3 * sizeof(uint64_t)) & mask[3]) ^ text[3]);
+            return !difference;
+        }
+        bool trySetText(const uint8_t* quote, size_t length);
+        void setTextThatStandsNowhere();
+
+        uint64_t text[wordsOfText];
+        uint64_t mask[wordsOfText];
+        uint16_t textLength;
+    };
+    static_assert(LearnedName::maxTextLength <= jsonSourcePadding);
+
+    struct LearnedExtraMembers {
+        static constexpr unsigned capacity = 8;
+        static constexpr uint64_t noKey = std::numeric_limits<uint64_t>::max();
+
+        struct Name : LearnedName {
+            uint16_t outOfLineCapacity;
+            PropertyOffset offset;
+            Structure* structure;
+        };
+
+        static uint64_t keyFor(uint32_t shape, StructureID structureBefore) { return shape | static_cast<uint64_t>(structureBefore.bits()) << 32; }
+        void begin(uint64_t keyOfMembers, unsigned outOfLineCapacityInFront);
+        void note(unsigned index, const uint8_t* quote, size_t textLength, Structure*);
+
+        bool holdsNoNamesOf(uint64_t keyOfMembers, uint64_t firstWordOfText) const { return !count && key == keyOfMembers && firstWord == firstWordOfText; }
+
+        uint64_t key { noKey };
+        uint64_t firstWord { 0 };
+        uint64_t orderBefore { JSONKeyOrder::unknown().word() };
+        uint64_t orderAfter { JSONKeyOrder::unknown().word() };
+        uint16_t positionedOrdinal { 0 };
+        uint16_t outOfLineCapacityBefore { 0 };
+        uint8_t count { 0 };
+        bool wasFound { false };
+        bool isOnlySeen { false };
+        Name names[capacity];
+    };
+    ALWAYS_INLINE LearnedExtraMembers* findLearnedExtraMembers(uint64_t key, const uint8_t* firstName)
+    {
+        if (!m_learnedExtraMembers) [[unlikely]]
+            return nullptr;
+        LearnedExtraMembers* learned = &(*m_learnedExtraMembers)[indexOfLearnedExtraMembers(key, firstName)];
+        if (learned->key == key && learned->names[0].standsAt(firstName)) [[likely]]
+            return learned;
+        learned = &(*m_learnedExtraMembers)[indexOfLearnedExtraMembers(key, firstName) ^ 1];
+        return learned->key == key && learned->names[0].standsAt(firstName) ? learned : nullptr;
+    }
+    LearnedExtraMembers* learnedExtraMembersWithoutNames(uint64_t key, const uint8_t* firstName);
+    LearnedExtraMembers& learnedExtraMembersToReplace(uint64_t key, const uint8_t* firstName);
+
+    struct LearnedObject {
+        AOT_CLASS_THRESHOLD(unsigned, maxNumberOfFields, 32);
+        AOT_CLASS_THRESHOLD(unsigned, maxNumberOfExtraMembers, 64);
+        AOT_CLASS_THRESHOLD(size_t, maxMembersParsedTwiceForEachReturnSaved, 3);
+
+        struct Member : LearnedName {
+            uint8_t indexOfValue;
+        };
+
+        bool isFor(uint32_t shapeOfObject, uint64_t firstWordOfText) const { return shape == shapeOfObject && firstWord == firstWordOfText; }
+        bool isRefused() const { return members.isEmpty() && !isOnlySeen; }
+        void forgetCells();
+
+        uint32_t shape { 0 };
+        uint32_t orderWord { 0 };
+        uint64_t firstWord { 0 };
+        Structure* structureAtBirth { nullptr };
+        Structure* extraStructure { nullptr };
+        CompiledStructure* structure { nullptr };
+        SlotData extraPropertiesSlot { };
+        Allocator allocatorOfExtraProperties;
+        std::unique_ptr<ObjectBuilderPlan> plan;
+        Vector<Member> members;
+        Vector<uint16_t> keys;
+        uint8_t numberOfExtraMembers { 0 };
+        bool wasFound { false };
+        bool isOnlySeen { false };
+    };
+    static constexpr unsigned numberOfLearnedObjects = 32;
+    using LearnedObjects = std::array<LearnedObject, numberOfLearnedObjects>;
+    LearnedObjects* learnedObjects() { return m_learnedObjects.get(); }
+    static unsigned indexOfLearnedObject(uint32_t shape, uint64_t firstWord) { return ((firstWord ^ shape) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedObjects)); }
+    LearnedObject& learnedObjectToReplace(uint32_t shape, uint64_t firstWord);
+    bool mayLearnAnotherObject();
+    void didSeeExtraMembers(uint32_t shape);
+    ALWAYS_INLINE bool remembersTextsOf(uint32_t shape) const { return m_timesNotFoundInARow[shape % numberOfJSONShapeBits] != maxTimesNotFoundInARow; }
+    ALWAYS_INLINE void didFindTextOf(uint32_t shape) { m_timesNotFoundInARow[shape % numberOfJSONShapeBits] = 0; }
+    void didNotFindTextOf(uint32_t shape);
+
     bool hasParsedRecords() const { return m_hasParsedRecords; }
     ALWAYS_INLINE RecordPlan recordPlanFor(VM& vm, Structure* ordinaryStructure)
     {
@@ -95,6 +200,14 @@ private:
     static constexpr size_t recordPlanCacheSize = 128;
     AOT_CLASS_THRESHOLD(size_t, maxRecordPlans, 256);
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
+    static constexpr unsigned numberOfLearnedExtraMembers = 64;
+    static unsigned indexOfLearnedExtraMembers(uint64_t key, const uint8_t* firstName)
+    {
+        return ((WTF::unalignedLoad<uint64_t>(firstName) ^ key) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedExtraMembers));
+    }
+    using LearnedExtraMembersTable = std::array<LearnedExtraMembers, numberOfLearnedExtraMembers>;
+    AOT_CLASS_THRESHOLD(unsigned, maxObjectsLearnedBetweenCollections, 64);
+    AOT_CLASS_THRESHOLD(uint8_t, maxTimesNotFoundInARow, 255);
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
@@ -118,6 +231,10 @@ private:
     bool m_hasParsedRecords { false };
     std::unique_ptr<RecordPlanCache> m_recordPlanCache;
     std::unique_ptr<JSONValueParser::LearnedNames> m_learnedNames;
+    std::unique_ptr<LearnedExtraMembersTable> m_learnedExtraMembers;
+    std::unique_ptr<LearnedObjects> m_learnedObjects;
+    unsigned m_numberOfObjectsLearned { 0 };
+    std::array<uint8_t, numberOfJSONShapeBits> m_timesNotFoundInARow { };
     Vector<RecordPlanForNames> m_recordPlans;
     Vector<JSONSource, 2> m_suspendedSources;
     RefPtr<StringImpl> m_wideText;

@@ -169,6 +169,13 @@ struct PlacedStaticsOfFiles {
     Vector<uint32_t> importedGroups;
 };
 
+// What is left of the last word of a group of files. It is filled like the variable in front of it, so that the words of one group go on as those of the next.
+struct PlacedStaticsPadding {
+    uint32_t offset { 0 };
+    SlotRepresentation representation { SlotRepresentation::JSValue };
+    uint64_t initialWord { 0 };
+};
+
 struct StaticsPlan {
     // The number of its group among groupsOfFilesFilledWhenEntered, if code that enters the file has words to fill.
     std::optional<uint32_t> groupFilledWhenEntered(ModuleID module) const
@@ -178,6 +185,7 @@ struct StaticsPlan {
 
     Vector<PlacedVariable> variables;
     Vector<PlacedStaticsOfFiles> groupsOfFilesFilledWhenEntered;
+    Vector<PlacedStaticsPadding> paddingOfFilesFilledWhenEntered;
     // Where somebody can come into the code of those files who has not filled their words.
     BitVector functionsThatEnterFiles;
     Vector<std::optional<uint32_t>> groupOfFile;

@@ -54,7 +54,7 @@ struct InitializerCall {
 };
 
 // The blocks that no version of the function enters: nothing has the type of one of their parameters. In the generic version a check lets everything through,
-// so of a value behind checks counts what the tests on its way leave of the type that it had in front of them.
+// so behind checks a cast counts as what it is handed, any other operation as the most that it makes of any operands, and a test leaves of that what it leaves.
 class BlocksNeverEntered {
 public:
     BlocksNeverEntered(const Program& program, const Function& function, const CFG& cfg)
@@ -76,7 +76,14 @@ public:
         TypingContext context { program, function, types };
         Vector<TypeID> typesWithoutChecks(function.values.size());
         auto typeWithoutChecks = [&](ValueID value) {
-            return predicted.isBehindCheck(value) ? typesWithoutChecks[value.index()] : function.at(value).type;
+            while (predicted.isBehindCheck(value) && isCast(function.at(value).opcode))
+                value = function.at(value).operand(0);
+            if (!predicted.isBehindCheck(value))
+                return function.at(value).type;
+            TypeID& type = typesWithoutChecks[value.index()];
+            if (std::optional<Type> widest = type ? std::nullopt : tryWidestNaturalTypeOf(function.at(value)))
+                type = types.intern(WTF::move(*widest));
+            return type;
         };
         auto comparesWithValueBehindCheck = [&](const Value& test, uint32_t operandIndex) {
             for (uint32_t index = 0; index < test.numberOfOperands(); ++index) {
@@ -86,10 +93,6 @@ public:
             return false;
         };
         for (BlockID block : cfg.reversePostOrder()) {
-            for (ValueID id : function.at(block).values) {
-                if (function.at(id).opcode == Opcode::Check)
-                    typesWithoutChecks[id.index()] = typeWithoutChecks(function.at(id).valueOperand());
-            }
             const TargetList& targets = function.at(block).terminator.targets;
             for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
                 if (!cfg.singleIncomingEdge(targets[targetIndex].block))
@@ -97,13 +100,16 @@ public:
                 const auto& parameters = function.at(targets[targetIndex].block).parameters;
                 uint32_t firstParameter = firstEdgeResultParameter(function, block, targetIndex);
                 for (uint32_t resultIndex = 0; firstParameter + resultIndex < parameters.size(); ++resultIndex) {
+                    ValueID parameter = parameters[firstParameter + resultIndex];
+                    if (!predicted.isBehindCheck(parameter))
+                        continue;
                     std::optional<EdgeResult> result = tryGetEdgeResult(function, { block, targetIndex, resultIndex });
                     if (!result || result->kind != EdgeResultKind::NarrowedOperand || !result->test)
                         continue;
                     TypeID source = typeWithoutChecks(result->subject);
                     const Value& test = function.at(result->test);
                     if (source && !comparesWithValueBehindCheck(test, result->operandIndex))
-                        typesWithoutChecks[parameters[firstParameter + resultIndex].index()] = types.intern(narrowTypeByTest(context, types.at(source), test, result->operandIndex, result->side));
+                        typesWithoutChecks[parameter.index()] = types.intern(narrowTypeByTest(context, types.at(source), test, result->operandIndex, result->side));
                 }
             }
         }

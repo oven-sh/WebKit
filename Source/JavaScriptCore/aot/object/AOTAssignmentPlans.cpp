@@ -346,38 +346,42 @@ FieldMap* AssignmentPlanCache::fieldMapFor(const LayoutData& target, const Layou
     }
     auto map = makeUnique<FieldMap>();
     map->excludedRunNumberPlusOne = excludedRunNumberPlusOne;
-    map->entries.fill(FieldMap::isUnknown, source.numberOfFields);
+    map->entries.fill(FieldMap::Entry { }, source.numberOfFields);
     maps.append(WTF::move(map));
     return maps.last().get();
 }
 
-uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne)
+FieldMap::Entry AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne)
 {
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     if (from.attributes() || hasForm(&from))
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     if (!layouts.hasStringKey(from) && !layouts.hasSymbolKey(from))
-        return FieldMap::isLeftOut;
+        return { FieldMap::isLeftOut };
     UniquedStringImpl* name = layouts.nameOf(vm, from);
     if (isPreparedBeforeLookups(vm, name))
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     if (excludedRunNumberPlusOne && m_excludedListsByRun.get(excludedRunNumberPlusOne)->contains(name))
-        return FieldMap::isLeftOut;
+        return { FieldMap::isLeftOut };
     const FieldData* to = layouts.field(vm, target, name);
     if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     if (to->holdsRawValueFromBirth)
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
-        return FieldMap::isNotServed;
+        return { FieldMap::isNotServed };
     // A granule starts as zeros, which have to say that the fields in it are absent. The copy fills a granule that holds one field.
     const SlotTraits traits = traitsOf(representation);
     if (to->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize)
-        return FieldMap::isNotServed;
-    uint16_t entry = FieldMap::firstField + target.indexOf(*to);
-    static_assert(FieldMap::firstField + maxFieldsInOrder < FieldMap::isTested);
-    return alwaysFits(layouts, from, *to) ? entry : entry | FieldMap::isTested;
+        return { FieldMap::isNotServed };
+    static_assert(FieldMap::firstField + maxFieldsInOrder < FieldMap::testsUndefinedAndNull);
+    SlotFit fit = fitOf(layouts, from, *to);
+    uint16_t state = FieldMap::firstField + target.indexOf(*to);
+    if (fit == SlotFit::UnlessUndefinedOrNull)
+        state |= FieldMap::testsUndefinedAndNull;
+    uint8_t acceptedKinds = fit == SlotFit::IsTested ? kindsAlwaysAccepted(layouts.typeOf(*to)).toRaw() : 0;
+    return { state, moveKindFor(from.slot.representation(), representation, fit), acceptedKinds };
 }
 
 void AssignmentPlanCache::fillPlanForCopyOfTwo(VM& vm, CopyOfTwoPlan& plan, JSGlobalObject* realm, const AssignmentSource* first, const AssignmentSource* second, bool isOrdinaryCopy)
@@ -561,13 +565,15 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         if (extraProperties && isValidOffset(extraPropertiesBefore->get(vm, property.name)))
             return notePlanWithoutUse("a field of the target lies among its extra properties"_s);
         const SlotTraits traits = traitsOf(field->slot.representation());
+        SlotFit fit = sharesTypes && property.field ? fitOf(layouts, *property.field, *field) : SlotFit::IsTested;
         storesInSourceOrder.append(static_cast<uint16_t>(fieldStores.size()));
         fieldStores.append(AssignmentPlan::FieldStore {
             .from = property.field,
             .to = field,
             .sourceOffset = property.offset,
             .acceptedKinds = kindsAlwaysAccepted(layouts.typeOf(*field)),
-            .sourceAlwaysFits = sharesTypes && property.field && alwaysFits(layouts, *property.field, *field),
+            .sourceAlwaysFits = fit == SlotFit::Always,
+            .sourceFitsUnlessUndefinedOrNull = fit == SlotFit::UnlessUndefinedOrNull,
             .isDirect = !(field->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize),
             .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,

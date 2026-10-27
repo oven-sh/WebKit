@@ -96,6 +96,7 @@ struct AssignmentPlan {
         StructureID lastAcceptedStructure { };
         OptionSet<ValueKind> acceptedKinds;
         bool sourceAlwaysFits { false };
+        bool sourceFitsUnlessUndefinedOrNull { false };
         bool isDirect { false };
         bool copiesBits { false };
         bool copiesBitsUntested { false };
@@ -227,10 +228,19 @@ struct FieldMap {
     static constexpr uint16_t isLeftOut = 1;
     static constexpr uint16_t isNotServed = 2;
     static constexpr uint16_t firstField = 3;
-    static constexpr uint16_t isTested = 1 << 15;
+    static constexpr uint16_t testsUndefinedAndNull = 1 << 15;
+
+    // What is the same in every copy that moves the field.
+    struct Entry {
+        uint16_t fieldOfTarget() const { return (state & ~testsUndefinedAndNull) - firstField; }
+
+        uint16_t state { isUnknown };
+        MappedCopy::MoveKind kind { MappedCopy::MoveKind::Tested };
+        uint8_t acceptedKinds { 0 };
+    };
 
     uint32_t excludedRunNumberPlusOne { 0 };
-    Vector<uint16_t> entries;
+    Vector<Entry> entries;
 };
 
 class AssignmentPlanCache final : public ChainDependentOwner {
@@ -252,7 +262,7 @@ public:
     ALWAYS_INLINE MappedCopy& mappedCopyAt(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne);
     // Null where the names that the copy leaves out have not been listed yet.
     FieldMap* fieldMapFor(const LayoutData& target, const LayoutData& source, uint32_t excludedRunNumberPlusOne);
-    uint16_t describeMappedField(VM&, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne);
+    FieldMap::Entry describeMappedField(VM&, const LayoutData& target, const FieldData& from, uint32_t excludedRunNumberPlusOne);
     ALWAYS_INLINE const ExcludedNameList& excludedNames(VM&, const ExcludedRun&);
     void didWritePlan(AssignmentPlan& plan)
     {
@@ -394,7 +404,7 @@ ALWAYS_INLINE void AssignmentPlanCache::didRunAsBefore(AssignmentPlan& plan)
 
 enum class RepeatedCopy : uint8_t { IsNotDone, ByWordsOrMoves, ByMap, ByMapForTheFirstTime, AsThePlanDidBefore };
 RepeatedCopy tryRepeatAssignment(VM&, State&, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne);
-MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, bool isTested);
+MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, SlotFit);
 // For a copy that takes no frame, whose Structures are known.
 void describeMovesForStub(MappedCopy&);
 bool clearFieldsMovedInVain(const MappedCopy&, const MappedCopy::Move* end, JSCell* target);

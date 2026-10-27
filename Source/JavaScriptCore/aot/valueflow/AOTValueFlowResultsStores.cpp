@@ -44,9 +44,9 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
     const ParallelLoops& loops = inputs.loops();
     ValueSetMaker& maker = heap.maker();
     uint32_t numberOfLayouts = program.layouts.size();
-    Vector<ValueFlowObjectID> objectsThatSelectLayout = collectInParallel<ValueFlowObjectID>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& objects) {
-        if (namedLayoutOf(ValueFlowObjectID(index)) && selectsLayoutByPrototype(ValueFlowObjectID(index)))
-            objects.append(ValueFlowObjectID(index));
+    Vector<ValueFlowObjectID> objectsThatSelectLayout = collectInParallel<ValueFlowObjectID>(loops, universe.numberOfSiteObjects(), [&](unsigned position, Vector<ValueFlowObjectID>& objects) {
+        if (namedLayoutOf(universe.siteObjectAt(position)) && selectsLayoutByPrototype(universe.siteObjectAt(position)))
+            objects.append(universe.siteObjectAt(position));
     });
     Vector<ValueFlowObjectID> objectsOfEveryEscapedClass;
     Vector<ValueFlowObjectID> objectsOfEveryLostClass;
@@ -112,13 +112,13 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
         }
     }
 
-    Vector<ObjectOfLayout> objectsWithLayouts = collectInParallel<ObjectOfLayout>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ObjectOfLayout>& found) {
-        ValueFlowObjectID object(index);
+    Vector<ObjectOfLayout> objectsWithLayouts = collectInParallel<ObjectOfLayout>(loops, universe.numberOfSiteAndLayoutObjects(), [&](unsigned position, Vector<ObjectOfLayout>& found) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         LayoutID named = namedLayoutOf(object);
         if (!named)
             return;
         found.append({ named, object });
-        auto selected = m_selectedLayouts.find(index);
+        auto selected = m_selectedLayouts.find(object.index());
         if (selected == m_selectedLayouts.end())
             return;
         for (LayoutID layout : m_listsOfSelectedLayouts[selected->value.list]) {

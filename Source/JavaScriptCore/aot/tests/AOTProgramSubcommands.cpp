@@ -19,6 +19,7 @@
 #include "AOTProgramFile.h"
 #include "AOTReaderInternal.h"
 #include "AOTSchemaEnums.h"
+#include "AOTTestCommand.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
@@ -48,6 +49,8 @@ struct ProgramArguments {
 struct PrintFlags {
     std::optional<PassID> until;
     Vector<uint32_t> functionIndices;
+    const TestCommand* command { nullptr };
+    Vector<String> commandArguments;
     bool isWire { false };
 };
 
@@ -56,6 +59,7 @@ struct PrintFlags {
 static constexpr ASCIILiteral untilFlag = "--until"_s;
 static constexpr ASCIILiteral functionFlag = "--function"_s;
 static constexpr ASCIILiteral wireFlag = "--wire"_s;
+static constexpr ASCIILiteral commandFlag = "--command"_s;
 static constexpr ASCIILiteral outputFlag = "--output"_s;
 
 static String unknownFlagSentence(StringView name)
@@ -121,10 +125,21 @@ static std::expected<PrintFlags, String> parsePrintFlags(std::span<const Flag> f
             result.isWire = true;
             continue;
         }
-        if (flag.name != functionFlag && flag.name != untilFlag)
+        if (flag.name != functionFlag && flag.name != untilFlag && flag.name != commandFlag)
             return makeUnexpected(unknownFlagSentence(flag.name));
         if (flag.value.isEmpty())
             return makeUnexpected(missingValueSentence(flag.name));
+        if (flag.name == commandFlag) {
+            if (result.command)
+                return makeUnexpected(repeatedFlagSentence(commandFlag));
+            for (StringView word : flag.value.split(' '))
+                result.commandArguments.append(word.toString());
+            result.command = findTestCommand(result.commandArguments[0]);
+            if (!result.command || result.command->programAsRead != ProgramAsRead::WithLibrary)
+                return makeUnexpected(makeString(commandFlag, " takes a command that runs the whole pipeline, not "_s, result.commandArguments[0]));
+            result.commandArguments.removeAt(0);
+            continue;
+        }
         if (flag.name == functionFlag) {
             std::optional<uint32_t> index = parseFunctionIndex(flag.value);
             if (!index)
@@ -138,8 +153,10 @@ static std::expected<PrintFlags, String> parsePrintFlags(std::span<const Flag> f
         if (!result.until)
             return makeUnexpected(makeString("unknown pass "_s, flag.value));
     }
-    if (result.isWire && (result.until || !result.functionIndices.isEmpty()))
+    if (result.isWire && (result.until || !result.functionIndices.isEmpty() || result.command))
         return makeUnexpected(makeString(wireFlag, " takes no other flag"_s));
+    if (result.command && (result.until || !result.functionIndices.isEmpty()))
+        return makeUnexpected(makeString(commandFlag, " takes no other flag"_s));
     return result;
 }
 
@@ -278,12 +295,19 @@ static int printProgramFile(const ProgramFile& file, const ProgramArguments& arg
     FilePrintStream errors(stderr, FilePrintStream::Borrow);
 
     BuildContext build(arguments.options);
-    std::unique_ptr<Program> program = flags.until ? createProgramWithLibrary(file, build) : createProgram(file, build);
+    std::unique_ptr<Program> program = flags.until || flags.command ? createProgramWithLibrary(file, build) : createProgram(file, build);
     if (!program) {
         build.diagnostics().finish(nullptr);
         return reportDiagnostics(build.diagnostics(), errors);
     }
     build.resolveFunctionToDump(*program);
+
+    if (flags.command) {
+        TestCommandContext context { WTF::move(program), IRForm::AsRead, flags.commandArguments.span(), out, build };
+        flags.command->run(context);
+        out.flush();
+        return build.diagnostics().hasErrors() ? reportDiagnostics(build.diagnostics(), errors) : exitCodeForSuccess;
+    }
 
     if (flags.until) {
         program = computeProgramAfterPass(*flags.until, WTF::move(program), build);

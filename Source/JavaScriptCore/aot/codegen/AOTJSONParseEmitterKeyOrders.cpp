@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTJSONKeyOrder.h"
+#include "AOTJSONWords.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -28,6 +29,7 @@ static_assert(sizeof(ObjectWords::keyOrderTransitionMask) == sizeof(uint32_t));
 static_assert(argumentBufferAccessOf(RuntimeOperation::JSONParseExtraMembers) == ArgumentBufferAccess::ReadsAndWrites, "updateInBuffer loads what the operation stored in the buffer");
 
 static constexpr int32_t parsedOutcome = static_cast<int32_t>(JSONOutcome::Parsed);
+static constexpr int32_t rejectedOutcome = static_cast<int32_t>(JSONOutcome::Rejected);
 static constexpr int32_t unknownOutcome = static_cast<int32_t>(JSONOutcome::Unknown);
 
 static constexpr unsigned logTransitionSize = std::countr_zero(sizeof(KeyOrderTransition));
@@ -191,12 +193,39 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
         return;
     Pointer cursor = cursorOf(value);
     ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
+    auto parse = [&](bool isOnRarePath) {
+        Pointer next;
+        state = updateInBuffer(state, [&](Pointer buffer) {
+            next = callOperation<Pointer>(value, RuntimeOperation::JSONParseExtraMembers, { word32(static_cast<int32_t>(shape)), cursor, buffer }, { .isOnRarePath = isOnRarePath });
+        });
+        return next;
+    };
+
     Pointer next;
-    state = updateInBuffer(state, [&](Pointer buffer) {
-        next = callOperation<Pointer>(value, RuntimeOperation::JSONParseExtraMembers, { word32(static_cast<int32_t>(shape)), cursor, buffer });
-    });
+    if (!typeOf(value->extraOperand()).hasOnlyPrimitives(Primitive::Null))
+        next = parse(false);
+    else {
+        LBasicBlock wasSeenWithExtraMembers = newBlock();
+        LBasicBlock continuation = newBlock();
+        unsigned bit = shape % numberOfJSONShapeBits;
+        Word32 bits = loadMutable32(AOT_INSTANCE_OFFSET(json.shapesSeenWithExtraMembers) + bit / 32 * sizeof(uint32_t));
+        ValueFromBlock sameCursor = m_out.anchor(cursor.value());
+        ValueFromBlock noExtra = m_out.anchor(undefined().value());
+        ValueFromBlock sameOrder = m_out.anchor(state.order.value());
+        branch(isZero(bitAnd(bits, word32(static_cast<int32_t>(1u << bit % 32)))), { normalEdge(continuation), unlikelyEdge(wasSeenWithExtraMembers) });
+
+        m_out.appendTo(wasSeenWithExtraMembers);
+        ValueFromBlock nextCursor = m_out.anchor(parse(true).value());
+        ValueFromBlock extra = m_out.anchor(state.extra.value());
+        ValueFromBlock order = m_out.anchor(state.order.value());
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        next = Pointer(m_out.phi(B3::Int64, sameCursor, nextCursor));
+        state = { Boxed(m_out.phi(B3::Int64, noExtra, extra)), Pointer(m_out.phi(B3::Int64, sameOrder, order)) };
+    }
     Condition isParsed(m_out.notNull(next.value()));
-    Word32 outcome = select(isParsed, word32(parsedOutcome), word32(unknownOutcome));
+    Word32 outcome = select(isParsed, select(equal(next, cursor), word32(rejectedOutcome), word32(parsedOutcome)), word32(unknownOutcome));
     defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
 }
 

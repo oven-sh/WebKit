@@ -173,7 +173,7 @@ public:
                     return;
                 }
                 if (function.module != m_owner.module)
-                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) ? exit : unknownScopeEntry);
+                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) && !m_index.functionsThatFilesOfCyclesMayEnter.quickGet(reader.index()) ? exit : unknownScopeEntry);
             };
             for (VariableID variable : m_owner.variables) {
                 for (const FlowScopeLocationAccess& read : operationsOn(m_index.reads, variable.index()))

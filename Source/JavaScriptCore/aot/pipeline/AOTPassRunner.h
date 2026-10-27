@@ -229,10 +229,6 @@ private:
         const PassSet* optionalPassesOfShortSchedule { nullptr };
         uint64_t maxRounds { std::numeric_limits<uint64_t>::max() };
         bool isStopped { false };
-        // Of the pass that is running: see passesThatMoveOperationsOutOfLoops.
-        bool castsNameTheirFacts { false };
-        std::optional<uint32_t> numberOfChangesWhenCastsWereTied;
-        bool didMakeFacts { false };
         PassSet passesThatRan;
         PassBits passesThatHaveRun;
         // None behind a change, until somebody asks.

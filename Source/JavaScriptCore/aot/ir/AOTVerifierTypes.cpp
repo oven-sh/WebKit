@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
-#include "AOTCastsWithoutFacts.h"
 #include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
 #include "AOTHeldOperands.h"
@@ -210,15 +209,6 @@ void FunctionVerifier::verifyParameterTypes(BlockID block, const Block& contents
             }
         }
     }
-}
-
-void FunctionVerifier::verifyCastsWithoutFacts()
-{
-    if (!m_inputs.castsNameTheirFacts)
-        return;
-    Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(m_program, m_function);
-    if (!found.isEmpty())
-        fail(InternalErrorKind::CastWithoutFact, found[0].block, found[0].cast);
 }
 
 void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& value)

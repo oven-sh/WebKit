@@ -111,7 +111,7 @@ static Policy valueTablePolicy()
 
 enum class ArmOfSwitch : uint8_t { Returns, JoinsWithConstant, JoinsWithSum };
 
-static void buildSwitchThatChoosesNumbers(Procedure& proc, int64_t firstCase, const Vector<int64_t>& numbers, int64_t otherwiseNumber, ArmOfSwitch form, bool lastArmCalls = false)
+static void buildSwitchThatChoosesNumbers(Procedure& proc, int64_t firstCase, const Vector<int64_t>& numbers, int64_t otherwiseNumber, ArmOfSwitch form, bool lastArmCalls = false, std::optional<int64_t> maskOfSubject = std::nullopt)
 {
     Graph graph { proc };
     BasicBlock* root = proc.addBlock();
@@ -119,6 +119,8 @@ static void buildSwitchThatChoosesNumbers(Procedure& proc, int64_t firstCase, co
     auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
     Value* subject = arguments[0];
     Value* addend = arguments[1];
+    if (maskOfSubject)
+        subject = graph.make(root, BitAnd, subject, graph.int64(root, *maskOfSubject));
     Value* phi = graph.phi(join, Int64);
     graph.ret(join, phi);
     auto addArm = [&](int64_t number, bool calls) {
@@ -190,6 +192,25 @@ static void testSwitchWhoseArmsChooseNumbersLoadsFromTable()
             }
         }
     }
+    const Vector<int64_t> sevenNumbers { 3, 1, 4, 1, 5, 9, 2 };
+    for (int64_t mask : { 7, 15 }) {
+        {
+            Procedure proc(valueTablePolicy());
+            buildSwitchThatChoosesNumbers(proc, 0, sevenNumbers, 250, ArmOfSwitch::JoinsWithConstant, false, mask);
+            proc.resetReachability();
+            CHECK(lowerMacros(proc));
+            CHECK_EQ(numberOfValues(proc, Load8Z), 1u);
+            CHECK_EQ(numberOfValues(proc, Select), mask == 7 ? 0u : 1u);
+        }
+        Procedure proc(valueTablePolicy());
+        buildSwitchThatChoosesNumbers(proc, 0, sevenNumbers, 250, ArmOfSwitch::JoinsWithConstant, false, mask);
+        auto code = compileProc(proc);
+        for (int64_t value = -20; value <= 40; ++value) {
+            uint64_t index = static_cast<uint64_t>(value & mask);
+            CHECK_EQ((invoke<int64_t>(*code, value, static_cast<int64_t>(0))), index < sevenNumbers.size() ? sevenNumbers[index] : 250);
+        }
+    }
+
     Procedure proc(valueTablePolicy());
     buildSwitchThatChoosesNumbers(proc, 0, { 3, 1, 4, 1, 5, 9, 2, 6 }, 250, ArmOfSwitch::JoinsWithConstant, true);
     proc.resetReachability();

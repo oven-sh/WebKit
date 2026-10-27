@@ -119,6 +119,14 @@ private:
         TypeID expected() const { return expectedForTyping.index() ? expectedForTyping : TypeID(); }
     };
 
+    struct MarksOfValue {
+        uint32_t isQueued : 1 { 0 };
+        uint32_t hasUserThatWasTakenFirst : 1 { 0 };
+        uint32_t isRemembered : 1 { 0 };
+        uint32_t lastWalkThatTookIt : 29 { 0 };
+    };
+    static_assert(sizeof(MarksOfValue) == sizeof(uint32_t));
+
     enum class SweepFlag : uint8_t {
         IsChangedValue = 1 << 0,
         IsTyped = 1 << 1,
@@ -153,7 +161,7 @@ private:
     const UseLists& uses();
     ValueLocation locationForRule(ValueID) const;
     void rememberState(ValueID);
-    bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
+    bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_marks[id.index()].isRemembered; }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
     {
         if (isRemembered(id)) [[likely]]
@@ -202,15 +210,13 @@ private:
     TypingMemo m_ownMemo;
 
     Vector<ValueID, 64> m_worklist;
-    BitVector m_isQueued;
+    Vector<MarksOfValue, 64> m_marks;
+    uint32_t m_numberOfWalks { 0 };
     QueuedValues m_queuedValues { QueuedValues::All };
     const BitVector* m_listedValues { nullptr };
-    BitVector m_wasTakenFromWorklist;
-    BitVector m_hasUserThatWasTakenFirst;
     Vector<ValueID, 16> m_valuesAboveTheirRules;
     Vector<OptionSet<SweepFlag>, 64> m_sweepFlags;
 
-    BitVector m_isRemembered;
     Vector<StateBeforeRestart, 64> m_statesBeforeRestart;
     Vector<ValueID, 64> m_rememberedValues;
     size_t m_numberOfReportedValues { 0 };

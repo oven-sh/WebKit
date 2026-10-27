@@ -2551,6 +2551,7 @@ static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
             continue;
         uint32_t file = lists.requests[firstRequest].target();
         face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+        lists.modules[file].shownByFace |= face.faceOfFile;
     }
 }
 

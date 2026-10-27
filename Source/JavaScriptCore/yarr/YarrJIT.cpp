@@ -42,6 +42,9 @@
 #include "YarrCodeAddressing.h"
 #endif
 #include "YarrDisassembler.h"
+#if defined(YARR_FOR_IMAGE)
+#include "YarrFlatProgram.h"
+#endif
 #include "YarrJITRegisters.h"
 #include "YarrMatchingContextHolder.h"
 #if defined(YARR_FOR_IMAGE)
@@ -2805,7 +2808,7 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
             m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorNoMatch)), m_regs.returnRegister);
 #else
-            moveBodyResult(static_cast<size_t>(JSRegExpResult::ErrorNoMatch));
+            moveBodyResult(static_cast<size_t>(m_handsLongSearchesOver ? JSRegExpResult::JITCodeFailure : JSRegExpResult::ErrorNoMatch));
 #endif
         }
 
@@ -12087,6 +12090,15 @@ public:
 #else
             ASSERT(GPRInfo::argumentGPR4 == m_regs.matchingContext);
 #endif
+#if defined(YARR_FOR_IMAGE)
+            // A search that goes back again and again over the same places takes this code a time that grows with a power of the length, or doubles with each unit. A flat program that keeps a
+            // table of the searches that have failed takes a time in proportion to the length, and gives the match up where the JIT does. So this code stops after a number of turns that an
+            // ordinary search does not come near, nine a unit and 65,537, and whoever called it makes the match again as for a pattern made at run time.
+            m_handsLongSearchesOver = hasFlatProgramsThatRememberFailedSearches(m_patternString, m_pattern.m_flags);
+            if (m_handsLongSearchesOver)
+                m_jit.getEffectiveAddress(MacroAssembler::BaseIndex(m_regs.length, m_regs.length, MacroAssembler::TimesEight, turnsBeforeHandingOver), m_regs.remainingMatchCount);
+            else
+#endif
             m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
 
             // Initialize freelist to null - contexts will be allocated from stack
@@ -12593,6 +12605,8 @@ private:
     bool m_didUseFrame { false };
     RequiredTexts m_requiredTexts;
     unsigned m_requiredTextFrameLocation { 0 };
+    static constexpr int32_t turnsBeforeHandingOver = 65537;
+    bool m_handsLongSearchesOver { false };
     Vector<std::unique_ptr<CachedClassTable>> m_classTables;
     unsigned m_classTableLimitHits { 0 };
     UncheckedKeyHashMap<const PatternTerm*, size_t> m_lookaheadEndOps;

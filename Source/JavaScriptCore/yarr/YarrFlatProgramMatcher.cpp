@@ -30,6 +30,8 @@
 #include "SuperSampler.h"
 #include "YarrCanonicalize.h"
 #include <algorithm>
+#include <bit>
+#include <limits>
 #include <wtf/ASCIICType.h>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
@@ -329,22 +331,52 @@ static NEVER_INLINE char32_t characterAtSurrogate(const char16_t* input, unsigne
     return at && U16_IS_LEAD(input[at - 1]) ? noCharacter : unit;
 }
 
-// See FlatProgram::referencedGroups.
-static NEVER_INLINE bool holdsBoundsOfReferencedGroups(const FlatProgram& program, const uint32_t* bounds, const unsigned* output)
+// Where the pattern has references, a search from one op and one position begins again and again with other bounds of the referenced groups: see FlatProgram::referencedGroups. So the table is one of
+// slots that are found by all three: the first word is the number of slots less one, a power of two less one, and a slot is one more than the index of op and position, the entry, and the bounds.
+// A slot that finds its few places taken takes the first of them: what was there is searched again.
+static NEVER_INLINE uint32_t* findSlotBesideReferences(const FlatProgram& program, uint32_t* memo, size_t index, const unsigned* output, bool makesSlot)
 {
+    constexpr unsigned placesTried = 8;
+    constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    uint32_t key = static_cast<uint32_t>(index + 1);
+    uint64_t hash = key * multiplier;
     for (unsigned group : program.referencedGroups) {
-        if (*bounds++ != output[group] || *bounds++ != output[group + 1])
-            return false;
+        hash = (hash ^ output[group]) * multiplier;
+        hash = (hash ^ output[group + 1]) * multiplier;
     }
-    return true;
-}
-
-static NEVER_INLINE void storeBoundsOfReferencedGroups(const FlatProgram& program, uint32_t* bounds, const unsigned* output)
-{
+    size_t mask = memo[0];
+    size_t slotSize = program.memoSlotSizeBesideReferences();
+    auto slotAt = [&](size_t place) {
+        return memo + 1 + (place & mask) * slotSize;
+    };
+    size_t first = hash >> 32;
+    uint32_t* slot = nullptr;
+    for (unsigned i = 0; i < placesTried; ++i) {
+        slot = slotAt(first + i);
+        if (!slot[0])
+            break;
+        if (slot[0] != key)
+            continue;
+        const uint32_t* bounds = slot + 2;
+        bool isSame = true;
+        for (unsigned group : program.referencedGroups) {
+            isSame &= bounds[0] == output[group] && bounds[1] == output[group + 1];
+            bounds += 2;
+        }
+        if (isSame)
+            return slot;
+    }
+    if (!makesSlot)
+        return nullptr;
+    if (slot[0])
+        slot = slotAt(first);
+    slot[0] = key;
+    uint32_t* bounds = slot + 2;
     for (unsigned group : program.referencedGroups) {
         *bounds++ = output[group];
         *bounds++ = output[group + 1];
     }
+    return slot;
 }
 
 // What a match seldom uses. Separate from Machine for the same reason as FrameStorage.
@@ -602,27 +634,31 @@ struct Machine {
         return static_cast<size_t>(row - 1) * (static_cast<size_t>(length) + 1) + at;
     }
 
-    // The bounds of the referenced groups lie behind all the entries, in the entries' order.
-    ALWAYS_INLINE uint32_t* boundsOfMemoEntry(size_t index) { return memo + memoIndex(program.memoRows, length) + 1 + index * 2 * program.referencedGroups.size(); }
-
     // 0: the search from there has not begun while the referenced groups held what they hold now. Else one more than the turns that it began before it failed.
     ALWAYS_INLINE uint32_t findFailedSearch(unsigned row, unsigned at)
     {
         size_t index = memoIndex(row, at);
-        uint32_t entry = memo[index];
         if constexpr (isFull) {
-            if (entry && !holdsBoundsOfReferencedGroups(program, boundsOfMemoEntry(index), output))
-                return 0;
+            if (!program.referencedGroups.isEmpty()) {
+                uint32_t* slot = findSlotBesideReferences(program, memo, index, output, false);
+                return slot ? slot[1] : 0;
+            }
         }
-        return entry;
+        return memo[index];
     }
 
     ALWAYS_INLINE void enterSearch(unsigned row, unsigned at, uint32_t value)
     {
         size_t index = memoIndex(row, at);
+        if constexpr (isFull) {
+            if (!program.referencedGroups.isEmpty()) {
+                // Whoever enters 0 has just found nothing.
+                if (value)
+                    findSlotBesideReferences(program, memo, index, output, true)[1] = value;
+                return;
+            }
+        }
         memo[index] = value;
-        if constexpr (isFull)
-            storeBoundsOfReferencedGroups(program, boundsOfMemoEntry(index), output);
     }
     ALWAYS_INLINE bool isMemoized(const FlatOp* at) const
     {
@@ -2013,8 +2049,15 @@ static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, 
 {
     constexpr uint64_t maxMemoSize = 32 * MB;
     uint64_t entries = static_cast<uint64_t>(program.memoRows) * (static_cast<uint64_t>(length) + 1);
-    if constexpr (isFull)
-        entries *= program.memoEntrySize();
+    uint64_t slots = 0;
+    if (isFull && entries && !program.referencedGroups.isEmpty()) {
+        // As many slots as there are ops, positions and places where one referenced group can begin, as far as there is room. An index has to fit a word.
+        constexpr uint64_t mostBeginsCounted = 64;
+        uint64_t slotSize = program.memoSlotSizeBesideReferences();
+        uint64_t wanted = entries * std::min<uint64_t>(static_cast<uint64_t>(length) + 1, mostBeginsCounted);
+        slots = std::bit_floor(std::min(wanted, (maxMemoSize / sizeof(uint32_t) - 1) / slotSize));
+        entries = entries < std::numeric_limits<uint32_t>::max() ? 1 + slots * slotSize : 0;
+    }
     Vector<uint32_t> memo;
     if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries)) {
         // The machine that keeps no table and is not the full one begins every attempt at the first op.
@@ -2023,6 +2066,8 @@ static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, 
         return matchForgetting<CharType, isFull>(program, input, length, start, output, matchLimit);
     }
     zeroSpan(memo.mutableSpan());
+    if (slots)
+        memo[0] = static_cast<uint32_t>(slots - 1);
     Enclosure<CharType> enclosure { start, length, matchLimit };
     if constexpr (isFull)
         return runFullMachine(program, input, enclosure, output, memo.mutableSpan().data());

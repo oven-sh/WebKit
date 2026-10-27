@@ -1,0 +1,98 @@
+# function total(list: Float64Array): number {
+#   let sum = 0;
+#   for (const value of list) sum += value;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = total(new Float64Array(input));
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(BODY): lower-to-b3 optimized loops f1
+# REQUIRES(BODY): unsanitized-code
+# RUN(HOT): lower-to-b3 optimized loops f1
+# REQUIRES(HOT): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=15 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=179 kind=CallResult
+typesite w3 module=m0 position=173 kind=CallResult
+typesite w4 module=m0 position=51 kind=Variable
+typesite w5 module=m0 position=73 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=Float64Array
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Construct v6, -, v8 calleeName="Float64Array"
+    v10 = Convert v9 declared={type=undefined|null|Float64Array site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v11 = Call v1, -, v10 calleeName="total"
+    v12 = Convert v11 declared={type=number site=w3}
+    PropSet v5, v12 key="answer"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Float64Array site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w4}
+    v3 = IteratorOpen v0
+    Jump -> next b2(v2)
+  b2(v4: number):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Convert v4 declared={type=number site=w1}
+    Return v9
+  b4():
+    Jump -> next b5()
+  b5() handler=b7():
+    v10 = Convert v8 declared={type=number site=w5} illTypedCause=ContainerWriterUnseen
+    v11 = Add v4, v10
+    v12 = Convert v11 declared={type=number site=w4}
+    Jump -> next b6()
+  b6() handler=b7():
+    Jump -> next b2(v12)
+  b7() role=IterationCleanup subject=v3:
+    v13 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v13
+}
+
+# `for (const value of list)` over a Float64Array is the loop that a counter would give, unrolled eight times: eight element loads.
+# BODY-LABEL: steps by 8
+# BODY-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-NOT: Reads:TypedArrayElements
+# BODY-LABEL: end of loop
+# Its only branch is the test of the counter. Nothing is called, polled or read again: no iterator, no result object, no length, no storage.
+# HOT-LABEL: steps by 8
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-NOT: ExitsSideways
+# HOT-NOT: Reads:JSArrayBufferView
+# HOT: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-NOT: ExitsSideways
+# HOT-LABEL: end of loop
+# Eight elements cost ten instructions on x86-64: eight additions from memory, the counter, the branch.
+# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 20, patchpoints: 8, {{*}} steps by 8

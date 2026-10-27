@@ -3,6 +3,8 @@
 # OPTIONS: heat=EverythingIsHot disable=b3:UnrollLoops
 # RUN: lower-to-air
 # RUN(LOOPS): lower-to-air loops
+# RUN(SIZE): lower-to-air size
+# RUN(BOTH): lower-to-air size loops
 # RUN(POINT): lower-to-air optimized
 # POINT: error: bad argument optimized
 
@@ -29,4 +31,11 @@ function f0 name="countUp" parameters=[{type=int[0, 1000]}] results=[{type=int[0
 # LOOPS: Add32 $1, %[[counter]]
 # LOOPS: end of loop #[[header]]
 # LOOPS-NOT: loop
+
+# SIZE-NEXT: instructions: {{*}}, patchpoints: 1
+# SIZE-NEXT: end of function f0
+
+# BOTH-NEXT: instructions: {{*}}, patchpoints: 1
+# BOTH-NEXT: loop #{{*}}, instructions: 2, patchpoints: 1, %{{*}} steps by 1
+# BOTH-NEXT: end of function f0
 }

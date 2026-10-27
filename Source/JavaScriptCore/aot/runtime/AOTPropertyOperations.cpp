@@ -299,7 +299,7 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!base.isObject())
-        throwException(globalObject, scope, member ? createSuperBaseNotAnObjectError(globalObject, base, *member) : createNotAnObjectError(globalObject, base));
+        throwException(globalObject, scope, createSuperBaseNotAnObjectError(globalObject, base, member));
     return base.getObject();
 }
 

@@ -97,8 +97,8 @@ function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
 # CHECK: [[step]]: undefined = MapNext
 # CHECK: [[key]]: undefined|L0 = ResultAt [[step]] index=2
 # CHECK: [[value]]: undefined|L1 = ResultAt [[step]] index=3
-# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]], [[here100]] provenType=L0
-# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]], [[here101]] provenType=L1
+# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]] provenType=L0
+# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]] provenType=L1
 # CHECK: Array = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=anything
 # TYPE-LABEL: function f3 name="main"
 # TYPE: = AssumeType {{*}} provenType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>

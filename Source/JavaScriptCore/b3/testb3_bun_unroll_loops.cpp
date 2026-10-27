@@ -398,10 +398,8 @@ static void testUnrollLoopsOnlyInnermostLoop()
         CHECK_EQ(invoke<int64_t>(*code, size), sumBelow(size) * sumBelow(size));
 }
 
-static void testPipelineUnrollsLoopOverElements()
+static void checkPipelineUnrollsLoopOverElements(const Policy& policy)
 {
-    Policy policy = optimizingPolicy();
-    policy.loops.unrolls = true;
     unsigned numberOfLoads = 0;
     Procedure proc(policyWithInspection(policy, [&](Procedure& optimized) {
         numberOfLoads = numberOfValues(optimized, [](Value* value) {
@@ -439,6 +437,21 @@ static void testPipelineUnrollsLoopOverElements()
             expected += elements[i];
         CHECK_EQ(invoke<double>(*code, count, elements), expected);
     }
+}
+
+static void testPipelineUnrollsLoopOverElements()
+{
+    Policy policy = optimizingPolicy();
+    policy.loops.unrolls = true;
+    checkPipelineUnrollsLoopOverElements(policy);
+}
+
+static void testPipelineUnrollsWhereNothingElseIsDoneToLoops()
+{
+    Policy policy = optimizingPolicy();
+    policy.loops = { };
+    policy.loops.unrolls = true;
+    checkPipelineUnrollsLoopOverElements(policy);
 }
 
 namespace {
@@ -578,6 +591,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsSkipsBoundComputedInLoop());
     RUN(testUnrollLoopsOnlyInnermostLoop());
     RUN(testPipelineUnrollsLoopOverElements());
+    RUN(testPipelineUnrollsWhereNothingElseIsDoneToLoops());
     RUN(testUnrollLoopsAddsSumOfIntegersAsIntegers());
     RUN(testUnrollLoopsGoesOnWithDoublesWhereSumOfIntegersGrowsLarge());
     RUN(testUnrollLoopsKeepsSumThatLoopLooksAt());

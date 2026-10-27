@@ -11,6 +11,7 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTValueFlow.h"
 #include "AOTValueSets.h"
+#include <array>
 #include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
@@ -83,6 +84,17 @@ public:
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
 
     void forEachMember(ClimbingSet set, NOESCAPE const Invocable<void(ValueFlowObjectID)> auto& functor) const { sets().forEachMember(set.m_set, functor); }
+    bool anyMember(ClimbingSet set, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& functor) const { return sets().anyMember(set.m_set, functor); }
+    // For a walk that would take the same step again.
+    bool holdSameMembers(ClimbingSet first, ClimbingSet second) const { return first.m_set == second.m_set; }
+    // What lies above objects as they are made hangs on the objects and on nothing else: the thread remembers it under the latest set of each slot.
+    ValueSetID prototypesAtCreationRememberedOf(ClimbingSet objects, NOESCAPE const Invocable<ValueSetID()> auto& find)
+    {
+        PrototypesAtCreation& slot = m_prototypesAtCreationOfSets[(objects.m_set.index() * 0x9e3779b1u) >> 24];
+        if (slot.objects != objects.m_set)
+            slot = { objects.m_set, find() };
+        return slot.prototypes;
+    }
     bool forEachBlock(ClimbingSet set, NOESCAPE const Invocable<void(uint64_t nameOfBlock)> auto& functor) const
     {
         if (ValueSets::isComplement(set.m_set))
@@ -210,6 +222,11 @@ private:
     uint64_t addEpoch() const { return m_runEpoch << 8 | (m_unknownSource ? static_cast<uint64_t>(*m_unknownSource) + 1 : 0); }
 
     uint64_t m_runEpoch { 0 };
+    struct PrototypesAtCreation {
+        ValueSetID objects;
+        ValueSetID prototypes;
+    };
+    std::array<PrototypesAtCreation, 256> m_prototypesAtCreationOfSets { };
     RunCache m_edgeCache { };
     RunCache m_addCache { };
     RunCache m_holdsAnyOfCache { };

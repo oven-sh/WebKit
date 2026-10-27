@@ -178,7 +178,7 @@ struct LogicalFrameSite {
 };
 
 // After a tail call the frame above a construct belongs to another function than the one that was constructed.
-bool isFrameOfConstructedCallee(CallFrame* plainFunctionConstructFrame, FunctionID);
+bool constructsFrameOf(const Image&, const CallSiteCache::Entry& caller, CallFrame* plainFunctionConstructFrame, FunctionID);
 
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);

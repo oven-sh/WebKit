@@ -1220,7 +1220,7 @@ struct MovableCode {
             const Type& arrayType = typeOf(function, test.objectOperand());
             const ClassPart* part = hasOnlyPristineArrays(arrayType) ? arrayType.singleBuiltinClass() : nullptr;
             BlockID taken = block.terminator.targets[0].block;
-            if (!part || !part->contentsAreProven || part->contentsOfSlots().empty() || numberOfPredecessors[taken.index()] != 1)
+            if (!part || !part->contentsAreProven || part->writtenContents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
                 continue;
             // Nothing in front of the read has run that could take the element away.
             const BlockValues& values = function.at(taken).values;

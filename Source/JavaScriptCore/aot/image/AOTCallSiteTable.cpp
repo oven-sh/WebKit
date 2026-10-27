@@ -410,6 +410,15 @@ bool Image::callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex site) cons
     return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).callsOwnFunctionObjectAt(site.bits());
 }
 
+std::optional<FunctionID> Image::constructedCalleeAt(uint32_t function, CallSiteIndex site) const
+{
+    const ImageFunction& record = this->function(function);
+    if (!record.has(ImageFunctionFlag::HasConstructedCallees)) [[likely]]
+        return std::nullopt;
+    std::optional<uint32_t> callee = SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).constructedCalleeAt(site.bits());
+    return callee ? std::optional(FunctionID(*callee)) : std::nullopt;
+}
+
 ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
 {
     const ImageFunction& record = this->function(function);
@@ -553,14 +562,17 @@ static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const S
 {
     uint32_t source = sourceNumber(position);
     bool startsOnSameLine = position.constructionStartLine == position.line;
-    if (position.constructionStartLine && (startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line)) {
+    bool startsInFront = startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line;
+    // That a site has a place for callers says what the site is, so it is written wherever that place lies.
+    if (position.constructionStartLine && (startsInFront || position.startIsForCallers)) {
         stream.append(0);
         // No row begins with a zero: a start on another line is at least one line back.
         if (position.startIsForCallers)
             stream.append(0);
+        startsOnSameLine |= !startsInFront;
         ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
         if (startsOnSameLine)
-            start.columnsBack = position.column - position.constructionStartColumn;
+            start.columnsBack = startsInFront ? position.column - position.constructionStartColumn : 0;
         else {
             start.linesBack = position.line - position.constructionStartLine;
             start.column = position.constructionStartColumn;

@@ -90,7 +90,8 @@ struct ModuleData {
     uint8_t importedByModule : 1;
     uint8_t importedWhileItRuns : 1;
     uint8_t beginsLoads : 1;
-    uint8_t unusedBits : 2;
+    uint8_t shownByFace : 1;
+    uint8_t unusedBits : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -112,6 +113,7 @@ struct ModuleData {
     bool isLoadedByLoader() const { return loadedByLoader; }
     // Its first request is the CommonJS file that it stands for where ES modules import the file.
     bool isFaceOfFile() const { return faceOfFile; }
+    bool hasFace() const { return shownByFace; }
     // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
     bool isImportedByModule() const { return importedByModule; }
     // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().

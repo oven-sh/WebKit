@@ -13,6 +13,7 @@
 #include "AOTLayout.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
@@ -41,7 +42,6 @@ FlowResultTables createUnknownResultTables(const Program&, BuildContext&);
 
 struct ValueFlowContainerFacts {
     Vector<TypeID, 2> contents;
-    Vector<TypeID, 2> expectedContents;
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> pristine;
@@ -578,7 +578,12 @@ public:
         bool isIndexed { false };
         ValueSetID writtenThroughUnknownObject { ValueSets::nothing };
         ValueSetID writtenThroughUntrackedObject { ValueSets::nothing };
+        AOT_CLASS_THRESHOLD(size_t, nodesInGroup, 8);
+        // By the number of members.
         Vector<uint32_t> nodesOfManyMembers;
+        // The members of each `nodesInGroup` of them together, and of all.
+        Vector<ValueSetID> membersOfGroupsOfNodes;
+        ValueSetID membersOfNodesOfManyMembers { ValueSets::nothing };
         Vector<NodeOfMember> nodesOfMembers;
     };
 

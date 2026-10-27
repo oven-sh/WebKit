@@ -705,7 +705,7 @@ static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgra
 static void testIntegersMoveIntoSlotsThatMayHoldNone()
 {
     MappedCopy::Move move { };
-    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, false);
+    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, SlotFit::Always);
     AOT_TEST_CHECK(move.kind == MappedCopy::MoveKind::Int32AsOptionalInt32);
     auto moves = [&](int32_t integer) {
         uint64_t stored = 0;

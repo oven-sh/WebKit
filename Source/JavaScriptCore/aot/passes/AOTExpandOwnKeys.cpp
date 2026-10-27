@@ -28,6 +28,7 @@
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestCoverage.h"
 #include "AOTValueIdentity.h"
@@ -1012,10 +1013,11 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
 {
     IRBuilder& builder = emission.builder();
-    if (!JSONSerializerBuilder(builder, emission.inputs(), ValueID()).hasPlanFor(site.source))
+    JSONSerializerBuilder planner(builder, emission.inputs(), ValueID());
+    if (!planner.hasPlanFor(site.source))
         return PassOutcome::Unchanged;
     // A string builder for one string, number, boolean or null costs three times what the stub of the call needs to write it.
-    if (site.walk == OwnKeyWalk::Stringify && !emission.typeOf(site.source).hasObjects())
+    if (site.walk == OwnKeyWalk::Stringify && (!emission.typeOf(site.source).hasObjects() || planner.writesOnePrimitive(site.source)))
         return PassOutcome::Unchanged;
 
     std::optional<BuiltinCallPlan> textFormCall;
@@ -1492,8 +1494,12 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
 
     Vector<ValueID, 2> castsOfParameter;
     ValueID source = function.at(copy).sourceOperand();
+    // A cast on the way may name the fact that the word has been filled. What takes the place of the word here is looked at behind the same fact.
+    ValueID factOfSource;
     while (isCastWithoutTest(function.at(source).opcode)) {
         castsOfParameter.append(source);
+        if (function.at(source).opcode == Opcode::AssumeType && function.at(source).factOperand())
+            factOfSource = function.at(source).factOperand();
         source = function.at(source).operand(0);
     }
     const UseLists& useLists = context.analyses.useLists();
@@ -1624,6 +1630,8 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     }
     if (hasOther) {
         builder.moveToEndOf(arms.last());
+        if (factOfSource && context.program.typeOf(function, other).mayBeUnspecified())
+            other = builder.append(makeCastBehindFact(function, context.types, other, factOfSource));
         IRBuilder::BranchBlocks hasNothing = builder.emitBranch(builder.appendTypeTest(other, Type::fromPrimitives(primitivesWithoutProperties)), frequency, frequency);
         endArm();
         builder.moveToEndOf(hasNothing.notTaken);

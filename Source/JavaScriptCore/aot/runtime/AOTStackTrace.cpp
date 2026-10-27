@@ -226,7 +226,7 @@ public:
         return *m_site;
     }
     bool isAtFirstReadSite() const { return m_isAtFirstReadSite && site().site.firstReadSite; }
-    bool constructs(CompiledFunctionID callee) const { return site().site.isConstruct() && (!m_plainFunctionConstructFrame || isFrameOfConstructedCallee(m_plainFunctionConstructFrame, m_image.rootFunctionOf(callee.index()))); }
+    bool constructs(CompiledFunctionID callee) const { return site().site.isConstruct() && constructsFrameOf(m_image, site(), m_plainFunctionConstructFrame, m_image.rootFunctionOf(callee.index())); }
     void* callerStackPointer() const { return stackPointerOfCaller(m_callFrame, bytesAboveReturnAddressOf(site())); }
     CallFrame* machineFrame() const { return m_callFrame; }
     RunStart position() const { return { m_stackPointer, m_framePointer, m_rawPC, m_entryFrame, m_isAtFirstReadSite, true }; }

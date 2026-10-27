@@ -21,7 +21,7 @@ class Code;
 
 namespace AOT { namespace Typed {
 
-enum class B3DumpScope : uint8_t { WholeProcedure, LoopsOnly };
+enum class B3DumpScope : uint8_t { WholeProcedure, LoopsOnly, SizeOnly, SizeOfFunctionAndLoops };
 
 void printOriginsAsOperations(B3::Procedure&, const Function&);
 void dumpB3(PrintStream&, B3::Procedure&, B3DumpScope);

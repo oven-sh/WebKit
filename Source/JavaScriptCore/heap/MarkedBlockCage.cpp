@@ -398,8 +398,16 @@ void* MarkedBlockCage::tryReallocate(void* pointer, size_t size)
         return result;
     }
     void* result = m_range->tryReallocate(pointer, size);
-    if (result)
+    if (result) {
         didAllocate(result, size);
+        return result;
+    }
+    // The range has no room. What a new cell of this size gets, this one gets too.
+    result = tryAllocate(size);
+    if (result) {
+        memcpy(result, pointer, std::min(size, m_range->sizeOf(pointer)));
+        m_range->free(pointer);
+    }
     return result;
 }
 

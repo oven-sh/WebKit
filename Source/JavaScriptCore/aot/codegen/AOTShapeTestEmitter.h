@@ -23,20 +23,14 @@ public:
     Word32 shapeWordOf(CellPointer);
     Word32 orderWordOf(CellPointer);
 
-    // Passes for compiled objects, whose words and slots what stands behind it may read and write, and for the objects of a class that isToldByStructureOfBuiltin(), which has no slots.
+    // Passes for compiled objects alone: what stands behind it may read and write the words and the slots of one.
     Condition hasShapeIn(CellPointer, LayoutSetID tested, const Type& known);
     void branchOnShapeIn(CellPointer, LayoutSetID tested, const Type& known, BranchTargets);
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const B3::FrequentedBlock> targets, B3::FrequentedBlock otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
     Condition hasNoExtraProperties(CellPointer);
-    // Every object of the type is one of a few classes that are each isToldByStructureOfBuiltin().
-    bool isToldByStructuresOfBuiltins(const Type&) const;
-    // It has the prototype object of its class and no property of its own.
-    Condition isAsBuiltinMadeIt(CellPointer, const Type& toldByStructures);
 
 private:
-    Condition hasShapeOfCompiledObjectIn(CellPointer, LayoutSetID tested, const Type& known);
-    Condition hasStructureOfClass(CellPointer, uint32_t rankOfClass);
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);
     Condition passesRange(Word32 shapeWord, const ShapeTest&);
     Condition passesBitSet(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

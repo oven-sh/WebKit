@@ -391,13 +391,7 @@ void* ReservedRangeHeap::tryReallocate(void* pointer, size_t size)
         return result;
     }
 #endif
-    size_t first = granuleIndexOf(m_start, m_size, pointer);
-    size_t oldSize;
-    {
-        Locker locker { m_lock };
-        RELEASE_ASSERT(m_firstGranulesOfRuns.get(first), first);
-        oldSize = granuleCountOfRun(first) * granuleSize;
-    }
+    size_t oldSize = sizeOf(pointer);
     if (size <= oldSize)
         return pointer;
 
@@ -423,6 +417,21 @@ void ReservedRangeHeap::free(void* pointer)
     }
 #endif
     freeGranules(pointer);
+}
+
+size_t ReservedRangeHeap::sizeOf(const void* pointer)
+{
+#if USE(LIBPAS)
+    if (m_backEnd == BackEnd::Malloc) [[likely]]
+        return bmalloc_get_allocation_size(const_cast<void*>(pointer));
+#elif USE(MIMALLOC)
+    if (m_backEnd == BackEnd::Malloc) [[likely]]
+        return mi_usable_size(pointer);
+#endif
+    size_t first = granuleIndexOf(m_start, m_size, pointer);
+    Locker locker { m_lock };
+    RELEASE_ASSERT(m_firstGranulesOfRuns.get(first), first);
+    return granuleCountOfRun(first) * granuleSize;
 }
 
 void ReservedRangeHeap::releaseFreeMemory()

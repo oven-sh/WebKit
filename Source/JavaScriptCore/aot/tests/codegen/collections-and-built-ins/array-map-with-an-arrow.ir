@@ -1,0 +1,171 @@
+# function doubled(list: number[]): number[] {
+#   return list.map(value => value * 2);
+# }
+# declare const input: any;
+# const list: number[] = [];
+# list.push(+input);
+# (globalThis as any).answer = doubled(list);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN(LOOP): lower-to-b3 optimized loops f1
+# REQUIRES(LOOP): unsanitized-code
+# RUN(NONE): lower-to-b3 optimized loops f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(WHOLE): lower-to-b3 optimized f1
+# REQUIRES(WHOLE): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+typesite w0 module=m0 position=118 kind=Variable
+typesite w1 module=m0 position=17 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=139 kind=CallResult
+typesite w4 module=m0 position=187 kind=CallResult
+typesite w5 module=m0 position=63 kind=Parameter function=f2
+typesite w6 module=m0 position=63 kind=Result
+typesite w7 module=m0 position=54 kind=CallResult
+typesite w8 module=m1 position=5386 kind=Variable
+typesite w9 module=m1 position=5634 kind=Variable
+data d0 root=Array{contents=number} module=m0
+runtimefunction id=65 function=f5
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v4 = PropGet v3 key="push"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = ToNumber v7
+    v9 = Call v4, v3, v8 calleeKey="push" calleeName="list.push"
+    v10 = Convert v9 declared={type=number site=w3} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="globalThis" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = Call v1, -, v3 calleeName="doubled"
+    v16 = Convert v15 declared={type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v14, v16 key="answer"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="doubled" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="map"
+    v2 = NewClosure function=f2
+    v3 = Call v1, v0, v2 calleeKey="map" calleeName="list.map"
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> site=w7 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 module=m0 position=63 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w5}] results=[{type=number site=w6}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    v3 = Convert v2 declared={type=number site=w6}
+    Return v3
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 name="map" module=m1 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1()
+  b1():
+    v3 = Undefined
+    v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
+    v5 = PropGet v4 key="length"
+    v6 = ToLength v5
+    v7 = Convert v6 declared={type=undefined|number site=w8}
+    v8 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v9 = TypeTest v8 testedType=function
+    Branch v9 -> taken b2(| 0), notTaken b14(| 0)
+  b2(v10):
+    Jump -> next b3()
+  b3():
+    v11 = Convert v7 declared={type=number} illTypedCause=Assertion
+    v12 = Convert v11 declared={type=number flags=[IsFromCompiler, IsClaim]}
+    v13 = ArraySpeciesCreate v12, v4
+    v14 = Integer
+    v15 = Convert v14 declared={type=undefined|number site=w9}
+    Jump -> next b4(v15, v3)
+  b4(v16: undefined|number, v17):
+    LoopHint
+    v19 = Convert v16 declared={type=number} illTypedCause=Assertion
+    v20 = Less v19, v11
+    Branch v20 -> taken b5(| 0, 1), notTaken b12(| 0, 1)
+  b5(v21, v22):
+    Jump -> next b6()
+  b6():
+    v23 = Convert v21 declared={type=number} illTypedCause=Assertion
+    v24 = ElemHas v4, v23
+    v25 = ToBoolean v24
+    Branch v25 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v26):
+    Jump -> next b8()
+  b8():
+    v27 = Convert v10 declared={type=undefined|null|function} illTypedCause=Assertion
+    v28 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    v29 = ElemGet v4, v28
+    v30 = Convert v28 declared={type=number} illTypedCause=Assertion
+    v31 = Call v27, v2, v29, v30, v4
+    v32 = Convert v30 declared={type=i32 flags=[IsExpected]}
+    v33 = Convert v13 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    ElemDefine v33, v32, v31
+    Jump -> next b11(v32, v31)
+  b9(v35):
+    Jump -> next b10()
+  b10():
+    Jump -> next b11(v23, v17)
+  b11(v36: undefined|number, v37):
+    v38 = Increment v36
+    v39 = Convert v38 declared={type=undefined|number site=w9}
+    Jump -> next b4(v39, v37)
+  b12(v40, v41):
+    Jump -> next b13()
+  b13():
+    Return v13
+  b14(v42):
+    Jump -> next b15()
+  b15():
+    v43 = ThrowNewError errorKind=TypeError message="Array.prototype.map callback must be a function"
+    Unreachable
+}
+
+# The text brings the library function along, as a front end sends it. The capabilities of f1 lack MayBeInlined: that keeps it out of the body of the module, while the library function and the arrow are inlined into it.
+# The likely loop of map holds the body of the arrow: an element is loaded as a double and added to itself.
+# LOOP-LABEL: loop #
+# LOOP: Double b@[[value]] = Load(b@{{*}}, ControlDependent|Reads:indexedDoubleProperties, {{*}}:GetArrayElement)
+# LOOP-NEXT: Double b@[[doubled]] = Add(b@[[value]], b@[[value]], {{*}}:Mul)
+# The new list has storage for any value, so the result is boxed: it is converted to an integer and back, the bits are compared and a select takes one of the two forms.
+# LOOP: Int64 b@[[bits]] = BitwiseCast(b@[[doubled]], {{*}}:PutArrayElement)
+# LOOP: Int64 b@[[boxed]] = Select(b@{{*}}, b@{{*}}, b@{{*}}, {{*}}:PutArrayElement)
+# LOOP: Store(b@[[boxed]], b@{{*}}, ControlDependent|Writes:indexedContiguousProperties, {{*}}:PutArrayElement)
+# LOOP: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# LOOP-LABEL: end of loop
+# The test of the counter is the only branch. Nothing is called, no length and no storage is loaded again, no hole is looked for and the loop does not poll.
+# NONE-LABEL: loop #
+# NONE-NOT: Branch(
+# NONE-NOT: ExitsSideways
+# NONE-NOT: Register(
+# NONE-NOT: Reads:Butterfly_publicLength
+# NONE-NOT: Reads:JSObject_butterfly
+# NONE: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# NONE-NOT: Branch(
+# NONE-LABEL: end of loop
+# No function object is made for the arrow.
+# WHOLE-LABEL: name="doubled" role=Source
+# WHOLE-NOT: :NewClosure
+# WHOLE-LABEL: end of function
+# X64: loop #{{*}}, instructions: 14, patchpoints: 1
+# ARM64: loop #{{*}}, instructions: 11, patchpoints: 1

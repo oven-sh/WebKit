@@ -41,6 +41,7 @@
 #include "GetterSetter.h"
 #include "JSCConfig.h"
 #include "JSCInlines.h"
+#include "PropertyOffset.h"
 #include "SlotVisitorInlines.h"
 #include <array>
 #include <bit>
@@ -1680,6 +1681,21 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
     return false;
 }
 
+// What was a dictionary only while it was given its names has not grown into one: its Structure is like any other. Other objects may share it, what is added to them is remembered in it,
+// and it may still grow into a dictionary, which is then made flat once. Its names are nowhere but in its table.
+void didFinishFilling(Structure* structure)
+{
+    ASSERT(!structure->isDictionary() && structure->isPinnedPropertyTable());
+    structure->setHasBeenFlattenedBefore(false);
+    structure->setHasBeenDictionary(false);
+}
+
+bool hasFewEnoughNamesToBeFilled(Structure* structure)
+{
+    AOT_THRESHOLD(unsigned, maxNamesCopiedIntoTable, 16);
+    return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()) <= maxNamesCopiedIntoTable;
+}
+
 // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
 static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
 {
@@ -1689,7 +1705,7 @@ static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
     if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->hasBeenFlattenedBefore())
         return;
     structure->flattenDictionaryStructure(vm, object);
-    structure->setHasBeenFlattenedBefore(false);
+    didFinishFilling(structure);
 }
 
 bool FirstAdditions::forget(JSObject* object)

@@ -42,7 +42,7 @@ testaot all <folder>                                              native tests, 
 testaot run <file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]
 testaot native [<filter>] [--after=<name>] [--single-process]
 testaot list commands|passes|options|limits|statistics|diagnostics
-testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }
+testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command="<command> { argument }"] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
 testaot write-out <file>                                          prints IR text with REPEAT, PROGRAM-OF and the labels of check lines inside functions written out
 testaot fuzz-reader [--seed=<n>] [--count=<n>] [<program>..]
@@ -80,6 +80,13 @@ Any other `--<name>=<value>` is set as a JSC option, as in `jsc`. Without `--fun
 
 ```
 testaot print main.bin --until=<PassID> --aotFunctionToDump=<name>
+```
+
+`print --command=".."` runs one of the commands that run the whole pipeline themselves on the program and prints what the command prints. This is how Bun's tests
+ask about a real program, with the library that the front end sent. `lower-to-b3` and `lower-to-air` print the functions that `aotFunctionToDump` names:
+
+```
+testaot print main.bin --command="lower-to-air loops" --aotFunctionToDump="bench|turn"
 ```
 
 Only `testaot` reads and prints IR text: the lexer, the parser and the printer are sources of `testaot`.
@@ -373,15 +380,16 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
   JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
   `exited with <code>` or `crashed with <signal>`. A failure of a validating build is the line `AOT validation: <Kind> f<n> v<n> ..` in
   front of `crashed with`.
-- `lower-to-b3 [ optimized | after=<step>[:<n>] ] [ loops ] { f<n> }` generates code for every function and prints B3 procedures: IR in, B3 out. It starts
+- `lower-to-b3 [ optimized | after=<step>[:<n>] ] [ loops ] { f<n> }` generates code for the functions it prints, and prints their B3 procedures: IR in, B3 out. It starts
   from `AsRead` (the whole pipeline runs first), `Selected` or `Placed`.
   - With no word it prints each procedure as the code generator built it, before any B3 phase has run. `optimized` prints it after the last B3 phase,
     right before it is lowered to Air. `after=<step>` prints it after one step of the table in `b3/B3Generate.cpp` and the cleanups that step
     requested: `after=unrollLoops`. A step that runs more than once is printed after its last run, or after run n with `:<n>`. Where the step
     did not run, the output is `<step> did not run`.
-  - A procedure follows the line `function f<n> name=".."`, with ` role=<role>` for a derived function. Derived functions come right after the
-    function they were derived from, so check lines inside the braces of a function see them too. `f<n>` prints only that function and what was
-    derived from it. Without one, every function but the library's is printed.
+  - A procedure stands between the lines `function f<n> name=".." role=<role>` and `end of function f<n>`. Derived functions come right after the
+    function they were derived from, so check lines inside the braces of a function see them too. `-LABEL: name="total" role=Source` and
+    `-LABEL: end of function` select the typed body of a function that also has a copy with `role=EntryChecks` and one with `role=GenericVersion`.
+    `f<n>` prints only that function and what was derived from it. Without one, every function but the library's is printed.
   - The text is B3's own dump, minus what differs from one build to the next. Blocks are in depth-first order with the likelier successor first, so
     the hot path reads from top to bottom. An origin is the IR value that the B3 value was emitted for, with its operation:
     `v18:GetTypedArrayElement`. An abstract heap has its name: `Reads:JSArrayBufferView_length`. Addresses of generators and the policy are
@@ -391,11 +399,14 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
     `-LABEL: steps by 8` and `-LABEL: end of loop` select a loop that counts up by one in the source and was unrolled eight times.
   - B3 is above instruction selection, so one set of check lines serves x86-64 and ARM64. Names of registers differ, and so does what
     `lowerMacros` and the steps after it do for one target.
-- `lower-to-air [ loops ] { f<n> }` is `lower-to-b3` one level down: it prints the Air of each function after register allocation and every other Air
+- `lower-to-air [ loops ] [ size ] { f<n> }` is `lower-to-b3` one level down: it prints the Air of each function after register allocation and every other Air
   phase, in the order the blocks are emitted. This text depends on the target, so its runs have a `REQUIRES`. With `loops`, a loop starts with
-  `loop #<header>, instructions: <n>, patchpoints: <n>`, then `, <register> steps by <n>` for each register that one `Add` or `Sub` of a constant
-  defines and nothing else in the loop does. `instructions` counts every Air instruction of the loop but `Patch`. It needs no hardware counter and no
-  run, and it moves when a spill, a copy or an address computation gets into the loop.
+  `loop #<header>, instructions: <n>, patchpoints: <n>`, then `, rare instructions: <n>` if the loop has blocks that only a rare edge leads to, then
+  `, <register> steps by <n>` for each register that one `Add` or `Sub` of a constant defines and nothing else in the loop does. `instructions` counts
+  the Air instructions but `Patch` in the other blocks, the ones an iteration is expected to run. It needs no hardware counter and no run, and it moves
+  when a spill, a copy or an address computation gets into the loop. `, entered rarely` ends the line of a
+  loop whose header only a rare edge of the function leads to: the copy of a loop that keeps its checks. `size` prints the count for the whole function and nothing
+  else, and `size loops` that line and the first line of each loop.
 - `list-passes` prints the pass table: id, scope, necessity, forms.
 - `pass-context` prints what a function pass can ask its context: heat and "runs at most once" per block, the subject of a value.
 - `derived-functions <Role>:<target> ..` asks the table of derived functions for keys and prints, under `OPTIONS: report=Declines` the

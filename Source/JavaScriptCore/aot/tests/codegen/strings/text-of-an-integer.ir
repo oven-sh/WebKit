@@ -1,0 +1,58 @@
+# function text(value: number): string {
+#   return "" + (value | 0);
+# }
+# declare const input: any;
+# (globalThis as any).answer = text(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=14 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=123 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="text"
+    v10 = Convert v9 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="text" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = String string=""
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = Add v1, v3
+    v5 = Convert v4 declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+
+# `"" + integer` concatenates nothing: it is the call of the stub that makes the text of an integer, and no cell is fetched for the empty literal.
+# CHECK-LABEL: name="text" role=Source
+# CHECK: Int32 b@[[value]] = Phi(
+# CHECK: Int64 b@[[wide]] = SExt32(b@[[value]],
+# CHECK-NEXT: Int64 b@[[digits]] = Patchpoint(b@[[wide]]:Register({{*}}), resultConstraints = Register(
+# CHECK-NEXT: Return(b@[[digits]], Terminal)
+# CHECK-LABEL: end of function
+# CALLS-LABEL: f3: size=
+# CALLS-NEXT: operation operationAOTToInt32 x1
+# CALLS-NEXT: stub IntegerToString x1
+# CALLS-NEXT: f4: size=

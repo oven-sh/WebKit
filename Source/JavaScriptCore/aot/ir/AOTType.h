@@ -17,7 +17,6 @@
 #include "AOTSortedSet.h"
 #include "AOTTypeKinds.h"
 #include "AOTWire.h"
-#include <algorithm>
 #include <compare>
 #include <optional>
 #include <span>
@@ -41,10 +40,7 @@ struct ClassPart {
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> provenPristine;
-    static constexpr unsigned maxContentsSlots = numberOfEnumerators<ContentsSlot>;
-
     // As they stand in the type: for the algebra of types, walkers, printers and tables. Whoever wants to know what a collection holds asks one of the two questions below.
-    // First what each slot holds. Where that is proven, what is expected of the slots may stand behind it, from maxContentsSlots on.
     InlineList<TypeID, 3> writtenContents;
 
     TypeID writtenContentsAt(unsigned indexInType) const;
@@ -52,12 +48,8 @@ struct ClassPart {
     // All that is ever stored, where flow has followed it. Nothing where the contents are declared or guessed.
     std::optional<ProvenValue<TypeID>> provenContentsAt(unsigned indexInType) const;
     std::optional<ProvenValue<TypeID>> provenContentsAt(const BuiltinTable&, ContentsSlot) const;
-    ExpectedType expectedContentsAt(unsigned indexInType) const;
+    ExpectedType expectedContentsAt(unsigned indexInType) const { return ExpectedType(writtenContentsAt(indexInType)); }
     ExpectedType expectedContentsAt(const BuiltinTable&, ContentsSlot) const;
-    std::span<const TypeID> contentsOfSlots() const LIFETIME_BOUND { return writtenContents.span().first(std::min<size_t>(writtenContents.size(), maxContentsSlots)); }
-    bool expectsContentsBesideProof() const { return writtenContents.size() > maxContentsSlots; }
-    void expectContentsAt(unsigned indexInType, TypeID);
-    void forgetProofOfContents();
 
     friend bool operator==(const ClassPart&, const ClassPart&) = default;
 };

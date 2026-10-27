@@ -290,7 +290,7 @@ public:
     void run()
     {
         m_context.use(m_builtin, modeAndUseOf(m_call.kind).second);
-        if (m_context.isGuardedByRemovedFeature(m_builtin))
+        if (callsFunction() || m_context.isGuardedByRemovedFeature(m_builtin))
             throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
 
         std::optional<BuiltinDispatchTarget> root = m_builtins.dispatchOf(m_builtin, modeAndUseOf(m_call.kind).first);
@@ -329,6 +329,21 @@ public:
             apply(m_builtins.at(overload));
         if (mayGetThisThatDeclaredOverloadsLeaveOut())
             applyWhatIsNotDeclared(selected.span());
+    }
+
+    // The Throws flag of an overload covers only what follows the conversion of its operands. Any call can fail earlier: on a conversion, on the receiver check, on stack overflow.
+    bool callsFunction() const
+    {
+        BuiltinCallMode mode = modeAndUseOf(m_call.kind).first;
+        return mode == BuiltinCallMode::Call || mode == BuiltinCallMode::Construct || m_builtins.at(m_builtin).kind == BuiltinKind::Accessor;
+    }
+
+    bool runsOperandCode(const BuiltinOverload& overload) const
+    {
+        auto hasBehavior = [&](const BuiltinParameter& parameter) {
+            return !!m_tables.behaviorOf(parameter);
+        };
+        return (overload.receiver && hasBehavior(*overload.receiver)) || std::ranges::any_of(overload.parameters, hasBehavior);
     }
 
     bool isPutByNativeModule() const
@@ -791,6 +806,18 @@ private:
         return m_tables.maskOf(receiver->accepted);
     }
 
+    // Some native functions convert their arguments before they check the receiver.
+    void convertArguments(const BuiltinOverload& overload)
+    {
+        for (const BuiltinParameter& parameter : overload.parameters) {
+            ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter);
+            if (!behavior || parameter.conversion == BuiltinConversion::None)
+                continue;
+            connectOperands(parameter.operand, m_context.hub(behavior));
+            throwValue(unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime));
+        }
+    }
+
     void apply(const BuiltinOverload& overload)
     {
         SetForScope receiversAccepted(m_receiversAccepted, receiversAcceptedBy(overload));
@@ -798,6 +825,7 @@ private:
             if (overload.receiver->roles.contains(BuiltinOperandRole::DescribedWhenRefused))
                 describeRefusedOperands(*overload.receiver);
             throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
+            convertArguments(overload);
             return;
         }
         if (isGetterOfEngineWithoutRow(overload)) {
@@ -874,7 +902,7 @@ private:
         if (const BuiltinType& answer = m_builtins.at(overload.result.type); isConstruction(m_call.kind) && (answer.isAnything() || answer.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction })))
             m_context.connect(m_context.lookup(m_context.restrict(m_context.valueOf(m_call.thisValue), ValueSets::complement(m_universe.builtinObjects())), property(m_context, BuiltinNames::prototype)), escaped());
 
-        if (overload.effects.capability == BuiltinCapability::JS)
+        if (overload.effects.capability == BuiltinCapability::JS || runsOperandCode(overload))
             throwValue(unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime));
         else if (overload.throws())
             throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
@@ -967,8 +995,12 @@ private:
         }
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         m_context.add(proxy, undescribedObject());
-        if (!answersProxy)
-            m_context.add(m_call.result, only(m_context, m_resultObject));
+        if (!answersProxy) {
+            ClimbingSet pair = only(m_context, m_resultObject);
+            m_context.add(m_context.written(pair, prototypeLinkName), only(m_context, m_universe.objectOf(Builtins::ObjectPrototype)));
+            noteAllocationAs(BuiltinClasses::Object, m_resultObject);
+            m_context.add(m_call.result, pair);
+        }
         markWhereNameReadOnProxyMayAnswerMemberLeftOut(proxy);
         m_context.connect(m_context.masked(escaped(), m_context.maker().of(ValueFlowUniverse::markOfLoadedBun())), proxy);
         m_context.add(proxy, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_context.maker().unite(m_tables.heap().objectsThatLetInUnseenCode(), m_context.maker().of(m_universe.objectOf(Builtins::Bun)))));

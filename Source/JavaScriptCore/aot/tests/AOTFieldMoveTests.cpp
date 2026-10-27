@@ -19,6 +19,7 @@
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
@@ -31,6 +32,7 @@
 #include "ObjectConstructor.h"
 #include "Options.h"
 #include "StrongInlines.h"
+#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -38,6 +40,7 @@
 #include <optional>
 #include <utility>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -202,10 +205,20 @@ static constexpr ASCIILiteral nameOfFieldWithTypeFor(SlotRepresentation represen
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
+// A slot with markers under a type that takes neither undefined nor null.
+static constexpr std::array slotsWithMarkersOutsideType {
+    std::pair { SlotRepresentation::OptionalInt32, "i32"_s },
+    std::pair { SlotRepresentation::OptionalInt64, "i64"_s },
+    std::pair { SlotRepresentation::OptionalDouble, "num"_s },
+    std::pair { SlotRepresentation::OptionalBoolean, "bool"_s },
+    std::pair { SlotRepresentation::JSValue, "num"_s },
+};
+
 namespace {
 
 struct LayoutWithEveryRepresentation {
-    static constexpr unsigned numberOfFields = numberOfEnumerators<SlotRepresentation>;
+    // Behind a field of each representation: two of each such slot. The first holds undefined and null.
+    static constexpr unsigned numberOfFields = numberOfEnumerators<SlotRepresentation> + 2 * slotsWithMarkersOutsideType.size();
 
     explicit LayoutWithEveryRepresentation(LoadedProgram&);
 
@@ -227,6 +240,7 @@ public:
     const LayoutData& layout() const { return m_layout.layout; }
     std::span<const FieldData> fields() const { return m_layout.layout.fields(); }
     const FieldData& field(SlotRepresentation representation) const { return fields()[static_cast<unsigned>(representation)]; }
+    const FieldData& fieldWithMarkersOutsideType(size_t index, bool holdsUndefinedAndNull) const { return fields()[numberOfEnumerators<SlotRepresentation> + 2 * index + !holdsUndefinedAndNull]; }
     Structure* structure() { return m_structure.get(); }
     const MarkedArgumentBuffer& samples() const { return m_samples; }
 
@@ -235,9 +249,13 @@ public:
     bool isSame(JSValue a, JSValue b) { return a && b && sameValue(m_program.realm(), a, b); }
     bool holdsInitialBits(Object* object, const FieldData& field) { return !memcmp(object->slotOf(field), create()->slotOf(field), widthOf(field.slot.representation())); }
     using FieldPair = std::pair<const FieldData*, const FieldData*>;
-    bool tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair>);
+    enum class MayTakeNoFrame : bool { No, Yes };
+    bool tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair>, MayTakeNoFrame = MayTakeNoFrame::No);
+    bool tryCopyWithoutFrame(Object* target, Object* source) { return tryCopyByFieldMapWithoutFrame(m_program.instance(), target, JSValue::encode(source), excludedRunNumberPlusOne); }
 
 private:
+    static constexpr uint32_t excludedRunNumberPlusOne = 1;
+
     LoadedProgram& m_program;
     LayoutWithEveryRepresentation& m_layout;
     Strong<Structure> m_structure;
@@ -251,28 +269,36 @@ LayoutWithEveryRepresentation::LayoutWithEveryRepresentation(LoadedProgram& prog
     Vector<uint32_t, numberOfFields> wideReferences;
     Vector<uint32_t, numberOfFields> narrowReferences;
     uint32_t offset = offsetOfFirstField;
-    for (SlotRepresentation representation : allMembersOf<SlotRepresentation>) {
-        const FieldData& model = typedField(program, nameOfFieldWithTypeFor(representation));
+    auto place = [&](FieldData& field, SlotRepresentation representation, ASCIILiteral nameOfFieldWithType) {
+        const FieldData& model = typedField(program, nameOfFieldWithType);
         SlotTraits traits = traitsOf(representation);
         offset = roundUpToMultipleOf(traits.width, offset);
-        FieldData& field = fields[static_cast<unsigned>(representation)];
         field.name = model.name;
         field.type = model.type;
         field.slot = SlotData::create(offset, representation);
         if (traits.holdsCell)
             (traits.isNarrowReference ? narrowReferences : wideReferences).append(offset);
         offset += traits.width;
+    };
+    for (SlotRepresentation representation : allMembersOf<SlotRepresentation>)
+        place(fields[static_cast<unsigned>(representation)], representation, nameOfFieldWithTypeFor(representation));
+    FieldData* next = fields + numberOfEnumerators<SlotRepresentation>;
+    for (auto [representation, nameOfFieldWithType] : slotsWithMarkersOutsideType) {
+        for (bool holdsUndefinedAndNull : { true, false }) {
+            place(*next, representation, nameOfFieldWithType);
+            next++->slotHoldsUndefinedAndNull = holdsUndefinedAndNull;
+        }
     }
     operands[0] = functionNamed(program, "callback"_s).index();
 
-    uint32_t* next = references;
-    *next++ = wideReferences.size();
-    *next++ = 0;
-    *next++ = narrowReferences.size();
+    uint32_t* nextReference = references;
+    *nextReference++ = wideReferences.size();
+    *nextReference++ = 0;
+    *nextReference++ = narrowReferences.size();
     for (uint32_t reference : wideReferences)
-        *next++ = reference;
+        *nextReference++ = reference;
     for (uint32_t reference : narrowReferences)
-        *next++ = reference;
+        *nextReference++ = reference;
 
     const LayoutData& model = typedLayout(program);
     layout.kindBits = static_cast<uint32_t>(LayoutKind::Record);
@@ -316,12 +342,13 @@ Object* Fixture::createHolding(const FieldData& field, JSValue value)
 }
 
 // A copy that leaves out the names of a run goes by the map between objects of one layout too. What the map knows of such a copy is written here as tryDescribeMappedCopy() writes it, with a move for each pair of fields.
-bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair> pairs)
+bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair> pairs, MayTakeNoFrame mayTakeNoFrame)
 {
-    constexpr uint32_t excludedRunNumberPlusOne = 1;
     State& state = m_program.state();
     MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne);
+    state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne)] = nullptr;
     copy = { };
+    copy.mayTakeNoFrame = mayTakeNoFrame == MayTakeNoFrame::Yes;
     copy.targetWords = target->orderAndShapeWords();
     copy.sourceWords = source->orderAndShapeWords();
     copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
@@ -330,10 +357,11 @@ bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list
     for (auto [from, to] : pairs) {
         SlotRepresentation representationOfSource = from->slot.representation();
         SlotRepresentation representationOfTarget = to->slot.representation();
-        bool isTested = !alwaysFits(layouts(), *from, *to);
-        uint8_t acceptedKinds = isTested ? kindsAlwaysAccepted(layouts().typeOf(*to)).toRaw() : 0;
-        copy.moves.append(MappedCopy::Move { from->slot.offset, to->slot.offset, moveKindFor(representationOfSource, representationOfTarget, isTested), static_cast<uint8_t>(widthOf(representationOfTarget)),
+        SlotFit fit = fitOf(layouts(), *from, *to);
+        uint8_t acceptedKinds = fit == SlotFit::IsTested ? kindsAlwaysAccepted(layouts().typeOf(*to)).toRaw() : 0;
+        copy.moves.append(MappedCopy::Move { from->slot.offset, to->slot.offset, moveKindFor(representationOfSource, representationOfTarget, fit), static_cast<uint8_t>(widthOf(representationOfTarget)),
             false, false, representationOfSource, representationOfTarget, acceptedKinds, layout().indexOf(*to) });
+        copy.moves.last().testsUndefinedAndNull = fit == SlotFit::UnlessUndefinedOrNull;
         copy.mayStoreCells |= traitsOf(representationOfTarget).holdsCell;
     }
     return tryRepeatAssignment(vm(), state, target, JSValue(source), excludedRunNumberPlusOne) == RepeatedCopy::ByMap;
@@ -461,15 +489,28 @@ static void checkAnswersAboutTypesHoldForEveryValue(LoadedProgram& program)
                 AOT_TEST_CHECK(fixture.layouts().fieldAccepts(from, value));
         }
         for (const FieldData& to : fixture.fields()) {
-            bool fits = alwaysFits(fixture.layouts(), from, to);
-            ++(fits ? numberOfFittingPairs : numberOfOtherPairs);
-            for (unsigned index = 0; fits && index < fixture.samples().size(); ++index) {
+            SlotFit fit = fitOf(fixture.layouts(), from, to);
+            ++(fit == SlotFit::Always ? numberOfFittingPairs : numberOfOtherPairs);
+            for (unsigned index = 0; fit != SlotFit::IsTested && index < fixture.samples().size(); ++index) {
                 JSValue value = fixture.samples().at(index);
-                AOT_TEST_CHECK(!fixture.layouts().slotAdmits(from, value) || fixture.layouts().slotAdmits(to, value));
+                AOT_TEST_CHECK(!fixture.layouts().slotAdmits(from, value) || fixture.layouts().slotAdmits(to, value) || (fit == SlotFit::UnlessUndefinedOrNull && value.isUndefinedOrNull()));
             }
         }
     }
     AOT_TEST_CHECK(numberOfFittingPairs > fixture.fields().size() && numberOfOtherPairs > fixture.fields().size());
+
+    // Only undefined and null are looked at where the source holds them and the target does not, and they alone leave the few loads and stores of the move.
+    for (size_t index = 0; index < slotsWithMarkersOutsideType.size(); ++index) {
+        const FieldData& holding = fixture.fieldWithMarkersOutsideType(index, true);
+        const FieldData& other = fixture.fieldWithMarkersOutsideType(index, false);
+        AOT_TEST_CHECK(fixture.layouts().slotAdmits(holding, jsNull()) && !fixture.layouts().slotAdmits(other, jsNull()) && !fixture.layouts().slotAdmits(other, jsUndefined()));
+        AOT_TEST_CHECK(fitOf(fixture.layouts(), holding, other) == SlotFit::UnlessUndefinedOrNull && alwaysFits(fixture.layouts(), other, holding));
+        AOT_TEST_CHECK(alwaysFits(fixture.layouts(), holding, holding) && alwaysFits(fixture.layouts(), other, other));
+        MappedCopy::MoveKind kind = moveKindFor(holding.slot.representation(), other.slot.representation(), SlotFit::UnlessUndefinedOrNull);
+        AOT_TEST_CHECK(kind != MappedCopy::MoveKind::Tested && kind != MappedCopy::MoveKind::OtherForm);
+    }
+    AOT_TEST_CHECK(moveKindFor(SlotRepresentation::OptionalInt32, SlotRepresentation::JSValue, SlotFit::UnlessUndefinedOrNull) == MappedCopy::MoveKind::BoxedOptionalInt32);
+    AOT_TEST_CHECK(moveKindFor(SlotRepresentation::OptionalInt32, SlotRepresentation::OptionalDouble, SlotFit::UnlessUndefinedOrNull) == MappedCopy::MoveKind::OptionalInt32AsDouble);
 
     AOT_TEST_CHECK(alwaysFits(fixture.layouts(), fixture.field(SlotRepresentation::Uint8), fixture.field(SlotRepresentation::Int16)));
     AOT_TEST_CHECK(!alwaysFits(fixture.layouts(), fixture.field(SlotRepresentation::Int16), fixture.field(SlotRepresentation::Uint8)));
@@ -485,6 +526,42 @@ static void checkAnswersAboutTypesHoldForEveryValue(LoadedProgram& program)
     AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::Uint8))).isEmpty());
     AOT_TEST_CHECK(kindsAlwaysAccepted(fixture.layouts().typeOf(fixture.field(SlotRepresentation::OptionalBoolean))) == (OptionSet<ValueKind> { ValueKind::True, ValueKind::False, ValueKind::Undefined, ValueKind::Null }));
     AOT_TEST_CHECK(valueKindOf(jsNumber(1)) == ValueKind::Int32 && valueKindOf(jsNumber(1.5)) == ValueKind::Double && valueKindOf(constructEmptyObject(program.realm())).isEmpty());
+}
+
+// The source holds undefined and null in its slot and the target holds neither: every other value goes by loads and stores alone, whichever of the forms of a number the two slots have.
+static void checkOnlyUndefinedAndNullAreTestedWhereTheTargetHoldsNeither(LoadedProgram& program)
+{
+    Fixture fixture(program);
+    SetForScope withoutValidation(fixture.vm().aotState().validatesRuntime, false);
+    unsigned numberOfPairs = 0;
+    for (size_t indexOfSource = 0; indexOfSource < slotsWithMarkersOutsideType.size(); ++indexOfSource) {
+        for (size_t indexOfTarget = 0; indexOfTarget < slotsWithMarkersOutsideType.size(); ++indexOfTarget) {
+            const FieldData& from = fixture.fieldWithMarkersOutsideType(indexOfSource, true);
+            const FieldData& to = fixture.fieldWithMarkersOutsideType(indexOfTarget, false);
+            if (fitOf(fixture.layouts(), from, to) != SlotFit::UnlessUndefinedOrNull)
+                continue;
+            if (moveKindFor(from.slot.representation(), to.slot.representation(), SlotFit::UnlessUndefinedOrNull) == MappedCopy::MoveKind::OtherForm)
+                continue;
+            ++numberOfPairs;
+            JSValue value = from.slot.representation() == SlotRepresentation::OptionalBoolean ? jsBoolean(true) : jsNumber(7);
+            Object* source = fixture.createHolding(from, value);
+            AOT_TEST_CHECK(source && fixture.tryCopyByMap(fixture.create(), source, { { &from, &to } }, Fixture::MayTakeNoFrame::Yes));
+            for (JSValue marker : { jsUndefined(), jsNull() }) {
+                Object* sourceWithMarker = fixture.createHolding(from, marker);
+                Object* untouched = fixture.create();
+                AOT_TEST_CHECK(sourceWithMarker && sourceWithMarker->isInSlot(from));
+                AOT_TEST_CHECK(!fixture.tryCopyWithoutFrame(untouched, sourceWithMarker) && fixture.holdsInitialBits(untouched, to));
+            }
+            Object* target = fixture.create();
+            AOT_TEST_CHECK(fixture.tryCopyWithoutFrame(target, source) && fixture.isSame(target->read(to), value));
+            for (JSValue marker : { jsUndefined(), jsNull() }) {
+                Object* untouched = fixture.create();
+                AOT_TEST_CHECK(!fixture.tryCopyByMap(untouched, fixture.createHolding(from, marker), { { &from, &to } }) && fixture.holdsInitialBits(untouched, to));
+            }
+        }
+    }
+    // Each of the five into its own form, an integer of either width into a boxed value and into a double, and a narrow integer into a wide one.
+    AOT_TEST_CHECK(numberOfPairs == 10);
 }
 
 static FieldMovePlanCache& planCacheOf(LoadedProgram& program)
@@ -622,6 +699,7 @@ std::span<const NativeTest> fieldMoveTests()
         { "field-moves/nothing-is-stored-when-one-move-fails"_s, runNativeTestWithNarrowReferences<checkNothingIsStoredWhenOneMoveFails> },
         { "field-moves/every-representation-to-a-property-of-a-new-object"_s, runNativeTestWithNarrowReferences<checkEveryRepresentationToPropertyOfNewObject> },
         { "field-moves/answers-about-types-hold-for-every-value"_s, runNativeTestWithNarrowReferences<checkAnswersAboutTypesHoldForEveryValue> },
+        { "field-moves/only-undefined-and-null-are-tested-where-the-target-holds-neither"_s, runNativeTestWithNarrowReferences<checkOnlyUndefinedAndNullAreTestedWhereTheTargetHoldsNeither> },
         { "field-moves/plan-cache-never-refuses"_s, runNativeTestWithNarrowReferences<checkPlanCacheNeverRefuses> },
         { "field-moves/plans-die-with-their-structures"_s, runNativeTestWithNarrowReferences<checkPlansDieWithTheirStructures> },
         { "field-moves/assignment-tests-each-closure"_s, runNativeTestWithNarrowReferences<checkAssignmentTestsEachClosure> },

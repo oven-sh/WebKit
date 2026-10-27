@@ -1558,6 +1558,8 @@ struct VariableCarrier : LoopEditor {
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
+        // The read ahead of the loop is a copy of one of the reads, and names what that one names.
+        bool isReadThroughCastInLoop { false };
     };
 
     // False for a loop that is entered from its copy, behind a whole turn: what every turn reads has been read when it is read ahead of the loop.
@@ -1647,7 +1649,8 @@ struct VariableCarrier : LoopEditor {
                 ValueID id = values[index];
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(id));
                 if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap()) {
-                    ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+                    // A cast that names a fact says from where on the word may be looked at: what stands in front of it is another base.
+                    ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     accesses.append(VariableAccess { access.location, base, id, access.stored, { block, index } });
                     continue;
                 }
@@ -1730,6 +1733,8 @@ struct VariableCarrier : LoopEditor {
                 variable = &m_variables.last();
             }
             variable->reads.append(access.id);
+            if (ValueID namedBase = memoryAccessOf(m_function, m_function.at(access.id)).base)
+                variable->isReadThroughCastInLoop |= loops.belongsTo(useLists.locationOf(namedBase).block, loop);
             variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
@@ -1787,7 +1792,7 @@ struct VariableCarrier : LoopEditor {
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (!variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || !variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -2214,7 +2219,7 @@ struct VariableCarrier : LoopEditor {
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(value));
                 DelayedVariable* stored = nullptr;
                 if (access.kind == MemoryAccess::Kind::Write) {
-                    ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+                    ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     for (DelayedVariable& candidate : delayed) {
                         if (candidate.variable.location == access.location && candidate.variable.base == base)
                             stored = &candidate;

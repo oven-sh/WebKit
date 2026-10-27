@@ -193,7 +193,11 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         ListedReceiversKnownToWorker blocks;
         Vector<uint32_t> lastListing;
         uint32_t numberOfListings { 0 };
+        // Many accesses have the same receivers, and many of those the same key.
+        HashMap<uint32_t, FlowSiteLoss, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lossesOfReceivers;
+        HashMap<uint64_t, std::optional<LayoutSet>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversSeenUnderKeys;
     };
+    AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
@@ -301,6 +305,13 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         const ListedReceivers& listed = listedReceiversOf(receiver);
         if (listed.layouts.isEmpty())
             return std::nullopt;
+        std::optional<LayoutSet>* remembered = nullptr;
+        if (listed.layouts.size() >= fewestMembersToRemember) {
+            auto known = listingsOfWorker[receiver.worker].receiversSeenUnderKeys.add(static_cast<uint64_t>(receiver.seen.index()) << 32 | key.index(), std::nullopt);
+            if (!known.isNewEntry)
+                return known.iterator->value;
+            remembered = &known.iterator->value;
+        }
         if (BuiltinMemberName name = builtinMemberNameOf(program, key); name && !name.isPrivateAlias) {
             for (BuiltinClassID builtinClass : listed.builtinClasses) {
                 if (program.builtins().findForInstance(builtinClass, name.name).outcome == BuiltinMemberLookup::Outcome::Found)
@@ -336,6 +347,8 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return std::nullopt;
         LayoutSet receivers = LayoutSet::open(WTF::move(seen));
         canonicalize(receivers);
+        if (remembered)
+            *remembered = receivers;
         return receivers;
     };
 
@@ -354,7 +367,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         }
         if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver))
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
-        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+        auto explain = [&](FlowSiteLoss& loss) {
             loss.cause = UnprovenCause::NonLayoutObject;
             bool mayBeBuiltinObject = false;
             sets.forEachMember(receiver.maker.intersect(receiver.held, universe.knownObjects()), [&](ValueFlowObjectID object) {
@@ -376,6 +389,16 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             // No line of the program makes a built-in object, so the access is the place to show.
             if (mayBeBuiltinObject)
                 loss = { .cause = UnprovenCause::NonLayoutObject, .hasOtherRoots = hasFunction(loss.witness) };
+        };
+        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+            if (loss != FlowSiteLoss { } || sets.size(receiver.held) < fewestMembersToRemember) {
+                explain(loss);
+                return;
+            }
+            auto known = listingsOfWorker[receiver.worker].lossesOfReceivers.add(receiver.held.index(), FlowSiteLoss { });
+            if (known.isNewEntry)
+                explain(known.iterator->value);
+            loss = known.iterator->value;
         });
         loss.seesConstructedObject = !ValueSets::isComplement(receiver.seen) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.seen), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;

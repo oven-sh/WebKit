@@ -393,15 +393,6 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
         }
         if (part.contentsAreProven)
             m_out.print(comma, "proven"_s);
-        if (part.expectsContentsBesideProof()) {
-            m_out.print(comma, "expected("_s);
-            CommaPrinter commaBetweenSlots;
-            for (unsigned index = 0; index < numberOfContents; ++index) {
-                m_out.print(commaBetweenSlots);
-                print(part.expectedContentsAt(index).predicted());
-            }
-            m_out.print(")"_s);
-        }
         if (part.arrayStorage != ArrayStorage::Other) {
             m_out.print(comma);
             print(part.arrayStorage);

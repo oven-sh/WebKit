@@ -16,6 +16,7 @@
 namespace JSC {
 
 class ModuleGraphLoadingState;
+class ModuleLoadingContext;
 
 namespace AOT {
 
@@ -68,6 +69,12 @@ public:
     void didLoad();
     static void didFailToLoad(const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
+    static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
+    static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
+    static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
+    static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
+    static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
+    void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();
     // The loader reports the module as loaded so many steps later.

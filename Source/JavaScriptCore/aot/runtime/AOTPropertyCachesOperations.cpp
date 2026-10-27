@@ -676,7 +676,9 @@ static bool answerImpliesResult(const PropertyAnswer& answer, Structure* structu
     Slot slot = slotFor(answer, structure);
     switch (Slot::presenceOf(slot.kind)) {
     case SlotPresence::Unknown:
-        return slot.kind == Slot::Kind::Uncacheable;
+        if (isIn && slot.kind == Slot::Kind::FieldOrInherited)
+            return result;
+        return slot.kind == Slot::Kind::Uncacheable || (isIn && slot.kind == Slot::Kind::InheritedField);
     case SlotPresence::ReadsSlot:
         return true;
     case SlotPresence::Present:

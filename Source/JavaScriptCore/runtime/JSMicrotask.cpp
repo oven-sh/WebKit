@@ -1209,6 +1209,10 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
+#if ENABLE(AOT)
+            if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
+                compiled->willBeLoadedByImport();
+#endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
@@ -1216,8 +1220,13 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             }
             context->setStep(ModuleLoadingContext::Step::Requested);
             requestedPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
-        } else
+        } else {
             loadPromise->reject(vm, arguments[1]);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::ModuleRecord::didFailToMakeModule(globalObject, context->entry()->key());
+#endif
+        }
         return;
     }
     case ModuleLoadingContext::Step::Requested: {

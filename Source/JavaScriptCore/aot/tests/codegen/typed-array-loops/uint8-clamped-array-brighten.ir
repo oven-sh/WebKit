@@ -142,4 +142,4 @@ function f1 name="turn" module=m0 position=43 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
 # X64: instructions: 26, patchpoints: 8, {{*}} steps by 4
-# ARM64: instructions: 29, patchpoints: 8, {{*}} steps by 4
+# ARM64: instructions: 27, patchpoints: 8, {{*}} steps by 4

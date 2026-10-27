@@ -361,12 +361,61 @@ static Vector<AirLoopCounter> findAirCounters(std::span<B3::Air::BasicBlock* con
     return counters;
 }
 
-static void dumpAirLoops(PrintStream& out, B3::Air::Code& code)
+static BitVector findBlocksReachedWithoutRareEdge(const B3::Air::Code& code, B3::Air::BasicBlock* entry, std::span<B3::Air::BasicBlock* const> region)
+{
+    BitVector isInRegion(code.size());
+    for (B3::Air::BasicBlock* block : region)
+        isInRegion.quickSet(block->index());
+
+    BitVector isReached(code.size());
+    isReached.quickSet(entry->index());
+    Vector<B3::Air::BasicBlock*, 16> worklist { entry };
+    while (!worklist.isEmpty()) {
+        for (const B3::Air::FrequentedBlock& successor : worklist.takeLast()->successors()) {
+            unsigned index = successor.block()->index();
+            if (!successor.isRare() && isInRegion.quickGet(index) && !isReached.quickSet(index))
+                worklist.append(successor.block());
+        }
+    }
+    return isReached;
+}
+
+static void dumpAirSize(PrintStream& out, const B3::Air::Code& code, B3::Air::BasicBlock* entry, std::span<B3::Air::BasicBlock* const> blocks)
+{
+    BitVector isLikely = findBlocksReachedWithoutRareEdge(code, entry, blocks);
+    unsigned numberOfInstructions = 0;
+    unsigned numberOfPatchpoints = 0;
+    unsigned numberOfRareInstructions = 0;
+    for (B3::Air::BasicBlock* block : blocks) {
+        if (!isLikely.quickGet(block->index())) {
+            numberOfRareInstructions += block->size();
+            continue;
+        }
+        for (const B3::Air::Inst& inst : *block)
+            ++(inst.kind.opcode == B3::Air::Patch ? numberOfPatchpoints : numberOfInstructions);
+    }
+    out.print("instructions: ", numberOfInstructions, ", patchpoints: ", numberOfPatchpoints);
+    if (numberOfRareInstructions)
+        out.print(", rare instructions: ", numberOfRareInstructions);
+}
+
+static Vector<B3::Air::BasicBlock*> collectBlocks(B3::Air::Code& code)
+{
+    Vector<B3::Air::BasicBlock*> blocks;
+    for (B3::Air::BasicBlock* block : code)
+        blocks.append(block);
+    return blocks;
+}
+
+enum class PrintedLoopParts : uint8_t { HeadingOnly, HeadingAndBlocks };
+
+static void dumpAirLoops(PrintStream& out, B3::Air::Code& code, PrintedLoopParts parts)
 {
     using namespace B3::Air;
 
     Dominators dominators(code);
     NaturalLoops loops(code, dominators);
+    BitVector isLikelyInFunction = findBlocksReachedWithoutRareEdge(code, code[0], collectBlocks(code).span());
     for (BasicBlock* header : code) {
         const NaturalLoop* loop = loops.headerOf(header);
         if (!loop)
@@ -380,16 +429,15 @@ static void dumpAirLoops(PrintStream& out, B3::Air::Code& code)
         if (!isInnermost)
             continue;
 
-        unsigned numberOfInstructions = 0;
-        unsigned numberOfPatchpoints = 0;
-        for (BasicBlock* block : blocks) {
-            for (const Inst& inst : *block)
-                ++(inst.kind.opcode == Patch ? numberOfPatchpoints : numberOfInstructions);
-        }
-        out.print("loop ", *header, ", instructions: ", numberOfInstructions, ", patchpoints: ", numberOfPatchpoints);
+        out.print("loop ", *header, ", ");
+        dumpAirSize(out, code, header, blocks.span());
         for (const AirLoopCounter& counter : findAirCounters(blocks.span()))
             out.print(", ", counter.tmp, " steps by ", counter.step);
+        if (!isLikelyInFunction.quickGet(header->index()))
+            out.print(", entered rarely");
         out.println();
+        if (parts == PrintedLoopParts::HeadingOnly)
+            continue;
         for (BasicBlock* block : blocks)
             dumpAirBlock(out, *block);
         out.println("end of loop ", *header);
@@ -404,7 +452,14 @@ void dumpAir(PrintStream& out, B3::Air::Code& code, B3DumpScope scope)
             dumpAirBlock(out, *block);
         return;
     case B3DumpScope::LoopsOnly:
-        dumpAirLoops(out, code);
+        dumpAirLoops(out, code, PrintedLoopParts::HeadingAndBlocks);
+        return;
+    case B3DumpScope::SizeOnly:
+    case B3DumpScope::SizeOfFunctionAndLoops:
+        dumpAirSize(out, code, code[0], collectBlocks(code).span());
+        out.println();
+        if (scope == B3DumpScope::SizeOfFunctionAndLoops)
+            dumpAirLoops(out, code, PrintedLoopParts::HeadingOnly);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -430,6 +485,9 @@ void dumpB3(PrintStream& out, B3::Procedure& procedure, B3DumpScope scope)
     case B3DumpScope::LoopsOnly:
         dumpLoops(out, procedure, heapNames);
         return;
+    case B3DumpScope::SizeOnly:
+    case B3DumpScope::SizeOfFunctionAndLoops:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

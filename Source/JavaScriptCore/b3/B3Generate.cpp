@@ -245,7 +245,7 @@ static constexpr Step steps[] = {
     { "findLoops"_s,
         [](Procedure& procedure, const PipelineState&) {
             const LoopPolicy& loops = procedure.policy().loops;
-            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions);
+            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.unrolls);
         },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
             state.hasLoops = procedure.hasCycle() && procedure.naturalLoops().numLoops();

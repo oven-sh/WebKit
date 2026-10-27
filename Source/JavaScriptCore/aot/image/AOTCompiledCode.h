@@ -147,6 +147,11 @@ struct FlaggedSite {
     BuiltinID calledBuiltin { };
 };
 
+struct ConstructedCallee {
+    uint32_t site;
+    uint32_t callee;
+};
+
 struct SiteHandler {
     uint32_t site;
     uint32_t codeOffset;
@@ -168,6 +173,8 @@ struct SiteDescription {
     Vector<FlaggedSite> flaggedSites;
     // In rising order. A site without code stands for the call that an inline frame has taken the place of.
     Vector<uint32_t> callsOfOwnFunctionObjects;
+    // In rising order of the sites. The callee is an index into CodeBody::callees.
+    Vector<ConstructedCallee> constructedCallees;
     Vector<SiteHandler> handlers;
     Vector<FaultingAccess> faultingAccesses;
     Vector<PollSite> pollSites;

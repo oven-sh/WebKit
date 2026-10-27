@@ -425,12 +425,24 @@ static String describe(JSGlobalObject* globalObject, JSValue value)
     return description;
 }
 
+JSObject* createUpdateOfNullishError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Cannot access property of undefined or null"_s);
+}
+
+static JSObject* createNotAnObjectErrorQuoting(const String& source, JSGlobalObject* globalObject, JSValue base)
+{
+    if (readOnTopTestsObjectOfUpdate(globalObject->vm()))
+        return createUpdateOfNullishError(globalObject);
+    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+}
+
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)
 {
     String source;
     if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
         source = tryMakeString(description, '.', member);
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
@@ -447,13 +459,13 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSV
         if (!description.isNull() && !descriptionOfKey.isNull())
             source = tryMakeString(description, '[', descriptionOfKey, ']');
     }
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
-JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
+JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier* member)
 {
-    String source = member.isSymbol() || member.isPrivateName() ? String() : tryMakeString("super."_s, StringView(member.impl()));
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    String source = !member || member->isSymbol() || member->isPrivateName() ? String() : tryMakeString("super."_s, StringView(member->impl()));
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)

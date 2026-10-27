@@ -135,7 +135,6 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     internWellKnownType(guard, Type::forOpaque(OpaqueKind::Guard));
     internWellKnownType(length, Type::integer(Range::length()));
     internWellKnownType(anythingOrAbsent, Type::anything().withPrimitives(Primitive::Absent));
-    internWellKnownType(fact, Type::forOpaque(OpaqueKind::Fact));
 }
 
 ProvenInEveryVersion TypeTable::provenTypeOf(const DeclaredType& declared) const

@@ -226,7 +226,7 @@ static bool provenContentsAdmitPlainData(const Program& program, const Type& fie
         .unionWith(Type::builtinClass(BuiltinClasses::Array), types)
         .unionWith(Type::builtinClass(BuiltinClasses::Object), types);
     return std::ranges::all_of(fieldType.classes, [&](const ClassPart& part) {
-        return !part.contentsAreProven || std::ranges::all_of(part.contentsOfSlots(), [&](TypeID contents) {
+        return !part.contentsAreProven || std::ranges::all_of(part.writtenContents, [&](TypeID contents) {
             return plainData.isSubsetOf(program.at(contents).withoutClassProofs(), program);
         });
     });

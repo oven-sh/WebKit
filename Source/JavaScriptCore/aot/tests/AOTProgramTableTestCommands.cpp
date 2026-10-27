@@ -529,7 +529,7 @@ static void printStatics(const TablesContext& context)
     for (const StaticsRun& run : tables.staticsRuns())
         RecordLine(context, "run"_s).field("firstWord"_s, run.firstWord).field("words"_s, run.numberOfWords).hex("bits"_s, run.bits());
     for (const StaticsOfFiles& group : tables.staticsOfFiles())
-        RecordLine(context, "files"_s).field("firstWord"_s, group.firstWord).field("words"_s, group.numberOfWords).field("firstImportedGroup"_s, group.firstImportedGroup);
+        RecordLine(context, "files"_s).field("firstWord"_s, group.firstWord).field("firstImportedGroup"_s, group.firstImportedGroup);
     for (uint32_t group : tables.staticsOfImportedFiles())
         RecordLine(context, "importedFiles"_s).field("group"_s, group);
     for (const StaticsRange& range : tables.staticsRoots())

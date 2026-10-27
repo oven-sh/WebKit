@@ -220,7 +220,7 @@ static bool isHeldByCacheableDictionary(Structure* structure, UniquedStringImpl*
     return offset && isValidOffset(*offset);
 }
 
-static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedStringImpl* uid)
+static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedStringImpl* uid, bool& isDueForFiling)
 {
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
@@ -232,6 +232,7 @@ static StructuralRead readAndCache(Instance* instance, JSObject* base, UniquedSt
             return read;
     }
     bool shouldCache = !filedSlot && caches.shouldFile(structure->id(), uid, SlotAccess::Read);
+    isDueForFiling = shouldCache;
     // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
     if (shouldCache && structure->isDictionary() && !structure->isUncacheableDictionary())
         flattenOnce(vm, base);
@@ -298,7 +299,48 @@ static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization 
     return name;
 }
 
-static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
+// An accessor has no value to read here, and neither has a field that holds nothing while the objects above have the name or lack it.
+static LeafPresence findPresenceWithoutValue(Instance* instance, JSObject* base, UniquedStringImpl* uid)
+{
+    VM& vm = *instance->vm;
+    Structure* structure = base->structure();
+    if (isNeverCachedName(vm, uid) || isPreparedBeforeLookups(vm, uid))
+        return LeafPresence::TakeSlowPath;
+    JSObject* storage = base;
+    if (Object* object = compiledObjectOrNull(base)) {
+        if (hasPendingStars(*object))
+            return LeafPresence::TakeSlowPath;
+        if (const FieldData* field = object->fieldNamed(object->state(), uid)) {
+            if (field->isPrivate() || field->flags & fieldMayExistWithoutStorage)
+                return LeafPresence::TakeSlowPath;
+            if (object->isInSlot(*field))
+                return LeafPresence::Own;
+        }
+        storage = object->extraProperties();
+    } else if (base->type() != FinalObjectType || structure->typeInfo().overridesGetOwnPropertySlot() || TypeInfo::hasStaticPropertyTable(base->inlineTypeFlags()))
+        return LeafPresence::TakeSlowPath;
+    if (storage) {
+        unsigned attributes;
+        auto offset = storage->structure()->getWithoutMaterializing(uid, attributes);
+        if (!offset)
+            return LeafPresence::TakeSlowPath;
+        if (isValidOffset(*offset))
+            return LeafPresence::Own;
+    }
+    switch (walkChain({ instance->globalObject, structure, base, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid).result) {
+    case ChainWalkResult::Unknown:
+        return LeafPresence::TakeSlowPath;
+    case ChainWalkResult::Absent:
+        return LeafPresence::Absent;
+    case ChainWalkResult::Found:
+        return LeafPresence::Inherited;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+enum class LeafQuestion : bool { Value, Presence };
+
+static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, LeafQuestion question)
 {
     if (!base->isObject())
         return { };
@@ -318,8 +360,14 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
             return { jsUndefined(), LeafPresence::Absent };
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
-    case KeyNameKind::Name:
-        return readAndCache(instance, object, name.uid);
+    case KeyNameKind::Name: {
+        bool isDueForFiling = false;
+        StructuralRead read = readAndCache(instance, object, name.uid, isDueForFiling);
+        // What is due is filed by the operation that the stub calls next, and from then on the stub answers.
+        if (question == LeafQuestion::Presence && read.presence == LeafPresence::TakeSlowPath && !isDueForFiling)
+            read.presence = findPresenceWithoutValue(instance, object, name.uid);
+        return read;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -327,13 +375,13 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetByValGeneric, EncodedJSValue, (Instance* instance, JSCell* base, JSCell* key))
 {
     LeafOperationScope leaf(*instance->vm);
-    return JSValue::encode(readByKey(instance, base, key).value);
+    return JSValue::encode(readByKey(instance, base, key, LeafQuestion::Value).value);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTInByValGeneric, size_t, (Instance* instance, JSCell* base, JSCell* key))
 {
     LeafOperationScope leaf(*instance->vm);
-    return static_cast<size_t>(readByKey(instance, base, key).presence);
+    return static_cast<size_t>(readByKey(instance, base, key, LeafQuestion::Presence).presence);
 }
 
 static LeafAnswer putToCompiledObject(Instance* instance, Object* object, UniquedStringImpl* uid, JSValue value)
@@ -410,8 +458,8 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     bool repeatsAddition = repeatsPropertyAddition(structure, uid);
     if (!repeatsAddition && !hasStructureAtHand(vm))
         return LeafAnswer::TakeSlowPath;
-    // An object that has been a dictionary and is given names by key again grows into one.
-    if (!repeatsAddition && structure->hasBeenDictionary() && !firstAdditionsOf(*instance->state).shouldMakeStructure(structure, uid))
+    // An object that has many names and is given more by key grows into a dictionary.
+    if (!repeatsAddition && (structure->hasBeenDictionary() || !hasFewEnoughNamesToBeFilled(structure)) && !firstAdditionsOf(*instance->state).shouldMakeStructure(structure, uid))
         object->convertToDictionary(vm);
     object->putDirect(vm, uid, value, slot);
     if (repeatsAddition)

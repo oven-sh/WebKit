@@ -2129,6 +2129,12 @@ NEVER_INLINE void Heap::collectInMutatorThread()
     m_collector->collectInMutatorThread(*this);
 }
 
+NEVER_INLINE void Heap::collectInMutatorThreadUntilDone()
+{
+    SetForScope marksInConcurrentPhase { m_collector->m_conductorMarksInConcurrentPhase, true };
+    collectInMutatorThread();
+}
+
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
@@ -2159,6 +2165,11 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
             relinquishConn();
         else if (relinquishConn(oldState))
             continue;
+        else if (!done && (oldState & mutatorHasConnBit)) [[unlikely]] {
+            // There is no thread to take the conn.
+            collectInMutatorThreadUntilDone();
+            continue;
+        }
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
@@ -2212,6 +2223,11 @@ void Heap::releaseAccessSlow()
         
         if (handleNeedCollectionEpilogue(oldState))
             continue;
+
+        if ((oldState & mutatorHasConnBit) && !m_collector->tryEnsureThreadForWork()) [[unlikely]] {
+            collectInMutatorThreadUntilDone();
+            continue;
+        }
         
         unsigned newState = oldState & ~(hasAccessBit | mutatorHasConnBit);
         
@@ -2239,6 +2255,9 @@ bool Heap::relinquishConn(unsigned oldState)
     
     if (!(oldState & mutatorHasConnBit))
         return false; // Done.
+
+    if (!m_collector->tryEnsureThreadForWork()) [[unlikely]]
+        return false;
     
     if (!m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
         return true; // Loop around.

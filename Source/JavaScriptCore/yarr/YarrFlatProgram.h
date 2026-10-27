@@ -241,11 +241,11 @@ public:
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
     unsigned memoRows { 0 };
-    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too. An entry of the table has their bounds beside it, and says nothing while they hold anything else.
+    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too. The table has an entry for each set of their bounds.
     // The first of each group's two places in the output.
     Vector<uint32_t> referencedGroups;
-    static constexpr unsigned maxReferencedGroups = 4;
-    unsigned memoEntrySize() const { return 1 + 2 * referencedGroups.size(); }
+    static constexpr unsigned maxReferencedGroups = 8;
+    unsigned memoSlotSizeBesideReferences() const { return 2 + 2 * referencedGroups.size(); }
     // Inside a turn of a group that may take nothing, the rest of the search depends on the position alone only once the turn has taken something: once the register that holds where the turn began
     // differs from the position. An op's row names the innermost such turn around it, which names the next one out. 0: none.
     struct TurnThatMayTakeNothing {
@@ -306,6 +306,8 @@ struct RegExpMatchOutcome {
 };
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&, FlatProgramForm = FlatProgramForm::Fast);
+// Whether the pattern has a program of each form, and the one that counts turns keeps a table.
+bool hasFlatProgramsThatRememberFailedSearches(StringView pattern, OptionSet<Flags>);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 bool jitCountsTurnsOf(const PatternTerm&);
 void removeUnneededLogging(FlatProgram&);
