@@ -189,6 +189,21 @@ static void testLongStrings()
     }
 }
 
+static void testShortStringsBehindALongOne()
+{
+    DetachedInstance fixture;
+    String longText = repeatedCharacter(1 * MB, 'a');
+    String shortText = repeatedCharacter(maxStringBuilderReservation + 1, 'b');
+    Writer writer(fixture);
+    writer.appendString(longText);
+    const Latin1Character* buffer = wordAt<Latin1Character*>(writer.builder(), StringBuilderStorage::offsetOfCharacters());
+    for (unsigned i = 0; i < 8; ++i)
+        writer.appendString(shortText);
+    AOT_TEST_CHECK(wordAt<Latin1Character*>(writer.builder(), StringBuilderStorage::offsetOfCharacters()) == buffer);
+    AOT_TEST_CHECK(wordAt<uint32_t>(writer.builder(), StringBuilderStorage::offsetOfLimit()) < longText.length() + longText.length() / 4);
+    AOT_TEST_CHECK(writer.finish().length() == longText.length() + 2 + 8 * (shortText.length() + 2));
+}
+
 static void testStringsFullOfQuotes()
 {
     DetachedInstance fixture;
@@ -752,6 +767,7 @@ std::span<const NativeTest> jsonWriterTests()
         { "json-writer/empty-text"_s, testEmptyText },
         { "json-writer/strings"_s, testStrings },
         { "json-writer/long-strings"_s, testLongStrings },
+        { "json-writer/short-strings-behind-a-long-one"_s, testShortStringsBehindALongOne },
         { "json-writer/strings-full-of-quotes"_s, testStringsFullOfQuotes },
         { "json-writer/wide-strings-full-of-quotes"_s, testWideStringsFullOfQuotes },
         { "json-writer/several-strings"_s, testSeveralStrings },

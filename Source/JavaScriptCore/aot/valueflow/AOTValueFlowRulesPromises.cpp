@@ -60,7 +60,7 @@ void rejectPromises(ValueFlowRuleContext& context, ClimbingSet promises, const V
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         context.connect(reasons, held);
     });
-    context.connect(reasons, ValueFlowProgramNodes::escaped());
+    carryOut(context, reasons);
 }
 
 void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

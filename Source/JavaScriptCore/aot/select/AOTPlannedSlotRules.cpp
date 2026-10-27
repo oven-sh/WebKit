@@ -289,7 +289,7 @@ static ValueID findFollower(SelectionContext& context, ValueID id, const SlotAgr
 
     size_t index = entered.values.findIf([&](ValueID earlier) {
         Opcode opcode = function.at(earlier).opcode;
-        return opcode != Opcode::AllGuards && resultRuleOf(opcode) != ResultRule::Constant;
+        return opcode != Opcode::AllGuards && !makesFact(opcode) && resultRuleOf(opcode) != ResultRule::Constant;
     });
     if (index == notFound)
         return { };

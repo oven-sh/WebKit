@@ -64,7 +64,8 @@ variable g0 name="last" declared={type=anything} initialization=Undefined
 # CHECK: v3: string = Call{{*}} overload=StringPrototypeSlice/0
 # CHECK-NEXT: PutModuleVariable v3 variable=g0
 # CHECK: [[range4]]: {{*}} = StringRange [[length4]], v1, v2
-# CHECK: v6: boolean = StringRangeEqualsLiteral v0,
+# CHECK-NOT: = String string=
+# CHECK: : boolean = StringRangeEqualsLiteral v0,
 
 function f5 name="end-may-be-undefined" parameters=[{type=string}, {type=int}, {type=undefined|int}] results=[{type=boolean}] {
     v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0

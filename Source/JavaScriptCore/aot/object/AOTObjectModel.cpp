@@ -512,6 +512,8 @@ struct StructureTable::VariantMaps {
             return false;
         if (structure.hasOutOfLineKeyOrder() != variant.outOfLineKeyOrder.has_value())
             return false;
+        if (variant.keysNamedByOrder || structure.hasKeyOrderOfOneObject())
+            return false;
         return !variant.outOfLineKeyOrder || equalSpans(structure.outOfLineKeyOrder(), *variant.outOfLineKeyOrder);
     }
 
@@ -906,12 +908,14 @@ StructureTable::Variant StructureTable::variantOf(const CompiledStructure& struc
     }
     if (structure.hasOutOfLineKeyOrder())
         variant.outOfLineKeyOrder = structure.outOfLineKeyOrder();
+    if (structure.hasKeyOrderOfOneObject())
+        variant.keysNamedByOrder = structure.keysNamedByOrder();
     return variant;
 }
 
 CompiledStructure* StructureTable::find(const Variant& variant) const
 {
-    if (variant.heldExtraProperties)
+    if (belongsToOneObject(variant))
         return nullptr;
     if (CompiledStructure* usual = usualStructureIfExists(variant.layout->shape); usual && VariantMaps::describes(variant, *usual))
         return usual;
@@ -937,7 +941,7 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.outOfLineKeyOrder && variant.prototype == usual.prototype && variant.hasOtherPrototype == usual.hasOtherPrototype)
         return createUsual(vm, layout, usual);
     CompiledStructure* created = create(vm, layout, variant);
-    if (!variant.heldExtraProperties) {
+    if (!belongsToOneObject(variant)) {
         m_variants->structures.set(VariantMaps::keyOf(variant), created);
         Locker locker { m_state.caches->lock() };
         m_variantsMadeSinceCollection.append(created->id());
@@ -961,7 +965,7 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     CompiledStructure* structure = findOrCreate(vm, variant);
     // Compiled code replays a transition by storing the StructureID and setting IsPristine, which a compiled object has where its prototype is not its layout's, in the cell: it looks for no cycle and tells nobody who depends on the chain.
     constexpr uint32_t pristineBitInBlob = IsPristine << 16;
-    if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !current.heldExtraProperties())
+    if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !belongsToOneObject(variant))
         recent = { encodedPrototype, before, structure->id().bits() };
     return structure;
 }
@@ -1031,6 +1035,15 @@ CompiledStructure* StructureTable::withOutOfLineKeyOrder(VM& vm, const CompiledS
 {
     Variant variant = variantOf(current);
     variant.outOfLineKeyOrder = entries;
+    variant.keysNamedByOrder = std::nullopt;
+    return findOrCreate(vm, variant);
+}
+
+CompiledStructure* StructureTable::withKeyOrderOfOneObject(VM& vm, const CompiledStructure& current, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder)
+{
+    Variant variant = variantOf(current);
+    variant.outOfLineKeyOrder = entries;
+    variant.keysNamedByOrder = keysNamedByOrder;
     return findOrCreate(vm, variant);
 }
 
@@ -1038,6 +1051,7 @@ CompiledStructure* StructureTable::withNumberedKeyOrder(VM& vm, const CompiledSt
 {
     Variant variant = variantOf(current);
     variant.outOfLineKeyOrder = std::nullopt;
+    variant.keysNamedByOrder = std::nullopt;
     return findOrCreate(vm, variant);
 }
 
@@ -1298,7 +1312,12 @@ void CompiledStructure::initializeForObject(const ObjectParameters& parameters)
     if (parameters.outOfLineKeyOrder || parameters.heldExtraProperties) {
         rareData = makeUnique<RareData>();
         if (parameters.outOfLineKeyOrder)
-            rareData->outOfLineKeyOrder = FixedVector<uint16_t>(*parameters.outOfLineKeyOrder);
+            rareData->outOfLineKeyOrder = Vector<uint16_t>(*parameters.outOfLineKeyOrder);
+        if (parameters.keysNamedByOrder) {
+            ASSERT(parameters.outOfLineKeyOrder);
+            rareData->keysNamedByOrder = Vector<RefPtr<UniquedStringImpl>>(*parameters.keysNamedByOrder);
+            rareData->keyOrderBelongsToOneObject = true;
+        }
         rareData->heldExtraProperties.setWithoutWriteBarrier(parameters.heldExtraProperties);
     }
     uintptr_t bitsOfRareData = std::bit_cast<uintptr_t>(rareData.release());

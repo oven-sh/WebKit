@@ -33,7 +33,8 @@ using SlotsOfCells = Vector<SlotOfCell, 4>;
 // Runs behind everything that moves a value, so the code is the code of an ordinary build with the checks beside it.
 // Only the slots of cells: of a buffer that a callee fills in part, code may read every word and keep those that count.
 // So it is with the padding of a layout: a load of a field may stand ahead of the test that tells the layouts apart.
-JS_EXPORT_PRIVATE B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID, const SlotsOfCells&, bool entersOnlyAtRoot);
+// Both are cleared at entry, for what a frame that has ended wrote into its slots is still on the stack. A frame that goes on behind a suspension finds them cleared.
+JS_EXPORT_PRIVATE B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID, const SlotsOfCells&);
 
 } } // namespace JSC::AOT
 

@@ -615,24 +615,26 @@ void forgetDemotedValues(Procedure& proc)
 
 } // anonymous namespace
 
+Variable* addVariableForDemotedValue(Procedure& proc, Value* value)
+{
+    Variable* variable = proc.addVariable(value->type());
+    if (proc.policy().optimization.keepsOriginsOfDemotedValues)
+        variable->setOrigin(value->origin());
+    proc.knownProperties().didDemote(value, variable);
+    return variable;
+}
+
 void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
 {
     UncheckedKeyHashMap<Value*, Variable*> map;
     UncheckedKeyHashMap<Value*, Variable*> phiMap;
 
     // Create stack slots.
-    auto addVariableFor = [&](Value* value) {
-        Variable* variable = proc.addVariable(value->type());
-        if (proc.policy().optimization.keepsOriginsOfDemotedValues)
-            variable->setOrigin(value->origin());
-        proc.knownProperties().didDemote(value, variable);
-        return variable;
-    };
     for (Value* value : values.values(proc.values())) {
-        map.add(value, addVariableFor(value));
+        map.add(value, addVariableForDemotedValue(proc, value));
 
         if (value->opcode() == Phi)
-            phiMap.add(value, addVariableFor(value));
+            phiMap.add(value, addVariableForDemotedValue(proc, value));
     }
 
     if (B3FixSSAInternal::verbose) {
@@ -698,6 +700,7 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
         }
         insertionSet.execute(block);
     }
+    proc.movedLoadLog().didDemote(proc, map);
 }
 
 bool fixSSA(Procedure& proc)

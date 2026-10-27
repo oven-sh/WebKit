@@ -70,6 +70,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
+    aot/image/AOTFaultHandler.h
     aot/image/AOTFaultTable.h
     aot/image/AOTImage.h
     aot/image/AOTImageFormat.h
@@ -107,6 +108,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTSlotAccess.h
     aot/object/AOTSlotRepresentation.h
     aot/pipeline/AOTPassID.h
+    aot/place/AOTBodyFactsForTables.h
     aot/runtime/AOTBuiltinCells.h
     aot/runtime/AOTBuiltinModules.h
     aot/runtime/AOTCallSiteCache.h
@@ -127,6 +129,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTJSONWords.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
+    aot/runtime/AOTModuleGraph.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
     aot/runtime/AOTModuleWords.h
@@ -213,6 +216,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTArrayTests.cpp
     aot/tests/AOTArrivalCountTests.cpp
     aot/tests/AOTAssignmentPlanTests.cpp
+    aot/tests/AOTB3Dump.cpp
     aot/tests/AOTB3HeapTests.cpp
     aot/tests/AOTB3PolicyTests.cpp
     aot/tests/AOTBackEndPhaseTests.cpp
@@ -496,7 +500,9 @@ function(AOT_COMPUTE_SOURCES)
     endif ()
     if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
         # A switch that has no default names every enumerator: whoever adds one is shown each question it has to answer.
-        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=switch -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTStandardLibraryAssertions.h")
+        # The prefix is read as text. A precompiled header is loaded in front of every -include, and AOTPrefix.h begins with what has to stand in front of the standard library's headers.
+        set_property(SOURCE ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} APPEND PROPERTY COMPILE_OPTIONS -Werror=switch -include "${JAVASCRIPTCORE_DIR}/aot/support/AOTPrefix.h")
+        set_source_files_properties(${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     endif ()
     set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${JavaScriptCoreAOT_SOURCES} ${JavaScriptCoreAOTCompiledForSize_SOURCES} PARENT_SCOPE)
 endfunction()

@@ -42,6 +42,10 @@ public:
     ModuleNumbers evaluationRequests(ModuleID module) const { return listOf(allEvaluationRequests(), module, &ModuleData::firstEvaluationRequest); }
     ModuleNumbers allEvaluationRequests() const { return { m_tables->evaluationRequests(), m_modules.size() }; }
     uint32_t endOfEvaluationRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstEvaluationRequest; }
+    // The build sorts the ES modules of the program into groups: whatever has loaded one module of a group has loaded all of them. Each group is known by one of its modules, the head.
+    ModuleID headOfLoadGroup(ModuleID module) const;
+    // The heads of the groups that are loaded whenever the group of this head is.
+    ModuleNumbers groupsLoadedWith(ModuleID head) const;
     std::span<const LinkPlanStepData> entryPointLinkPlan() const { return m_tables->entryPointLinkPlan(); }
     struct LinkPlanOfRoot {
         std::span<const LinkPlanStepData> steps;
@@ -52,6 +56,8 @@ public:
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
+    // The export statement that asks for the name. An import asks for any other one.
+    const ExportStatementData* findExportStatement(const RequiredNameData&) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
@@ -104,12 +110,39 @@ inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData:
     return list.subspan(start, m_modules[index + 1].*first - start);
 }
 
+inline ModuleID ModuleTable::headOfLoadGroup(ModuleID module) const
+{
+    const ModuleData& moduleData = data(module);
+    ASSERT(moduleData.isESModuleOfProgram());
+    uint32_t group = moduleData.referrerRuntimeModuleOrLoadGroup;
+    return group < size() ? ModuleID(group) : module;
+}
+
+inline ModuleNumbers ModuleTable::groupsLoadedWith(ModuleID head) const
+{
+    uint32_t group = data(head).referrerRuntimeModuleOrLoadGroup;
+    ASSERT(group >= size());
+    if (group == Number24::max)
+        return { };
+    // In front of the list stands its length.
+    ModuleNumbers lists(m_tables->groupsLoadedWithGroups(), m_modules.size());
+    return lists.subspan(group - size() + 1, lists[group - size()]);
+}
+
 inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportData& moduleExport) const
 {
     RELEASE_ASSERT(moduleExport.kind() == ModuleExportKind::Indirect);
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
+}
+
+inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const
+{
+    uint32_t number = static_cast<uint32_t>(&requiredName - m_tables->requiredNames().data());
+    std::span<const ExportStatementData> statements = m_tables->exportStatements();
+    auto found = std::ranges::lower_bound(statements, number, { }, &ExportStatementData::requiredName);
+    return found != statements.end() && found->requiredName == number ? &*found : nullptr;
 }
 
 } } // namespace JSC::AOT

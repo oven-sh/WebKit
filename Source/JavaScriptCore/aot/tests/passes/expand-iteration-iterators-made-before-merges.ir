@@ -31,19 +31,23 @@ function f0 name="underTestOfNames" parameters=[{type=Map<string, number>}] resu
 # CHECK: v2: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
 # CHECK-NEXT: [[made0]]: 0 = Integer
 # CHECK-NEXT: [[receiver0]]: Map<string, number> = Upcast v0 castType=Map<string, number>
-# CHECK-NEXT: [[nothing0]]: MapIterator = Unspecified valueType=MapIterator
+# CHECK-NEXT: [[nothing0]]: unspecified|MapIterator = Unspecified valueType=MapIterator
 # CHECK-NEXT: Jump -> next b3([[nothing0]], [[made0]], [[receiver0]])
 # CHECK: v4: anything = Call v3, v0
 # CHECK-NEXT: [[returned0]]: 1 = Integer integer=1
-# CHECK-NEXT: [[noMap0]]: Map<string, number> = Unspecified valueType=Map<string, number>
+# CHECK-NEXT: [[noMap0]]: unspecified|Map<string, number> = Unspecified valueType=Map<string, number>
 # CHECK-NEXT: Jump -> next b3(v4, [[returned0]], [[noMap0]])
-# CHECK-NEXT: b3(v5: anything ~ MapIterator, [[arm0]]: int[0, 1], [[map0]]: Map<string, number>):
+# CHECK-NEXT: b3(v5: anything|unspecified ~ MapIterator, [[arm0]]: int[0, 1], [[map0]]: unspecified|Map<string, number>):
 # CHECK: Switch [[arm0]] cases=[0] -> case [[walk0]](), otherwise [[protocol0]]()
-# CHECK: [[step0]]: undefined = MapNext [[map0]],
+# CHECK: [[step0]]: undefined = MapNext [[mapInArm0]],
 # CHECK: [[walk0]]():
-# CHECK-NEXT: = CollectionTable [[map0]]
+# CHECK-NEXT: [[isMap0]]: fact = Specified
+# CHECK-NEXT: [[mapInArm0]]: Map<string, number> = AssumeType [[map0]], [[isMap0]] provenType=Map<string, number>
+# CHECK-NEXT: = CollectionTable [[mapInArm0]]
 # CHECK: [[protocol0]]() frequency=Unlikely:
-# CHECK-NEXT: = CallDirect v5 function=[[openIterator]] [isNeverInlined]
+# CHECK-NEXT: [[isIterator0]]: fact = Specified
+# CHECK-NEXT: [[iterator0]]: anything ~ MapIterator = AssumeType v5, [[isIterator0]] provenType=anything
+# CHECK-NEXT: = CallDirect [[iterator0]] function=[[openIterator]] [isNeverInlined]
 # ABSENT-NOT: TypeTest {{*}} testedType=Map
 # ABSENT-NOT: b3(v2
 }
@@ -84,11 +88,12 @@ function f1 name="throughTwoMerges" parameters=[{type=Set<number>}, {type=boolea
 # CHECK: v6: anything = Call v3
 # CHECK-NEXT: [[returned1]]: 1 = Integer integer=1
 # CHECK: Jump -> next b6(v6, [[returned1]],
-# CHECK: b5(v7: SetIterator, [[inner1]]: int[0, 1], [[innerSet1]]: Set<number>):
+# CHECK: b5(v7: unspecified|SetIterator, [[inner1]]: int[0, 1], [[innerSet1]]: unspecified|Set<number>):
 # CHECK: Jump -> next b6(v8, [[inner1]], [[innerSet1]])
-# CHECK-NEXT: b6(v9: anything, [[arm1]]: int[0, 1], [[set1]]: Set<number>):
+# CHECK-NEXT: b6(v9: anything|unspecified, [[arm1]]: int[0, 1], [[set1]]: unspecified|Set<number>):
 # CHECK-NEXT: Switch [[arm1]] cases=[0]
-# CHECK: = SetNext [[set1]],
+# CHECK: = SetNext [[setInArm1]],
+# CHECK: [[setInArm1]]: Set<number> = AssumeType [[set1]], [[isSet1]] provenType=Set<number>
 # CHECK: function=[[openIterator]] [isNeverInlined]
 # ABSENT-NOT: b5(v4
 # ABSENT-NOT: b5(v5
@@ -129,12 +134,15 @@ function f2 name="receiverNarrowedPerClass" parameters=[{type=anything}] results
 # CHECK-NEXT: = Upcast v6 castType=Map<string, number>
 # CHECK: v11: anything = Call v10, v9
 # CHECK-NEXT: 2 = Integer integer=2
-# CHECK: b5(v12: anything, [[arm2]]: int[0, 2], [[array2]]: Array<number>, [[map2]]: Map<string, number>):
+# CHECK: b5(v12: anything|unspecified, [[arm2]]: int[0, 2], [[array2]]: unspecified|Array<number>, [[map2]]: unspecified|Map<string, number>):
 # CHECK-NEXT: Switch [[arm2]] cases=[0, 1]
-# CHECK: = PropGet [[array2]] key="length"
-# CHECK: = MapNext [[map2]],
-# CHECK: = CallDirect v12 function=[[openIterator]] [isNeverInlined]
-# CHECK: [[element2]]: {{*}} = ElemGet [[array2]], [[index2]] [keyIsIntegral]
+# CHECK: [[arrayInArm2]]: Array<number> = AssumeType [[array2]], [[isArray2]] provenType=Array<number>
+# CHECK-NEXT: = PropGet [[arrayInArm2]] key="length"
+# CHECK: = MapNext [[mapInArm2]],
+# CHECK: [[mapInArm2]]: Map<string, number> = AssumeType [[map2]], [[isMap2]] provenType=Map<string, number>
+# CHECK: [[iterator2]]: anything = AssumeType v12, [[isIterator2]] provenType=anything
+# CHECK-NEXT: = CallDirect [[iterator2]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[element2]]: {{*}} = ElemGet [[arrayInArm2]], [[index2]] [keyIsIntegral]
 # CHECK: = NewArray [[index2]], [[element2]] contents=anything
 }
 
@@ -161,7 +169,7 @@ function f3 name="everyEdgeMakesOne" parameters=[{type=Map<string, number>}, {ty
 # CHECK: Jump -> next b3({{*}}, [[first3]])
 # CHECK: [[second3]]: Map<string, number> = Upcast v1 castType=Map<string, number>
 # CHECK: Jump -> next b3({{*}}, [[second3]])
-# CHECK-NEXT: b3(v5: MapIterator, [[map3]]: Map<string, number>):
+# CHECK-NEXT: b3(v5: unspecified|MapIterator, [[map3]]: Map<string, number>):
 # CHECK-NEXT: = CollectionTable [[map3]]
 # CHECK: [[step3]]: undefined = MapNext [[map3]],
 # CHECK: [[key3]]: {{*}} = ResultAt [[step3]] index=2
@@ -191,12 +199,14 @@ function f4 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=bo
     Branch v8 -> taken b5(), notTaken b4()
   b5():
     Return v9
-# CHECK: b3(v4: MapIterator, [[arm4]]: int[0, 1], [[keys4]]: Map<string, number>, [[values4]]: Map<string, number>):
+# CHECK: b3(v4: unspecified|MapIterator, [[arm4]]: int[0, 1], [[keys4]]: unspecified|Map<string, number>, [[values4]]: unspecified|Map<string, number>):
 # CHECK-NEXT: Switch [[arm4]] cases=[0]
-# CHECK: [[keyStep4]]: undefined = MapNext [[keys4]],
+# CHECK: [[keyStep4]]: undefined = MapNext [[keysInArm4]],
 # CHECK: [[key4]]: {{*}} = ResultAt [[keyStep4]] index=2
-# CHECK: [[valueStep4]]: undefined = MapNext [[values4]],
+# CHECK: [[valueStep4]]: undefined = MapNext [[valuesInArm4]],
 # CHECK: [[value4]]: {{*}} = ResultAt [[valueStep4]] index=3
+# CHECK: [[keysInArm4]]: Map<string, number> = AssumeType [[keys4]], [[walksKeys4]] provenType=Map<string, number>
+# CHECK: [[valuesInArm4]]: Map<string, number> = AssumeType [[values4]], [[walksValues4]] provenType=Map<string, number>
 # CHECK: Jump -> next {{*}}, [[value4]],
 # CHECK: Jump -> next {{*}}, [[key4]],
 # ABSENT-NOT: @@iterator
@@ -419,10 +429,11 @@ function f12 name="madeInLoopAroundOpen" parameters=[{type=Map<string, number>},
     Return v11
 # Every run of the outer loop makes an iterator, so every run starts at the first entry.
 # CHECK: v4: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
-# CHECK: b4(v6: anything ~ MapIterator, [[arm12]]: int[0, 1], [[map12]]: Map<string, number>):
+# CHECK: b4(v6: anything|unspecified ~ MapIterator, [[arm12]]: int[0, 1], [[map12]]: unspecified|Map<string, number>):
 # CHECK-NEXT: Switch [[arm12]] cases=[0]
-# CHECK: = MapNext [[map12]],
+# CHECK: = MapNext [[mapInArm12]],
 # CHECK: Branch v13 -> taken b1(), notTaken b7()
+# CHECK: [[mapInArm12]]: Map<string, number> = AssumeType [[map12]], [[isMap12]] provenType=Map<string, number>
 # CHECK: function [[openIterator]] name="openIterator"
 # ABSENT-NOT: b4(v4
 }

@@ -391,6 +391,7 @@ private:
         if (isDecided)
             markNeededValues(tail);
 
+        MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
         RegionCloner::ValueMap map;
         m_cloner.substitutePhisFedBy(block, tail, map);
         unsigned indexInTail = 0;

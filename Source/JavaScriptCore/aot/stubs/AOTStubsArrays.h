@@ -29,6 +29,8 @@ enum class EmptyArray : uint8_t { ContiguousCapacity1, ContiguousCapacity3, Doub
 enum class ArraySliceRange : uint8_t { Bounded, Whole, BoundedWithPropertyRoom, WholeWithPropertyRoom };
 // Number: an array of int32 that takes a number which may be none becomes an array of doubles.
 enum class ArrayStoredValue : uint8_t { Value, Number };
+// Strings: every element below the length is a JSString.
+enum class SearchedElements : uint8_t { Values, Strings };
 
 constexpr IndexingType indexingTypeOf(ArrayElementKind kind)
 {
@@ -99,6 +101,8 @@ constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumb
 // The answer of `in`: 1 or 0.
 constexpr StubKey arrayHasAtIndex() { return StubKey(StubFamily::ArrayHasAtIndex); }
 constexpr StubKey arrayHasAtNumber() { return StubKey(StubFamily::ArrayHasAtNumber); }
+// Operands: a JSArray with pristine elements and a JSString. Result: the index of the first equal string, or -1.
+constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }
 
 Jump branchIfHavingABadTime(StubAssembler&);
 // In the space of plain cells.
@@ -126,6 +130,7 @@ static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists
 static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());
 static_assert(exists(arrayPutAtIndex(ArrayStoredValue::Number)) && exists(arrayPutAtNumber(ArrayStoredValue::Number)) && exists(arrayGetAtIndex()) && exists(arrayGetAtNumber()) && exists(arrayHasAtIndex()) && exists(arrayHasAtNumber()));
+static_assert(exists(arrayIndexOfString(SearchedElements::Strings)) && !exists(arrayIndexOfString(SearchedElements::Strings).withForm(2)));
 
 } } // namespace JSC::AOT
 

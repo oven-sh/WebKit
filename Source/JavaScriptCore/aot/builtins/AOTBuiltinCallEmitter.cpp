@@ -483,7 +483,8 @@ void BuiltinCallEmitter::appendBytesOf(const ValueContext& value, DirectOperands
             // A part lies inside its view. A whole view is written as an end that no part reaches.
             Integer givenStart = integerOperand(bounds[0]);
             Integer givenEnd = integerOperand(bounds[1]);
-            Condition endsInsideView = logicalOr(belowOrEqual(givenEnd, size), aboveOrEqual(givenEnd, integer(static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE))));
+            Condition partEndsInsideView = belowOrEqual(givenEnd, size);
+            Condition endsInsideView = logicalOr(partEndsInsideView, aboveOrEqual(givenEnd, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE)));
             RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
             validation.checkPrecondition(value, belowOrEqual(givenStart, givenEnd));
             validation.checkPrecondition(value, logicalOr(endsInsideView, isZero(size)));
@@ -555,7 +556,7 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
             words.append(boxedOperand(value, value->receiverOperand()));
             for (ValueID argument : arguments.subspan(next))
                 words.append(boxedOperand(value, argument));
-            operands.words.append(m_out.sub(argumentBuffer(words.span()).value(), m_out.constIntPtr(CallFrameSlot::argumentCountIncludingThis * sizeof(Register))));
+            operands.words.append(m_out.sub(argumentBuffer(words.span()).value(), CallFrameSlot::argumentCountIncludingThis * sizeof(Register)));
             next = arguments.size();
             operands.takesFrame = true;
             break;
@@ -761,7 +762,8 @@ void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 
 void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)
 {
-    emitter<ConstantEmitter>().builtinCell(value, m_builtins.canonicalID(value->builtin()));
+    BuiltinCellKey read = BuiltinCellKey::value(value->builtin());
+    emitter<ConstantEmitter>().builtinCell(value, read.hasCell(m_builtins) ? read : BuiltinCellKey::object(m_builtins.canonicalID(value->builtin())));
 }
 
 } } } // namespace JSC::AOT::Typed

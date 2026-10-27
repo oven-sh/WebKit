@@ -43,11 +43,11 @@ constexpr bool isCastOrConversion(Opcode opcode) { return castsAndConversions.co
 // Each answers with its operand where that is an object, and with another object where it is not.
 inline constexpr OpcodeSet conversionsToObject { Opcode::ToObject, Opcode::ToThis };
 
-ValueID sameObjectThroughCasts(const Function&, ValueID);
+RootThroughCasts sameObjectThroughCasts(const Function&, ValueID);
 // For whoever makes an operation that looks at the value: in front of a cast that names a fact the word may be anything.
 ValueID sameObjectBehindFacts(const Function&, ValueID);
 // For a question about an object: where the value found is that object, so is the given one.
-ValueID sameObjectThroughConversionsToObject(const Function&, ValueID);
+RootThroughCasts sameObjectThroughConversionsToObject(const Function&, ValueID);
 ValueID definitionThroughUpcasts(const Function&, ValueID);
 
 inline bool leavesDeadZoneBehind(const Program& program, const Function& function, const Value& value)
@@ -98,13 +98,13 @@ public:
     CastChain(const Function& function, ValueID value)
         : m_function(function)
         , m_first(value)
-        , m_last(sameObjectThroughCasts(function, value))
+        , m_last(sameObjectThroughCasts(function, value).valueInFrontOfFacts())
     {
     }
 
     Iterator begin() const { return Iterator(m_function, m_first, m_last); }
     Iterator end() const { return { }; }
-    ValueID last() const { return m_last; }
+    RootThroughCasts last() const { return RootThroughCasts(m_last); }
 
 private:
     const Function& m_function;

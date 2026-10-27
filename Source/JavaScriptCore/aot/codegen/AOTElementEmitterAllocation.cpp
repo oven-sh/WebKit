@@ -79,10 +79,6 @@ static EmptyArray emptyNumberArray(const ArrayStorageForm& form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isOptionalNumberInDoubleForm(const ArrayStorageForm& form, Representation representation)
-{
-    return form.element == Representation::Double && representation == Representation::OptionalDouble;
-}
 
 template<typename T>
 static Vector<T, 16> boxElements(CodeGenerator& generator, const OperationContext& context, std::span<const ValueID> elements)
@@ -105,6 +101,14 @@ static Integer plannedCapacityOf(CodeGenerator& generator, const ValueContext& l
     return operand.as<Integer>();
 }
 
+bool ArrayAllocationEmitter::isNumberOrMarker(ValueID element)
+{
+    if (representationOf(element) == Representation::OptionalDouble)
+        return true;
+    const Type& type = typeOf(element);
+    return representationOf(element) == Representation::JSValue && !type.isNumber() && type.isSubsetOf(Type::fromPrimitives(Primitive::Number | Primitive::Undefined), m_program);
+}
+
 const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& array) const
 {
     return arrayStorageFormOf(arrayStorageAtAllocation(m_program, array));
@@ -118,7 +122,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
         return typeOf(element).isNever();
     });
     bool canHoldElements = !isNeverMade && std::ranges::all_of(elements, [&](ValueID element) {
-        return isOptionalNumberInDoubleForm(form, representationOf(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
+        return (form.element == Representation::Double && isNumberOrMarker(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
     });
     if (canHoldElements)
         return form;
@@ -159,7 +163,7 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithStorage(const Operatio
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     LBasicBlock isExhausted = newBlock();
     Join<Pointer> join(m_out);
-    Integer sizeInBytes = add(mul(capacity, integer(sizeof(EncodedJSValue))), integer(sizeOfArrayWithStorage(0)));
+    Integer sizeInBytes = add(mul(capacity, sizeof(EncodedJSValue)), sizeOfArrayWithStorage(0));
     Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeInBytes, slowPath, isExhausted);
     join.add(asPointer(cells.allocateHeapCell(allocator, std::nullopt, isExhausted)));
 
@@ -201,7 +205,8 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
     CodeGenerator::InitializationScope scope(generator());
-    m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
+    Word32 publicLength = low32(length);
+    m_out.store32(publicLength.value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
     return array;
 }
 
@@ -238,7 +243,7 @@ Number ArrayAllocationEmitter::numberOrMarker(ValueID element)
     case Representation::Int32:
         return toNumber(operand.as<Word32>());
     case Representation::JSValue:
-        return emitter<ConversionEmitter>().unbox(operand.as<Boxed>(), typeOf(element), Representation::Double).as<Number>();
+        return Number(emitter<ConversionEmitter>().unbox(operand.as<Boxed>(), typeOf(element), isNumberOrMarker(element) ? Representation::OptionalDouble : Representation::Double).value);
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -266,7 +271,7 @@ CellPointer ArrayAllocationEmitter::newArrayOutOfLine(const OperationContext& co
     Vector<Number, 16> rawNumbers(length, [&](size_t index) {
         ValueID element = elements[index];
         Number rawNumber = numberOrMarker(element);
-        bool mayLookLikeMarker = representationOf(element) != Representation::OptionalDouble && typeOf(element).mayBeNaN();
+        bool mayLookLikeMarker = !isNumberOrMarker(element) && typeOf(element).mayBeNaN();
         return mayLookLikeMarker ? conversions.withoutPayload(rawNumber) : rawNumber;
     });
     Pointer values = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(length);
@@ -300,7 +305,7 @@ ArrayAllocationEmitter::RawElements ArrayAllocationEmitter::rawElementsOf(std::s
     ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
     RawElements rawElements;
     for (ValueID element : elements) {
-        if (isOptionalNumberInDoubleForm(form, representationOf(element))) {
+        if (form.element == Representation::Double && isNumberOrMarker(element)) {
             Number number = numberOrMarker(element);
             branchUnless(equal(number, number), doesNotFit);
             rawElements.append(number);
@@ -346,7 +351,7 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         uint32_t isNumberMask = 0;
         for (unsigned i = 0; i < length; ++i) {
             numbersOrMarkers.append(numberOrMarker(elements[i]));
-            isNumberMask |= static_cast<uint32_t>(representationOf(elements[i]) != Representation::OptionalDouble) << i;
+            isNumberMask |= static_cast<uint32_t>(!isNumberOrMarker(elements[i])) << i;
         }
         return newDoubleLiteral(context, numbersOrMarkers.span(), isNumberMask);
     }
@@ -422,8 +427,8 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         return CellPointer(m_out.int64Zero);
     }
     branchUnless(belowOrEqual(capacity, integer(maxCapacity)), fallback);
-    Integer total = length ? select(lessThan(capacity, integer(length)), integer(length), capacity) : capacity;
-    Integer lengthAndCapacity(m_out.shl(bitOr(total, integer(1)).value(), m_out.constInt32(holeArrayCapacityShift)));
+    Integer total = length ? select(lessThan(capacity, length), length, capacity) : capacity;
+    Integer lengthAndCapacity(m_out.shl(bitOr(total, 1).value(), holeArrayCapacityShift));
     if (length)
         lengthAndCapacity = bitOr(lengthAndCapacity, integer(length));
     CellPointer newArray = callNewArrayWithLength(value, form, lengthAndCapacity);

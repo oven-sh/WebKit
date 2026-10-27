@@ -478,6 +478,9 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
+    if [ "$WEBKIT_RELEASE_TYPE" = Release ]; then \
+        ! llvm-nm --undefined-only --print-file-name $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -E 'UnifiedSource-aot-[0-9]+\.cpp\.o: .*__glibcxx_assert_fail' || { echo "error: these sources of aot/ print when an assertion of libstdc++ fails; behind aot/support/AOTStandardLibraryAssertions.h they trap" >&2; exit 1; }; \
+    fi && \
     if [ "$ENABLE_FUZZILLI" = ON ]; then \
         for callback in __sanitizer_cov_trace_pc_guard __sanitizer_cov_trace_pc_guard_init; do \
             llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \

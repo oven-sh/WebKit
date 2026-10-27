@@ -216,6 +216,32 @@ void generateThrowUnlessCallable(StubAssembler& jit)
     jit.returnToCaller();
 }
 
+StubSignature signatureOfThrowUnlessForwardedCalleeIsCallable(StubKey)
+{
+    return StubSignature::withoutResult({ calleeGPR, thisGPR });
+}
+
+void generateThrowUnlessForwardedCalleeIsCallable(StubAssembler& jit)
+{
+    const GPRReg callee = jit.operand(0);
+    const GPRReg receiver = jit.operand(1);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+
+    JumpList slowCases;
+    slowCases.append(jit.branchIfNotCell(callee));
+    slowCases.append(jit.branchIfNotCell(receiver));
+    JumpList calleeIsFunction = branchIfFunction(jit, callee, scratch);
+    slowCases.append(jit.jump());
+
+    calleeIsFunction.link(&jit);
+    JumpList receiverIsFunction = branchIfFunction(jit, receiver, scratch);
+    slowCases.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTThrowUnlessForwardedCalleeIsCallable, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .secondArgumentIn = callee, .thirdArgumentIn = receiver });
+
+    receiverIsFunction.link(&jit);
+    jit.returnToCaller();
+}
+
 // A strict comparison passes its operands swapped: both operations it calls are symmetric, and the right operand already is the second C argument.
 static OperationCall equalityOperationCall(bool isStrict, GPRReg left, GPRReg right, bool checksException)
 {

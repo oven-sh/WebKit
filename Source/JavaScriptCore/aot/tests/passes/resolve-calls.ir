@@ -158,7 +158,7 @@ function f25 name="surplus-argument" parameters=[{type=f3}, {type=number}, {type
 function f26 name="converted-argument" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1, v1
     Return v2
-# CHECK: [[assumed]]: number = AssumeType v1 provenType=number
+# CHECK: [[assumed]]: number = AssumeType v1, [[here161]] provenType=number
 # CHECK-NEXT: = CallDirect [[assumed]], v1 function=f3
 }
 function f27 name="this-value" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {

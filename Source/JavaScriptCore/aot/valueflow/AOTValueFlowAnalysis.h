@@ -11,6 +11,8 @@
 #include "AOTValueFlowSolver.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
+#include <array>
+#include <atomic>
 #include <memory>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -30,7 +32,15 @@ public:
     void giveBack(ValueSetMaker&);
 
 private:
+    // A loop on many threads borrows a maker for each of its steps. What a thread gives back waits for that thread, where no other thread looks first.
+    struct alignas(64) MakerOfThread {
+        std::atomic<ValueSetMaker*> idleMaker { nullptr };
+    };
+    static constexpr unsigned numberOfThreadsToldApart = 64;
+    MakerOfThread& makerOfCurrentThread();
+
     ValueSets& m_sets;
+    std::array<MakerOfThread, numberOfThreadsToldApart> m_makersOfThreads;
     Lock m_lock;
     Vector<ValueSetMaker*> m_idleMakers WTF_GUARDED_BY_LOCK(m_lock);
     Vector<std::unique_ptr<ValueSetMaker>> m_ownMakers WTF_GUARDED_BY_LOCK(m_lock);

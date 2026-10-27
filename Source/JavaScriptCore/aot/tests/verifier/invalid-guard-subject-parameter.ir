@@ -212,8 +212,10 @@ function f13 name="goodSubjectIsUnspecifiedOnOneEdge" parameters=[{type=anything
   b3(v8, v9, v10):
     Switch v10 cases=[1] -> case b4(), otherwise b5()
   b4():
-    v11 = GetSlot v8, v9 key="x" receivers=[L0] level=Proven
-    Return v11
+    v11 = Specified
+    v12 = AssumeType v8, v11 provenType=object
+    v13 = GetSlot v12, v9 key="x" receivers=[L0] level=Proven
+    Return v13
   b5():
     Return
 }

@@ -25,24 +25,34 @@ TypedPointer JSONWriteEmitter::listedHoldersOf(const ValueContext& value)
     return builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
 }
 
+void JSONWriteEmitter::generateStringBuilderCommit(const ValueContext& value)
+{
+    CellPointer builder = builderOf(value);
+    builders().commit(builder, cursorOf(value));
+}
+
 void JSONWriteEmitter::generateJSONResetHolders(const ValueContext& value)
 {
-    m_out.storePtr(m_out.constIntPtr(0), listedHoldersOf(value));
+    LValue none = m_out.constIntPtr(0);
+    m_out.storePtr(none, listedHoldersOf(value));
 }
 
 void JSONWriteEmitter::generateJSONEnterHolder(const ValueContext& value)
 {
     TypedPointer listed = listedHoldersOf(value);
     Pointer record(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_proc.addStackSlot(sizeof(JSONHolderRecord))));
-    m_out.storePtr(m_out.loadPtr(listed), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
-    m_out.store64(in<Boxed>(value->holderOperand()).value(), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, holder)));
+    LValue outer = m_out.loadPtr(listed);
+    m_out.storePtr(outer, builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
+    Boxed holder = in<Boxed>(value->holderOperand());
+    m_out.store64(holder.value(), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, holder)));
     m_out.storePtr(record.value(), listed);
     define(value, record);
 }
 
 void JSONWriteEmitter::generateJSONLeaveHolder(const ValueContext& value)
 {
-    m_out.storePtr(m_out.loadPtr(builders().bytesAt(holdersOf(value), OBJECT_OFFSETOF(JSONHolderRecord, outer))), listedHoldersOf(value));
+    LValue outer = m_out.loadPtr(builders().bytesAt(holdersOf(value), OBJECT_OFFSETOF(JSONHolderRecord, outer)));
+    m_out.storePtr(outer, listedHoldersOf(value));
 }
 
 void JSONWriteEmitter::generateJSONListedHolders(const ValueContext& value)
@@ -52,7 +62,8 @@ void JSONWriteEmitter::generateJSONListedHolders(const ValueContext& value)
 
 void JSONWriteEmitter::generateJSONRestoreHolders(const ValueContext& value)
 {
-    m_out.storePtr(holdersOf(value).value(), listedHoldersOf(value));
+    Pointer holders = holdersOf(value);
+    m_out.storePtr(holders.value(), listedHoldersOf(value));
 }
 
 void JSONWriteEmitter::generateJSONEnterWatchedLevel(const ValueContext& value)
@@ -78,7 +89,8 @@ void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
         Pointer cursor = cursorOf(value);
         Word32 previous(m_out.load8ZeroExt32(builders().bytesAt(cursor, -1)));
         Pointer brace(m_out.sub(cursor.value(), zeroExtended(equal(previous, word32(','))).value()));
-        m_out.store32As8(m_out.constInt32('}'), builders().bytesAt(brace));
+        LValue closingBrace = m_out.constInt32('}');
+        m_out.store32As8(closingBrace, builders().bytesAt(brace));
         define(value, offsetBy(brace, 1));
         return;
     }
@@ -100,10 +112,12 @@ void JSONWriteEmitter::generateJSONAppendBoolean(const ValueContext& value)
 {
     Pointer cursor = cursorOf(value);
     Condition isTrue = in<Condition>(value->valueOperand());
-    Word32 firstFourBytes = select(isTrue, word32('t' | 'r' << 8 | 'u' << 16 | 'e' << 24), word32('f' | 'a' << 8 | 'l' << 16 | 's' << 24));
+    Word32 firstFourBytes = select<Word32>(isTrue, 't' | 'r' << 8 | 'u' << 16 | 'e' << 24, 'f' | 'a' << 8 | 'l' << 16 | 's' << 24);
     m_out.store32(firstFourBytes.value(), builders().bytesAt(cursor));
-    m_out.store32As8(m_out.constInt32('e'), builders().bytesAt(cursor, 4));
-    define(value, Pointer(m_out.sub(offsetBy(cursor, 5).value(), zeroExtended(isTrue).value())));
+    LValue lastByteOfFalse = m_out.constInt32('e');
+    m_out.store32As8(lastByteOfFalse, builders().bytesAt(cursor, 4));
+    Pointer endOfFalse = offsetBy(cursor, 5);
+    define(value, Pointer(m_out.sub(endOfFalse.value(), zeroExtended(isTrue).value())));
 }
 
 void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
@@ -118,7 +132,8 @@ void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
     if (isInteger)
         branch(below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)), { normalEdge(hasFewDigits), unlikelyEdge(byCall) });
     else {
-        Condition isWholeWithFewDigits = logicalAnd(equal(toNumber(whole), appended.as<Number>()), below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+        Condition isWhole = equal(toNumber(whole), appended.as<Number>());
+        Condition isWholeWithFewDigits = logicalAnd(isWhole, below(whole, StringBuilderEmitter::firstIntegerWrittenByCall));
         branch(isWholeWithFewDigits, { normalEdge(hasFewDigits), normalEdge(byCall) });
     }
 

@@ -20,6 +20,8 @@
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include "ArrayConventions.h"
+#include "JSType.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -69,7 +71,8 @@ ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& cal
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
-    elements().forEachFormByShape(elements().indexingMode(array, mask), test, candidateFormsOf(call), missBlockOf(call), functor);
+    Word32 mode = elements().indexingMode(array, mask);
+    elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor);
 }
 
 void ArrayBuiltinEmitter::generateArrayIterator(const InlineCall& call)
@@ -89,7 +92,8 @@ void ArrayBuiltinEmitter::generateArrayAt(const InlineCall& call)
     Integer index = typeOf(position).isInteger() ? integerOperand(position) : elements().indexOrElse(position, false, missBlockOf(call));
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
-    Integer relative = select(lessThan(index, integer(0)), add(index, length), index);
+    Condition countsFromEnd = lessThan(index, 0);
+    Integer relative = select(countsFromEnd, add(index, length), index);
     branchUnless(below(relative, length), isAbsent);
     forEachFormOrMiss(call, array, arrayStorageTestMask, [&](const ArrayStorageForm& form) {
         Operand raw = elements().loadRawElement(form, storage, relative);
@@ -122,7 +126,7 @@ void ArrayBuiltinEmitter::generateArrayJoin(const InlineCall& call)
 
 Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const ArrayStorageForm& form, const ArrayElements& storage, LBasicBlock isAbsent)
 {
-    Integer last = sub(elements().publicLength(storage), integer(1));
+    Integer last = sub(elements().publicLength(storage), 1);
     Operand first = elements().loadRawElement(form, storage, integer(0));
     branchUnless(logicalNot(elements().isHoleIn(call.receiver(), form, first)), isAbsent);
 
@@ -325,13 +329,25 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
     const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
     uint16_t primitives = typeOf(call.argument(0)).primitives;
     Boxed searched = boxedOperand(call.context(), call.argument(0));
+    Join<Integer> join(m_out);
+    if (primitives & Primitive::AnyString) {
+        LBasicBlock isCellBlock = newBlock();
+        LBasicBlock isStringBlock = newBlock();
+        LBasicBlock isNotString = newBlock();
+        branch(isCell(searched), { normalEdge(isCellBlock), normalEdge(isNotString) });
+        m_out.appendTo(isCellBlock);
+        branch(hasCellType(unboxCell(searched), StringType), { normalEdge(isStringBlock), normalEdge(isNotString) });
+        m_out.appendTo(isStringBlock);
+        join.add(indexOfString(call, array, unboxCell(searched)));
+        m_out.appendTo(isNotString);
+    }
     missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
     if (primitives & Primitive::Number)
         missUnless(call, logicalNot(isNumber(searched)));
     // A hole is the empty word, which equals nothing that is searched.
     if (hole == HoleIs::Undefined && primitives & Primitive::Undefined)
         missUnless(call, notEqual(searched, undefined()));
-    if (primitives & (Primitive::AnyString | Primitive::BigInt)) {
+    if (primitives & Primitive::BigInt) {
         LBasicBlock isCellBlock = newBlock();
         LBasicBlock isComparedByBits = newBlock();
         branch(isCell(searched), { normalEdge(isCellBlock), normalEdge(isComparedByBits) });
@@ -341,31 +357,43 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
         m_out.appendTo(isComparedByBits);
     }
 
-    Join<Integer> join(m_out);
     scanShortVector(call, form, array, searched, join);
     join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, searched }));
     return join.finish();
+}
+
+Integer ArrayBuiltinEmitter::indexOfString(const InlineCall& call, CellPointer array, CellPointer searched)
+{
+    Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Proven }, typeOf(call.receiver()), ContentsSlot::Element);
+    bool elementsAreStrings = contents.isAnyString() && elements().isDense(call.receiver()) && !generator().validatesOrChecksProofs();
+    StubKey stub = arrayIndexOfString(elementsAreStrings ? SearchedElements::Strings : SearchedElements::Values);
+    return Integer(callStub(call.context(), stub, { array.value(), searched.value() }).first);
 }
 
 Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole)
 {
     if (typeOf(call.argument(0)).isNumber())
         return indexOfNumber(call, receiverOf(call));
+    if (typeOf(call.argument(0)).isAnyString()) {
+        CellPointer array = receiverOf(call);
+        return indexOfString(call, array, cellOperand(call.argument(0)));
+    }
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
 }
 
 void ArrayBuiltinEmitter::generateArrayIndexOf(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 1))
+    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
         return;
-    finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, INT32_MAX });
+    bool maySearchForString = typeOf(call.argument(0)).primitives & Primitive::AnyString;
+    finish(call, indexOfSearched(call, HoleIs::Nothing), Range { -1, maySearchForString ? static_cast<int64_t>(MAX_ARRAY_INDEX) : INT32_MAX });
 }
 
 void ArrayBuiltinEmitter::generateArrayIncludes(const InlineCall& call)
 {
-    if (!checkChosenForm(call, call.canMiss() && call.numberOfArguments() == 1))
+    if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
         return;
-    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), integer(-1)));
+    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), -1));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -35,6 +35,12 @@ public:
     void makeSets(const Program&, const ValueFlowUniverse&, ValueSets&, const ParallelLoops&, NOESCAPE const ScopedLambda<void()>& runBesideSets);
 
     ValueSetID maskOf(BuiltinTypeID type) const { return m_maskOfType[type.index()]; }
+    ValueSetID acceptedValues(const BuiltinParameter* parameter) const
+    {
+        if (!parameter || !parameter->accepted || parameter->conversion != BuiltinConversion::None)
+            return ValueSets::anything;
+        return maskOf(parameter->accepted);
+    }
     ValueSetID primitivesOf(BuiltinTypeID type) const { return m_primitivesOfType[type.index()]; }
     std::span<const BuiltinClassID> classesAtOrBelow(BuiltinClassID builtinClass) const LIFETIME_BOUND { return m_classesAtOrBelow[builtinClass.index()].span(); }
     ValueSetID membersSurelyOf(BuiltinTypeID type) const { return m_membersSurelyOfType[type.index()]; }

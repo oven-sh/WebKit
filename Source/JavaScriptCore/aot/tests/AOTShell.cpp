@@ -22,6 +22,7 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
@@ -72,12 +73,14 @@ static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
 static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationOnResolve);
 static JSC_DECLARE_HOST_FUNCTION(functionCallAndCancelTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndCall);
+static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndConstruct);
 static JSC_DECLARE_CUSTOM_GETTER(getExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 12> functionNames {
+static constexpr std::array<ASCIILiteral, 14> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
@@ -90,6 +93,8 @@ static constexpr std::array<ASCIILiteral, 12> functionNames {
     "callWhileAnotherThreadLocksCell"_s,
     "requestTerminationOnResolve"_s,
     "callAndCancelTermination"_s,
+    "requestTerminationAndCall"_s,
+    "requestTerminationAndConstruct"_s,
 };
 
 static std::optional<ModuleID> s_terminateOnResolveModule;
@@ -337,6 +342,36 @@ JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(wasPending));
 }
 
+// As a watchdog thread that fires behind the last check of a native caller. The callee gets the arguments behind itself.
+template<bool isConstruct>
+static EncodedJSValue requestTerminationAndEnter(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callee = callFrame->argument(0);
+    if (isConstruct ? !callee.isConstructor() : !callee.isCallable())
+        return throwVMTypeError(globalObject, scope, "Expected a function"_s);
+    MarkedArgumentBuffer arguments;
+    for (unsigned index = 1; index < callFrame->argumentCount(); ++index)
+        arguments.append(callFrame->uncheckedArgument(index));
+    RELEASE_ASSERT(!arguments.hasOverflowed());
+    vm.notifyNeedTermination();
+    if constexpr (isConstruct)
+        RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, callee, arguments, "Expected a function"_s)));
+    else
+        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, callee, jsUndefined(), arguments, "Expected a function"_s)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndCall, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return requestTerminationAndEnter<false>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndConstruct, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return requestTerminationAndEnter<true>(globalObject, callFrame);
+}
+
 // An image locks `console`, so no script can give the shell one that prints.
 class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
@@ -404,6 +439,8 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionCallWhileAnotherThreadLocksCell, 2 },
         { functionRequestTerminationOnResolve, 1 },
         { functionCallAndCancelTermination, 1 },
+        { functionRequestTerminationAndCall, 1 },
+        { functionRequestTerminationAndConstruct, 1 },
     };
     static_assert(std::size(functions) == functionNames.size());
 
@@ -478,6 +515,37 @@ JSC_DEFINE_CUSTOM_GETTER(getChildrenOfModuleObject, (JSGlobalObject* globalObjec
     return JSValue::encode(areShown ? JSValue(children) : jsUndefined());
 }
 
+// Compiled code calls a function that the table lists under an object of the host without testing that it is there.
+static void addMissingHostFunctions(JSGlobalObject* globalObject, JSObject* object, BuiltinID holder)
+{
+    VM& vm = globalObject->vm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (BuiltinID member : table.membersOf(holder)) {
+        Identifier name = table.identifierOf(vm, table.at(member).name);
+        if (table.at(member).kind != BuiltinKind::Function || isValidOffset(object->getDirectOffset(vm, name)))
+            continue;
+        JSFunction* function = JSNativeStdFunction::create(vm, globalObject, 0, name.string(), [member](JSGlobalObject*, CallFrame*) -> EncodedJSValue {
+            dataLogLn("AOT: the program needs the host's ", BuiltinTable::singleton().textOf(member), ", and this realm has no host");
+            exitProcess(4);
+        });
+        addMissingHostFunctions(globalObject, function, table.canonicalID(member));
+        object->putDirect(vm, name, function);
+    }
+}
+
+void addMissingImportMetaFunctions(JSGlobalObject* globalObject, JSObject* importMeta)
+{
+    if (Image::current())
+        addMissingHostFunctions(globalObject, importMeta, Builtins::ImportMeta);
+}
+
+static JSFunction* createRequireFunction(JSGlobalObject* globalObject)
+{
+    JSFunction* require = JSFunction::create(globalObject->vm(), globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    addMissingHostFunctions(globalObject, require, Builtins::ModuleRequire);
+    return require;
+}
+
 static void createModuleObject(JSGlobalObject* globalObject, JSString* path, ModuleID number, OptionSet<ModuleObjectTrait> traits, ModuleObjects& objects)
 {
     VM& vm = globalObject->vm();
@@ -500,15 +568,16 @@ static void createModuleObject(JSGlobalObject* globalObject, JSString* path, Mod
     module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "children"_s), CustomGetterSetter::create(vm, getChildrenOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
     module->putDirect(vm, Identifier::fromString(vm, "paths"_s), paths);
     module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "parent"_s), CustomGetterSetter::create(vm, getParentOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
+    addMissingHostFunctions(globalObject, module, Builtins::ModuleObject);
 
     objects.module = module;
-    objects.require = JSFunction::create(vm, globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    objects.require = createRequireFunction(globalObject);
 }
 
 static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleObjects& objects)
 {
     objects.module = importMeta;
-    objects.require = JSFunction::create(globalObject->vm(), globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    objects.require = createRequireFunction(globalObject);
 }
 
 static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue specifier)

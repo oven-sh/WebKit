@@ -105,15 +105,29 @@ public:
 
 } // anonymous namespace
 
+static FunctionID compiledBuiltinFunctionID(const NativeExecutable& executable)
+{
+    return static_cast<const CompiledBuiltinJITCode&>(executable.generatedJITCodeForCall().get()).function;
+}
+
 static JSObject* compiledClosureOfCallee(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto* executable = uncheckedDowncast<NativeExecutable>(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->executable());
-    FunctionID function = static_cast<const CompiledBuiltinJITCode&>(executable->generatedJITCodeForCall().get()).function;
-    return asObject(State::of(globalObject).objects->closures.closure(globalObject->vm(), function));
+    return asObject(State::of(globalObject).objects->closures.closure(globalObject->vm(), compiledBuiltinFunctionID(*executable)));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callCompiledBuiltin);
 static JSC_DECLARE_HOST_FUNCTION(constructCompiledBuiltin);
+
+std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell* cell)
+{
+    if (cell->type() != JSFunctionType)
+        return std::nullopt;
+    auto* executable = dynamicDowncast<NativeExecutable>(uncheckedDowncast<JSFunction>(cell)->executable());
+    if (!executable || executable->function() != toTagged(callCompiledBuiltin))
+        return std::nullopt;
+    return compiledBuiltinFunctionID(*executable);
+}
 
 JSC_DEFINE_HOST_FUNCTION(callCompiledBuiltin, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

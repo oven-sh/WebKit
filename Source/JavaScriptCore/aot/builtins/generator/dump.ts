@@ -240,6 +240,8 @@ export interface DumpedEntry {
   mutability: Mutability;
   platforms: TargetPlatform[];
   flags: BuiltinFlag[];
+  isAddedAtFirstRead: boolean;
+  isAddedAsEnumerable: boolean;
   holder: string | null;
   name: string;
   isSymbolName: boolean;

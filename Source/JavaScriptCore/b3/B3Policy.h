@@ -42,6 +42,11 @@ struct ValidationPolicy {
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
     bool keepsOriginsOfAccessesThatTakeTraps { false };
+    // These break a phase on purpose, for the tests of the checks.
+    bool overlooksWritesOnUnlikelyPaths { false };
+    bool overlooksWritesBetweenReadsOfBound { false };
+    bool omitsStridedLimitGuard { false };
+    bool overlooksWritesBehindWordsReadAgain { false };
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -117,12 +122,18 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
+    // The fast version of a loop whose counter stays below the length of an array, a view or a string does not poll.
+    bool omitsPollsFromLoopsThatEndWithinData { false };
+    bool vectorizes { false };
+    bool unrolls { false };
+    double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };
 };
 
 struct SwitchLoweringPolicy {
     bool usesBitTests { false };
+    bool usesValueTables { false };
     unsigned minCasesForJumpTable { 7 };
 };
 
@@ -166,6 +177,8 @@ enum class PolicySwitch : uint8_t {
     FoldComparisonsWithBounds,
     VersionLoops,
     ClampLoopBounds,
+    VectorizeLoops,
+    UnrollLoops,
     BitTests,
     KnownRanges,
     KnownDereferenceableBytes,
@@ -189,7 +202,7 @@ enum class PolicySwitch : uint8_t {
     FoldTrapsIntoAccesses,
 };
 
-static constexpr unsigned numberOfSwitches = 40;
+static constexpr unsigned numberOfSwitches = 42;
 static_assert(static_cast<unsigned>(PolicySwitch::FoldTrapsIntoAccesses) + 1 == numberOfSwitches);
 static_assert(numberOfSwitches <= 64);
 

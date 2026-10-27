@@ -35,6 +35,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxRangeCheckBoundsPerLoop, 4, CodeSize, "further range checks stay in the loop"_s) \
     macro(MaxCopiedValuesPerRotatedLoop, 12, CodeSize, "the loop is not rotated"_s) \
     macro(MaxRareBlocksPerRotatedLoop, 8, CompileTime, "the loop is not rotated"_s) \
+    macro(MaxValuesPerUnrolledLoop, 96, CodeSize, "fewer turns of the loop are written out, or none"_s) \
     macro(MaxThreadedTestCopyCost, 8, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxThreadedPathCost, 16, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxBlocksOnThreadedPath, 8, CodeSize, "the threaded path ends at the block"_s) \
@@ -132,11 +133,28 @@ inline constexpr int64_t maxRangeCheckOffset = 1 << 16;
 inline constexpr int64_t maxLoopBoundForRangeChecks = 1ll << 62;
 static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() - maxRangeCheckOffset - maxCountedLoopStep);
 
+inline constexpr int64_t maxTurnsWithoutPoll = 1 << 20;
+inline constexpr unsigned maxTermsPerInvariantSum = 4;
+inline constexpr unsigned maxStridedRangeChecksPerLoop = 4;
+inline constexpr unsigned maxReducedIndicesPerLoop = 16;
+
 inline constexpr int64_t minPageSize = 4096;
 
 inline constexpr unsigned minHoistedValuesPerLoopVersion = 2;
+inline constexpr unsigned minTurnsPerUnrolledLoop = 4;
+inline constexpr unsigned maxTurnsPerUnrolledLoop = 8;
+inline constexpr unsigned maxBlocksBesideTestOfUnrolledLoop = 4;
+inline constexpr unsigned maxDepthOfAddressInUnrolledLoop = 6;
+inline constexpr unsigned maxValuesPerTurnOfVectorizedLoop = 64;
+inline constexpr unsigned maxAccessesPerTurnOfVectorizedLoop = 8;
+inline constexpr unsigned maxDistancesTestedInFrontOfVectorizedLoop = 3;
+inline constexpr unsigned maxDepthOfAddressInVectorizedLoop = 8;
+inline constexpr unsigned maxTermsOfAddressInVectorizedLoop = 3;
+inline constexpr unsigned maxCountersOfVectorizedLoop = 3;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
+inline constexpr unsigned maxValuesBesideSecondTestOfInterval = 4;
+inline constexpr unsigned maxValuesInPlaceOfBranchWithUnlikelySide = 1;
 inline constexpr unsigned blocksPerConstantStretch = 1024;
 
 inline constexpr unsigned minCasesToGrowSwitchInPlace = 128;

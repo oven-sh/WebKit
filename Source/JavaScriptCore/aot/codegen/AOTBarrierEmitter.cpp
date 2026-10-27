@@ -227,7 +227,9 @@ void BarrierEmitter::didEmitBarrier(CellPointer owner)
     if (!generator().validates())
         return;
     LValue pendingOwner = m_out.load64(pendingBarrierOwner());
-    m_out.store64(m_out.select(m_out.equal(pendingOwner, owner.value()), m_out.constInt64(0), pendingOwner), pendingBarrierOwner());
+    LValue isPending = m_out.equal(pendingOwner, owner.value());
+    LValue stillPending = m_out.select(isPending, m_out.constInt64(0), pendingOwner);
+    m_out.store64(stillPending, pendingBarrierOwner());
 }
 
 void BarrierEmitter::validateAfterStore(const ValueContext& store)
@@ -251,9 +253,11 @@ void BarrierEmitter::validateAfterStore(const ValueContext& store)
         failValidationIf(store, Condition(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack)))), owner);
         return;
     }
-    case BarrierDecision::LaterBarrierCovers:
-        m_out.store64(in<CellPointer>(ownerOperand).value(), pendingBarrierOwner());
+    case BarrierDecision::LaterBarrierCovers: {
+        CellPointer owner = in<CellPointer>(ownerOperand);
+        m_out.store64(owner.value(), pendingBarrierOwner());
         return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

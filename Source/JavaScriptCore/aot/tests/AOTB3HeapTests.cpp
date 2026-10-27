@@ -840,7 +840,7 @@ struct ReadsAroundCollections {
         fixture.heaps.computeRangesAndDecorateInstructions();
 
         B3::Policy policy;
-        checkClaimsAtRunTime(policy, Typed::FunctionID(0u), { }, true);
+        checkClaimsAtRunTime(policy, Typed::FunctionID(0u), { });
         policy.clientPhases[0].run->run(proc);
     }
 

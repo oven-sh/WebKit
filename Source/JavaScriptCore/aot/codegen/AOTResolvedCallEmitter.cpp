@@ -51,7 +51,7 @@ void ResolvedCallEmitter::generateCallResolved(const ValueContext& value)
         .count = m_out.constInt64(static_cast<int64_t>(arguments.size())),
         .arguments = values.span(),
     };
-    define(value, emitter<CallEmitter>().callByConvention(value, call));
+    define(value, emitter<CallEmitter>().callByConvention(value, call, { .throwSite = CallEmitter::siteThatNamesCallee(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

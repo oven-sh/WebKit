@@ -108,7 +108,7 @@ protected:
     Condition equal(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleEqual, a, b); }
     Condition notEqualOrUnordered(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleNotEqualOrUnordered, a, b); }
     Condition equalOrUnordered(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleEqualOrUnordered, a, b); }
-    Condition isNeitherZeroNorNaN(Number a) { return isX86_64() ? binary<Condition>(&FTL::Output::doubleNotEqualAndOrdered, a, number(0)) : greaterThan(abs(a), number(0)); }
+    Condition isNeitherZeroNorNaN(Number a) { return isX86_64() ? binary<Condition>(&FTL::Output::doubleNotEqualAndOrdered, a, number(0)) : greaterThan(abs(a), 0); }
     Condition lessThan(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleLessThan, a, b); }
     Condition lessThanOrEqual(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleLessThanOrEqual, a, b); }
     Condition greaterThan(Number a, Number b) { return binary<Condition>(&FTL::Output::doubleGreaterThan, a, b); }
@@ -124,10 +124,36 @@ protected:
     template<typename T> requires isBitwiseComparable<T> Condition above(T a, T b) { return binary<Condition>(&FTL::Output::above, a, b); }
     template<typename T> requires isBitwiseComparable<T> Condition aboveOrEqual(T a, T b) { return binary<Condition>(&FTL::Output::aboveOrEqual, a, b); }
 
-    Condition logicalNot(Condition value) { return Condition(m_out.bitXor(value.value(), m_out.constInt32(1))); }
+    // An operand that is written as a number becomes a constant once the operand before it has been appended.
+    template<typename T> T constant(Immediate<T>);
+    template<typename T> T add(T a, Immediate<T> b) { return add(a, constant<T>(b)); }
+    template<typename T> T sub(T a, Immediate<T> b) { return sub(a, constant<T>(b)); }
+    template<typename T> T mul(T a, Immediate<T> b) { return mul(a, constant<T>(b)); }
+    template<typename T> T bitAnd(T a, Immediate<T> b) { return bitAnd(a, constant<T>(b)); }
+    template<typename T> T bitOr(T a, Immediate<T> b) { return bitOr(a, constant<T>(b)); }
+    template<typename T> T bitXor(T a, Immediate<T> b) { return bitXor(a, constant<T>(b)); }
+    Number div(Number a, double b) { return div(a, number(b)); }
+    Word32 shiftLeft(Word32 a, int32_t b) { return shiftLeft(a, word32(b)); }
+    Word32 shiftRight(Word32 a, int32_t b) { return shiftRight(a, word32(b)); }
+    Word32 shiftRightUnsigned(Word32 a, int32_t b) { return shiftRightUnsigned(a, word32(b)); }
+    template<typename T> Condition lessThan(T a, Immediate<T> b) { return lessThan(a, constant<T>(b)); }
+    template<typename T> Condition lessThanOrEqual(T a, Immediate<T> b) { return lessThanOrEqual(a, constant<T>(b)); }
+    template<typename T> Condition greaterThan(T a, Immediate<T> b) { return greaterThan(a, constant<T>(b)); }
+    template<typename T> Condition greaterThanOrEqual(T a, Immediate<T> b) { return greaterThanOrEqual(a, constant<T>(b)); }
+    template<typename T> Condition equal(T a, Immediate<T> b) { return equal(a, constant<T>(b)); }
+    template<typename T> Condition notEqual(T a, Immediate<T> b) { return notEqual(a, constant<T>(b)); }
+    template<typename T> Condition below(T a, Immediate<T> b) { return below(a, constant<T>(b)); }
+    template<typename T> Condition belowOrEqual(T a, Immediate<T> b) { return belowOrEqual(a, constant<T>(b)); }
+    template<typename T> Condition above(T a, Immediate<T> b) { return above(a, constant<T>(b)); }
+    template<typename T> Condition aboveOrEqual(T a, Immediate<T> b) { return aboveOrEqual(a, constant<T>(b)); }
+
+    Condition logicalNot(Condition value) { return Condition(m_out.bitXor(value.value(), 1)); }
     Condition logicalAnd(Condition a, Condition b) { return binary<Condition>(&FTL::Output::bitAnd, a, b); }
     Condition logicalOr(Condition a, Condition b) { return a ? binary<Condition>(&FTL::Output::bitOr, a, b) : b; }
     template<typename T> T select(Condition condition, T a, T b) { return T(m_out.select(condition.value(), a.value(), b.value())); }
+    template<typename T> T select(Condition condition, T a, Immediate<T> b) { return select(condition, a, constant<T>(b)); }
+    template<typename T> T select(Condition condition, Immediate<T> a, T b) { return select(condition, constant<T>(a), b); }
+    template<typename T> T select(Condition, Immediate<T>, Immediate<T>);
 
     Integer signExtended(Word32 value) { return Integer(m_out.signExt32To64(value.value())); }
     Integer zeroExtended(Word32 value) { return Integer(m_out.zeroExt(value.value(), B3::Int64)); }
@@ -143,15 +169,15 @@ protected:
     Condition isBoolean(Boxed value)
     {
         static_assert(JSValue::ValueTrue == JSValue::ValueFalse + 1);
-        return Condition(m_out.belowOrEqual(m_out.sub(value.value(), m_out.constInt64(JSValue::ValueFalse)), m_out.constInt64(1)));
+        return Condition(m_out.belowOrEqual(m_out.sub(value.value(), JSValue::ValueFalse), 1));
     }
     Condition isUndefinedOrNull(Boxed, uint16_t occurringPrimitives);
     Condition isEmpty(Boxed value) { return Condition(m_out.isZero64(value.value())); }
     Condition isNotEmpty(Boxed value) { return Condition(m_out.notZero64(value.value())); }
     // A value in a narrow reference is a reference or one of the three markers, and no marker is above undefinedCell32: the comparison takes an immediate of one byte.
-    Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), m_out.constInt32(undefinedCell32))); }
+    Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), undefinedCell32)); }
     // For a word that may be any word below minCell32: that of a literal string, an immediate in the table of a collection.
-    Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), m_out.constInt32(minCell32))); }
+    Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), minCell32)); }
     // What a load makes of the word in a narrow slot: the cell where the word is a reference, the word itself where it is none.
     std::optional<NarrowReference> narrowWordBehind(LiteralStringWord);
 
@@ -159,12 +185,12 @@ protected:
     Boxed boxBoolean(Condition value)
     {
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
-        return Boxed(m_out.bitOr(m_out.zeroExt(value.value(), B3::Int64), m_out.constInt64(JSValue::ValueFalse)));
+        return Boxed(m_out.bitOr(m_out.zeroExt(value.value(), B3::Int64), JSValue::ValueFalse));
     }
     Boxed boxCell(CellPointer value) { return Boxed(value.value()); }
     Word32 unboxInt32(Boxed value) { return Word32(m_out.castToInt32(value.value())); }
     Number unboxDouble(Boxed value) { return Number(m_out.bitCast(m_out.add(value.value(), m_numberTag), B3::Double)); }
-    Condition unboxBoolean(Boxed value) { return Condition(m_out.bitAnd(m_out.castToInt32(value.value()), m_out.constInt32(1))); }
+    Condition unboxBoolean(Boxed value) { return Condition(m_out.bitAnd(m_out.castToInt32(value.value()), 1)); }
     CellPointer unboxCell(Boxed value) { return CellPointer(value.value()); }
     Number numberToDouble(Boxed number);
 
@@ -185,9 +211,9 @@ protected:
     template<typename T, typename Base> T loadField(Base, const B3::AbstractHeap&);
     template<typename Base> Word32 loadByte(Base base, const B3::AbstractHeap& field) { return Word32(m_out.load8ZeroExt32(base.value(), field)); }
     template<typename T, typename Base> void storeField(Base, const B3::AbstractHeap&, T);
-    Condition hasNoBits(Pointer a, uintptr_t mask) { return Condition(m_out.testIsZeroPtr(a.value(), m_out.constIntPtr(mask))); }
-    Pointer offsetBy(Pointer base, Integer index, unsigned logSize) { return Pointer(m_out.add(base.value(), logSize ? m_out.shl(index.value(), m_out.constInt32(logSize)) : index.value())); }
-    Pointer offsetBy(Pointer base, ptrdiff_t offset) { return offset ? Pointer(m_out.add(base.value(), m_out.constIntPtr(offset))) : base; }
+    Condition hasNoBits(Pointer a, uintptr_t mask) { return Condition(m_out.testIsZeroPtr(a.value(), mask)); }
+    Pointer offsetBy(Pointer base, Integer index, unsigned logSize) { return Pointer(m_out.add(base.value(), logSize ? m_out.shl(index.value(), logSize) : index.value())); }
+    Pointer offsetBy(Pointer base, ptrdiff_t offset) { return offset ? Pointer(m_out.add(base.value(), offset)) : base; }
     Pointer asPointer(CellPointer cell) { return Pointer(cell.value()); }
 
     Pointer instance() { return Pointer(m_instance); }
@@ -195,12 +221,13 @@ protected:
     Pointer loadImmutablePointer(ptrdiff_t offsetInInstance);
     Word32 loadImmutable32(ptrdiff_t offsetInInstance);
     Integer loadImmutable64(ptrdiff_t offsetInInstance);
+    Word32 loadFilledOnce32(ptrdiff_t offsetInInstance);
     Word32 loadMutable32(ptrdiff_t offsetInInstance);
     Integer loadMutable64(ptrdiff_t offsetInInstance);
     TypedPointer instanceField(const B3::AbstractHeap&, ptrdiff_t offsetInInstance);
     TypedPointer mutableInstanceField(ptrdiff_t offsetInInstance) { return instanceField(m_heaps.AOTInstance_mutableFields, offsetInInstance); }
 
-    Condition isRopeString(CellPointer string) { return Condition(m_out.testNonZeroPtr(m_out.loadPtr(string.value(), m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer))); }
+    Condition isRopeString(CellPointer string) { return Condition(m_out.testNonZeroPtr(m_out.loadPtr(string.value(), m_heaps.JSString_value), JSString::isRopeInPointer)); }
     CellPointer emptyString() { return CellPointer(loadImmutablePointer(AOT_INSTANCE_PREFIX_OFFSET(emptyString)).value()); }
     CellPointer singleCharacterString(Word32 character);
 
@@ -263,6 +290,24 @@ T PrimitiveEmitter::selectByBranch(Condition condition, NOESCAPE const Invocable
     m_out.appendTo(isFalse);
     join.add(whenFalse());
     return join.finish();
+}
+
+template<typename T>
+T PrimitiveEmitter::constant(Immediate<T> value)
+{
+    if constexpr (std::is_same_v<T, Word32>)
+        return word32(value);
+    else if constexpr (std::is_same_v<T, Integer>)
+        return integer(value);
+    else
+        return number(value);
+}
+
+template<typename T>
+T PrimitiveEmitter::select(Condition condition, Immediate<T> a, Immediate<T> b)
+{
+    T whenTrue = constant<T>(a);
+    return select(condition, whenTrue, constant<T>(b));
 }
 
 template<typename T, typename Base>

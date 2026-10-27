@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
@@ -914,10 +915,12 @@ DeclaredAs declaredAs(JSCell* cell)
 {
     std::optional<FunctionID> function = functionOf(cell);
     if (!function)
+        function = compiledBuiltinFunctionID(cell);
+    if (!function)
         return DeclaredAs::NotCompiled;
     FunctionKindData kindData = functionKindData(*function);
     if (kindData.isConstructor)
-        return DeclaredAs::Class;
+        return FunctionDescription(*function).isNakedConstructor() ? DeclaredAs::Function : DeclaredAs::Class;
     if (kindData.isBound())
         return DeclaredAs::Function;
     if (kindData.isGenerator)

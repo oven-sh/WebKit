@@ -29,12 +29,15 @@ function f0 name="merge" parameters=[{type=boolean}, {type=Array}] results=[{typ
     AppendElement v9, v10
     Switch v8 cases=[1] -> case b4(), otherwise b5()
   b4():
-    v12 = CallBuiltin v6 overload=ArrayPrototypeLength/0
-    v13 = CallBuiltin v7 overload=ArrayPrototypeLength/0
-    v14 = CallBuiltin v9 overload=ArrayPrototypeLength/0
-    v15 = Add v12, v13
-    v16 = Add v15, v14
-    Return v16
+    v12 = Specified
+    v13 = AssumeType v6, v12 provenType=Array
+    v14 = CallBuiltin v13 overload=ArrayPrototypeLength/0
+    v15 = AssumeType v7, v12 provenType=Array
+    v16 = CallBuiltin v15 overload=ArrayPrototypeLength/0
+    v17 = CallBuiltin v9 overload=ArrayPrototypeLength/0
+    v18 = Add v14, v16
+    v19 = Add v18, v17
+    Return v19
   b5():
     Return
 }

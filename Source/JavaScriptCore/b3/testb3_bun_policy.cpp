@@ -99,6 +99,8 @@ static Policy policyWithEverySwitchOn()
     policy.loops.foldsComparisonsWithBounds = true;
     policy.loops.versions = true;
     policy.loops.clampsLoopBounds = true;
+    policy.loops.vectorizes = true;
+    policy.loops.unrolls = true;
     policy.switchLowering.usesBitTests = true;
     enableEveryAirSwitch(policy.air);
     return policy;
@@ -174,6 +176,8 @@ static std::span<const SwitchFields> switchFields()
         SWITCH_FIELD(FoldComparisonsWithBounds, loops, foldsComparisonsWithBounds),
         SWITCH_FIELD(VersionLoops, loops, versions),
         SWITCH_FIELD(ClampLoopBounds, loops, clampsLoopBounds),
+        SWITCH_FIELD(VectorizeLoops, loops, vectorizes),
+        SWITCH_FIELD(UnrollLoops, loops, unrolls),
         SWITCH_FIELD(BitTests, switchLowering, usesBitTests),
         SWITCH_FIELD(KnownRanges, knownProperties, trustsKnownRanges),
         SWITCH_FIELD(KnownDereferenceableBytes, knownProperties, trustsKnownDereferenceableBytes),

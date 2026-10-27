@@ -10,14 +10,17 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCallSiteTable.h"
 #include "AOTCodeGenerator.h"
 #include "AOTCodeRecords.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionKinds.h"
+#include "AOTHeat.h"
 #include "AOTOperationData.h"
 #include "AOTSort.h"
 #include "AOTStackCheckEmitter.h"
+#include "AOTThreshold.h"
 #include "AOTThrowEmitter.h"
 #include "AOTVector.h"
 #include "AirCode.h"
@@ -28,6 +31,7 @@
 #include <iterator>
 #include <optional>
 #include <span>
+#include <utility>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/StdLibExtras.h>
 
@@ -45,7 +49,7 @@ struct DescribedFunction {
 struct SiteReference {
     uint32_t returnOffset;
     uint32_t* site;
-    bool isFirstRead { false };
+    FirstReadSite* firstRead { nullptr };
 };
 
 // B3 may copy a site, and each copy has an edge to a landing pad of its own. The copies record their landing pads in the order in which their code is emitted.
@@ -148,7 +152,7 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
 {
     Vector<SiteReference, 32> references;
     for (FirstReadSite& site : body.firstReadSites)
-        references.append({ site.returnOffset, &site.site, true });
+        references.append({ site.returnOffset, &site.site, &site });
     for (ReturnSite& site : body.returnSites) {
         if (site.site)
             references.append({ site.offset, &site.site.bits });
@@ -163,47 +167,6 @@ static Vector<SiteReference, 32> collectSiteReferences(CodeBody& body, SiteDescr
     }
     AOT::stableSort(references, { }, &SiteReference::returnOffset);
     return references;
-}
-
-static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer& linkBuffer, std::span<const SiteReference> references, SiteDescription& sites)
-{
-    const Vector<RecordedSite>& recorded = records.sites.positions;
-    LandingPadsOfCopies landingPads(records.exceptions, recorded.size(), references);
-    auto recordOf = [&](uint32_t recordedNumber) -> const RecordedSite& {
-        RELEASE_ASSERT(recordedNumber && recordedNumber <= recorded.size());
-        return recorded[recordedNumber - 1];
-    };
-
-    // One operation of the program is often several calls in a row.
-    struct LastSite {
-        const RecordedSite* record { nullptr };
-        const SiteLandingPad* landingPad { nullptr };
-    };
-    LastSite last;
-    auto leadToSameHandler = [](const SiteLandingPad* a, const SiteLandingPad* b) {
-        return a && b ? a->landingPad == b->landingPad && a->type == b->type : a == b;
-    };
-
-    Vector<RecordedSite> result;
-    result.reserveInitialCapacity(records.sites.numberOfSitesWithoutCode + references.size());
-    result.append(recorded.span().first(records.sites.numberOfSitesWithoutCode));
-    for (const SiteReference& reference : references) {
-        uint32_t recordedNumber = *reference.site;
-        const RecordedSite& record = recordOf(recordedNumber);
-        const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
-        if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
-            *reference.site = result.size();
-            continue;
-        }
-        result.append(record);
-        uint32_t number = result.size();
-        *reference.site = number;
-        if (landingPad)
-            sites.handlers.append({ number, linkBuffer.offsetOf(*records.exceptions.landingPads[landingPad->landingPad]), landingPad->type });
-        last = saysOnlyWhereItIs ? LastSite { &record, landingPad } : LastSite { };
-    }
-    return result;
 }
 
 static std::optional<LineColumn> positionOfImplementedBuiltin(StackTraceBuiltinKind kind)
@@ -308,13 +271,11 @@ static SitePosition describePosition(const Program& program, const ShownFunction
     return position;
 }
 
-static std::optional<unsigned> methodReadColumnDelta(const SitePosition& read, const SitePosition& call)
+static std::optional<unsigned> firstReadColumnDelta(const SitePosition& read, const SitePosition& site)
 {
-    if (read.line != call.line || read.source != call.source || read.inlineFrame != call.inlineFrame || read.constructionStartLine)
+    if (read.line != site.line || read.source != site.source || read.inlineFrame != site.inlineFrame || read.constructionStartLine || read.column > site.column)
         return std::nullopt;
-    if (read.column > call.column || call.column - read.column > ThrowSiteWord::maxMethodReadColumnDelta)
-        return std::nullopt;
-    return call.column - read.column;
+    return site.column - read.column;
 }
 
 // A method is mostly read a few columns in front of its call. The throw site of the call has room for that number, and the read needs no site.
@@ -332,13 +293,80 @@ static void foldMethodReadSites(const DescribedFunction& described, const ShownF
             return false;
         auto call = std::ranges::lower_bound(body.returnSites, read.returnOffset, { }, &ReturnSite::offset);
         RELEASE_ASSERT(call != body.returnSites.end() && call->offset == read.returnOffset && call->site);
-        std::optional<unsigned> delta = methodReadColumnDelta(describePosition(described.program, shownFunctions, recorded[read.site - 1]), describePosition(described.program, shownFunctions, recorded[*call->site - 1]));
-        if (!delta)
+        std::optional<unsigned> delta = firstReadColumnDelta(describePosition(described.program, shownFunctions, recorded[read.site - 1]), describePosition(described.program, shownFunctions, recorded[*call->site - 1]));
+        if (!delta || *delta > ThrowSiteWord::maxMethodReadColumnDelta)
             return false;
         word.registerNumber = *delta + 1;
         access->throwSite[0] = std::bit_cast<uint32_t>(word);
         return true;
     });
+}
+
+static Vector<RecordedSite> renumberSites(const DescribedFunction& described, const ShownFunctions& shownFunctions, const CodeRecords& records, LinkBuffer& linkBuffer, std::span<const SiteReference> references, SiteDescription& sites)
+{
+    const Vector<RecordedSite>& recorded = records.sites.positions;
+    LandingPadsOfCopies landingPads(records.exceptions, recorded.size(), references);
+    auto recordOf = [&](uint32_t recordedNumber) -> const RecordedSite& {
+        RELEASE_ASSERT(recordedNumber && recordedNumber <= recorded.size());
+        return recorded[recordedNumber - 1];
+    };
+
+    // One operation of the program is often several calls in a row.
+    struct LastSite {
+        const RecordedSite* record { nullptr };
+        const SiteLandingPad* landingPad { nullptr };
+    };
+    LastSite last;
+    auto leadToSameHandler = [](const SiteLandingPad* a, const SiteLandingPad* b) {
+        return a && b ? a->landingPad == b->landingPad && a->type == b->type : a == b;
+    };
+
+    // The row of a plain site in the frame of the site in front has room for the columns from its first read. A read at the position of its site says nothing.
+    bool mayOmitFirstReadSites = !described.build.options().obfuscates();
+    unsigned frameOfLastSite = 0;
+    auto columnDeltaWithoutSite = [&](const RecordedSite& read, const RecordedSite& site) -> std::optional<unsigned> {
+        if (!mayOmitFirstReadSites)
+            return std::nullopt;
+        std::optional<unsigned> delta = firstReadColumnDelta(describePosition(described.program, shownFunctions, read), describePosition(described.program, shownFunctions, site));
+        if (!delta || !*delta)
+            return delta;
+        if (*delta > maxFirstReadColumnDelta || site.kind != CallSiteKind::Plain || site.origin.inlineFrame != frameOfLastSite)
+            return std::nullopt;
+        return delta;
+    };
+
+    Vector<RecordedSite> result;
+    result.reserveInitialCapacity(records.sites.numberOfSitesWithoutCode + references.size());
+    result.append(recorded.span().first(records.sites.numberOfSitesWithoutCode));
+    bool rowHoldsFirstRead = false;
+    for (size_t index = 0; index < references.size(); ++index) {
+        const SiteReference& reference = references[index];
+        uint32_t recordedNumber = *reference.site;
+        const RecordedSite& record = recordOf(recordedNumber);
+        if (reference.firstRead) {
+            RELEASE_ASSERT(index + 1 < references.size() && references[index + 1].returnOffset == reference.returnOffset && !references[index + 1].firstRead);
+            if (std::optional<unsigned> delta = columnDeltaWithoutSite(record, recordOf(*references[index + 1].site))) {
+                reference.firstRead->site = 0;
+                reference.firstRead->columnDelta = *delta;
+                rowHoldsFirstRead = !!*delta;
+                continue;
+            }
+        }
+        const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
+        bool saysOnlyWhereItIs = !reference.firstRead && !std::exchange(rowHoldsFirstRead, false) && record.kind == CallSiteKind::Plain && !record.callsOwnFunctionObject;
+        if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
+            *reference.site = result.size();
+            continue;
+        }
+        result.append(record);
+        frameOfLastSite = record.origin.inlineFrame;
+        uint32_t number = result.size();
+        *reference.site = number;
+        if (landingPad)
+            sites.handlers.append({ number, linkBuffer.offsetOf(*records.exceptions.landingPads[landingPad->landingPad]), landingPad->type });
+        last = saysOnlyWhereItIs ? LastSite { &record, landingPad } : LastSite { };
+    }
+    return result;
 }
 
 static Vector<SitePosition> describePositions(const DescribedFunction& described, const ShownFunctions& shownFunctions, const Vector<RecordedSite>& renumbered)
@@ -384,6 +412,16 @@ static uint32_t ensureCalleeIndex(CodeBody& body, FunctionID callee)
     return static_cast<uint32_t>(body.callees.size() - 1);
 }
 
+static Vector<ConstructedCallee> collectConstructedCallees(const Vector<RecordedSite>& renumbered, CodeBody& body)
+{
+    Vector<ConstructedCallee> callees;
+    for (uint32_t i = 0; i < renumbered.size(); ++i) {
+        if (renumbered[i].constructedCallee)
+            callees.append({ i + 1, ensureCalleeIndex(body, renumbered[i].constructedCallee) });
+    }
+    return callees;
+}
+
 static Vector<AOT::InlineFrame> describeInlineFrames(const Function& function, const SiteRecords& sites, CodeBody& body)
 {
     const Vector<uint32_t>& inlineCallSites = sites.inlineCallSites;
@@ -395,7 +433,7 @@ static Vector<AOT::InlineFrame> describeInlineFrames(const Function& function, c
     inlineFrames.append({ 0, 0, 0, false, false });
     for (size_t index = 1; index < function.inlineFrames.size(); ++index) {
         const InlineFrame& frame = function.inlineFrames[index];
-        inlineFrames.append({ frame.parent, inlineCallSites[index], ensureCalleeIndex(body, frame.callee), frame.isTailCall, frame.isConstruction });
+        inlineFrames.append({ frame.parent, inlineCallSites[index], ensureCalleeIndex(body, frame.callee), frame.isTailCall, frame.isConstruction, frame.calledBuiltin });
     }
     return inlineFrames;
 }
@@ -412,9 +450,10 @@ static SiteDescription describeSites(const DescribedFunction& described, CodeRec
     ShownFunctions shownFunctions = findShownFunctions(described);
     foldMethodReadSites(described, shownFunctions, records.sites.positions, body, sites);
     Vector<SiteReference, 32> references = collectSiteReferences(body, sites);
-    Vector<RecordedSite> renumbered = renumberSites(records, linkBuffer, references.span(), sites);
+    Vector<RecordedSite> renumbered = renumberSites(described, shownFunctions, records, linkBuffer, references.span(), sites);
     sites.positions = describePositions(described, shownFunctions, renumbered);
     sites.flaggedSites = collectFlaggedSites(renumbered, sites.numberOfSitesWithoutCode);
+    sites.constructedCallees = collectConstructedCallees(renumbered, body);
     // No walk of the stack can stand in a body without a site that has code, so nobody asks which functions it took in.
     size_t numberOfInlineCallSites = described.function.inlineFrames.isEmpty() ? 0 : described.function.inlineFrames.size() - 1;
     if (numberOfInlineCallSites && sites.numberOfSitesWithoutCode == numberOfInlineCallSites && sites.positions.size() == 1 + numberOfInlineCallSites) {
@@ -485,6 +524,39 @@ static CodeBody describeBody(CodeRecords& records, EmittedCode& emitted)
     return body;
 }
 
+// A loop of a few instructions turns once a cycle where it lies in one line of the instruction cache, and once in two cycles where it lies in two. A longer one takes two cycles wherever it lies. Of loops in one another the innermost turns most.
+// A jump back is also how a block that seldom runs gets back to where it was left for. A loop of the program has a poll.
+static Vector<CodeRange, 0> findSmallLoops(const CodeBody& body, std::span<const PollSite> polls)
+{
+    AOT_THRESHOLD(size_t, maxLoopsKeptInLine, 4);
+    constexpr uint32_t maxSizeOfLoopKeptInLine = sizeOfInstructionCacheLine / 2;
+    Vector<CodeRange, 0> loops;
+    for (const LinkedSite& site : body.localSites) {
+        if (!transfersControl(site.kind) || site.kind == RelocationKind::Call || site.target > site.offset)
+            continue;
+        CodeRange loop { site.target, site.offset + MacroAssembler::relocationSize(site.kind) };
+        if (loop.end > body.sizeOfHotBlocks || loop.end - loop.begin > maxSizeOfLoopKeptInLine)
+            continue;
+        bool hasPoll = std::ranges::any_of(polls, [&](const PollSite& poll) {
+            return poll.offset >= loop.begin && poll.returnOffset() <= loop.end;
+        });
+        if (!hasPoll)
+            continue;
+        // The sites ascend, so a loop that was found earlier ends earlier.
+        bool isKnown = false;
+        for (CodeRange& earlier : loops) {
+            if (earlier.begin < loop.begin)
+                continue;
+            isKnown = true;
+            if (earlier.begin == loop.begin)
+                earlier.end = loop.end;
+        }
+        if (!isKnown && loops.size() < maxLoopsKeptInLine)
+            loops.append(loop);
+    }
+    return loops;
+}
+
 static Vector<CodeRange, 1> describeFrameRanges(const B3::Air::Code& code, LinkBuffer& linkBuffer)
 {
     Vector<CodeRange, 1> ranges;
@@ -552,6 +624,8 @@ CompiledCode describeCode(BuildContext& build, const CodeGenerationInputs& input
     result.entry = describeEntry(inputs, id, function);
     result.body = describeBody(records, emitted);
     result.sites = describeSites({ build, inputs.program, id, function }, records, emitted.buffer.linkBuffer(), result.body);
+    if (keepsSmallLoopsInLines && !isCold(inputs.heat.of(inputs.program, id)).predicted())
+        result.body.smallLoops = findSmallLoops(result.body, result.sites.pollSites.span());
     result.frame = describeFrame(records, emitted, id, function);
     return result;
 }

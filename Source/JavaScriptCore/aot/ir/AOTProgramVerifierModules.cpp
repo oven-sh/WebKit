@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTFlowSiteData.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -40,7 +41,6 @@ struct ModuleKindRules {
     bool canHaveData { false };
     bool hasRuntimeModule { false };
     bool hasReferrer { false };
-    bool hasUniquePath { false };
 };
 
 struct VerifiedRequestTargets {
@@ -56,13 +56,13 @@ static ModuleKindRules rulesOf(ModuleKind kind)
 {
     switch (kind) {
     case ModuleKind::SourceText:
-        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasRequiredNames = true, .hasUniquePath = true };
+        return { .body = BodyRule::Optional, .hasExportTable = true, .hasRequests = true, .hasRequiredNames = true };
     case ModuleKind::CommonJs:
-        return { .body = BodyRule::Required, .forbiddenBodyFlags = FunctionFlags::HasThis, .hasRequests = true, .hasUniquePath = true };
+        return { .body = BodyRule::Required, .forbiddenBodyFlags = FunctionFlags::HasThis, .hasRequests = true };
     case ModuleKind::Data:
-        return { .body = BodyRule::Optional, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasExportTable = true, .canHaveData = true, .hasUniquePath = true };
+        return { .body = BodyRule::Optional, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasExportTable = true, .canHaveData = true };
     case ModuleKind::RuntimeSource:
-        return { .body = BodyRule::Required, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasRuntimeModule = true, .hasUniquePath = true };
+        return { .body = BodyRule::Required, .forbiddenBodyFlags = { FunctionFlags::IsAsync, FunctionFlags::IsGenerator }, .hasRuntimeModule = true };
     case ModuleKind::Runtime:
         return { .body = BodyRule::Absent, .hasRuntimeModule = true };
     case ModuleKind::External:
@@ -93,7 +93,8 @@ static bool hasRequiredIDs(const Module& module)
         && std::ranges::all_of(module.exports, isSet, &ModuleExport::name)
         && std::ranges::all_of(module.syntheticExports, isSet, &SyntheticExport::name)
         && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::module)
-        && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::name);
+        && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::name)
+        && std::ranges::all_of(module.requiredNames, [](const RequiredName& required) { return !required.exportName == !required.specifier; });
 }
 
 static bool isCommonJsRule(SyntheticExportRule rule)
@@ -257,7 +258,7 @@ void ProgramVerifier::verifyModules()
     BitVector usedExportsVariables(m_program.variables.size());
     for (unsigned index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
-        if (rulesOf(module.kind).hasUniquePath && usedPaths.quickSet(module.path.index()))
+        if (answersToPath(m_program, module) && usedPaths.quickSet(module.path.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
         if (module.body && usedBodies.quickSet(module.body.index()))
             fail({ .kind = InternalErrorKind::InvalidModule, .function = module.body, .count = index });
@@ -385,11 +386,12 @@ static void forEachNamedModule(const Module& module, const Functor& functor)
         functor(required.module);
 }
 
-static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
+// The modules that name a module to which nothing leads from them. `targetsOf` gives what a module leads to in one step.
+static Vector<uint32_t> findUnreachedNames(unsigned numberOfModules, const auto& targetsOf, const auto& forEachNamed)
 {
     Vector<ModuleID> allNamedModules;
-    for (auto& module : modules) {
-        forEachNamedModule(module, [&](ModuleID named) {
+    for (unsigned index = 0; index < numberOfModules; ++index) {
+        forEachNamed(index, [&](ModuleID named) {
             allNamedModules.append(named);
         });
     }
@@ -400,10 +402,7 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
         return std::lower_bound(namedModules.begin(), namedModules.end(), module) - namedModules.begin();
     };
 
-    unsigned numberOfModules = modules.size();
-    auto components = computeStronglyConnectedComponents(numberOfModules, [&](unsigned module) {
-        return VerifiedRequestTargets { modules[module].requests };
-    });
+    auto components = computeStronglyConnectedComponents(numberOfModules, targetsOf);
     auto& componentOf = components.componentOf;
 
     Vector<uint32_t> modulesByComponent(numberOfModules, [](size_t index) {
@@ -418,8 +417,9 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
         reachedNames[componentOf[namedModules[rank].index()]].set(rank);
     for (uint32_t index : modulesByComponent) {
         uint32_t component = componentOf[index];
-        for (auto& request : modules[index].requests) {
-            uint32_t requestedComponent = componentOf[request.target.index()];
+        auto targets = targetsOf(index);
+        for (size_t target = 0; target < targets.size(); ++target) {
+            uint32_t requestedComponent = componentOf[targets[target].index()];
             if (requestedComponent != component)
                 reachedNames[component].merge(reachedNames[requestedComponent]);
         }
@@ -429,13 +429,96 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
     for (unsigned index = 0; index < numberOfModules; ++index) {
         const BitVector& reached = reachedNames[componentOf[index]];
         bool reachesEveryName = true;
-        forEachNamedModule(modules[index], [&](ModuleID named) {
+        forEachNamed(index, [&](ModuleID named) {
             reachesEveryName &= reached.get(rankOf(named));
         });
         if (!reachesEveryName)
             holders.append(index);
     }
     return holders;
+}
+
+namespace {
+
+struct MentionInCode {
+    enum class Kind : uint8_t { LoadsModule, NamesVariable };
+
+    auto operator<=>(const MentionInCode&) const = default;
+
+    Kind kind;
+    ModuleID file;
+    ModuleID other;
+};
+
+} // anonymous namespace
+
+static Vector<MentionInCode> findMentionsInCode(const Program& program, const ParallelLoops& loops)
+{
+    Vector<ModuleID> moduleWithBody(program.functions.size());
+    for (unsigned index = 0; index < program.modules.size(); ++index) {
+        if (FunctionID body = program.modules[index].body)
+            moduleWithBody[body.index()] = ModuleID(index);
+    }
+    Vector<MentionInCode> mentions = collectInParallel<MentionInCode>(loops, program.functions.size(), [&](unsigned index, Vector<MentionInCode>& found) {
+        const Function& function = program.functions[index];
+        ModuleID file = function.module;
+        if (!file || !function.hasBody() || !isFileOfProgram(program.at(file)))
+            return;
+        size_t first = found.size();
+        auto add = [&](MentionInCode::Kind kind, ModuleID other) {
+            MentionInCode mention { kind, file, other };
+            if (other && other != file && !std::ranges::contains(found.span().subspan(first), mention))
+                found.append(mention);
+        };
+        // A module that stands beside a file has code of the file as its body.
+        if (ModuleID beside = moduleWithBody[index]; beside && beside != file) {
+            add(MentionInCode::Kind::LoadsModule, beside);
+            found.append({ MentionInCode::Kind::LoadsModule, beside, file });
+        }
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                forEachVariable(value, [&](VariableID variable) {
+                    if (!variable)
+                        return;
+                    if (ModuleID owner = program.at(variable).module; owner && isFileOfProgram(program.at(owner)))
+                        add(MentionInCode::Kind::NamesVariable, owner);
+                });
+                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
+                    if (kind == ModuleReferenceKind::Target)
+                        add(MentionInCode::Kind::LoadsModule, module);
+                });
+            }
+        }
+    });
+    AOT::sort(mentions);
+    mentions.shrink(std::ranges::unique(mentions).begin() - mentions.begin());
+    return mentions;
+}
+
+// A variable has its first state once its file, or a file that leads there, has been entered (place/AOTStaticsLayout.cpp).
+static Vector<uint32_t> findFilesThatNameUnreachedVariables(const Program& program, const ParallelLoops& loops)
+{
+    Vector<MentionInCode> mentions = findMentionsInCode(program, loops);
+    auto mentionsOf = [&](MentionInCode::Kind kind, unsigned index) {
+        return std::ranges::equal_range(mentions, std::pair { kind, ModuleID(index) }, { }, [](const MentionInCode& mention) {
+            return std::pair { mention.kind, mention.file };
+        });
+    };
+    Vector<Vector<ModuleID>> targets(program.modules.size(), [&](size_t index) {
+        Vector<ModuleID> found = WTF::map(program.modules[index].requests, [](const ModuleRequest& request) {
+            return request.target;
+        });
+        for (const MentionInCode& mention : mentionsOf(MentionInCode::Kind::LoadsModule, index))
+            found.append(mention.other);
+        return found;
+    });
+    return findUnreachedNames(program.modules.size(), [&](unsigned index) {
+        return targets[index].span();
+    }, [&](unsigned index, const auto& functor) {
+        for (const MentionInCode& mention : mentionsOf(MentionInCode::Kind::NamesVariable, index))
+            functor(mention.other);
+    });
 }
 
 void ProgramVerifier::verifyModuleGraph()
@@ -447,7 +530,14 @@ void ProgramVerifier::verifyModuleGraph()
         if (modules[index].flags.contains(ModuleFlags::IsLibrary) && !modules[index].requests.isEmpty())
             fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
     }
-    for (uint32_t index : findUnreachedNames(modules))
+    Vector<uint32_t> holders = findUnreachedNames(modules.size(), [&](unsigned index) {
+        return VerifiedRequestTargets { modules[index].requests };
+    }, [&](unsigned index, const auto& functor) {
+        forEachNamedModule(modules[index], functor);
+    });
+    for (uint32_t index : holders)
+        fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
+    for (uint32_t index : findFilesThatNameUnreachedVariables(m_program, m_build.parallelLoops()))
         fail({ .kind = InternalErrorKind::InvalidModule, .count = index });
     verifyModuleFailures();
 }
@@ -456,7 +546,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier)
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }

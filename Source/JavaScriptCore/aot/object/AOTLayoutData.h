@@ -10,6 +10,8 @@
 #include "AOTCellFormat.h"
 #include "AOTSlotRepresentation.h"
 #include "PropertySlot.h"
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -222,6 +224,8 @@ struct LayoutData {
     int32_t referencesOffset;
     uint32_t ordersOffset;
 
+    // The bit fields above, as one load of compiled code finds them.
+    uint32_t firstWord() const { return std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(*this)[0]; }
     LayoutKind kind() const { return static_cast<LayoutKind>(kindBits); }
     bool isClass() const { return kind() == LayoutKind::Instance; }
     EvaluationState evaluation() const { return static_cast<EvaluationState>(evaluationBits); }

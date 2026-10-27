@@ -424,10 +424,14 @@ private:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
             return fieldsOf(evaluate(activation, value.objectOperand()), value.key());
-        case Typed::Opcode::GetArrayElement:
-            return elementsOf(evaluate(activation, value.arrayOperand()), positionOf(activation, value.positionOperand()));
-        case Typed::Opcode::ElemGet:
-            return elementsOf(evaluate(activation, value.objectOperand()), positionOf(activation, value.propertyOperand()));
+        case Typed::Opcode::GetArrayElement: {
+            Constants arrays = evaluate(activation, value.arrayOperand());
+            return elementsOf(arrays, positionOf(activation, value.positionOperand()));
+        }
+        case Typed::Opcode::ElemGet: {
+            Constants arrays = evaluate(activation, value.objectOperand());
+            return elementsOf(arrays, positionOf(activation, value.propertyOperand()));
+        }
         case Typed::Opcode::GetStringLength:
             return lengthsOf(evaluate(activation, value.stringOperand()));
         case Typed::Opcode::GetCapture:
@@ -1500,8 +1504,10 @@ private:
             return { literalIn(activation, ValueID(static_cast<uint32_t>(&value - m_program.at(activation.function).values.span().data()))) };
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ObjectFreeze && call.arguments.size() == 1)
             return evaluate(activation, call.arguments[0]);
-        if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeJoin && call.arguments.size() <= 1)
-            return joined(evaluate(activation, call.receiver), evaluate(activation, call.arguments.empty() ? ValueID() : call.arguments[0]));
+        if (overload.mode == BuiltinCallMode::Call && callee == Builtins::ArrayPrototypeJoin && call.arguments.size() <= 1) {
+            Constants arrays = evaluate(activation, call.receiver);
+            return joined(arrays, evaluate(activation, call.arguments.empty() ? ValueID() : call.arguments[0]));
+        }
         if (overload.mode == BuiltinCallMode::Call && callee == Builtins::StringRaw && !call.arguments.empty())
             return rawTextsOf(activation, call.arguments);
         bool dependsOnOperandsAlone = table.at(callee).flags.contains(BuiltinFlag::IsDeterministic) || callee == Builtins::NumberPrototypeToString;

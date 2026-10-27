@@ -439,6 +439,7 @@ void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue 
         RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
         ProgramStatics& statics = *m_instance->state->statics;
         statics.ensureProgramStaticsInitialized();
+        statics.ensureVariableIsFilled(offset);
         RELEASE_ASSERT(tryWriteSlot(strings, representation, m_instance->statics() + offset, value));
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);

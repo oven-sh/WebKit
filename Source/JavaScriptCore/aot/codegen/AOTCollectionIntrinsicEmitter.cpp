@@ -51,9 +51,9 @@ public:
 
     LValue keysOf(LValue table)
     {
-        LValue keysShift = m_out.bitAnd(m_out.load8ZeroExt32(tableField(table, CompactTable::offsetOfKeysShift())), m_out.constInt32(CompactTable::keysShiftMask));
+        LValue keysShift = m_out.bitAnd(m_out.load8ZeroExt32(tableField(table, CompactTable::offsetOfKeysShift())), CompactTable::keysShiftMask);
         LValue sizeOfIndex = m_out.shl(m_out.constInt32(2), keysShift);
-        return m_out.add(table, m_out.add(m_out.zeroExtPtr(sizeOfIndex), m_out.constIntPtr(CompactTable::offsetOfIndex())));
+        return m_out.add(table, m_out.add(m_out.zeroExtPtr(sizeOfIndex), CompactTable::offsetOfIndex()));
     }
 
     TypedPointer elementAt(LValue base, LValue index, unsigned shift)
@@ -64,7 +64,7 @@ public:
     LValue entriesOf(LValue data)
     {
         LValue capacity = m_out.zeroExtPtr(m_out.load32(dataAt(data, JSMap::Helper::capacityIndex())));
-        return m_out.add(data, m_out.shl(m_out.add(capacity, m_out.constIntPtr(JSMap::Helper::hashTableStartIndex())), m_out.constInt32(3)));
+        return m_out.add(data, m_out.shl(m_out.add(capacity, JSMap::Helper::hashTableStartIndex()), 3));
     }
 
     LValue entryAt(Collection kind, LValue entries, LValue entryIndex)
@@ -113,7 +113,7 @@ public:
         LBasicBlock isNarrow = m_out.newBlock();
         LBasicBlock isWide = m_out.newBlock();
         Join<Boxed> join(m_out);
-        LValue values = m_out.add(keys, m_out.shl(m_out.zeroExtPtr(m_out.load32(tableField(table, CompactTable::offsetOfCapacity()))), m_out.constInt32(keysAreWide ? 3 : 2)));
+        LValue values = m_out.add(keys, m_out.shl(m_out.zeroExtPtr(m_out.load32(tableField(table, CompactTable::offsetOfCapacity()))), keysAreWide ? 3 : 2));
         LValue width = m_out.load8ZeroExt32(tableField(table, CompactTable::offsetOfValueWidth()));
         m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))), normalEdge(isNarrow), unlikelyEdge(isWide));
 
@@ -177,7 +177,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     if (keyWidth == CompactTable::Width::Wide) {
         // The bit for wide keys is the sign of the byte and the bit for the image the one below it.
         static_assert(CompactTable::keysAreWide == 0x80 && CompactTable::keysAreInImage == 0x40);
-        branchUnless(Condition(m_out.lessThan(m_out.load8SignExt32(reader.tableField(storage, CompactTable::offsetOfKeysShift())), m_out.constInt32(static_cast<int8_t>(CompactTable::keysAreWide | CompactTable::keysAreInImage)))), slowPath);
+        branchUnless(Condition(m_out.lessThan(m_out.load8SignExt32(reader.tableField(storage, CompactTable::offsetOfKeysShift())), static_cast<int8_t>(CompactTable::keysAreWide | CompactTable::keysAreInImage))), slowPath);
     } else {
         Word32 flags(m_out.load8ZeroExt32(reader.tableField(storage, CompactTable::offsetOfKeysShift())));
         branchUnless(hasNoBits(flags, CompactTable::keysAreWide | CompactTable::keysAreInImage), slowPath);
@@ -202,11 +202,13 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
 
     m_out.appendTo(isMarked);
     TableEntry entry = reader.compactEntryAt(kind, keyWidth, storage, column, entryIndex);
-    join.add(boolean(true), low32(Integer(entryIndex)), entry.key, entry.value);
+    Condition hasEntry = boolean(true);
+    join.add(hasEntry, low32(Integer(entryIndex)), entry.key, entry.value);
 
     m_out.appendTo(isOrdinary);
     LValue data = m_out.add(storage, m_out.constIntPtr(JSCellButterfly::offsetOfData()));
-    LValue usedInStorage = m_out.zeroExtPtr(m_out.add(m_out.load32(reader.dataAt(data, JSMap::Helper::aliveEntryCountIndex())), m_out.load32(reader.dataAt(data, JSMap::Helper::deletedEntryCountIndex()))));
+    LValue aliveInStorage = m_out.load32(reader.dataAt(data, JSMap::Helper::aliveEntryCountIndex()));
+    LValue usedInStorage = m_out.zeroExtPtr(m_out.add(aliveInStorage, m_out.load32(reader.dataAt(data, JSMap::Helper::deletedEntryCountIndex()))));
     LValue entries = reader.entriesOf(data);
     LValue deletedValue = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, vm().value(), VM::offsetOfOrderedHashTableDeletedValue()));
     LValue entryIndexInStorage = reader.firstAliveEntry(start.value(), usedInStorage, hasNoEntry, [&](LValue candidate) {
@@ -215,10 +217,14 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     LValue words = reader.entryAt(kind, entries, entryIndexInStorage);
     Boxed keyInStorage(m_out.load64(reader.dataAt(words, 0)));
     Boxed valueInStorage = kind == Collection::Map ? Boxed(m_out.load64(reader.dataAt(words, 1))) : undefined();
-    join.add(boolean(true), low32(Integer(entryIndexInStorage)), keyInStorage, valueInStorage);
+    Condition hasEntryInStorage = boolean(true);
+    join.add(hasEntryInStorage, low32(Integer(entryIndexInStorage)), keyInStorage, valueInStorage);
 
     m_out.appendTo(hasNoEntry);
-    join.add(boolean(false), word32(0), undefined(), undefined());
+    Condition hasNone = boolean(false);
+    Word32 noIndex = word32(0);
+    Boxed noValue = undefined();
+    join.add(hasNone, noIndex, noValue, noValue);
 
     m_out.appendTo(slowPath);
     addStepByOperation(join);
@@ -239,7 +245,8 @@ void CollectionIntrinsicEmitter::generateIsCollectionTableFull(const ValueContex
     m_out.branch(m_out.isNull(storage), unlikelyEdge(continuation), normalEdge(hasTable));
 
     m_out.appendTo(hasTable);
-    ValueFromBlock withTable = m_out.anchor(m_out.equal(m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed())), m_out.load32(reader.tableField(storage, CompactTable::offsetOfCapacity()))));
+    LValue used = m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed()));
+    ValueFromBlock withTable = m_out.anchor(m_out.equal(used, m_out.load32(reader.tableField(storage, CompactTable::offsetOfCapacity()))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -254,7 +261,8 @@ void CollectionIntrinsicEmitter::generateReserveCollectionCapacity(const ValueCo
 void CollectionIntrinsicEmitter::generateCollectionTable(const ValueContext& value)
 {
     LValue storage = TableReader(generator()).storageOf(in<CellPointer>(value->collectionOperand()));
-    define(value, Boxed(m_out.select(m_out.notNull(storage), storage, m_out.constInt64(JSValue::encode(jsNull())))));
+    LValue hasStorage = m_out.notNull(storage);
+    define(value, Boxed(m_out.select(hasStorage, storage, m_out.constInt64(JSValue::encode(jsNull())))));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -1,0 +1,152 @@
+# An operand that is expected to be an integer of which only the kind is known gets a test for int32 in place of the test for a number that it gets anyway, where it arrives as a value of any type: there an int32 is found as fast as a number. What a field, an array or a parameter of numbers holds arrives as a number: it is tested for a number, or not at all, unless the test makes a sum of which a bitwise operator takes the low half. How an operand arrives shows behind the tests of the access that delivers it, so the operator waits a round for an access that has just got its tests
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(TWICE): pass PlaceTypeTests SimplifyCasts RetypeValues PlaceTypeTests SimplifyCasts
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Holder" fields=[{key="held" declared={type=undefined|int} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+# sum += j + l[j], with l: number[] that holds integers: out of Double storage it is a number without a test
+function f0 name="elementOfArray" parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: int[0, 1000], v4: number):
+    LoopHint
+    v6 = Less v3, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = ElemGet v0, v7
+    v9 = Expect v8 expectedType=number
+    v10 = Add v7, v9
+    v11 = Add v4, v10
+    v12 = Integer integer=1
+    v13 = Add v7, v12
+    Jump -> next b1(v13, v11)
+  b3():
+    Return v4
+# CHECK-NOT: testedType=i32
+# CHECK: : int = GetArrayElement v0, {{*}} arrayStorage=Double
+# CHECK-NOT: testedType=i32
+# TWICE-NOT: testedType=i32
+# TWICE: : int = GetArrayElement v0, [[position]], {{*}} arrayStorage=Double
+# TWICE: : int|whole = Add [[position]], 
+# TWICE-NOT: testedType=i32
+}
+
+# sum += j + x, with x out of a read by name, of which flow says that it is an integer or undefined
+function f1 name="valueOfAnyType" parameters=[{type=anything}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = AssumeType v0 provenType=undefined|int
+    v4 = Expect v3 expectedType=number
+    Jump -> next b1(v2, v2)
+  b1(v5: int[0, 1000], v6: number):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = Add v9, v4
+    v11 = Add v6, v10
+    v12 = Integer integer=1
+    v13 = Add v9, v12
+    Jump -> next b1(v13, v11)
+  b3():
+    Return v6
+# CHECK: = TypeTest {{*}} testedType=i32
+# TWICE: = TypeTest {{*}} testedType=i32
+}
+
+# sum += j + x, with x?: number that holds integers: it arrives as an integer or as nothing
+function f2 name="integerOrNothing" parameters=[{type=undefined|int}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Expect v0 expectedType=number
+    Jump -> next b1(v2, v2)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Add v8, v3
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+# CHECK-NOT: testedType=i32
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: testedType=i32
+# TWICE-NOT: testedType=i32
+# TWICE: = TypeTest {{*}} testedType=number
+# TWICE-NOT: testedType=i32
+}
+
+# sum += j + x, with x: number that holds integers: it is a number without a test, and is added as one
+function f3 name="number" parameters=[{type=number}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Expect v0 expectedType=int
+    Jump -> next b1(v2, v2)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Add v8, v3
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+# CHECK-NOT: TypeTest
+# TWICE-NOT: TypeTest
+}
+
+# bits = (bits + x) | 0, with x?: number that holds integers: behind the test for int32 the sum is an integer
+function f4 name="sumForBitwiseOperator" parameters=[{type=undefined|int}, {type=int[0, 1000]}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    v3 = Expect v0 expectedType=number
+    Jump -> next b1(v2, v2)
+  b1(v4: int[0, 1000], v5: i32):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Add v5, v3
+    v10 = BitOr v9, v2
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+# CHECK: = TypeTest {{*}} testedType=i32
+# TWICE: = TypeTest {{*}} testedType=i32
+}
+
+# sum += j + o.held, with o expected to be a Holder: the read by name delivers any value, and the read of the field that takes its place an integer or nothing
+function f5 name="fieldOfExpectedLayout" parameters=[{type=L0 flags=[IsExpected]}, {type=int[0, 1000]}] results=[{type=number}] {
+  b0(v0: anything ~ L0, v1: int[0, 1000]):
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: int[0, 1000], v4: number):
+    LoopHint
+    v6 = Less v3, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = PropGet v0 key="held"
+    v9 = AssumeType v8 provenType=undefined|int
+    v10 = Expect v9 expectedType=number
+    v11 = Add v7, v10
+    v12 = Add v4, v11
+    v13 = Integer integer=1
+    v14 = Add v7, v13
+    Jump -> next b1(v14, v12)
+  b3():
+    Return v4
+# CHECK-NOT: testedType=i32
+# CHECK: = GetSlot {{*}} key="held"
+# CHECK-NOT: testedType=i32
+# TWICE-NOT: testedType=i32
+# TWICE: = GetSlot {{*}} key="held"
+# TWICE: = TypeTest {{*}} testedType=number
+# TWICE-NOT: testedType=i32
+}

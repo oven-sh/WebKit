@@ -156,6 +156,8 @@ ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, co
         || !receiver.builtins.isEmpty()
         || !receiver.isJavaScriptValue();
 
+    result.isMadeByHostAlone = result.hasOtherParts && !receiver.layouts && !receiver.anyObject && !(receiver.primitives & ~Primitive::UndefinedOrNull) && receiver.isJavaScriptValue();
+
     if (!receiver.layouts && !receiver.anyObject)
         return result;
 

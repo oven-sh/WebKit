@@ -1,0 +1,49 @@
+# DefineOwnProperty hands back its first operand and throws where that is no object, so its type is what the type of the operand holds of objects.
+# The copy of the head returns its argument. Where that is a text the definition behind it has no result, and its block ends there.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsInlined = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="a-text-is-handed-back" parameters=[{type=string}, {type=anything}] results=[{type=undefined}] {
+    v2 = String string="text"
+    v3 = CallDirect v2 function=f3
+    v4 = DefineOwnProperty v3, v0, v1 descriptorFlags=[HasValue]
+    v5 = Undefined
+    Return v5
+# CHECK-NOT: CallDirect
+# CHECK: : never = DefineOwnProperty
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: Return
+}
+function f1 name="a-text-is-handed-back-in-a-try" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
+    v2 = String string="text"
+    v3 = CallDirect v2 function=f3
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = DefineOwnProperty v3, v0, v1 descriptorFlags=[HasValue]
+    v5 = Boolean boolean=true
+    Return v5
+  b2() role=CatchHandler:
+    v6 = Boolean
+    Return v6
+# CHECK-NOT: CallDirect
+# CHECK: handler=
+# CHECK: : never = DefineOwnProperty
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: boolean=true
+# CHECK: role=CatchHandler
+# CHECK: Return
+}
+function f2 name="a-list-or-a-text-is-handed-back" parameters=[{type=string}, {type=anything}, {type=string|Array}] results=[{type=object}] {
+    v3 = CallDirect v2 function=f3
+    v4 = DefineOwnProperty v3, v0, v1 descriptorFlags=[HasValue]
+    Return v4
+# CHECK-NOT: CallDirect
+# CHECK: [[defined]]: Array = DefineOwnProperty
+# CHECK-NEXT: Return [[defined]]
+}
+function f3 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -250,7 +250,7 @@ static LocationProof proofOfLookup(const BuiltinTable& table, const MemberAnswer
 static BuiltinMemberAnswer answerFor(const BuiltinLookupContext& context, BuiltinID start, PropertyKeyID key, const BuiltinMemberLookup& found, BuiltinMemberName name)
 {
     const BuiltinTable& table = context.program.builtins();
-    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     if (name.isPrivateAlias) {
         if (!answer.isFound() || !table.at(found.member).flags.contains(BuiltinFlag::HasPrivateAlias))
             return { };
@@ -280,9 +280,9 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     BuiltinMemberLookup found = table.findForInstance(builtinClass, name.name);
     bool isOwnProperty = found.member && table.at(found.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isOwnProperty && !name.isPrivateAlias)
-        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant };
+        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant, found.member };
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
-        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
 }
 
@@ -385,27 +385,23 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     return constant;
 }
 
-// The first read of a member may add it to its holder, which decides where it stands among the holder's keys.
+// The holder adds the member behind the properties that it has when the member is first read. From the first copy of the holder on, its keys stand in that order.
 bool firstReadChangesListedKeys(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
 {
-    BuiltinID holder = table.at(member).holder;
-    if (!holder || holder == Builtins::GlobalThis || !flow.listsKeysOf(table.canonicalID(holder)))
-        return false;
-    // What a module exports is filled when the module runs.
-    BuiltinID root = holder;
-    while (BuiltinID above = table.at(root).holder)
-        root = above;
-    return root == Builtins::GlobalThis;
+    return table.at(member).isAddedAtFirstRead && flow.listsKeysOf(table.canonicalID(table.at(member).holder));
 }
 
-std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, const Value& constant)
+bool onlyAddsMemberToHolder(const BuiltinTable& table, BuiltinID member)
 {
-    if (constant.opcode != Opcode::Builtin)
-        return std::nullopt;
-    if (!isMadeWithCodeOfLibrary(table, constant.builtin()) && !firstReadChangesListedKeys(table, flow, constant.builtin()))
+    return !isMadeWithCodeOfLibrary(table, member);
+}
+
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
+{
+    if (!isMadeWithCodeOfLibrary(table, member) && !firstReadChangesListedKeys(table, flow, member))
         return std::nullopt;
     Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
-    initialization.setBuiltin(constant.builtin());
+    initialization.setBuiltin(member);
     return initialization;
 }
 

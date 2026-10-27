@@ -442,6 +442,9 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
 {
     ValueID operand = value.operand(operandIndex);
     const Type& source = context.typeOf(operand);
+    // The definition throws for what is no object.
+    if (value.opcode == Opcode::DefineOwnProperty)
+        return source.withOnlyObjects();
     if (value.opcode != Opcode::Convert)
         return source;
     return typeOfConvert(context, source, context.types.at(context.function.at(operand).type), value.declared());
@@ -495,6 +498,8 @@ Type ResultRules::declared(const Value& value, LayoutID layout, uint32_t field)
     const Vector<Field>& fields = context.program.at(layout).fields;
     if (field >= fields.size())
         return Type::anything();
+    if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+        return context.typeOf(fields[field].declared).withPrimitives(Primitive::Unspecified);
     if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
         return context.typeOf(fields[field].declared);
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), fields[field].key));
@@ -552,8 +557,10 @@ Type ResultRules::declared(const Value& value, ModuleID module)
     return Type::forLayout(layout, context.types);
 }
 
-Type ResultRules::declared(const Value&, TypeID type)
+Type ResultRules::declared(const Value& value, TypeID type)
 {
+    if (value.opcode == Opcode::Unspecified)
+        return context.types.at(type).withPrimitives(Primitive::Unspecified);
     return context.types.at(type);
 }
 
@@ -636,7 +643,12 @@ Type ResultRules::unknown(const Value& value)
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
-    return context.typeOf(value.operand(operandIndex)).castTo(context.types.at(castType), context.types);
+    const Type& source = context.typeOf(value.operand(operandIndex));
+    Type result = source.castTo(context.types.at(castType), context.types);
+    // Only a cast that names a fact takes away that the word may be anything.
+    if (source.mayBeUnspecified() && !(value.opcode == Opcode::AssumeType && value.factOperand()))
+        return result.withPrimitives(Primitive::Unspecified);
+    return result;
 }
 
 // The one place where what is expected of a value becomes what is proven of it: a check tests. An expectation that nothing tests proves nothing.
@@ -817,12 +829,12 @@ struct ResultRulesWithoutType {
 
     TypeID sameAs(const Value& value, uint32_t operandIndex)
     {
-        if (value.opcode == Opcode::Convert)
+        if (value.opcode == Opcode::Convert || value.opcode == Opcode::DefineOwnProperty)
             return { };
         return idInArena(context.typeIDOf(value.operand(operandIndex)));
     }
 
-    TypeID declared(const Value&, TypeID type) { return idInArena(type); }
+    TypeID declared(const Value& value, TypeID type) { return value.opcode == Opcode::Unspecified ? TypeID() : idInArena(type); }
 
     TypeID declared(const Value& value, VariableID variable)
     {
@@ -875,6 +887,8 @@ struct ResultRulesWithoutType {
         const Vector<Field>& fields = context.program.at(layout).fields;
         if (field >= fields.size())
             return TypeTable::anything;
+        if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+            return { };
         if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
             return idInArena(context.typeIDOf(fields[field].declared));
         return { };
@@ -900,8 +914,11 @@ struct ResultRulesWithoutType {
 
     TypeID cast(const Value& value, uint32_t operandIndex, TypeID castType)
     {
+        TypeID source = context.typeIDOf(value.operand(operandIndex));
+        if (context.types.at(source).mayBeUnspecified()) [[unlikely]]
+            return { };
         return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
-            hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), castType.index());
+            hasher.add(source.index(), castType.index());
         });
     }
 

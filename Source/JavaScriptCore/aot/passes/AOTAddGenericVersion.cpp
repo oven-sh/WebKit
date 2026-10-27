@@ -174,7 +174,7 @@ struct GenericVersionBuilder {
             const Value& call = function.at(values[index]);
             if (call.opcode != Opcode::Call || !call.calleeKey() || typeOf(call.calleeOperand()).functions.size() < 2)
                 continue;
-            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last());
+            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last().valueInFrontOfFacts());
             if (read.placement == ValuePlacement::InBlock && read.block == block && read.index < indexBehind)
                 return true;
         }
@@ -342,7 +342,7 @@ struct GenericVersionBuilder {
         for (const CheckSite& site : sites) {
             const Value& check = function.at(site.check);
             auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand())) && !isReliedOn(site.check);
+                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts()) && !isReliedOn(site.check);
             };
             bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
             if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
@@ -701,7 +701,7 @@ struct GenericVersionBuilder {
             const BlockValues& values = function.at(point.block).values;
             auto isCastAt = [&](uint32_t index) {
                 Opcode opcode = function.at(values[index]).opcode;
-                return opcode == Opcode::Check || opcode == Opcode::Upcast || opcode == Opcode::AssumeType;
+                return opcode == Opcode::Check || opcode == Opcode::Upcast || opcode == Opcode::AssumeType || makesFact(opcode);
             };
             while (point.index && point.index < values.size() && isCastAt(point.index))
                 ++point.index;
@@ -998,6 +998,17 @@ static ALWAYS_INLINE std::optional<PropertyKeyID> keyOfTypedReadByName(const Pro
     return read.opcode == Opcode::PropGet ? read.key() : program.at(read.layout()).fields[read.field()].key;
 }
 
+// What is told apart by the value of a field leaves out the layouts whose field cannot hold that value: it reads the types of their fields, and of no other.
+static ALWAYS_INLINE bool leavesOutLayoutsByField(const Program& program, const Function& function, const Value& value)
+{
+    return value.opcode == Opcode::NarrowByField && program.at(value.type).layouts != program.typeOf(function, value.valueOperand()).layouts;
+}
+
+static ALWAYS_INLINE bool isTypedFromFieldsUnderName(const Program& program, const Function& function, const Value& value)
+{
+    return keyOfTypedReadByName(program, value) || leavesOutLayoutsByField(program, function, value);
+}
+
 static bool hasMarkedField(std::span<const Position> marked)
 {
     auto firstField = std::ranges::lower_bound(marked, Position { Position::Kind::Field, 0, 0 });
@@ -1006,12 +1017,23 @@ static bool hasMarkedField(std::span<const Position> marked)
 
 static bool readsMarkedFieldByName(const Program& program, const Function& function, const Value& read, std::span<const Position> marked)
 {
+    if (!hasMarkedField(marked))
+        return false;
+    auto hasMarkedFieldUnder = [&](LayoutID member, PropertyKeyID key) {
+        std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);
+        return field && std::ranges::binary_search(marked, positionOfField(declarationOf(program, *field)));
+    };
+    if (leavesOutLayoutsByField(program, function, read)) {
+        std::span<const LayoutID> kept = membersOf(program, program.at(read.type));
+        return std::ranges::any_of(membersOf(program, program.typeOf(function, read.valueOperand())), [&](LayoutID member) {
+            return !std::ranges::binary_search(kept, member) && hasMarkedFieldUnder(member, read.key());
+        });
+    }
     std::optional<PropertyKeyID> key = keyOfTypedReadByName(program, read);
-    if (!key || !hasMarkedField(marked))
+    if (!key)
         return false;
     return std::ranges::any_of(membersOf(program, program.typeOf(function, read.objectOperand())), [&](LayoutID member) {
-        std::optional<FieldReference> field = findField(program, member, *key, BaseChain::Proven);
-        return field && std::ranges::binary_search(marked, positionOfField(declarationOf(program, *field)));
+        return hasMarkedFieldUnder(member, *key);
     });
 }
 
@@ -1954,7 +1976,7 @@ static ReadsOfBody listReads(const Program& program, const Function& function)
         for (ValueID id : block.values) {
             if (std::optional<Position> position = readPosition(program, function, function.at(id)))
                 reads.positions.append(*position);
-            else if (keyOfTypedReadByName(program, function.at(id)))
+            else if (isTypedFromFieldsUnderName(program, function, function.at(id)))
                 reads.typedReadsByName.append(id);
         }
     }
@@ -2026,7 +2048,11 @@ static Vector<GuardedRead> collectGuardedReads(const Program& program, FunctionI
         for (ValueID value : function.at(block).values) {
             if (std::optional<Position> position = readPosition(program, function, function.at(value)))
                 addReadIfMarked(value, *position);
-            else if (keyOfTypedReadByName(program, function.at(value)) && readsMarkedFieldByName(program, function, function.at(value), marked))
+            else if (leavesOutLayoutsByField(program, function, function.at(value))) {
+                // It is typed anew and lets those layouts through.
+                if (readsMarkedFieldByName(program, function, function.at(value), marked))
+                    valuesReadingMarkedPositions.append(value);
+            } else if (keyOfTypedReadByName(program, function.at(value)) && readsMarkedFieldByName(program, function, function.at(value), marked))
                 addRead(value, DeclaredType(ExpectedType(function.at(value).type)));
         }
     }

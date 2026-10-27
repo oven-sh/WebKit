@@ -149,6 +149,8 @@ static bool spellOneText(std::span<const StringView> first, std::span<const Stri
 // The further modules of a file follow the file.
 std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
 {
+    if (!data(file).hasFace())
+        return std::nullopt;
     for (unsigned index = file.index() + 1; index < size(); ++index) {
         ModuleID module(index);
         if (fileBehindFace(module) == file)

@@ -13,6 +13,7 @@
 #include "AOTExceptionEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStaticsEmitter.h"
+#include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -59,7 +60,7 @@ B3::FrequentedBlock ControlEmitter::countedEdgeTo(const TerminatorContext& termi
     LBasicBlock countingBlock = newBlock();
     m_out.appendTo(countingBlock);
     TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-    m_out.store64(m_out.add(m_out.load64(counter), m_out.constInt64(1)), counter);
+    m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
     m_out.jump(edge.block());
     m_out.appendTo(branchingBlock);
     edge.block() = countingBlock;
@@ -108,6 +109,27 @@ void ControlEmitter::generateSwitch(const TerminatorContext& terminator)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A table that has an entry for every integer of the subject's type is never left, and the back end sees that only where each of them is listed. Fewer integers than a table needs are told apart by comparisons, and there the rest costs none.
+static void listIntegersLeftToRest(const Type& subject, LType type, unsigned minCasesForJumpTable, Vector<SwitchTarget, 8>& targets, B3::FrequentedBlock otherwise)
+{
+    if (!subject.isInteger() || (type == B3::Int32 && !subject.integers.isSubsetOf(Range::int32())))
+        return;
+    Range integers = subject.integers;
+    uint64_t numberOfIntegers = static_cast<uint64_t>(integers.maximum - integers.minimum) + 1;
+    if (numberOfIntegers < minCasesForJumpTable || numberOfIntegers > 2 * static_cast<uint64_t>(targets.size()))
+        return;
+    BitVector isListed(numberOfIntegers);
+    for (const SwitchTarget& target : targets) {
+        if (!integers.contains(target.caseValue))
+            return;
+        isListed.quickSet(target.caseValue - integers.minimum);
+    }
+    for (uint64_t index = 0; index < numberOfIntegers; ++index) {
+        if (!isListed.quickGet(index))
+            targets.append(SwitchTarget { integers.minimum + static_cast<int64_t>(index), otherwise });
+    }
+}
+
 void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue subject, LType type, B3::FrequentedBlock otherwise)
 {
     RELEASE_ASSERT(subject->type() == type && (type == B3::Int32 || type == B3::Int64));
@@ -129,6 +151,8 @@ void ControlEmitter::switchOnInteger(const TerminatorContext& terminator, LValue
         m_out.jump(otherwise.block());
         return;
     }
+    if (generatedBlocks.isEmpty())
+        listIntegersLeftToRest(typeOf(terminator->subjectOperand()), type, m_out.minCasesForJumpTable(), targets, otherwise);
     m_out.switchOn(subject, targets.span(), otherwise);
 }
 
@@ -157,7 +181,7 @@ void ControlEmitter::testBitsOfWindow(const TerminatorContext& terminator, const
             m_out.jump(place.block());
             return;
         }
-        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), m_out.constInt64(1)));
+        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), 1));
         if (isLast) {
             branch(isListed, { place, otherwise });
             return;

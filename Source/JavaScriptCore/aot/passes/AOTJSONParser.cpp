@@ -85,6 +85,7 @@ struct JSONParserBuilder final : Emission {
     struct ObjectParse {
         const ResultNode& node;
         Vector<MemberParse, 8> members;
+        BlockID notInOrder;
         BlockID anyOrder;
         BlockID closing;
         ParseExits exits;
@@ -357,6 +358,7 @@ struct JSONParserBuilder final : Emission {
         emitRequireByte(cursor, '[', exits.rejected);
         ValueID afterBracket = appendSkipPunctuator(cursor);
         ValueID array = builder().append(makeArrayOf(program(), node));
+        afterBracket = appendElementsParsedBefore(node.children[0], array, afterBracket);
         BlockID header = builder().addBlock();
         BlockID done = builder().addBlock();
         ValueID cursorAtHeader = builder().addParameter(header, cursorType());
@@ -384,6 +386,26 @@ struct JSONParserBuilder final : Emission {
         return { array, builder().append(Opcode::JSONSkipByte, { cursorAtDone }) };
     }
 
+    ValueID appendElementsParsedBefore(ResultNodeRef element, ValueID array, ValueID firstElement)
+    {
+        ResultNode node = describeNode(program(), element);
+        if (node.shape == ResultShape::Union) {
+            Vector<ResultNodeRef, 4> objects;
+            for (ResultNodeRef arm : node.children) {
+                if (valueClassesOf(program(), arm).contains(JSONValueClass::Object))
+                    objects.append(arm);
+            }
+            if (objects.size() != 1)
+                return firstElement;
+            element = objects[0];
+            node = describeNode(program(), element);
+        }
+        if (node.shape != ResultShape::Object || !node.layout || decideNodeCode(decisionInputs(), element).code != NodeCode::Compiled)
+            return firstElement;
+        ValueID order = builder().append(make<&Value::setLayout>(Opcode::JSONObjectBegin, { }, node.layout));
+        return appendResultAt(builder().append(make<&Value::setLayout>(Opcode::JSONParseExtraMembers, { firstElement, array, order }, node.layout)), 2);
+    }
+
     // The slot of a field of a function type holds fewer functions than the type admits.
     TypeID typeStoredInSlotOf(const Field& field)
     {
@@ -404,16 +426,9 @@ struct JSONParserBuilder final : Emission {
             return emitGenericValueFor(node, cursor, exits);
 
         ValueID firstKey = appendSkipPunctuator(cursor);
-        ObjectParse parse { node, resolveMembers(node), builder().addBlock(), builder().addBlock(), exits };
-        for (BlockID block : { parse.anyOrder, parse.closing }) {
-            for (const MemberParse& member : parse.members) {
-                builder().addParameter(block, member.valueType);
-                builder().addParameter(block, TypeTable::boolean);
-            }
-            builder().addParameter(block, cursorType());
-            builder().addParameter(block, keyOrderType());
-            builder().addParameter(block, TypeTable::anything);
-        }
+        ObjectParse parse { node, resolveMembers(node), { }, builder().addBlock(), builder().addBlock(), exits };
+        for (BlockID block : { parse.anyOrder, parse.closing })
+            addParametersForState(parse, block);
 
         ValueID undefined = builder().appendUndefined();
         ValueID notSeen = builder().appendBoolean(false);
@@ -423,9 +438,38 @@ struct JSONParserBuilder final : Emission {
         state.slots.appendList({ firstKey, builder().append(make<&Value::setLayout>(Opcode::JSONObjectBegin, { }, node.layout)), undefined });
 
         emitOrderedMembers(parse, state);
-        emitJumpWithState(parse.anyOrder, state);
+        emitJumpWithState(blockForMembersNotInOrder(parse), state);
         emitUnorderedMembers(parse);
-        return emitObjectClosing(parse);
+        ParsedValue parsed = emitObjectClosing(parse);
+        if (!parse.notInOrder)
+            return parsed;
+
+        ValueMerge merge = createMerge(valueTypeOf(inputs(), node));
+        jumpTo(merge, parsed);
+        jumpTo(merge, emitObjectAsParsedBefore(parse, cursor));
+        return continueAt(merge);
+    }
+
+    void addParametersForState(const ObjectParse& parse, BlockID block)
+    {
+        for (const MemberParse& member : parse.members) {
+            builder().addParameter(block, member.valueType);
+            builder().addParameter(block, TypeTable::boolean);
+        }
+        builder().addParameter(block, cursorType());
+        builder().addParameter(block, keyOrderType());
+        builder().addParameter(block, TypeTable::anything);
+    }
+
+    BlockID blockForMembersNotInOrder(ObjectParse& parse)
+    {
+        if (parse.exits.undeclaredMember)
+            return parse.anyOrder;
+        if (!parse.notInOrder) {
+            parse.notInOrder = builder().addBlock(BlockFrequency::Unlikely);
+            addParametersForState(parse, parse.notInOrder);
+        }
+        return parse.notInOrder;
     }
 
     Vector<MemberParse, 8> resolveMembers(const ResultNode& node)
@@ -463,7 +507,7 @@ struct JSONParserBuilder final : Emission {
         builder().emitJump(block, function().at(block).parameters.isEmpty() ? Arguments() : Arguments(state.slots));
     }
 
-    void emitOrderedMembers(const ObjectParse& parse, ObjectState& state)
+    void emitOrderedMembers(ObjectParse& parse, ObjectState& state)
     {
         for (size_t index = 0; index < parse.members.size(); ++index) {
             const MemberParse& member = parse.members[index];
@@ -483,7 +527,7 @@ struct JSONParserBuilder final : Emission {
 
             builder().moveToEndOf(miss);
             if (!mayBeMissing) {
-                emitJumpWithState(parse.anyOrder, stateAtMiss);
+                emitJumpWithState(blockForMembersNotInOrder(parse), stateAtMiss);
                 builder().moveToEndOf(afterMember);
                 continue;
             }
@@ -503,6 +547,24 @@ struct JSONParserBuilder final : Emission {
         }
     }
 
+    ParsedValue emitObjectAsParsedBefore(const ObjectParse& parse, ValueID brace)
+    {
+        builder().moveToEndOf(parse.notInOrder);
+        BlockID wasNotParsedBefore = builder().addBlock();
+        ObjectState whole;
+        whole.slots.appendList({ brace, builder().append(make<&Value::setLayout>(Opcode::JSONObjectBegin, { }, parse.node.layout)), appendNull() });
+        emitParseExtraMembers(parse, whole, wasNotParsedBefore);
+        ValueID object = emitTypeTest(whole.extra(), inputs().types.intern(testableTypeOf(program(), parse.node)), parse.exits.unknown);
+        ValueID next = builder().append(Opcode::JSONSkipByte, { whole.cursor() });
+        BlockID parsed = builder().currentBlock();
+
+        builder().moveToEndOf(wasNotParsedBefore);
+        emitJumpWithState(parse.anyOrder, ObjectState { function().at(parse.notInOrder).parameters.span() });
+
+        builder().moveToEndOf(parsed);
+        return { object, next };
+    }
+
     void emitUnorderedMembers(const ObjectParse& parse)
     {
         const ParseExits& exits = parse.exits;
@@ -516,8 +578,14 @@ struct JSONParserBuilder final : Emission {
 
         builder().moveToEndOf(more);
         emitRequireByte(state.cursor(), '"', exits.rejected);
-        IRBuilder::BranchBlocks keyHasEscapes = builder().emitBranch(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor() }), BlockFrequency::Rare, BlockFrequency::Normal);
-        builder().moveToEndOf(keyHasEscapes.notTaken);
+        BlockID keyHasEscapes;
+        auto emitBranchOnEscapesInKey = [&] {
+            IRBuilder::BranchBlocks branch = builder().emitBranch(builder().append(Opcode::JSONKeyHasEscapes, { state.cursor() }), BlockFrequency::Rare, BlockFrequency::Normal);
+            keyHasEscapes = branch.taken;
+            builder().moveToEndOf(branch.notTaken);
+        };
+        if (exits.undeclaredMember)
+            emitBranchOnEscapesInKey();
 
         auto emitMatchedMember = [&](size_t index, ValueID valueStart) {
             ObjectState stateOfMember = state;
@@ -533,7 +601,11 @@ struct JSONParserBuilder final : Emission {
             builder().moveToEndOf(nextTest);
         }
 
-        if (parse.members.containsIf([](const MemberParse& member) { return !member.quotedKey; })) {
+        bool hasNamesThatNeedEscapes = parse.members.containsIf([](const MemberParse& member) { return !member.quotedKey; });
+        if (hasNamesThatNeedEscapes && !keyHasEscapes)
+            emitBranchOnEscapesInKey();
+
+        if (hasNamesThatNeedEscapes) {
             ParsedValue key = emitParse(Opcode::JSONParseKey, state.cursor(), exits.unknown);
             ValueID valueStart = emitExpectColon(key.next, exits.rejected);
             for (size_t index = 0; index < parse.members.size(); ++index) {
@@ -548,16 +620,19 @@ struct JSONParserBuilder final : Emission {
 
         if (exits.undeclaredMember) {
             builder().emitJump(exits.undeclaredMember);
-            builder().moveToEndOf(keyHasEscapes.taken);
+            builder().moveToEndOf(keyHasEscapes);
             builder().emitJump(exits.unknown);
             return;
         }
-        BlockID undeclared = builder().addBlock();
-        builder().emitJump(undeclared);
-        builder().moveToEndOf(keyHasEscapes.taken);
-        builder().emitJump(undeclared);
-        builder().moveToEndOf(undeclared);
-        emitExtraMembers(parse, state);
+        if (keyHasEscapes) {
+            BlockID undeclared = builder().addBlock();
+            builder().emitJump(undeclared);
+            builder().moveToEndOf(keyHasEscapes);
+            builder().emitJump(undeclared);
+            builder().moveToEndOf(undeclared);
+        }
+        emitParseExtraMembers(parse, state, exits.unknown);
+        emitJumpWithState(parse.anyOrder, state);
     }
 
     ParsedValue emitObjectClosing(const ObjectParse& parse)
@@ -707,17 +782,16 @@ struct JSONParserBuilder final : Emission {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void emitExtraMembers(const ObjectParse& parse, ObjectState& state)
+    void emitParseExtraMembers(const ObjectParse& parse, ObjectState& state, BlockID whenMemberIsDeclared)
     {
         ValueID results = builder().append(make<&Value::setLayout>(Opcode::JSONParseExtraMembers, { state.cursor(), state.extra(), state.order() }, parse.node.layout));
         BlockID parsed = builder().addBlock();
-        emitBranchOnOutcome(appendResultAt(results, 0), parsed, parse.exits.unknown, parse.exits.unknown);
+        emitBranchOnOutcome(appendResultAt(results, 0), parsed, whenMemberIsDeclared, parse.exits.unknown);
 
         builder().moveToEndOf(parsed);
         state.extra() = appendResultAt(results, 1);
-        ValueID next = appendResultAt(results, 2);
+        state.cursor() = appendResultAt(results, 2);
         state.order() = appendResultAt(results, 3);
-        emitMemberSeparator(parse, next, state, parse.anyOrder);
     }
 
     Vector<ClassGroup, 6> groupArmsByClass(std::span<const ResultNodeRef> arms)

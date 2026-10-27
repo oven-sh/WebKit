@@ -104,6 +104,8 @@ struct FlowLocationOrder {
     StoreCount stores { StoreCount::Unknown };
     bool undefinedAtStartIsNeverRead { false };
     bool isStoredBeforeCallersOfReaders { false };
+    bool isStoredBeforeCapturersRun { false };
+    bool holdsClosureOverOwnEnvironment { false };
 };
 
 struct FlowScopeLocationNumbering {

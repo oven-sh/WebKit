@@ -28,7 +28,7 @@ flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType }
 
 record LocationFlow engine {
     writers: WriterState stores: StoreCount storeNaming: StoreNaming initialization: InitializationState reads: ReadState deferral: ClosureDeferral
-    deferredFunction: Function(Closure)? isUnchangedDuringActivation: Bool cause: UnprovenCause witness: Witness
+    deferredFunction: Function(Closure)? isUnchangedDuringActivation: Bool isStoredBeforeCapturersRun: Bool holdsClosureOverOwnEnvironment: Bool cause: UnprovenCause witness: Witness
 }
 record FieldFlow engine { location: LocationFlow occupancy: Occupancy prototypeName: PrototypeNameState stability: FieldStability }
 record FieldOrder engine { fields: List<UInt32> }

@@ -65,7 +65,8 @@ void BufferBuiltinEmitter::generateAtomics(const InlineCall& call)
             return;
         }
         Number value = numberOperand(stored);
-        finish(call, select(equal(value, value), add(trunc(value), number(0)), number(0)));
+        Condition isNotNaN = equal(value, value);
+        finish(call, select(isNotNaN, add(trunc(value), 0), 0));
         return;
     }
     LValue bits = access;

@@ -2,8 +2,7 @@
 # a cast that names a fact takes `unspecified` away
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: UnspecifiedValueInspected 4
-# DIAGNOSTIC: InvalidGuard 1
+# DIAGNOSTIC: UnspecifiedValueInspected 5
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="text" declared={type=string} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
@@ -47,6 +46,7 @@ function f5 name="badReturn" parameters=[{type=boolean}] results=[{type=anything
     v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
     Return v1
 }
+# What a cast gives that names no fact may be anything too.
 function f6 name="badCastNamesNoFact" parameters=[{type=boolean}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
     v2 = AssumeType v1 provenType=string

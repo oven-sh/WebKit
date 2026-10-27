@@ -262,6 +262,7 @@ ValueFlowRuleContext::InstanceOfRun::~InstanceOfRun()
 ClimbingSet ValueFlowRuleContext::setOfKey() const { return ClimbingSet(keyOfStatement().set); }
 uint32_t ValueFlowRuleContext::numberOfMembersOfKey() const { return sets().size(keyOfStatement().set); }
 ValueFlowName ValueFlowRuleContext::nameOfKey() const { return keyOfStatement().name(); }
+bool ValueFlowRuleContext::isLookupForCall() const { return !isStatementOfBody() && keyOfStatement().isLookupForCall(); }
 ValueFlowCallKind ValueFlowRuleContext::callKindOfKey() const { return keyOfStatement().callKind(); }
 ValueFlowObjectID ValueFlowRuleContext::markerOfKey() const { return keyOfStatement().markerOfCallGroup(); }
 
@@ -635,7 +636,7 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
     return function && universe().builtinTables().isCodeThatRecordsDescribe(function);
 }
 
-ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name)
+ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name, LookupUse use)
 {
     ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));
     if (sets().contains(receivers.m_set, ValueFlowUniverse::unknownObject()) && runsCodeThatRecordsDescribe()) {
@@ -647,7 +648,7 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
     }
     if (receivers.m_set == ValueSets::nothing)
         return holdingNothing();
-    return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
+    return nodeFor(use == LookupUse::OnlyCalledOnReceiver ? ValueFlowNodeKey::lookupForCall(receivers.m_set, name) : ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, receivers.m_set, name));
 }
 
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)

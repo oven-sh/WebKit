@@ -230,6 +230,10 @@ static void checkSortedTables(const TableCheck& check)
     checkAscending(check.tables.staticsRoots(), &StaticsRange::offset);
     checkAscending(check.tables.staticsNarrowRoots(), &StaticsRange::offset);
     checkAscending(check.tables.staticsRuns(), &StaticsRun::firstWord);
+    check.expect(std::ranges::is_sorted(check.tables.staticsOfFiles(), { }, &StaticsOfFiles::firstWord) && std::ranges::is_sorted(check.tables.staticsOfFiles(), { }, &StaticsOfFiles::firstImportedGroup), ProgramTableRule::TableNotSorted);
+    check.expect(std::ranges::all_of(check.tables.staticsOfImportedFiles(), [&](uint32_t file) {
+        return file + 1 < check.tables.staticsOfFiles().size();
+    }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
     checkAscending(check.tables.compiledRuntimeFunctions(), &CompiledRuntimeFunctionData::id);
 
@@ -538,9 +542,10 @@ static void checkObfuscation(const TableCheck& check)
     }) || std::ranges::any_of(check.tables.functionNameRuns(), [&](const FunctionNameRunData& run) {
         return run.name != emptyString;
     });
-    bool hasDisplayPath = std::ranges::any_of(modules.first(std::min<size_t>(modules.size(), check.program.modules.size())), [&](const ModuleData& module) {
-        return module.charactersInFrontOfDisplayPath != ModuleData::hasNoDisplayPath;
-    });
+    // The names of the files of the host's library are no names of the program.
+    bool hasDisplayPath = false;
+    for (size_t index = 0; index < std::min<size_t>(modules.size(), check.program.modules.size()); ++index)
+        hasDisplayPath |= modules[index].charactersInFrontOfDisplayPath != ModuleData::hasNoDisplayPath && !check.program.modules[index].runtimeModule;
     bool hasTypeText = std::ranges::any_of(check.tables.typeSites(), [](const TypeSiteData& site) {
         return site.text != TypeSiteData::noText;
     });

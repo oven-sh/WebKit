@@ -65,6 +65,11 @@ bool narrowsHolderToNothing(const TypingContext& context, const Type& holder, Pr
     return result.isNever();
 }
 
+bool narrowsHolderToNothing(const TypingContext& context, const Value& value)
+{
+    return value.opcode == Opcode::NarrowByField && narrowsHolderToNothing(context, context.typeOf(value.valueOperand()), value.key(), context.typeOf(value.readOperand()));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

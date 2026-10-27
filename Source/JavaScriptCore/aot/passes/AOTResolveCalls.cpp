@@ -116,7 +116,7 @@ static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& co
 {
     const Function& function = context.function;
     FunctionList closures;
-    ValueID joined = sameObjectThroughCasts(function, callee);
+    ValueID joined = sameObjectThroughCasts(function, callee).valueInFrontOfFacts();
     if (function.at(joined).opcode != Opcode::Parameter)
         return closures;
     ValueLocation location = context.analyses.useLists().locationOf(joined);
@@ -175,7 +175,7 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
 
 static ValueID findClosureCreation(const Function& function, ValueID closure, FunctionID closureFunction)
 {
-    ValueID definition = sameObjectThroughCasts(function, closure);
+    ValueID definition = sameObjectThroughCasts(function, closure).valueInFrontOfFacts();
     const Value& value = function.at(definition);
     return value.opcode == Opcode::NewClosure && value.function() == closureFunction ? definition : ValueID();
 }
@@ -216,6 +216,20 @@ ValueID convertTo(const ValueInsertion& insertion, ValueID value, const Declared
     return insertWithOrigin(insertion, makeAssumeType(value, Proven::byRulesWithoutChecks(required)));
 }
 
+// Flow narrows a parameter from every call that it has followed to the function, so what such a call hands over has the type wherever the value is at hand. A callee that flow has not followed here says
+// nothing of the value: it has the type where the call stands, behind the test that has found the callee.
+static ValueID convertWhereCallStands(const ValueInsertion& insertion, ValueID value, const DeclaredType& target, ValueID& callStandsHere)
+{
+    TypeID required = requiredTypeOf(insertion, target);
+    if (isValueInside(insertion, value, required))
+        return value;
+    if (insertion.context.build.validates())
+        insertWithOrigin(insertion, makeValidateType(value, required));
+    if (!callStandsHere)
+        callStandsHere = insertWithOrigin(insertion, IRBuilder::make(Opcode::Specified));
+    return insertWithOrigin(insertion, makeAssumeType(value, callStandsHere, Proven::behindFact(required)));
+}
+
 ValueID convertTo(IRBuilder& builder, ValueID value, const DeclaredType& target)
 {
     return withInsertionAtEnd(builder, [&](const ValueInsertion& insertion) { return convertTo(insertion, value, target); });
@@ -248,8 +262,11 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
+    ValueID callStandsHere;
     auto convert = [&](ValueID value, const DeclaredType& target) {
-        return convertTo(insertion, value ? value : insert(IRBuilder::make(Opcode::Undefined)), target);
+        if (!value)
+            value = insert(IRBuilder::make(Opcode::Undefined));
+        return request.calleeIsPredicted ? convertWhereCallStands(insertion, value, target, callStandsHere) : convertTo(insertion, value, target);
     };
     size_t numberOfPositionalParameters = callee.numberOfPositionalParameters();
     auto insertArrayOfOtherArguments = [&](TypeID contents, bool convertsElements) {
@@ -2059,8 +2076,15 @@ struct CallResolver {
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
         // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
-        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return !mayBeCalledDirectly(program, member) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
-        bool mayTestNames = std::ranges::any_of(candidates.listed().predicted(), isEnteredByValueOnceRenamed) && paysToTestFunctionNames(site);
+        bool calleeEscapes = false;
+        if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
+            context.planAsksAboutPlace = true;
+            if (haveFunctionNamesChanged(site))
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+            calleeEscapes = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && callsOwnClosureThatEscapes(site, candidates.value, member); });
+        }
+        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return (calleeEscapes || !mayBeCalledDirectly(program, member)) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
+        bool mayTestNames = std::ranges::any_of(candidates.listed().predicted(), isEnteredByValueOnceRenamed) && (calleeEscapes || paysToTestFunctionNames(site));
         auto members = chooseDispatchedCallees(site, candidates, mayTestNames ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged : mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
@@ -2163,7 +2187,11 @@ struct CallResolver {
         const Function& callee = program.at(creation.function());
         if (creation.isMadeOnDemand() || namesClosureOfTable(program, creation) || callee.has(FunctionFlags::TakesCallee))
             return false;
+        return !escapesAround(site, closureCreation);
+    }
 
+    bool escapesAround(const CallSite& site, ValueID closureCreation)
+    {
         const UseLists& uses = context.analyses.useLists();
         BlockID made = uses.blockOf(closureCreation);
         Vector<ValueID, 4> sameObject { closureCreation };
@@ -2181,10 +2209,27 @@ struct CallResolver {
                         continue;
                 }
                 if (leadsToCall(use, site, made) || isReachedFromCall(use, site, made))
-                    return false;
+                    return true;
             }
         }
-        return true;
+        return false;
+    }
+
+    // Flow lost sight of the closures of such a function, so it cannot tell whether a statement renames one. Once one is renamed, only a call by value records which closure runs.
+    bool recordsCalleeOnlyOnceRenamed(FunctionID callee)
+    {
+        FunctionID source = callee;
+        while (FunctionID next = program.at(source).derivation.source)
+            source = next;
+        return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
+    }
+
+    bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
+
+    bool callsOwnClosureThatEscapes(const CallSite& site, ValueID closure, FunctionID callee)
+    {
+        ValueID closureCreation = findClosureCreation(function, closure, callee);
+        return closureCreation && escapesAround(site, closureCreation);
     }
 
     // A call of the one function that its callee can be, whose result is what the call gives: no test, no arm, no block.
@@ -2201,6 +2246,8 @@ struct CallResolver {
             return nullptr;
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only);
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
+            return nullptr;
+        if (recordsCalleeOnlyOnceRenamed(only) && (haveFunctionNamesChanged(site) || callsOwnClosureThatEscapes(site, closure, only)))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
@@ -2778,7 +2825,7 @@ struct CallResolver {
             RELEASE_ASSERT(location.placement == ValuePlacement::InBlock);
             return ProgramPoint { location.block, location.index };
         };
-        auto sourceOf = [&](ValueID append) { return sameObjectThroughCasts(function, function.at(append).operand(1)); };
+        auto sourceOf = [&](ValueID append) { return sameObjectBehindFacts(function, function.at(append).operand(1)); };
         static_assert(OperandIndex::AppendSpread::iterable == 1 && OperandIndex::AppendElements::source == 1);
         std::span<const ValueID> retired = spread.operationsOnList.span();
 
@@ -2903,7 +2950,7 @@ struct CallResolver {
             return declined;
 
         SpreadOfRest spread;
-        spread.list = sameObjectThroughCasts(function, call.listOperand());
+        spread.list = sameObjectBehindFacts(function, call.listOperand());
         const Value& list = function.at(spread.list);
         if (list.opcode != Opcode::NewArray || !list.holes().empty() || list.capacityOperand() || list.elementsOperands().size() != target.numberOfPositionalParameters())
             return declined;

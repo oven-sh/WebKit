@@ -28,6 +28,7 @@ static constexpr size_t numberOfPlacedUnits = 30;
 static constexpr int64_t placementReach = 100;
 static_assert(sizeOfPlacedUnit * numberOfPlacedUnits == 3 * placementReach);
 static constexpr uint32_t unitAlignment = 4;
+static constexpr size_t sizeOfPlacementLine = 64;
 static constexpr uint32_t symbolWithoutUnit = UINT32_MAX;
 static constexpr int64_t largestFiller = 16 * MB;
 
@@ -45,6 +46,7 @@ struct PlacementCase {
     size_t alignment { 1 };
     BitVector fallsIntoNext { };
     size_t shiftOfFirstUnit { 0 };
+    Vector<Vector<RangeInUnit>> rangesByUnit { };
 };
 
 struct ShortJump {
@@ -89,6 +91,14 @@ UnitPlacement PlacementCase::place() const
     appendRows(usesByUnit, sizes.size(), uses, firstUseByUnit);
     appendRows(usesByCopyable, copyables.size(), usesOfCopyables, firstUseByCopyable);
     Vector<size_t> offsets = alignedOffsets.isEmpty() ? Vector<size_t>(FillWith { }, sizes.size(), 0) : alignedOffsets;
+    Vector<RangeInUnit> ranges;
+    Vector<uint32_t> firstRangeByUnit;
+    for (size_t unit = 0; unit < sizes.size(); ++unit) {
+        firstRangeByUnit.append(static_cast<uint32_t>(ranges.size()));
+        if (unit < rangesByUnit.size())
+            ranges.appendVector(rangesByUnit[unit]);
+    }
+    firstRangeByUnit.append(static_cast<uint32_t>(ranges.size()));
     return placeUnits({
         .sizes = sizes.span(),
         .alignedOffsets = offsets.span(),
@@ -103,6 +113,9 @@ UnitPlacement PlacementCase::place() const
         .start = 0,
         .shiftOfFirstUnit = shiftOfFirstUnit,
         .policy = policy,
+        .rangesKeptInLine = ranges.span(),
+        .firstRangeByUnit = firstRangeByUnit.span(),
+        .lineSize = sizeOfPlacementLine,
     });
 }
 
@@ -134,6 +147,44 @@ static void checkUsesAreInReach(const PlacementCase& inputs, const UnitPlacement
             AOT_TEST_CHECK(static_cast<int64_t>(distance) < use.reach);
         }
     }
+}
+
+static void testRangeIsKeptInOneLine()
+{
+    // 60 up to 80 would straddle the line that ends at 64, and 94 + 10 up to 94 + 30 straddles none.
+    PlacementCase inputs { .sizes = { 50, 40, 40 }, .rangesByUnit = { { }, { { 10, 30 } }, { { 10, 30 } } } };
+    UnitPlacement placement = inputs.place();
+    AOT_TEST_CHECK(placement.unitStarts == Vector<size_t>({ 0, 54, 94 }));
+    AOT_TEST_CHECK(placement.end == 134);
+
+    // The aligned offset stays aligned: 54 + 2 is a multiple of 4, and 64 up to 84 lies in one line.
+    inputs.alignment = unitAlignment;
+    inputs.alignedOffsets = { 0, 2, 2 };
+    placement = inputs.place();
+    AOT_TEST_CHECK(placement.unitStarts[1] == 54);
+    AOT_TEST_CHECK(!((placement.unitStarts[1] + 2) % unitAlignment));
+
+    // A range as long as a line begins with a line.
+    PlacementCase whole { .sizes = { 10, 100 }, .rangesByUnit = { { }, { { 6, 70 } } } };
+    AOT_TEST_CHECK(whole.place().unitStarts[1] == 58);
+}
+
+static void testFirstRangeGoesFirst()
+{
+    // 0 up to 40 and 40 up to 80 lie in no two lines of 64 bytes at once unless the unit begins 24 bytes into a line.
+    PlacementCase both { .sizes = { 30, 80 }, .rangesByUnit = { { }, { { 0, 40 }, { 40, 80 } } } };
+    AOT_TEST_CHECK(both.place().unitStarts[1] == 88);
+
+    // 0 up to 60 and 30 up to 90 cannot both be kept. The first one is.
+    PlacementCase one { .sizes = { 30, 90 }, .rangesByUnit = { { }, { { 0, 60 }, { 30, 90 } } } };
+    AOT_TEST_CHECK(one.place().unitStarts[1] == 64);
+}
+
+static void testUnitThatIsFallenIntoStays()
+{
+    PlacementCase inputs { .sizes = { 50, 40 }, .rangesByUnit = { { }, { { 10, 30 } } } };
+    inputs.fallsIntoNext.set(0);
+    AOT_TEST_CHECK(inputs.place().unitStarts == Vector<size_t>({ 0, 50 }));
 }
 
 static ShortJump assembleShortJump()
@@ -529,6 +580,9 @@ std::span<const NativeTest> unitPlacementTests()
         { "image/unit-placement/aligned-offsets-before-user"_s, [] { checkAlignedOffsets(CopyPolicy::BeforeUser); } },
         { "image/unit-placement/aligned-offsets-after-users"_s, [] { checkAlignedOffsets(CopyPolicy::AfterUsers); } },
         { "image/unit-placement/equal-inputs-equal-placements"_s, testEqualInputsEqualPlacements },
+        { "image/unit-placement/range-is-kept-in-one-line"_s, testRangeIsKeptInOneLine },
+        { "image/unit-placement/first-range-goes-first"_s, testFirstRangeGoesFirst },
+        { "image/unit-placement/unit-that-is-fallen-into-stays"_s, testUnitThatIsFallenIntoStays },
         { "image/section-linker/units-call-each-other"_s, testUnitsCallEachOther },
         { "image/section-linker/one-veneer-per-unit-and-target"_s, testOneVeneerPerUnitAndTarget },
         { "image/section-linker/second-copy-of-routine-out-of-reach"_s, [] { checkSecondCopyOutOfReach(shortJumpsTo({ 3 }), testTemplates().returnToCaller); } },

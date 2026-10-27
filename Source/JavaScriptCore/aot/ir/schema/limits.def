@@ -90,6 +90,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
 
     MaxThreadedBlockValues(Optimize, CodeSize, NotOptimized, 8, 8, 0, "code duplicated per threaded jump")
     MaxThreadingReachabilitySteps(Optimize, CompileTime, NotOptimized, 128, 128, 0, "blocks walked to keep loops intact while threading jumps")
+    MaxValuesMergedAgainBelowThreadedJumps(Optimize, CodeSize, NotOptimized, 32, 32, 0, "values that every join below a row of threaded jumps merges again")
     MaxReadsPerSolve(Optimize, Memory, NotOptimized, 4096, 4096, 0, "redundant read elimination memory per function")
     MaxMergedReadPredecessors(Optimize, CodeSize, NotOptimized, 4, 4, 0, "predecessors merged to remove a repeated read")
     MaxVirtualObjectFields(Optimize, Memory, HeapAllocation, 64, 64, 0, "fields of an object that can be removed or stack-allocated")
@@ -185,6 +186,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxRangeCheckBoundsPerLoop(GenerateCode, CodeSize, NotOptimized, 4, 4, 0, "entry guards per loop")
     MaxCopiedValuesPerRotatedLoop(GenerateCode, CodeSize, NotOptimized, 12, 12, 0, "code size of a rotated loop")
     MaxRareBlocksPerRotatedLoop(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code size of a rotated loop")
+    MaxValuesPerUnrolledLoop(GenerateCode, CodeSize, NotOptimized, 96, 96, 0, "code size of the turns of a counted loop that are written out")
     MaxThreadedTestCopyCost(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code duplicated by jump threading")
     MaxThreadedPathCost(GenerateCode, CodeSize, NotOptimized, 16, 16, 0, "code duplicated by jump threading")
     MaxBlocksOnThreadedPath(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "code duplicated by jump threading")

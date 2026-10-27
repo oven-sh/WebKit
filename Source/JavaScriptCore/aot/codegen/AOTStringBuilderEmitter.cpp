@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTResultRules.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
@@ -60,6 +61,8 @@ void StringBuilderEmitter::findStackBuilders()
         bool isOnStack { true };
         bool isOnlyInCompactCode { true };
         bool readsLength { false };
+        bool appendsOnlyStrings { true };
+        bool beginsWithString { false };
         uint32_t slot { 0 };
         BitVector websOpenAtOnce;
     };
@@ -108,6 +111,8 @@ void StringBuilderEmitter::findStackBuilders()
                     const Value& user = m_function.at(use.user);
                     web.isOnStack &= stackBuilderOperations.contains(user.opcode) && user.builderOperand() == member;
                     web.readsLength |= user.opcode == Opcode::StringBuilderLength;
+                    // What yields a value appends nothing. A wrong guess costs a comparison that never holds.
+                    web.appendsOnlyStrings &= resultRuleOf(user.opcode) != ResultRule::None || user.opcode == Opcode::StringBuilderAppendString || user.opcode == Opcode::StringBuilderDiscard;
                     web.isOnlyInCompactCode &= m_function.at(use.block).shape == CodeShape::Compact;
                 }
             }
@@ -146,6 +151,24 @@ void StringBuilderEmitter::findStackBuilders()
         }
     }
 
+    for (BlockID block : cfg.reversePostOrder()) {
+        ValueID begin;
+        for (ValueID id : m_function.at(block).values) {
+            const Value& value = m_function.at(id);
+            if (value.opcode == Opcode::StringBuilderBegin) {
+                begin = id;
+                continue;
+            }
+            if (!begin || !stackBuilderOperations.contains(value.opcode) || value.builderOperand() != begin || value.opcode == Opcode::StringBuilderLength)
+                continue;
+            if (value.opcode == Opcode::StringBuilderAppendString) {
+                m_firstAppends.set(id.index());
+                webs[webOf[begin.index()]].beginsWithString = true;
+            }
+            begin = ValueID();
+        }
+    }
+
     Vector<B3::Air::StackSlot*, 2> slots;
     m_stackBuilders.grow(webs.size());
     for (uint32_t index = 0; index < webs.size(); ++index) {
@@ -160,7 +183,12 @@ void StringBuilderEmitter::findStackBuilders()
         web.slot = taken.findBit(0, false);
         if (web.slot == slots.size())
             slots.append(m_proc.addStackSlot(sizeof(StackStringBuilder)));
-        m_stackBuilders[index] = StackBuilder { slots[web.slot], m_proc.addVariable(B3::Int64), web.readsLength };
+        StackBuilder& builder = m_stackBuilders[index];
+        builder = StackBuilder { slots[web.slot], m_proc.addVariable(B3::Int64), m_proc.addVariable(B3::Int64), web.readsLength };
+        if (web.appendsOnlyStrings && web.beginsWithString) {
+            builder.firstPart = m_proc.addVariable(B3::Int64);
+            builder.endOfFirstPart = m_proc.addVariable(B3::Int64);
+        }
     }
     m_stackBuilderOf = WTF::move(webOf);
 }
@@ -180,38 +208,68 @@ Pointer StringBuilderEmitter::addressOf(const StackBuilder& builder)
     return Pointer(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), builder.slot));
 }
 
+LValue StringBuilderEmitter::get(B3::Variable* variable)
+{
+    return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), variable);
+}
+
+void StringBuilderEmitter::set(B3::Variable* variable, LValue value)
+{
+    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
+}
+
 Pointer StringBuilderEmitter::cursorOf(const StackBuilder& builder)
 {
-    return Pointer(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), builder.cursor));
+    return Pointer(get(builder.cursor));
 }
 
 void StringBuilderEmitter::setCursor(const StackBuilder& builder, Pointer cursor)
 {
-    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), builder.cursor, cursor.value());
+    set(builder.cursor, cursor.value());
+}
+
+void StringBuilderEmitter::didAppendString(const StackBuilder& builder, ValueID append, CellPointer string)
+{
+    if (!m_firstAppends.get(append.index()))
+        return;
+    set(builder.firstPart, string.value());
+    set(builder.endOfFirstPart, cursorOf(builder).value());
+}
+
+void StringBuilderEmitter::setCursorBehindCall(const StackBuilder& builder, Pointer cursor)
+{
+    setCursor(builder, cursor);
+    set(builder.limit, m_out.loadPtr(stackBuilderField(builder, OBJECT_OFFSETOF(StackStringBuilder, limit))));
 }
 
 Pointer StringBuilderEmitter::limitOf(const StackBuilder& builder)
 {
-    return Pointer(m_out.loadPtr(stackBuilderField(builder, OBJECT_OFFSETOF(StackStringBuilder, limit))));
+    return Pointer(get(builder.limit));
 }
 
 void StringBuilderEmitter::advance(const OperationContext& context, const StackBuilder& builder, Pointer cursor)
 {
-    setCursor(builder, either<Pointer>(belowOrEqual(cursor, limitOf(builder)), [&] {
-        return cursor;
+    ifElse(belowOrEqual(cursor, limitOf(builder)), [&] {
+        setCursor(builder, cursor);
     }, [&] {
-        return callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderGrow, { addressOf(builder), cursor }, { .isOnRarePath = true });
-    }));
+        setCursorBehindCall(builder, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderGrow, { addressOf(builder), cursor }, { .isOnRarePath = true }));
+    });
 }
 
 void StringBuilderEmitter::generateStringBuilderBegin(const ValueContext& value)
 {
     if (const StackBuilder* builder = stackBuilderFor(value.id())) {
-        Pointer buffer = offsetBy(addressOf(*builder), OBJECT_OFFSETOF(StackStringBuilder, buffer));
-        m_out.storePtr(offsetBy(buffer, StackStringBuilder::capacity).value(), stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, limit)));
+        Pointer buffer = bufferOf(*builder);
+        Pointer limit = limitOnStack(*builder);
+        m_out.storePtr(limit.value(), stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, limit)));
+        set(builder->limit, limit.value());
         if (builder->readsLength)
             m_out.storePtr(buffer.value(), stackBuilderField(*builder, OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin)));
         setCursor(*builder, buffer);
+        if (builder->firstPart) {
+            set(builder->firstPart, m_out.constInt64(0));
+            set(builder->endOfFirstPart, m_out.constInt64(0));
+        }
         define(value, CellPointer(addressOf(*builder).value()));
         return;
     }
@@ -255,7 +313,8 @@ void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& val
     CellPointer builder = in<CellPointer>(value->builderOperand());
     Integer lastString(m_out.load64(storageField(builder, StringBuilderStorage::offsetOfLastString())));
     Word32 lengthOfLastString(m_out.load32(storageField(builder, StringBuilderStorage::offsetOfLengthOfLastString())));
-    define(value, either<CellPointer>(logicalAnd(isNotZero(lastString), equal(lengthOfLastString, lengthOf(builder))), [&] {
+    Condition hasLastString = isNotZero(lastString);
+    define(value, either<CellPointer>(logicalAnd(hasLastString, equal(lengthOfLastString, lengthOf(builder))), [&] {
         return CellPointer(lastString.value());
     }, [&] {
         return callOperation<CellPointer>(value, RuntimeOperation::StringBuilderToString, { builder, word32(0) });
@@ -265,7 +324,30 @@ void StringBuilderEmitter::generateStringBuilderToString(const ValueContext& val
 void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value)
 {
     if (const StackBuilder* builder = stackBuilderFor(value->builderOperand())) {
-        define(value, callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { addressOf(*builder), cursorOf(*builder), word32(value->isLikelyKey()) }));
+        auto finishByCall = [&] {
+            return callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { addressOf(*builder), cursorOf(*builder), word32(value->isLikelyKey()) });
+        };
+        if (!builder->firstPart || value->isLikelyKey()) {
+            define(value, finishByCall());
+            return;
+        }
+        // A flat first part behind which nothing has characters is the text. A builder that has left the frame takes long strings without moving its cursor.
+        StringEmitter& strings = emitter<StringEmitter>();
+        LBasicBlock firstMayBeAll = newBlock();
+        LBasicBlock byCall = newBlock();
+        Join<CellPointer> text(m_out);
+        m_out.branch(equal(cursorOf(*builder), Pointer(get(builder->endOfFirstPart))).value(), unlikelyEdge(firstMayBeAll), normalEdge(byCall));
+
+        m_out.appendTo(byCall);
+        text.add(finishByCall());
+
+        m_out.appendTo(firstMayBeAll);
+        CellPointer firstPart(get(builder->firstPart));
+        Pointer limit = limitOf(*builder);
+        strings.continueIf(equal(limit, limitOnStack(*builder)), rareEdge(byCall));
+        strings.continueIf(hasNoBits(loadField<Pointer>(firstPart, m_heaps.JSString_value), JSString::isRopeInPointer), unlikelyEdge(byCall));
+        text.add(firstPart);
+        define(value, text.finish());
         return;
     }
     define(value, callOperation<CellPointer>(value, RuntimeOperation::StringBuilderFinish, { in<CellPointer>(value->builderOperand()), word32(value->isLikelyKey()) }));
@@ -274,8 +356,8 @@ void StringBuilderEmitter::generateStringBuilderFinish(const ValueContext& value
 void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& value)
 {
     if (const StackBuilder* builder = stackBuilderFor(value->builderOperand())) {
-        Pointer limitOnStack = offsetBy(addressOf(*builder), OBJECT_OFFSETOF(StackStringBuilder, buffer) + StackStringBuilder::capacity);
-        ifElse(equal(limitOf(*builder), limitOnStack), [] { }, [&] {
+        Pointer limit = limitOf(*builder);
+        ifElse(equal(limit, limitOnStack(*builder)), [] { }, [&] {
             callVoidOperation(value, RuntimeOperation::StackStringBuilderDiscard, { addressOf(*builder) }, { .isOnRarePath = true, .accessesCollectorState = true });
         });
         return;
@@ -320,21 +402,22 @@ Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPoint
     return join.finish();
 }
 
-Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPointer builder, Word32 size)
+Pointer StringBuilderEmitter::reserveAtMost(const OperationContext& context, CellPointer builder, uint32_t size)
 {
     LBasicBlock slow = newBlock();
     Join<Pointer> join(m_out);
-    join.add(tryReserve(builder, size, slow));
+    join.add(tryReserve(builder, word32(static_cast<int32_t>(size)), slow));
 
     m_out.appendTo(slow);
-    join.add(callOperation<Pointer>(context, RuntimeOperation::StringBuilderReserve, { builder, zeroExtended(size) }, { .isOnRarePath = true }));
+    join.add(callOperation<Pointer>(context, RuntimeOperation::StringBuilderReserve, { builder, integer(encodeReservationOfAtMost(size)) }, { .isOnRarePath = true }));
     return join.finish();
 }
 
 void StringBuilderEmitter::commit(CellPointer builder, Pointer cursor)
 {
     LValue characters = m_out.loadPtr(storageField(builder, Storage::offsetOfCharacters()));
-    m_out.store32(m_out.castToInt32(m_out.sub(cursor.value(), characters)), storageField(builder, Storage::offsetOfPosition()));
+    LValue position = m_out.castToInt32(m_out.sub(cursor.value(), characters));
+    m_out.store32(position, storageField(builder, Storage::offsetOfPosition()));
 }
 
 Pointer StringBuilderEmitter::writeBytes(Pointer cursor, std::span<const Latin1Character> bytes)
@@ -372,14 +455,16 @@ Pointer StringBuilderEmitter::writeDigits(Pointer cursor, Word32 value)
     m_out.jump(store);
 
     m_out.appendTo(severalDigits);
-    LValue upperHalf = m_out.lShr(m_out.mul(number, constant(0xd1b71759ull)), m_out.constInt32(45));
+    LValue upperHalf = m_out.lShr(m_out.mul(number, constant(0xd1b71759ull)), 45);
     LValue lowerHalf = m_out.sub(number, m_out.mul(upperHalf, constant(10000)));
     LValue halves = m_out.bitOr(upperHalf, m_out.shl(lowerHalf, m_out.constInt32(32)));
-    LValue upperPairs = m_out.bitAnd(m_out.lShr(m_out.mul(halves, constant(10486)), m_out.constInt32(20)), constant(0x7full << 32 | 0x7f));
+    LValue hundredthsOfHalves = m_out.lShr(m_out.mul(halves, constant(10486)), 20);
+    LValue upperPairs = m_out.bitAnd(hundredthsOfHalves, constant(0x7full << 32 | 0x7f));
     LValue lowerPairs = m_out.sub(halves, m_out.mul(upperPairs, constant(100)));
     LValue pairs = m_out.add(m_out.shl(lowerPairs, m_out.constInt32(16)), upperPairs);
-    LValue tens = m_out.bitAnd(m_out.lShr(m_out.mul(pairs, constant(103)), m_out.constInt32(10)), constant(0x000f000f000f000full));
-    LValue digits = m_out.add(tens, m_out.shl(m_out.sub(pairs, m_out.mul(tens, constant(10))), m_out.constInt32(8)));
+    LValue tenthsOfPairs = m_out.lShr(m_out.mul(pairs, constant(103)), 10);
+    LValue tens = m_out.bitAnd(tenthsOfPairs, constant(0x000f000f000f000full));
+    LValue digits = m_out.add(tens, m_out.shl(m_out.sub(pairs, m_out.mul(tens, constant(10))), 8));
     B3::PatchpointValue* trailingZeros = m_out.patchpoint(B3::Int64);
     trailingZeros->appendSomeRegister(digits);
     trailingZeros->effects = B3::Effects::none();
@@ -388,8 +473,10 @@ Pointer StringBuilderEmitter::writeDigits(Pointer cursor, Word32 value)
         jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
     });
     LValue leadingZeroBits = m_out.bitAnd(trailingZeros, constant(0x38));
-    ValueFromBlock severalDigitsText = m_out.anchor(m_out.lShr(m_out.add(digits, constant(asciiZeros)), m_out.castToInt32(leadingZeroBits)));
-    ValueFromBlock severalDigitsCount = m_out.anchor(m_out.sub(constant(maxInlineDigits), m_out.lShr(leadingZeroBits, m_out.constInt32(3))));
+    LValue textBehindZeros = m_out.add(digits, constant(asciiZeros));
+    ValueFromBlock severalDigitsText = m_out.anchor(m_out.lShr(textBehindZeros, m_out.castToInt32(leadingZeroBits)));
+    LValue mostDigits = constant(maxInlineDigits);
+    ValueFromBlock severalDigitsCount = m_out.anchor(m_out.sub(mostDigits, m_out.lShr(leadingZeroBits, 3)));
     m_out.jump(store);
 
     m_out.appendTo(store);
@@ -461,7 +548,8 @@ Pointer StringBuilderEmitter::copyShortLatin1Characters(Pointer cursor, Pointer 
     m_out.branch(isNotZero(length).value(), normalEdge(oneCharacter), normalEdge(done));
 
     m_out.appendTo(oneCharacter);
-    storeBytes(m_out, 1, loadBytes(m_out, 1, TypedPointer(characters, source.value())), bytesAt(cursor));
+    LValue character = loadBytes(m_out, 1, TypedPointer(characters, source.value()));
+    storeBytes(m_out, 1, character, bytesAt(cursor));
     m_out.jump(done);
 
     m_out.appendTo(done);

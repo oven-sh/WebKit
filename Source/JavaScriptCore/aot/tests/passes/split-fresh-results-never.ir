@@ -72,14 +72,19 @@ function f4 name="impossibleVariant" parameters=[{type=never}, {type=number}] re
 # CHECK-LABEL: function f4 name="impossibleVariant" module=m0 role=ResultWrapper
 # CHECK: [[call4]]:{{*}}= CallDirect v0, v1 function=[[worker4]]
 # CHECK-NEXT: [[tag4]]: i32 = ResultAt [[call4]]
-# CHECK-NEXT: [[x4]]: anything = ResultAt [[call4]] index=1
-# CHECK-NEXT: [[y4]]: number = ResultAt [[call4]] index=2
-# CHECK-NEXT: [[z4]]: number = ResultAt [[call4]] index=3
+# CHECK-NEXT: [[x4]]: anything|unspecified = ResultAt [[call4]] index=1
+# CHECK-NEXT: [[y4]]: number|unspecified = ResultAt [[call4]] index=2
+# CHECK-NEXT: [[z4]]: number|unspecified = ResultAt [[call4]] index=3
 # CHECK-NEXT: Switch [[tag4]] cases=[1] -> case [[point4]](), otherwise [[other4]]()
 # CHECK: [[point4]]():
-# CHECK-NEXT: = NewObject -, [[x4]], [[y4]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[x4There]]: anything = AssumeType [[x4]], [[filled1]] provenType=anything
+# CHECK-NEXT: [[y4There]]: number = AssumeType [[y4]], [[filled1]] provenType=number
+# CHECK-NEXT: = NewObject -, [[x4There]], [[y4There]] layout=L0 fields=[0, 1]
 # CHECK: [[other4]]():
-# CHECK-NEXT: = NewObject -, [[z4]] layout=L2 fields=[0]
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[z4There]]: number = AssumeType [[z4]], [[filled2]] provenType=number
+# CHECK-NEXT: = NewObject -, [[z4There]] layout=L2 fields=[0]
 
 function f5 name="impossibleCell" parameters=[{type=never}, {type=number}] results=[{type=object}] {
     v2 = ToBoolean v1
@@ -95,8 +100,8 @@ function f5 name="impossibleCell" parameters=[{type=never}, {type=number}] resul
 # CHECK-LABEL: function f5 name="impossibleCell" module=m0 role=ResultWrapper
 # CHECK: [[call5]]:{{*}}= CallDirect v0, v1 function=[[worker5]]
 # CHECK-NEXT: [[tag5]]: i32 = ResultAt [[call5]]
-# CHECK-NEXT: [[cell5]]: object = ResultAt [[call5]] index=1
-# CHECK-NEXT: [[z5]]: number = ResultAt [[call5]] index=2
+# CHECK-NEXT: [[cell5]]: object|unspecified = ResultAt [[call5]] index=1
+# CHECK-NEXT: [[z5]]: number|unspecified = ResultAt [[call5]] index=2
 
 function f6 name="impossibleFieldInOneVariant" parameters=[{type=never}, {type=number}] results=[{type=object}] {
     v2 = ToBoolean v1
@@ -118,10 +123,10 @@ function f6 name="impossibleFieldInOneVariant" parameters=[{type=never}, {type=n
 # CHECK: function [[worker1]] name="impossibleParameter"
 # CHECK: results=[{type=anything}, {type=number}]
 # CHECK: function [[worker4]] name="impossibleVariant"
-# CHECK: results=[{type=i32}, {type=anything}, {type=number}, {type=number}]
+# CHECK: results=[{type=i32}, {type=anything|unspecified}, {type=number|unspecified}, {type=number|unspecified}]
 # CHECK-NOT: valueType=never
 # CHECK: function [[worker5]] name="impossibleCell"
-# CHECK: results=[{type=i32}, {type=object}, {type=number}]
+# CHECK: results=[{type=i32}, {type=object|unspecified}, {type=number|unspecified}]
 # CHECK-NOT: valueType=never
 
 # Whoever calls them needs no object

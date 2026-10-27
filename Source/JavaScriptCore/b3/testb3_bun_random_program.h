@@ -195,6 +195,10 @@ inline Policy randomProgramPolicy(RelocationLowering& lowering)
 
     policy.allocation.keepsValuesAfterLowering = true;
 
+    policy.upstream.allowsSIMD = true;
+    policy.loops.vectorizes = true;
+    policy.loops.unrolls = true;
+
     policy.addressing.isPositionIndependent = true;
     policy.addressing.namesPinnedRegistersDirectly = true;
     policy.addressing.dataSectionSpace = testDataSectionSpace;

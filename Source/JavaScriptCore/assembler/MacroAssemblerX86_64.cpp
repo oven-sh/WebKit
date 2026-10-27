@@ -569,6 +569,50 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
     return features;
 }
 
+void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutAVX operation, SIMDLane lane, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+{
+    if (dest == right && dest != left) {
+        moveVector(right, fpTempRegister);
+        right = fpTempRegister;
+    }
+    if (dest != left)
+        moveVector(left, dest);
+
+    using Emit = void (X86Assembler::*)(XMMRegisterID, XMMRegisterID);
+    // In the order of SIMDLane: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2.
+    static constexpr Emit arithmetic[4][6] = {
+        { &X86Assembler::paddb_rr, &X86Assembler::paddw_rr, &X86Assembler::paddd_rr, &X86Assembler::paddq_rr, &X86Assembler::addps_rr, &X86Assembler::addpd_rr },
+        { &X86Assembler::psubb_rr, &X86Assembler::psubw_rr, &X86Assembler::psubd_rr, &X86Assembler::psubq_rr, &X86Assembler::subps_rr, &X86Assembler::subpd_rr },
+        { nullptr, &X86Assembler::pmullw_rr, &X86Assembler::pmulld_rr, nullptr, &X86Assembler::mulps_rr, &X86Assembler::mulpd_rr },
+        { nullptr, nullptr, nullptr, nullptr, &X86Assembler::divps_rr, &X86Assembler::divpd_rr },
+    };
+    static_assert(static_cast<unsigned>(SIMDLane::i8x16) + 5 == static_cast<unsigned>(SIMDLane::f64x2));
+    Emit emit = nullptr;
+    switch (operation) {
+    case VectorOperationWithoutAVX::Add:
+    case VectorOperationWithoutAVX::Sub:
+    case VectorOperationWithoutAVX::Mul:
+    case VectorOperationWithoutAVX::Div:
+        RELEASE_ASSERT(lane >= SIMDLane::i8x16 && lane <= SIMDLane::f64x2);
+        emit = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];
+        break;
+    case VectorOperationWithoutAVX::And:
+        emit = &X86Assembler::andps_rr;
+        break;
+    case VectorOperationWithoutAVX::Or:
+        emit = &X86Assembler::orps_rr;
+        break;
+    case VectorOperationWithoutAVX::Xor:
+        emit = &X86Assembler::xorps_rr;
+        break;
+    case VectorOperationWithoutAVX::Swizzle:
+        emit = &X86Assembler::pshufb_rr;
+        break;
+    }
+    RELEASE_ASSERT(emit);
+    (m_assembler.*emit)(right, dest);
+}
+
 } // namespace JSC
 
 #endif // ENABLE(ASSEMBLER) && CPU(X86_64)

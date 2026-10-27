@@ -74,7 +74,11 @@
 #include "WasmTypeDefinition.h"
 #include "WebAssemblyFunctionBase.h"
 #include "WebAssemblyGCStructure.h"
+#include <algorithm>
+#include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <wtf/BitVector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -1300,6 +1304,170 @@ private:
             });
     }
 
+    struct ValueTableArm {
+        Type type { Void };
+        Value* phi { nullptr };
+        BasicBlock* join { nullptr };
+        Value* operation { nullptr };
+        Value* operand { nullptr };
+        int64_t constant { 0 };
+    };
+
+    std::optional<ValueTableArm> describeValueTableArm(BasicBlock* target)
+    {
+        bool returns = target->last()->opcode() == Return && target->last()->numChildren() == 1;
+        if (!returns && (target->numSuccessors() != 1 || target->last()->opcode() != Jump))
+            return std::nullopt;
+        UpsilonValue* upsilon = nullptr;
+        Value* operation = nullptr;
+        for (Value* value : *target) {
+            switch (value->opcode()) {
+            case Nop:
+            case Jump:
+            case Return:
+            case Const32:
+            case Const64:
+                break;
+            case Upsilon:
+                if (upsilon)
+                    return std::nullopt;
+                upsilon = value->as<UpsilonValue>();
+                break;
+            case Add:
+            case BitOr:
+            case BitXor:
+                if (operation)
+                    return std::nullopt;
+                operation = value;
+                break;
+            default:
+                return std::nullopt;
+            }
+        }
+        if (returns == !!upsilon)
+            return std::nullopt;
+        Value* result = returns ? target->last()->child(0) : upsilon->child(0);
+        if (!result->type().isInt())
+            return std::nullopt;
+        ValueTableArm arm;
+        arm.type = result->type();
+        if (upsilon) {
+            arm.phi = upsilon->phi();
+            arm.join = target->successorBlock(0);
+        }
+        if (result->hasInt()) {
+            arm.constant = result->asInt();
+            return operation ? std::nullopt : std::optional(arm);
+        }
+        if (result == operation) {
+            if (!operation->child(1)->hasInt() || operation->child(0)->isConstant())
+                return std::nullopt;
+            arm.operation = operation;
+            arm.operand = operation->child(0);
+            arm.constant = operation->child(1)->asInt();
+            return arm;
+        }
+        if (operation)
+            return std::nullopt;
+        arm.operand = result;
+        return arm;
+    }
+
+    static bool staysInsideTable(Value* subject, int64_t firstValue, size_t tableSize)
+    {
+        return !firstValue && subject->opcode() == BitAnd && subject->child(1)->hasInt() && static_cast<uint64_t>(subject->child(1)->asInt()) < tableSize;
+    }
+
+    static bool coversEveryValueOf(Value* subject, std::span<const SwitchCase> cases, size_t tableSize)
+    {
+        if (cases.size() + 1 != tableSize || cases.front().caseValue())
+            return false;
+        return subject->opcode() == BitAnd && subject->child(1)->hasInt() && static_cast<uint64_t>(subject->child(1)->asInt()) <= static_cast<uint64_t>(cases.back().caseValue());
+    }
+
+    bool tryBuildValueTable(std::span<const SwitchCase> cases, FrequentedBlock fallThrough, BasicBlock* before, Value* index, size_t tableSize)
+    {
+        if (!m_proc.policy().switchLowering.usesValueTables)
+            return false;
+
+        Vector<int64_t, 16> constants(FillWith { }, tableSize, int64_t { 0 });
+        ValueTableArm shape;
+        auto add = [&](BasicBlock* target, size_t entry) {
+            std::optional<ValueTableArm> arm = describeValueTableArm(target);
+            if (!arm)
+                return false;
+            if (shape.type == Void)
+                shape = *arm;
+            if (arm->type != shape.type || arm->phi != shape.phi || arm->join != shape.join || arm->operand != shape.operand)
+                return false;
+            if (arm->operation) {
+                if (shape.operation && shape.operation->opcode() != arm->operation->opcode())
+                    return false;
+                shape.operation = arm->operation;
+            }
+            constants[entry] = arm->constant;
+            return true;
+        };
+        int64_t firstValue = cases.front().caseValue();
+        bool isFallThroughTaken = !coversEveryValueOf(m_value->child(0), cases, tableSize);
+        if (isFallThroughTaken) {
+            if (!add(fallThrough.block(), tableSize - 1))
+                return false;
+            constants.fill(constants.last());
+        }
+        for (const SwitchCase& switchCase : cases) {
+            if (!add(switchCase.targetBlock(), switchCase.caseValue() - firstValue))
+                return false;
+        }
+        if (shape.operand && !shape.operation)
+            return false;
+
+        auto [smallest, largest] = std::ranges::minmax(constants);
+        Type type = shape.type;
+        unsigned shift = 3;
+        B3::Opcode load = Load;
+        Type loaded = Int64;
+        if (smallest >= 0 && largest <= std::numeric_limits<uint8_t>::max()) {
+            shift = 0;
+            load = Load8Z;
+            loaded = Int32;
+        } else if (smallest >= 0 && largest <= std::numeric_limits<uint16_t>::max()) {
+            shift = 1;
+            load = Load16Z;
+            loaded = Int32;
+        } else if (type == Int32 || (smallest >= std::numeric_limits<int32_t>::min() && largest <= std::numeric_limits<int32_t>::max())) {
+            shift = 2;
+            loaded = Int32;
+        }
+
+        size_t width = size_t { 1 } << shift;
+        uint8_t* data = static_cast<uint8_t*>(m_proc.addDataSection(tableSize * width));
+        for (size_t entry = 0; entry < tableSize; ++entry)
+            memcpy(data + entry * width, &constants[entry], width);
+
+        Value* table = m_proc.addDataSectionAddress(m_origin, data);
+        before->append(table);
+        Value* offset = shift ? before->appendNew<Value>(m_proc, Shl, m_origin, index, before->appendIntConstant(m_proc, m_origin, Int32, shift)) : index;
+        Value* address = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, offset, table);
+        MemoryValue* entry = load == Load ? before->appendNew<MemoryValue>(m_proc, Load, loaded, m_origin, address) : before->appendNew<MemoryValue>(m_proc, load, m_origin, address);
+        entry->setControlDependent(false);
+        entry->setReadsMutability(B3::Mutability::Immutable);
+        Value* result = entry;
+        if (type == Int64 && loaded == Int32)
+            result = before->appendNew<Value>(m_proc, load == Load ? SExt32 : ZExt32, m_origin, entry);
+        if (shape.operation)
+            result = before->appendNew<Value>(m_proc, shape.operation->opcode(), m_origin, shape.operand, result);
+        if (!shape.phi) {
+            before->appendNew<Value>(m_proc, Return, m_origin, result);
+            before->clearSuccessors();
+            return true;
+        }
+        before->appendNew<UpsilonValue>(m_proc, m_origin, result, shape.phi);
+        before->appendNew<Value>(m_proc, Jump, m_origin);
+        before->setSuccessors(FrequentedBlock(shape.join));
+        return true;
+    }
+
     static constexpr unsigned bitsPerBitTestWindow = 64;
 
     bool tryBuildBitTests(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart, unsigned end, BasicBlock* before)
@@ -1453,10 +1621,14 @@ private:
                 size_t tableSize = static_cast<size_t>(range.value()) + 1; // + 1 for fallthrough
                 Value* index = before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, firstValue.value()));
                 Value* fallthroughIndex = before->appendIntConstant(m_proc, m_origin, type, tableSize - 1);
-                index = before->appendNew<B3::Value>(m_proc, Select, m_origin, before->appendNew<Value>(m_proc, AboveEqual, m_origin, index, fallthroughIndex), fallthroughIndex, index);
+                if (!policy.usesValueTables || !staysInsideTable(child, firstValue.value(), tableSize))
+                    index = before->appendNew<B3::Value>(m_proc, Select, m_origin, before->appendNew<Value>(m_proc, AboveEqual, m_origin, index, fallthroughIndex), fallthroughIndex, index);
 
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
+
+                if (tryBuildValueTable(cases.subspan(start, end - start), fallThrough, before, index, tableSize))
+                    return;
 
                 if (m_proc.policy().addressing.isPositionIndependent) {
                     appendJumpThroughOffsetTable(cases.subspan(start, end - start), fallThrough, before, index, tableSize);

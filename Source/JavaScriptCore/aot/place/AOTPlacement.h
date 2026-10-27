@@ -141,6 +141,7 @@ struct KeyOrders {
 enum class StaticsRegion : uint8_t {
     FilledAtInstanceCreation,
     FilledAtProgramEntry,
+    FilledWithFile,
 };
 
 struct PlacedVariable {
@@ -161,8 +162,36 @@ struct ModuleBuiltinCell {
     uint32_t offset { 0 };
 };
 
+struct PlacedStaticsOfFiles {
+    ModuleID firstFile;
+    uint32_t firstWord { 0 };
+    uint32_t numberOfWords { 0 };
+    Vector<uint32_t> importedGroups;
+};
+
+// What is left of the last word of a group of files. It is filled like the variable in front of it, so that the words of one group go on as those of the next.
+struct PlacedStaticsPadding {
+    uint32_t offset { 0 };
+    SlotRepresentation representation { SlotRepresentation::JSValue };
+    uint64_t initialWord { 0 };
+};
+
 struct StaticsPlan {
+    // The number of its group among groupsOfFilesFilledWhenEntered, if code that enters the file has words to fill.
+    std::optional<uint32_t> groupFilledWhenEntered(ModuleID module) const
+    {
+        return module && module.index() < groupOfFile.size() ? groupOfFile[module.index()] : std::nullopt;
+    }
+
     Vector<PlacedVariable> variables;
+    Vector<PlacedStaticsOfFiles> groupsOfFilesFilledWhenEntered;
+    Vector<PlacedStaticsPadding> paddingOfFilesFilledWhenEntered;
+    // Where somebody can come into the code of those files who has not filled their words.
+    BitVector functionsThatEnterFiles;
+    Vector<std::optional<uint32_t>> groupOfFile;
+    uint32_t firstWordFilledWithFiles { 0 };
+    uint32_t endWordFilledWithFiles { 0 };
+    uint32_t offsetOfFilledFiles { 0 };
     Vector<std::optional<uint32_t>> moduleValueOffsets;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;

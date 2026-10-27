@@ -1,0 +1,55 @@
+# const make = () => class { static #c = 1; static { this.t = this.#c; } };   const C = make();
+# A static block is a function that the static initializer calls directly. The copy of the factory gets a copy of the block, which takes the environment of the copy.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK: layout L2 kind=Environment
+# CHECK: layout L3 kind=Instance{{*}}constructor=f5
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[copy]]{{*}} = NewClosure function=f8
+# CHECK-NEXT: Call [[copy]]
+# CHECK-LABEL: function f6 name="block"
+# CHECK: GetEnvironmentField v0 layout=L2
+# CHECK-LABEL: function f7 name="initializer"
+# CHECK: PutEnvironmentField v0, v3 layout=L2
+# CHECK: CallDirect v0, v1, v2 function=f6
+# CHECK-LABEL: function f8 name="make"
+# CHECK: NewObject layout=L2
+# CHECK: NewClass {{*}} layout=L3
+# CHECK: CallDirect v0, v2, v3 function=f7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="C" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything}}]
+layout L1 kind=Instance module=m0 position=20 constructor=f2
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="make" module=m0 position=10 kind=Arrow results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    v2 = NewClass v1 layout=L1
+    v3 = FinishClass v2 layout=L1
+    v4 = CallDirect v0, v2, v3 function=f3
+    Return v3
+}
+function f2 name="constructor" module=m0 position=20 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L1 {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="initializer" module=m0 position=20 kind=Initializer flags=[HasThis] captures=[{type=env L0}, {type=function}] thisType={type=function} results=[{type=anything}] {
+    v3 = Integer integer=1
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = CallDirect v0, v1, v2 function=f4
+    Return
+}
+function f4 name="block" module=m0 position=30 kind=Method flags=[HasThis] captures=[{type=env L0}, {type=function}] thisType={type=function} results=[{type=anything}] {
+    v3 = GetEnvironmentField v0 layout=L0
+    PropSet v2, v3 key="t"
+    Return
+}

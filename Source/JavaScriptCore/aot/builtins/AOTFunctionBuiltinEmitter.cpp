@@ -33,7 +33,7 @@ void FunctionBuiltinEmitter::missUnlessCallableClosure(const InlineCall& call, C
     auto missUnlessFullClosure = [&](bool mayBeConstructor) {
         missUnless(call, hasStructureIDAt(AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
         if (mayBeConstructor)
-            missUnless(call, isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))));
+            missUnless(call, isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTClosure_entry), static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit))));
     };
     if (FunctionID known = type.singleFunction()) {
         switch (m_placement.slots().closureFormOf(known)) {

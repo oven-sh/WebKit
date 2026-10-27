@@ -979,6 +979,394 @@ static void testExtendedFormsAreSelectedOnRequest()
     }
 }
 
+namespace {
+
+struct IntervalTest {
+    B3::Opcode first;
+    int64_t firstConstant;
+    B3::Opcode second;
+    int64_t secondConstant;
+    // Whether the edge that leaves is the one taken where the comparison holds.
+    bool leavesWhereFirstHolds;
+    bool leavesWhereSecondHolds;
+    bool isMerged;
+};
+
+} // anonymous namespace
+
+template<typename T>
+static bool holds(B3::Opcode relation, T left, T right)
+{
+    using Unsigned = std::make_unsigned_t<T>;
+    switch (relation) {
+    case LessThan:
+        return left < right;
+    case LessEqual:
+        return left <= right;
+    case GreaterThan:
+        return left > right;
+    case GreaterEqual:
+        return left >= right;
+    case Below:
+        return static_cast<Unsigned>(left) < static_cast<Unsigned>(right);
+    case BelowEqual:
+        return static_cast<Unsigned>(left) <= static_cast<Unsigned>(right);
+    case Above:
+        return static_cast<Unsigned>(left) > static_cast<Unsigned>(right);
+    case AboveEqual:
+        return static_cast<Unsigned>(left) >= static_cast<Unsigned>(right);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+template<typename T>
+static void checkTestsOfOneInterval(const IntervalTest& test, bool usesPolicy, bool leavesThroughBlocksOfTheirOwn, bool bothSidesMeet)
+{
+    Type type = sizeof(T) == 4 ? Int32 : Int64;
+    Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* next = proc.addBlock();
+    BasicBlock* inside = proc.addBlock();
+    BasicBlock* outside = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    Value* wideOperand = arguments[0];
+    Value* resultOutside = arguments[1];
+    Value* operand = type == Int32 ? graph.make(root, Trunc, wideOperand) : wideOperand;
+    Value* result = graph.phi(outside, Int64);
+    auto wayOut = [&] {
+        if (!leavesThroughBlocksOfTheirOwn)
+            return outside;
+        BasicBlock* edge = proc.addBlock();
+        graph.upsilon(edge, resultOutside, result);
+        graph.jump(edge, outside);
+        return edge;
+    };
+    auto appendTest = [&](BasicBlock* block, B3::Opcode relation, int64_t constant, bool leavesWhereItHolds, BasicBlock* stays) {
+        Value* comparison = graph.make(block, relation, operand, intConstant(graph, block, type, constant));
+        BasicBlock* leaves = wayOut();
+        graph.branch(block, comparison, leavesWhereItHolds ? leaves : stays, leavesWhereItHolds ? stays : leaves);
+    };
+    if (!leavesThroughBlocksOfTheirOwn)
+        graph.upsilon(root, resultOutside, result);
+    appendTest(root, test.first, test.firstConstant, test.leavesWhereFirstHolds, next);
+    appendTest(next, test.second, test.secondConstant, test.leavesWhereSecondHolds, inside);
+    if (bothSidesMeet) {
+        graph.upsilon(inside, graph.int64(inside, 1000), result);
+        graph.jump(inside, outside);
+    } else
+        graph.ret(inside, graph.int64(inside, 1000));
+    graph.ret(outside, result);
+
+    proc.resetReachability();
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    if (test.isMerged)
+        CHECK_EQ(numberOfValues(proc, Branch), usesPolicy ? 1u : 2u);
+    CHECK_EQ(numberOfValues(proc, Add), usesPolicy && test.isMerged ? 1u : 0u);
+
+    auto code = compileProc(proc);
+    auto check = [&](T value) {
+        bool leaves = holds<T>(test.first, value, static_cast<T>(test.firstConstant)) == test.leavesWhereFirstHolds
+            || holds<T>(test.second, value, static_cast<T>(test.secondConstant)) == test.leavesWhereSecondHolds;
+        CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(value), 7), leaves ? 7 : 1000);
+    };
+    for (int64_t constant : { test.firstConstant, test.secondConstant }) {
+        for (int64_t distance = -2; distance <= 2; ++distance)
+            check(static_cast<T>(static_cast<uint64_t>(constant) + static_cast<uint64_t>(distance)));
+    }
+    for (T value : { T { 0 }, T { -1 }, std::numeric_limits<T>::min(), std::numeric_limits<T>::max() })
+        check(value);
+}
+
+static void testTwoTestsOfOneIntervalBecomeOne()
+{
+    constexpr int64_t least32 = std::numeric_limits<int32_t>::min();
+    constexpr int64_t greatest32 = std::numeric_limits<int32_t>::max();
+    const IntervalTest tests[] = {
+        { LessThan, 48, GreaterThan, 57, true, true, true },
+        { GreaterThan, 57, LessThan, 48, true, true, true },
+        { Below, 48, Above, 57, true, true, true },
+        { GreaterEqual, 48, LessEqual, 57, false, false, true },
+        { AboveEqual, 48, BelowEqual, 57, false, false, true },
+        { LessEqual, 47, GreaterEqual, 58, true, true, true },
+        { LessThan, -5, GreaterThan, 5, true, true, true },
+        { LessThan, 7, GreaterThan, 7, true, true, true },
+        { LessThan, least32 + 1, GreaterThan, greatest32 - 1, true, true, true },
+        { Below, 2, Above, -3, true, true, true },
+        // No value passes both tests.
+        { LessThan, 57, GreaterThan, 48, true, true, false },
+        // Both tests are of the same side.
+        { LessThan, 48, LessThan, 57, true, true, false },
+        // One test takes the value as signed and the other as unsigned.
+        { LessThan, 48, Above, 57, true, true, false },
+        // The edge is always taken.
+        { LessEqual, greatest32, GreaterThan, 57, true, true, false },
+    };
+    for (const IntervalTest& test : tests) {
+        for (bool usesPolicy : { true, false }) {
+            for (bool leavesThroughBlocksOfTheirOwn : { false, true }) {
+                for (bool bothSidesMeet : { false, true }) {
+                    checkTestsOfOneInterval<int32_t>(test, usesPolicy, leavesThroughBlocksOfTheirOwn, bothSidesMeet);
+                    if (test.firstConstant != greatest32)
+                        checkTestsOfOneInterval<int64_t>(test, usesPolicy, leavesThroughBlocksOfTheirOwn, bothSidesMeet);
+                }
+            }
+        }
+    }
+}
+
+static void testTestsOfOneIntervalStayTwoWhereTheyDiffer()
+{
+    enum class Difference : uint8_t { OtherValueLeaves, StoreBetweenTests, OtherOperand };
+    for (Difference difference : { Difference::OtherValueLeaves, Difference::StoreBetweenTests, Difference::OtherOperand }) {
+        Procedure proc(strengthReductionPolicy());
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* next = proc.addBlock();
+        BasicBlock* inside = proc.addBlock();
+        BasicBlock* under = proc.addBlock();
+        BasicBlock* over = proc.addBlock();
+        BasicBlock* outside = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t*>(proc, root);
+        Value* operand = arguments[0];
+        Value* other = arguments[1];
+        Value* pointer = arguments[2];
+        Value* result = graph.phi(outside, Int64);
+        graph.branch(root, graph.make(root, LessThan, operand, graph.int64(root, 48)), under, next);
+        if (difference == Difference::StoreBetweenTests)
+            graph.store(next, operand, pointer, 0, firstHeap);
+        graph.branch(next, graph.make(next, GreaterThan, difference == Difference::OtherOperand ? other : operand, graph.int64(next, 57)), over, inside);
+        graph.upsilon(under, other, result);
+        graph.jump(under, outside);
+        graph.upsilon(over, difference == Difference::OtherValueLeaves ? operand : other, result);
+        graph.jump(over, outside);
+        graph.ret(inside, graph.int64(inside, 1000));
+        graph.ret(outside, result);
+
+        proc.resetReachability();
+        reduceStrength(proc, ReduceStrengthPass::Initial);
+        CHECK_EQ(numberOfValues(proc, Branch), 2u);
+        auto code = compileProc(proc);
+        int64_t memory[1] = { 0 };
+        CHECK_EQ(invoke<int64_t>(*code, 40, 7, memory), 7);
+        CHECK_EQ(memory[0], 0);
+        CHECK_EQ(invoke<int64_t>(*code, 50, 7, memory), 1000);
+        CHECK_EQ(invoke<int64_t>(*code, 60, 7, memory), difference == Difference::OtherValueLeaves ? 60 : difference == Difference::OtherOperand ? 1000 : 7);
+    }
+}
+
+static void testPhisWithSameInputsBecomeOne()
+{
+    enum class Form : uint8_t { Same, OtherInputOnOneSide, InputsSwapped, SecondInputInOneBlock };
+    for (bool usesPolicy : { true, false }) {
+        for (Form form : { Form::Same, Form::OtherInputOnOneSide, Form::InputsSwapped, Form::SecondInputInOneBlock }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            BasicBlock* left = proc.addBlock();
+            BasicBlock* right = proc.addBlock();
+            BasicBlock* join = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+            Value* condition = arguments[0];
+            Value* fromLeft = arguments[1];
+            Value* fromRight = arguments[2];
+            Value* first = graph.phi(join, Int64);
+            Value* second = graph.phi(join, Int64);
+            graph.branch(root, condition, left, right);
+            graph.upsilon(left, fromLeft, first);
+            if (form == Form::SecondInputInOneBlock)
+                graph.upsilon(left, fromRight, second);
+            graph.upsilon(left, form == Form::InputsSwapped ? fromRight : fromLeft, second);
+            graph.jump(left, join);
+            // The Upsilons of the two stand in either order.
+            graph.upsilon(right, form == Form::Same || form == Form::SecondInputInOneBlock ? fromRight : form == Form::InputsSwapped ? fromLeft : condition, second);
+            graph.upsilon(right, fromRight, first);
+            graph.jump(right, join);
+            graph.ret(join, graph.make(join, Sub, graph.make(join, Mul, first, graph.int64(join, 10)), second));
+
+            proc.resetReachability();
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(numberOfValues(proc, Phi), usesPolicy && form == Form::Same ? 1u : 2u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 3, 5), 30 - (form == Form::InputsSwapped ? 5 : 3));
+            CHECK_EQ(invoke<int64_t>(*code, 0, 3, 5), 50 - (form == Form::OtherInputOnOneSide ? 0 : form == Form::InputsSwapped ? 3 : 5));
+        }
+    }
+}
+
+static void testConstantLeavesZeroExtendedSumInAddress()
+{
+    struct Case {
+        IntRange range;
+        int32_t constant;
+        unsigned shift;
+        bool isTakenOut;
+    };
+    constexpr int64_t greatest32 = std::numeric_limits<int32_t>::max();
+    const Case cases[] = {
+        { IntRange(0, greatest32), 3, 0, true },
+        { IntRange(0, greatest32), 3, 1, true },
+        { IntRange(0, greatest32), 3, 3, true },
+        { IntRange(5, 100), -5, 0, true },
+        // The sum of 32 bits may wrap around.
+        { IntRange(5, 100), -6, 0, false },
+        { IntRange(-1, 100), 3, 0, false },
+        { IntRange::top<int32_t>(), 3, 3, false },
+    };
+    for (const Case& testCase : cases) {
+        for (bool usesPolicy : { true, false }) {
+            Procedure proc(usesPolicy ? policyWith([](Policy& policy) {
+                policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+                policy.optimization.reducesWithRanges = true;
+                policy.loops.unrolls = true;
+            }) : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<uint8_t*, int64_t>(proc, root);
+            Value* index = graph.make(root, Trunc, arguments[1]);
+            if (usesPolicy)
+                proc.setKnownRange(index, testCase.range);
+            Value* extended = graph.make(root, ZExt32, graph.make(root, Add, index, graph.int32(root, testCase.constant)));
+            if (testCase.shift)
+                extended = graph.make(root, Shl, extended, graph.int32(root, testCase.shift));
+            MemoryValue* load = root->appendNew<MemoryValue>(proc, Load8Z, Origin(), graph.make(root, Add, arguments[0], extended), 0, firstHeap);
+            graph.ret(root, graph.make(root, ZExt32, load));
+
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(load->offset(), usesPolicy && testCase.isTakenOut && (isX86() || !testCase.shift) ? testCase.constant * (1 << testCase.shift) : 0);
+            auto code = compileProc(proc);
+            uint8_t memory[1024];
+            for (unsigned position = 0; position < 1024; ++position)
+                memory[position] = position * 7;
+            for (int64_t position : { 6ll, 50ll, 100ll })
+                CHECK_EQ(invoke<int64_t>(*code, memory, position), static_cast<uint8_t>(((position + testCase.constant) << testCase.shift) * 7));
+        }
+    }
+}
+
+static void testZeroExtendedSumWithAnotherUserStaysOutsideX86()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<uint8_t*, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = graph.make(root, Trunc, arguments[1]);
+    proc.setKnownRange(index, IntRange(0, std::numeric_limits<int32_t>::max()));
+    Value* sum = graph.make(root, Add, index, graph.int32(root, 3));
+    MemoryValue* load = root->appendNew<MemoryValue>(proc, Load8Z, Origin(), graph.make(root, Add, pointer, graph.make(root, ZExt32, sum)), 0, firstHeap);
+    graph.ret(root, graph.make(root, ZExt32, graph.make(root, Mul, load, sum)));
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    CHECK_EQ(load->offset(), isX86() ? 3 : 0);
+    auto code = compileProc(proc);
+    uint8_t memory[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 4), 49);
+}
+
+// Two accesses at index + 1 and index + 2, neither in front of the other. Outside x86 base + (index << 3) is an instruction: it is made once, where both come from.
+static void testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = arguments[1];
+    Value* isFirst = arguments[2];
+    graph.branch(root, isFirst, first, second);
+    auto returnElement = [&](BasicBlock* block, int64_t distance) {
+        Value* offset = graph.make(block, Shl, graph.make(block, Add, index, graph.int64(block, distance)), graph.int32(block, 3));
+        graph.ret(block, graph.load(block, Int64, graph.make(block, Add, pointer, offset), 0, firstHeap));
+    };
+    returnElement(first, 1);
+    returnElement(second, 2);
+    proc.resetReachability();
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Shl), isX86() ? 2u : 1u);
+    auto code = compileProc(proc);
+    int64_t memory[4] = { 10, 11, 12, 13 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 1), 12);
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
+}
+
+// A cycle with two entries, each behind a test that folds. The walk reduces the blocks of the cycle before it has seen that nothing leads to them, and they leave the procedure behind it.
+// What is left shares its part as if the cycle had never been there.
+static void testPartOfAddressIsSharedBesideCycleThatLeavesProcedure()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* testInFrontOfFirst = proc.addBlock();
+    BasicBlock* testInFrontOfSecond = proc.addBlock();
+    BasicBlock* storing = proc.addBlock();
+    BasicBlock* loading = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = arguments[1];
+    Value* isFirst = arguments[2];
+    auto address = [&](BasicBlock* block, int64_t distance) {
+        Value* offset = graph.make(block, Shl, graph.make(block, Add, index, graph.int64(block, distance)), graph.int32(block, 3));
+        return graph.make(block, Add, pointer, offset);
+    };
+    graph.branch(root, isFirst, testInFrontOfFirst, testInFrontOfSecond);
+    graph.branch(testInFrontOfFirst, graph.int32(testInFrontOfFirst, 0), storing, first);
+    graph.branch(testInFrontOfSecond, graph.int32(testInFrontOfSecond, 0), loading, second);
+    graph.store(storing, index, address(storing, 3), 0, firstHeap);
+    graph.jump(storing, loading);
+    graph.branch(loading, graph.load(loading, Int64, address(loading, 4), 0, firstHeap), storing, first);
+    graph.ret(first, graph.load(first, Int64, address(first, 1), 0, firstHeap));
+    graph.ret(second, graph.load(second, Int64, address(second, 2), 0, firstHeap));
+    proc.resetReachability();
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Store), 0u);
+    CHECK_EQ(numberOfValues(proc, Shl), isX86() ? 2u : 1u);
+    auto code = compileProc(proc);
+    int64_t memory[4] = { 10, 11, 12, 13 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 1), 12);
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
+}
+
+static void testDifferencePlusSubtrahend()
+{
+    for (bool usesPolicy : { true, false }) {
+        for (bool differenceIsOnLeft : { true, false }) {
+            Procedure proc(usesPolicy ? strengthReductionPolicy() : Policy());
+            Graph graph { proc };
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+            Value* difference = graph.make(root, Sub, arguments[0], arguments[1]);
+            graph.ret(root, differenceIsOnLeft ? graph.make(root, Add, difference, arguments[1]) : graph.make(root, Add, arguments[1], difference));
+            reduceStrength(proc, ReduceStrengthPass::Initial);
+            CHECK_EQ(numberOfValues(proc, Add) + numberOfValues(proc, Sub), usesPolicy ? 0u : 2u);
+            auto code = compileProc(proc);
+            CHECK_EQ(invoke<int64_t>(*code, 1, 12345), 1);
+            CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int64_t>::min(), 1), std::numeric_limits<int64_t>::min());
+        }
+    }
+}
+
 void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testMemoryNumberingIrreducibleCycle());
@@ -1004,6 +1392,14 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testComparisonLooksThroughReplacementOfNaN());
     RUN(testReplacementOfExcludedConstantFoldsOnPath());
     RUN(testExtendedFormsAreSelectedOnRequest());
+    RUN(testTwoTestsOfOneIntervalBecomeOne());
+    RUN(testTestsOfOneIntervalStayTwoWhereTheyDiffer());
+    RUN(testPhisWithSameInputsBecomeOne());
+    RUN(testConstantLeavesZeroExtendedSumInAddress());
+    RUN(testZeroExtendedSumWithAnotherUserStaysOutsideX86());
+    RUN(testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther());
+    RUN(testPartOfAddressIsSharedBesideCycleThatLeavesProcedure());
+    RUN(testDifferencePlusSubtrahend());
 }
 
 #endif // ENABLE(B3_JIT)

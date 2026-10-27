@@ -35,6 +35,8 @@ struct CallPatchpointRequest {
     bool runsWithoutFrame { false };
     bool neverReturns { false };
     bool holdsUniqueRecord { false };
+    // Not a function of the program. Whether one is called from there is among the effects.
+    bool callsStub { false };
 };
 
 class RuntimeCallEmitter final : public OperationEmitter {
@@ -68,7 +70,12 @@ public:
     B3::PatchpointValue* createCallPatchpoint(const OperationContext&, const CallPatchpointRequest&);
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
-    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
+    // The slot of a site is filled, emptied and filled again by the stubs and the run time. No operation of the IR says so: only generated code reads the slots.
+    enum class SlotsOfSites : uint8_t { MayChange, StayAsTheyAre };
+    SlotsOfSites slotsOfSitesBehindStub(const OperationContext*, const Effects&) const;
+    // For the end of a procedure. A write matters to a reader in the same procedure, and a call that writes nothing may be moved, merged or left out.
+    void stateWhichCallsChangeSlotsOfSites();
+    void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;
@@ -118,6 +125,7 @@ private:
     B3::Air::StackSlot* ensureRegisterStorage(B3::Air::StackSlot*&);
 
     B3::Air::StackSlot* m_transientBuffer { nullptr };
+    Vector<B3::PatchpointValue*, 16> m_callsThatMayChangeSlotsOfSites;
     B3::Air::StackSlot* m_keptRegisterStorage { nullptr };
     B3::Air::StackSlot* m_landingPadRegisterStorage { nullptr };
 };

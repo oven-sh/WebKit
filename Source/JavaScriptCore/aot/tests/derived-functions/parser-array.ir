@@ -1,4 +1,4 @@
-# The parser of an array appends in a loop, and an element that its typed parser does not take is read again as a plain value
+# The parser of an array appends in a loop, and an element that its typed parser does not take is read again as a plain value. In front of the loop the run time appends the objects whose names it has parsed before, and says where the loop goes on
 # FORM: Prepared optimizing
 # RUN: derived-functions Parser:g0
 # STATISTIC: ParsersCreated = 2
@@ -18,7 +18,10 @@ variable g0 name="rows" declared={type=Array<L0>} initialization=Undefined
 # CHECK-NEXT: Branch [[isBracket0]] -> taken {{*}}, notTaken [[rejected0]]()
 # CHECK: [[afterBracket0]]: cursor = JSONSkipWhitespace
 # CHECK-NEXT: [[array0]]: Array<L0> = NewArray contents=L0
-# CHECK-NEXT: [[byte0]]:{{*}}= JSONGetByte [[afterBracket0]]
+# CHECK-NEXT: [[noKeys0]]: keyorder = JSONObjectBegin layout=L0
+# CHECK-NEXT: [[appended0]]:{{*}}= JSONParseExtraMembers [[afterBracket0]], [[array0]], [[noKeys0]] layout=L0
+# CHECK-NEXT: [[afterAppended0]]: cursor = ResultAt [[appended0]] index=2
+# CHECK-NEXT: [[byte0]]:{{*}}= JSONGetByte [[afterAppended0]]
 # CHECK-NEXT: [[closingBracket0]]: 93 = Integer integer=93
 # CHECK-NEXT: [[isEmpty0]]: boolean = StrictEq [[byte0]], [[closingBracket0]]
 # CHECK-NEXT: Branch [[isEmpty0]] -> taken [[empty0]](), notTaken [[hasElements0]]()
@@ -31,9 +34,9 @@ variable g0 name="rows" declared={type=Array<L0>} initialization=Undefined
 # CHECK-NEXT: [[next0]]: cursor = JSONSkipByte [[atBracket0]]
 # CHECK: = Results {{*}}, [[array0]], [[next0]]
 # CHECK: [[empty0]]():
-# CHECK-NEXT: Jump -> next [[done0]]([[afterBracket0]])
+# CHECK-NEXT: Jump -> next [[done0]]([[afterAppended0]])
 # CHECK-NEXT: [[hasElements0]]():
-# CHECK-NEXT: Jump -> next [[loop0]]([[afterBracket0]])
+# CHECK-NEXT: Jump -> next [[loop0]]([[afterAppended0]])
 # CHECK-NEXT: [[again0]]() frequency=Rare:
 # CHECK-NEXT: [[generic0]]:{{*}}= JSONParseValue [[element0]]
 # CHECK: [[merge0]]([[value0]]:{{*}}, [[afterValue0]]: cursor):

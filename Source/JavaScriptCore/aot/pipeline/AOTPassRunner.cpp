@@ -12,6 +12,7 @@
 #include "AOTBindGlobalNames.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTCastsWithoutFacts.h"
 #include "AOTCurrentWork.h"
 #include "AOTEffectSummaries.h"
 #include "AOTExactBuffer.h"
@@ -113,7 +114,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::RemoveTrivialParameters, { .traits = BodyTrait::BlockParameters } },
     { PassID::PropagateBranchConditions, { .opcodes = { Opcode::ToBoolean }, .terminators = { TerminatorKind::Branch } } },
     { PassID::HoistTestsIntoPredecessors, { .opcodes = operationsHoistedIntoPredecessors }, { { .traits = BodyTrait::BlockParameters } } },
-    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest } } },
+    { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
@@ -351,7 +352,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
     CurrentWorkScope workScope(context.program, run.functionAsRead);
     PassOutcome outcome = runFunctionPass(id, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return outcome;
+    return run.didMakeFacts ? PassOutcome::Changed : outcome;
 }
 
 void PassRunner::prepare(ScheduleRun& run) const
@@ -414,7 +415,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
         runFunctionPass(PassID::RetypeValues, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return run.numberOfChanges ? PassOutcome::Changed : PassOutcome::Unchanged;
+    return run.numberOfChanges || run.didMakeFacts ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
 void PassRunner::didFinishFunctionLoop()
@@ -830,11 +831,44 @@ static bool isVerifiedElsewhere(const FunctionPassContext& context)
 }
 
 // Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
+// These put operations where the program had none: in front of a loop, on the edges into it, at the head of a web. What they may put there is what names nothing that is defined behind the place.
+// Other passes put values in place of values, cut the code between a value and a cast of it and make casts where values are used, and move no cast: so each cast that stands apart from its value holds where
+// it stands, and is tied there before anything leaves a loop.
+static constexpr PassSet passesThatMoveOperationsOutOfLoops {
+    PassID::HoistLoopInvariantReads, PassID::PlaceTypeTests, PassID::SeparateUnlikelyLoopPaths, PassID::CreateStringBuilders, PassID::PlanArrayCapacities, PassID::PlanCollectionCapacities, PassID::Select,
+};
+
 NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
 
+    auto tieCasts = [&] {
+        if (run.numberOfChangesWhenCastsWereTied == run.numberOfChanges)
+            return;
+        // A fact gives no pass anything to do, so no round follows for its sake.
+        if (Vector<BlockID, 4> changedBlocks = tieCastsWhereTheyStand(context.program, context.function); !changedBlocks.isEmpty()) {
+            context.analyses.didAddDetachedValue({ });
+            for (BlockID block : changedBlocks)
+                context.analyses.didChangeBlock(block);
+            run.contents = std::nullopt;
+            run.didMakeFacts = true;
+        }
+        run.numberOfChangesWhenCastsWereTied = run.numberOfChanges;
+    };
+    if (passesThatMoveOperationsOutOfLoops.contains(id) && context.program.form() == IRForm::Prepared) {
+        const OpcodeSet& opcodes = run.contentsOf(context.function, context.changes).opcodes;
+        if (opcodes.contains(Opcode::LoopHint) && opcodes.contains(Opcode::AssumeType)) {
+            tieCasts();
+            if (m_build.options().verifiesProgram) [[unlikely]] {
+                if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
+                    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = id });
+                    run.isStopped = true;
+                    return PassOutcome::Unchanged;
+                }
+            }
+        }
+    }
     const bool isTimed = m_build.options().logging.logsPhaseTimes;
     size_t numberOfValuesBefore = context.function.values.size();
     const uint32_t weight = isTimed ? numberOfRunsThatTimedRunStandsFor(run.functionAsRead, numberOfValuesBefore) : 0;

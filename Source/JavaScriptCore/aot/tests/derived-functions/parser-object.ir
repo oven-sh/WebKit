@@ -1,4 +1,4 @@
-# The parser of an object tries the members in declared order, then in any order in a loop, where a member that comes again keeps its place among the keys, and allocates the layout in the closing block
+# The parser of an object tries the members in declared order, then asks whether a text with the same names was parsed before, then tries them in any order in a loop, where a member that comes again keeps its place among the keys, and allocates the layout in the closing block
 # FORM: Prepared optimizing
 # RUN: derived-functions Parser:g0 Parser:g1 Parser:g2
 # STATISTIC: ParsersCreated = 3
@@ -45,11 +45,14 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK: [[repeats]]: boolean = JSONMemberRepeats [[idValue]] string="id"
 # CHECK-NEXT: Branch [[repeats]] -> taken [[unknown0]](), notTaken [[rejected0]]()
 # CHECK: [[orderAfterId]]: keyorder = JSONObjectKey [[begin]] layout=L0 @
+# CHECK: [[notInOrder]]([[nId]]: undefined|number, [[nSeenId]]: boolean, [[nName]]: undefined|string, [[nSeenName]]: boolean, [[nKey]]: cursor, [[nOrder]]: keyorder, [[nExtra]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[beginOfWhole]]: keyorder = JSONObjectBegin layout=L0
+# CHECK-NEXT: [[null]]: null = Null
+# CHECK-NEXT: [[whole]]:{{*}}= JSONParseExtraMembers v0, [[null]], [[beginOfWhole]] layout=L0
+# CHECK-NEXT: [[wholeOutcome]]: int[0, 2] = ResultAt [[whole]]
+# CHECK-NEXT: Switch [[wholeOutcome]] cases=[1, 2] -> case [[isWhole]](), case [[isNotWhole]](), otherwise [[unknown0]]()
 # CHECK: = JSONObjectKey [[orderAfterId]] layout=L0 field=1
-# CHECK: [[hasEscapes]]: boolean = JSONKeyHasEscapes [[key]]
-# CHECK-NEXT: Branch [[hasEscapes]] -> taken [[escapes]](), notTaken
-# CHECK-NEXT: [[escapes]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[undeclared]]()
+# CHECK-NOT: JSONKeyHasEscapes
 # CHECK: [[idInLoop]]: boolean = JSONStartsWith [[key]] string="\"id\"" @
 # CHECK: = JSONStartsWith [[key]] string="\"name\"" @
 # CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken [[idIsNew]]()
@@ -59,6 +62,9 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK-NEXT: [[idIsNew]]():
 # CHECK-NEXT: [[orderAfterIdInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 @
 # CHECK-NEXT: Jump -> next [[afterId]]([[orderAfterIdInLoop]])
+# CHECK: [[extraMembers]]:{{*}}= JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
+# CHECK-NEXT: [[extraOutcome]]: int[0, 2] = ResultAt [[extraMembers]]
+# CHECK-NEXT: Switch [[extraOutcome]] cases=[1] -> case [[hasExtraMembers]](), otherwise [[unknown0]]()
 # CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken [[nameIsNew]]()
 # CHECK: [[afterName]]([[orderWithName]]: keyorder):
 # CHECK: [[nameRepeats]]() frequency=Rare:
@@ -66,8 +72,12 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK-NEXT: [[nameIsNew]]():
 # CHECK-NEXT: [[orderAfterNameInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 field=1
 # CHECK-NEXT: Jump -> next [[afterName]]([[orderAfterNameInLoop]])
-# CHECK: [[undeclared]]():
-# CHECK-NEXT: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
+# CHECK-NOT: JSONKeyHasEscapes
+# CHECK: [[hasExtraMembers]]():
+# CHECK-NEXT: [[extraAfter]]: anything = ResultAt [[extraMembers]] index=1
+# CHECK-NEXT: [[keyAfter]]: cursor = ResultAt [[extraMembers]] index=2
+# CHECK-NEXT: [[orderAfter]]: keyorder = ResultAt [[extraMembers]] index=3
+# CHECK-NEXT: Jump -> next [[loop]]([[id]], [[seenId]], [[name]], [[seenName]], [[keyAfter]], [[orderAfter]], [[extraAfter]])
 # CHECK: [[hasId]]():
 # CHECK-NEXT: Branch [[cSeenName]] -> taken {{*}}, notTaken [[nameIsMissing]]()
 # CHECK-NEXT: [[idIsMissing]]() frequency=Rare:
@@ -78,9 +88,20 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK: [[object]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[finished]]: int[0, 2] = JSONObjectFinish [[cOrder]], [[object]], [[cExtra]] layout=L0
 # CHECK-NEXT: Switch [[finished]] cases=[1] -> case {{*}}, otherwise [[unknown0]]()
-# CHECK: [[one]]: 1 = Integer integer=1
-# CHECK-NEXT: [[parsedResults]]:{{*}}= Results [[one]], [[object]], [[next]]
+# CHECK: Jump -> next [[parsed]]([[object]], [[next]])
+# CHECK-NEXT: [[parsed]]([[result]]: undefined|L0, [[behind]]: cursor):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[parsedResults]]:{{*}}= Results [[one]], [[result]], [[behind]]
 # CHECK-NEXT: Return [[parsedResults]]
+# CHECK-NEXT: [[isNotWhole]]():
+# CHECK-NEXT: Jump -> next [[loop]]([[nId]], [[nSeenId]], [[nName]], [[nSeenName]], [[nKey]], [[nOrder]], [[nExtra]])
+# CHECK-NEXT: [[isWhole]]():
+# CHECK-NEXT: [[wholeValue]]: anything = ResultAt [[whole]] index=1
+# CHECK-NEXT: [[closingBrace]]: cursor = ResultAt [[whole]] index=2
+# CHECK: [[isObject]]: boolean = TypeTest [[wholeValue]] testedType=L0
+# CHECK: ([[wholeObject]]: L0):
+# CHECK-NEXT: [[behindWhole]]: cursor = JSONSkipByte [[closingBrace]]
+# CHECK-NEXT: Jump -> next [[parsed]]([[wholeObject]], [[behindWhole]])
 
 # CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
 # CHECK: LoopHint

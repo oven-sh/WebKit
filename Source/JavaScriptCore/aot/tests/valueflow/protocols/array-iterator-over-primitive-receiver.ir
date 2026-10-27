@@ -1,0 +1,48 @@
+# [...Array.prototype.values.call("ab")][0]; for (const unit of Array.prototype.values.call("ab")); [...Array.prototype.entries.call("ab")][0][1]; for (const none of Array.prototype.values.call(5))
+# RUN: valueflow-why values=f0:v6 values=f0:v10 values=f0:v20 values=f0:v25
+# CHECK: values=f0:v6
+# CHECK: result {{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v10
+# CHECK: result {{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v20
+# CHECK: result {{*}} 4 members: primitive0 primitive4 primitive5 primitive7
+# CHECK: values=f0:v25
+# CHECK: result {{*}} 1 members: primitive0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="element" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="unit" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="valueOfEntry" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="none" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ArrayPrototypeValues
+    v1 = String string="ab"
+    v2 = Call v0, v1
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = Integer
+    v6 = ElemGet v3, v5
+    PutModuleVariable v6 variable=g0
+    v8 = Call v0, v1
+    v9 = IteratorOpen v8
+    v10 = IteratorResume v9
+    v11 = ResultAt v10 index=1
+    PutModuleVariable v11 variable=g1
+    v13 = Builtin builtin=ArrayPrototypeEntries
+    v14 = Call v13, v1
+    v15 = NewArray contents=anything
+    AppendSpread v15, v14
+    v17 = Integer
+    v18 = ElemGet v15, v17
+    v19 = Integer integer=1
+    v20 = ElemGet v18, v19
+    PutModuleVariable v20 variable=g2
+    v22 = Integer integer=5
+    v23 = Call v0, v22
+    v24 = IteratorOpen v23
+    v25 = IteratorResume v24
+    v26 = ResultAt v25 index=1
+    PutModuleVariable v26 variable=g3
+    Return
+}

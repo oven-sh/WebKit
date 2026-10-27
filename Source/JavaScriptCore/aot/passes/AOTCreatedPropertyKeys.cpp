@@ -71,7 +71,7 @@ static ReturnedStrings findReturnedStrings(const Program& program, FunctionID id
     while (!worklist.isEmpty()) {
         ValueID returned = worklist.takeLast();
         const Value& value = function.at(returned);
-        if (ValueID definition = sameObjectThroughCasts(function, returned); definition != returned)
+        if (ValueID definition = sameObjectThroughCasts(function, returned).valueInFrontOfFacts(); definition != returned)
             add(definition);
         else if (value.opcode == Opcode::Parameter) {
             for (const Block& block : function.blocks) {

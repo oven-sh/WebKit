@@ -160,7 +160,7 @@ static bool isLoopTestSameOnRarePaths(const LoopVersionPlan& plan)
 std::optional<GaveUp> LoopVersionPlanner::finishPlan(LoopVersionPlan& plan)
 {
     plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted);
-    if (plan.rewritesLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
+    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
         plan.excursion = { };
     if (plan.firstIterationSlowPath && !plan.excursion.contains(plan.firstIterationSlowPath) && !plan.unswitched && plan.isEnteredFromPreHeader)
         return GaveUp(GaveUpReason::NoSingleLikelyPath);
@@ -189,7 +189,12 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
     if (plan.countedLoop) {
         plan.rangeChecks = planRangeChecks({ m_proc, m_phiChildren, plan.region, attempt.invariance, *plan.countedLoop, attempt.blocksBeforeTopTest, canRewriteTest && clampsLoopBounds });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
+    } else if (clampsLoopBounds) {
+        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance });
+        plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     }
+    if (plan.rangeChecks.decidedComparisons.isEmpty() && !hoistsEnough(attempt))
+        return std::unexpected(GaveUp(GaveUpReason::NothingToHoist));
     if (auto gaveUp = checkSpeculativeHoistBudget(attempt))
         return std::unexpected(*gaveUp);
 
@@ -369,10 +374,16 @@ bool LoopVersionPlanner::isNeverNegative(Value* value)
     return !!upsilons.size();
 }
 
+bool LoopVersionPlanner::hoistsEnough(const Attempt& attempt)
+{
+    const HoistPlan& hoisted = attempt.invariance.plan();
+    return hoisted.hoistsGuard || hoisted.numberOfHoistedValues >= Limits::minHoistedValuesPerLoopVersion;
+}
+
 std::optional<GaveUp> LoopVersionPlanner::checkHoistThresholds(const Attempt& attempt) const
 {
     const HoistPlan& hoisted = attempt.invariance.plan();
-    if ((!hoisted.hoistsGuard && hoisted.numberOfHoistedValues < Limits::minHoistedValuesPerLoopVersion) || (attempt.unswitched && !hoisted.isHoisted(attempt.unswitched->block->last())))
+    if (attempt.unswitched && !hoisted.isHoisted(attempt.unswitched->block->last()))
         return GaveUp(GaveUpReason::NothingToHoist);
     if (attempt.plan.numberOfClonedValues - hoisted.numberOfHoistedValues + hoisted.numberOfPeeledValues > m_proc.limit(Limit::MaxClonedValuesPerLoopVersion)) {
         m_proc.didReachLimit(Limit::MaxClonedValuesPerLoopVersion, attempt.plan.region.header->at(0)->origin());

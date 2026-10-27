@@ -32,6 +32,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestSite.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <tuple>
@@ -536,7 +537,7 @@ struct CapacityPlanner {
 
     bool canMeasureAt(const MeasuredStorage& measured, ProgramPoint point)
     {
-        return analyses.dominates(measured.owner, point) && !mayBeUnspecified(analyses, measured.owner) && holdsAt(measured.guard, point);
+        return analyses.dominates(measured.owner, point) && !context.program.typeOf(function, measured.owner).mayBeUnspecified() && holdsAt(measured.guard, point);
     }
 
     // Nothing that anybody could tell lies between the point and the value, and no other way leads on from the point. So what the value does, a throw too, may as well be done at the point.
@@ -566,7 +567,7 @@ struct CapacityPlanner {
     bool canMeasureBehindCheck(const MeasuredStorage& measured, ProgramPoint point)
     {
         ValueID check = checkInFrontOf(function, measured);
-        return check && !function.at(point.block).handler && !mayBeUnspecified(analyses, measured.owner)
+        return check && !function.at(point.block).handler && !context.program.typeOf(function, measured.owner).mayBeUnspecified()
             && analyses.dominates(function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
     }
 
@@ -714,12 +715,12 @@ struct CapacityPlanner {
     {
         if (!id)
             return { };
-        id = valueOnLikelyEdges(analyses.sameObjectThroughCasts(id)).predicted();
+        id = valueOnLikelyEdges(sameObjectBehindFacts(function, id)).predicted();
         KnownValue known = knownValueOf(context.program, function, id);
         if (known.kind() == KnownValue::Kind::Integer)
             return plannedTermRange.contains(known.asInteger()) ? CapacityTerm { CapacityTermKind::Constant, { }, known.asInteger() } : CapacityTerm { };
 
-        ValueID definition = analyses.sameObjectThroughCasts(id);
+        ValueID definition = sameObjectBehindFacts(function, id);
         const Type& type = context.program.typeOf(function, definition);
         bool isAvailable = analyses.dominates(definition, literal.point);
         if (isAvailable && type.isInteger() && type.integers.isSubsetOf(plannedTermRange))
@@ -808,7 +809,7 @@ struct CapacityPlanner {
             return std::nullopt;
         ValueID collection = addition.receiverOperand();
         BlockID preheader = findPreheader(loop);
-        if (!preheader || !isInvariantIn(analyses, loop, collection) || mayBeUnspecified(analyses, collection))
+        if (!preheader || !isInvariantIn(analyses, loop, collection) || program.typeOf(function, collection).mayBeUnspecified())
             return std::nullopt;
         // A value that is invariant may still be computed in the loop.
         if (!analyses.dominates(collection, pointBeforeTerminatorOf(function, preheader)) || !makeSizeRead(context, collection, implementation == InlineBuiltin::MapSet))
@@ -1072,7 +1073,7 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         return ordinal;
     };
     auto groupNamedBy = [&](ValueID operand) -> std::optional<unsigned> {
-        ValueID array = analyses.sameObjectThroughCasts(operand);
+        ValueID array = analyses.sameObjectThroughCasts(operand).valueInFrontOfFacts();
         if (auto entry = ordinals.find(array); entry != ordinals.end())
             return leaderOf(entry->value);
         if (function.at(array).opcode != Opcode::Parameter || analyses.escape().gaveUp())

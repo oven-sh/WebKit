@@ -218,7 +218,8 @@ void StringRangeReadEmitter::generateStringRangeParseInt(const ValueContext& val
     if (!requireRepresentation(generator(), value, Representation::Double))
         return;
     ValueID radix = value->radixOperand();
-    define(value, parseInt(viewOfRange(value), radix ? strings().word32Of(radix) : word32(0)));
+    CharacterView view = viewOfRange(value);
+    define(value, parseInt(view, radix ? strings().word32Of(radix) : word32(0)));
 }
 
 void StringRangeReadEmitter::generateStringRangeSubstringOrUndefined(const ValueContext& value)

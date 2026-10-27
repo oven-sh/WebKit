@@ -614,9 +614,9 @@ static bool isPositionTestForUser(const Function& function, const GuardOrigin& o
     return Value::opcodesWithIsInsideView.contains(user.opcode) == (test.opcode == Opcode::IsInsideView);
 }
 
-static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
+static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardFact& fact, const GuardOrigin& origin, const Value& user)
 {
-    return isPositionTestForUser(analyses.function(), origin, user) && isSamePosition(analyses, analyses.function().at(origin.test).positionOperand(), user.positionOperand());
+    return isPositionTestForUser(analyses.function(), origin, user) && fact.position && isSamePosition(analyses, fact.position, user.positionOperand());
 }
 
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
@@ -735,7 +735,7 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
         if (proof == Proof::ArrayStorage)
             return provesArrayStorageForUser(program, function, origin, user);
         if (proof == Proof::InBounds)
-            return provesInBoundsForUser(analyses, origin, user);
+            return provesInBoundsForUser(analyses, fact, origin, user);
         return true;
     });
 }
@@ -903,7 +903,9 @@ static GuardFacts factsOfEdgeResult(FunctionAnalyses& analyses, BlockID from, co
         Vector<MemoryLocation, 2> locations = declaredReadsOf(terminator, provesOf(terminator.kind));
         return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, WTF::move(locations), { GuardOrigin { GuardSource::SwitchCase, { }, from, *result.caseIndex } } } } };
     }
-    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(function.at(result.test)), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } } } } };
+    const Value& test = function.at(result.test);
+    ValueID position = result.proof == Proof::InBounds ? analyses.identityOf(test.positionOperand()) : ValueID();
+    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(test), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } }, position } } };
 }
 
 void GuardAvailability::computeFacts()

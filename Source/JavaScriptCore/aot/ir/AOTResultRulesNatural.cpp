@@ -505,6 +505,7 @@ struct WidestNaturalRules {
     Result constant(auto&&...) { return std::nullopt; }
     Result sameAs(auto&&...) { return std::nullopt; }
     Result allocation(auto&&...) { return std::nullopt; }
+    Result declared(const Value&, LayoutID) { return Type::object(); }
     Result declared(auto&&...) { return std::nullopt; }
     Result declaredContents(auto&&...) { return std::nullopt; }
     Result declaredResult(auto&&...) { return std::nullopt; }

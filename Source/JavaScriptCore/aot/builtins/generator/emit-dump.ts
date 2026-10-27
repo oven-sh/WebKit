@@ -329,6 +329,8 @@ function dumpEntry(builtin: ModelBuiltin): DumpedEntry {
     mutability: builtin.mutability,
     platforms: inListOrder(targetPlatforms, builtin.platforms),
     flags: inListOrder(builtinFlags, builtin.flags),
+    isAddedAtFirstRead: builtin.isAddedAtFirstRead,
+    isAddedAsEnumerable: builtin.isAddedAsEnumerable,
     holder: tokenOrNull(builtin.holder),
     name: builtin.name.text,
     isSymbolName: builtin.name.kind !== "Text",

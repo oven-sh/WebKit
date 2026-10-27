@@ -54,6 +54,15 @@ static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <=
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
+static double leastFrequencyOfWarmCode(const CodeGenerationInputs& inputs, FunctionID id)
+{
+    for (double frequency = 1; frequency <= 1000; frequency *= frequencyConstants.iterationsPerLoop) {
+        if (!isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted())
+            return frequency;
+    }
+    return std::numeric_limits<double>::infinity();
+}
+
 FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, FunctionID id, const Function& function, const FrameMaps& frameMaps)
 {
     bool savesFrameOnSuspend = frameMaps.numberOfSuspensions() || function.role == FunctionRole::CoroutineBody;
@@ -71,6 +80,7 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
         .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
         .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
+        .leastFrequencyOfWarmCode = leastFrequencyOfWarmCode(inputs, id),
     };
 }
 
@@ -252,7 +262,7 @@ bool FunctionCodeGenerator::generateB3()
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
-        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells, !traits.savesFrameOnSuspend);
+        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
     if (options.checksMovedLoads) {

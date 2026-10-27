@@ -350,7 +350,7 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
         return produced;
     if (holdsAnyNaN(wanted)) {
         RELEASE_ASSERT(!produced.is<ImpureNumber>());
-        return Operand(wanted, produced.is<NumberWithPayload>() ? produced.value : inRepresentation(context, produced, producedType, Representation::Double).value);
+        return Operand(wanted, inRepresentation(context, produced, producedType, Representation::Double).value);
     }
     if (holdsAnyNaN(produced.representation) && wanted != Representation::JSValue)
         return inRepresentation(context, integerRepresentations.contains(wanted) ? Number(produced.value) : withoutBitsOfAnyNaN(produced), producedType, wanted);
@@ -423,7 +423,8 @@ Boxed ConversionEmitter::boxNumber(Operand number)
         return boxInt32(*converted);
 
     Word32 low = low32(toInteger(value));
-    return selectByBranch<Boxed>(equal(bitsOf(toNumber(low)), bitsOf(value)), [&] {
+    Integer bitsOfLow = bitsOf(toNumber(low));
+    return selectByBranch<Boxed>(equal(bitsOfLow, bitsOf(value)), [&] {
         return boxInt32(low);
     }, [&] {
         return boxDouble(number.is<Number>() ? value : withoutBitsOfAnyNaN(number));
@@ -571,7 +572,8 @@ std::optional<ConversionEmitter::ExactInteger> ConversionEmitter::findExactInteg
         auto factor = [&](const ExactInteger& operand) {
             return operand.word ? signExtended(*operand.word) : operand.value;
         };
-        return ExactInteger { .value = mul(factor(*left), factor(*right)), .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile) };
+        Integer leftFactor = factor(*left);
+        return ExactInteger { .value = mul(leftFactor, factor(*right)), .range = *range, .mayBeRounded = !range->isSubsetOf(neverRounded), .holdsWhile = whileBoth(left->holdsWhile, right->holdsWhile) };
     }
     case B3::Add:
     case B3::Sub: {
@@ -614,7 +616,7 @@ Integer ConversionEmitter::widen(Word32 value, Range range)
     return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
 }
 
-Word32 ConversionEmitter::toInt32(Number value)
+Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
@@ -638,13 +640,13 @@ Word32 ConversionEmitter::toInt32(Number value)
         return either<Word32>(isExact, [&] {
             return low32(exact->value);
         }, [&] {
-            return toInt32OfAnyNumber(value);
+            return toInt32OfAnyNumber(value, bits);
         });
     }
-    return toInt32OfAnyNumber(value);
+    return toInt32OfAnyNumber(value, bits);
 }
 
-Word32 ConversionEmitter::toInt32OfAnyNumber(Number value)
+Word32 ConversionEmitter::toInt32OfAnyNumber(Number value, BitsOfInt32 bits)
 {
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
@@ -656,8 +658,16 @@ Word32 ConversionEmitter::toInt32OfAnyNumber(Number value)
     }
 #endif
     Integer truncated = toInteger(value);
+    if (bits == BitsOfInt32::Lowest)
+        return low32(truncated);
     // x86-64 truncates whatever is outside int64 to the least of them. ARM64 stops at either end.
-    Condition fits = isX86_64() ? notEqual(truncated, integer(std::numeric_limits<int64_t>::min())) : below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
+    Condition fits;
+    if (isX86_64())
+        fits = notEqual(truncated, std::numeric_limits<int64_t>::min());
+    else {
+        Integer one = integer(1);
+        fits = below(one, add(truncated, std::numeric_limits<int64_t>::min() + 1));
+    }
     return either<Word32>(fits, [&] {
         return low32(truncated);
     }, [&] {
@@ -696,7 +706,8 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
         Boxed marker(m_out.zeroExt(word.value(), B3::Int64));
         if (!type.hasCells())
             return marker;
-        return select(isCellReference(word), boxCell(decode(word)), marker);
+        Condition isCell = isCellReference(word);
+        return select(isCell, boxCell(decode(word)), marker);
     }
     case Representation::Unchosen:
     case Representation::Void:
@@ -733,7 +744,8 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
         if (!type.hasCells())
             return marker;
         // The empty value passes isCell.
-        return select(above(value, undefined()), compress(unboxCell(value)), marker);
+        Condition isCell = above(value, undefined());
+        return select(isCell, compress(unboxCell(value)), marker);
     }
     case Representation::Unchosen:
     case Representation::Boolean:
@@ -821,7 +833,7 @@ uint64_t ConversionEmitter::markerBits(uint16_t primitive, Representation repres
 Condition ConversionEmitter::isMarker(Operand operand)
 {
     RELEASE_ASSERT(operand.is<OptionalInteger>() || operand.is<OptionalNumber>());
-    return greaterThanOrEqual(bitsOf(operand), integer(static_cast<int64_t>(markerBits(Primitive::Undefined, operand.representation))));
+    return greaterThanOrEqual(bitsOf(operand), static_cast<int64_t>(markerBits(Primitive::Undefined, operand.representation)));
 }
 
 Condition ConversionEmitter::isAbsent(Operand operand)

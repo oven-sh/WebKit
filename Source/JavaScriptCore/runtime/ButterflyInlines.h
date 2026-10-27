@@ -137,9 +137,10 @@ inline Butterfly* Butterfly::tryCreate(VM& vm, JSObject*, size_t preCapacity, si
 
 inline Butterfly* Butterfly::create(VM& vm, JSObject* intendedOwner, size_t preCapacity, size_t propertyCapacity, bool hasIndexingHeader, const IndexingHeader& indexingHeader, size_t indexingPayloadSizeInBytes)
 {
-    Butterfly* result = tryCreate(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingHeader, indexingPayloadSizeInBytes);
-
-    RELEASE_ASSERT(result);
+    Butterfly* result = createUninitialized(vm, intendedOwner, preCapacity, propertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes);
+    if (hasIndexingHeader)
+        *result->indexingHeader() = indexingHeader;
+    memset(result->propertyStorage() - propertyCapacity, 0, propertyCapacity * sizeof(EncodedJSValue));
     return result;
 }
 
@@ -187,9 +188,15 @@ inline Butterfly* Butterfly::createOrGrowArrayRight(
             vm, intendedOwner, 0, propertyCapacity, true, IndexingHeader(),
             newIndexingPayloadSizeInBytes);
     }
-    return oldButterfly->growArrayRight(
-        vm, intendedOwner, oldStructure, propertyCapacity, hadIndexingHeader,
-        oldIndexingPayloadSizeInBytes, newIndexingPayloadSizeInBytes);
+    ASSERT_UNUSED(oldStructure, !oldButterfly->preCapacity(oldStructure));
+    ASSERT(hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
+    Butterfly* result = createUninitialized(vm, intendedOwner, 0, propertyCapacity, true, newIndexingPayloadSizeInBytes);
+    // Use memcpy since this butterfly is not tied to any object yet.
+    memcpy(
+        static_cast<JSValue*>(result->base(0, propertyCapacity)),
+        static_cast<JSValue*>(oldButterfly->base(0, propertyCapacity)),
+        totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes));
+    return result;
 }
 
 inline Butterfly* Butterfly::growArrayRight(

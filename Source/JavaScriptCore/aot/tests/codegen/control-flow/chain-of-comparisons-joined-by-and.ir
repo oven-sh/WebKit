@@ -1,0 +1,117 @@
+# function isInside(x: number, y: number, width: number, height: number): boolean {
+#   return x >= 0 && y >= 0 && x < width && y < height;
+# }
+# declare const input: any;
+# (globalThis as any).answer = isInside(+input, +input, +input, +input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=18 kind=Parameter function=f1
+typesite w1 module=m0 position=29 kind=Parameter function=f1
+typesite w2 module=m0 position=40 kind=Parameter function=f1
+typesite w3 module=m0 position=55 kind=Parameter function=f1
+typesite w4 module=m0 kind=Result
+typesite w5 module=m0 position=193 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = ToNumber v12
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="input" [isFreeName]
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = ToNumber v16
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="input" [isFreeName]
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = ToNumber v20
+    v22 = Call v1, -, v9, v13, v17, v21 calleeName="isInside"
+    v23 = Convert v22 declared={type=boolean site=w5}
+    PropSet v5, v23 key="answer"
+    v25 = Undefined
+    Return v25
+}
+function f1 name="isInside" module=m0 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}, {type=number site=w2}, {type=number site=w3}] results=[{type=boolean site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number, v3: number):
+    Jump -> next b1()
+  b1():
+    v4 = Integer
+    v5 = GreaterEq v0, v4
+    v6 = ToBoolean v5
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer
+    v9 = GreaterEq v1, v8
+    Jump -> next b5(v9)
+  b4(v10):
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = ToBoolean v11
+    Branch v12 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v13):
+    Jump -> next b7()
+  b7():
+    v14 = Less v0, v2
+    Jump -> next b9(v14)
+  b8(v15):
+    Jump -> next b9(v15)
+  b9(v16):
+    v17 = ToBoolean v16
+    Branch v17 -> taken b10(| 0), notTaken b12(| 0)
+  b10(v18):
+    Jump -> next b11()
+  b11():
+    v19 = Less v1, v3
+    Jump -> next b13(v19)
+  b12(v20):
+    Jump -> next b13(v20)
+  b13(v21):
+    v22 = Convert v21 declared={type=boolean site=w4}
+    Return v22
+}
+
+# Each comparison but the last is a branch, and every failed one goes to the same block. The last comparison is the answer itself. No boolean is made and tested again.
+# CHECK-LABEL: name="isInside" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int32 b@[[first]] = GreaterEqual(b@[[x]], $0.000000(
+# CHECK-NEXT: Branch(b@[[first]], Terminal
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:#[[no]]
+# CHECK: Int32 b@[[second]] = GreaterEqual(b@[[y]], $0.000000(
+# CHECK-NEXT: Branch(b@[[second]], Terminal
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:#[[no]]
+# CHECK: Int32 b@[[third]] = LessThan(b@[[x]], b@
+# CHECK-NEXT: Branch(b@[[third]], Terminal
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:#[[no]]
+# CHECK-NOT: Branch(
+# CHECK: Int32 b@[[fourth]] = LessThan(b@[[y]], b@
+# CHECK-NEXT: Upsilon(b@[[fourth]], ^[[answer]], WritesLocalState)
+# CHECK-NOT: Branch(
+# CHECK: Int32 b@[[answer]] = Phi(
+# CHECK-NEXT: Return(b@[[answer]], Terminal)
+# CHECK-NOT: Branch(
+# CHECK-LABEL: end of function
+# X64: instructions: 9, patchpoints: 0
+# ARM64: instructions: 8, patchpoints: 0

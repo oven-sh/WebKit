@@ -16,18 +16,22 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Integer BuiltinCallEmitter::divide(Integer dividend, Range dividends, Integer divisor, Range divisors)
 {
-    if (dividends.minimum >= 0 && divisors.minimum > 0 && dividends.isSubsetOf(Range::uint32()) && divisors.isSubsetOf(Range::uint32()))
-        return zeroExtended(Word32(m_out.m_block->appendNew<B3::Value>(m_proc, B3::UDiv, m_out.origin(), low32(dividend).value(), low32(divisor).value())));
+    if (dividends.minimum >= 0 && divisors.minimum > 0 && dividends.isSubsetOf(Range::uint32()) && divisors.isSubsetOf(Range::uint32())) {
+        Word32 narrowDividend = low32(dividend);
+        return zeroExtended(Word32(m_out.m_block->appendNew<B3::Value>(m_proc, B3::UDiv, m_out.origin(), narrowDividend.value(), low32(divisor).value())));
+    }
     if (divisors.isSingleValue() && hasOneBitSet(divisors.minimum)) {
         unsigned shift = WTF::fastLog2(static_cast<uint64_t>(divisors.minimum));
         if (!shift)
             return dividend;
         if (dividends.minimum < 0)
-            dividend = add(dividend, Integer(m_out.lShr(m_out.aShr(dividend.value(), m_out.constInt32(63)), m_out.constInt32(64 - shift))));
+            dividend = add(dividend, Integer(m_out.lShr(m_out.aShr(dividend.value(), 63), 64 - shift)));
         return Integer(m_out.aShr(dividend.value(), m_out.constInt32(shift)));
     }
-    if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32()) && (dividends.minimum > INT32_MIN || divisors.minimum > 0))
-        return signExtended(Word32(m_out.div(low32(dividend).value(), low32(divisor).value())));
+    if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32()) && (dividends.minimum > INT32_MIN || divisors.minimum > 0)) {
+        Word32 narrowDividend = low32(dividend);
+        return signExtended(Word32(m_out.div(narrowDividend.value(), low32(divisor).value())));
+    }
     return Integer(m_out.div(dividend.value(), divisor.value()));
 }
 
@@ -62,7 +66,7 @@ Integer BuiltinCallEmitter::roundedQuotient(QuotientRounding rounding, Integer d
     if (rounding == QuotientRounding::Truncate || isNeverNegative)
         return truncated;
     Integer remainder = sub(dividend, mul(truncated, divisor));
-    Condition isNegative = lessThan(bitXor(remainder, divisor), integer(0));
+    Condition isNegative = lessThan(bitXor(remainder, divisor), 0);
     Condition isInexact = isNotZero(remainder);
     if (roundsUp)
         return add(truncated, zeroExtended(logicalAnd(isInexact, logicalNot(isNegative))));
@@ -94,7 +98,8 @@ void BuiltinCallEmitter::generateDivideIntegers(const ValueContext& value)
         return;
     }
     if (dividends.isSubsetOf(Range::int32()) && divisors.isSubsetOf(Range::int32())) {
-        defineAs(value, Word32(m_out.chillDiv(low32(dividend).value(), low32(divisor).value())), type);
+        Word32 narrowDividend = low32(dividend);
+        defineAs(value, Word32(m_out.chillDiv(narrowDividend.value(), low32(divisor).value())), type);
         return;
     }
     defineAs(value, low32(Integer(m_out.chillDiv(dividend.value(), divisor.value()))), type);
@@ -118,7 +123,8 @@ void BuiltinCallEmitter::generateToIntegerOrInfinity(const ValueContext& value)
 {
     Number operand = numberOperand(value->valueOperand());
     Number zero = number(0);
-    defineAs(value, select(equal(operand, operand), add(trunc(operand), zero), zero), typeOf(value.id()));
+    Condition isNotNaN = equal(operand, operand);
+    defineAs(value, select(isNotNaN, add(trunc(operand), zero), zero), typeOf(value.id()));
 }
 
 } } } // namespace JSC::AOT::Typed

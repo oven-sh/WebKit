@@ -1384,6 +1384,14 @@ bool JSONSerializerBuilder::hasPlanFor(ValueID value) const
     return writer.planValue(value).kind != JSONTextWriter::ValueKind::Generic && !writer.typeOf(value).hasOnlyPrimitives(Primitive::Undefined);
 }
 
+bool JSONSerializerBuilder::writesOnePrimitive(ValueID value) const
+{
+    JSONTextWriter writer { { builder, inputs }, stringBuilder };
+    writer.m_reportsLimits = false;
+    JSONTextWriter::ValuePlan plan = writer.planValue(value);
+    return plan.kind == JSONTextWriter::ValueKind::Nullish || (plan.kind == JSONTextWriter::ValueKind::Scalar && !inputs.types.at(plan.tested).hasObjects());
+}
+
 bool JSONSerializerBuilder::writingRunsCode(ValueID value) const
 {
     JSONTextWriter writer { { builder, inputs }, stringBuilder };

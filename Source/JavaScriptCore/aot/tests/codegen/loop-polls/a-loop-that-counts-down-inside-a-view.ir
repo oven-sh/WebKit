@@ -1,0 +1,38 @@
+# The test of a counter against the extent of a view is made once in front of the loop, whichever way the loop counts. The loop that is left without the test cannot outrun the view, so it has no poll.
+# The loop as it was written takes over where the counter is outside the view. Nothing bounds its turns, and it polls. A turn outside the view comes back in front of both loops:
+# that way round has no other poll, so it polls on the way back. What enters the loops from outside polls nowhere: the ten patchpoints that are reached without a rare edge are none of them polls.
+# FORM: Placed
+# OPTIONS: heat=EverythingIsHot
+# RUN: generate-code
+# REQUIRES: x86_64 faulting-loop-polls
+# STATISTIC: RangeChecksRemoved >= 1
+# STATISTIC: LoopsUnrolled >= 1
+# CHECK: f0: size={{*}} polls=2
+# RUN(LIKELY): lower-to-air size f0
+# REQUIRES(LIKELY): x86_64 unsanitized-code
+# LIKELY: instructions: {{*}}, patchpoints: 10, rare
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="walkedDownward" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[-1, 4294967295]}, {type=number}] results=[{type=number}] {
+    Jump -> next b1(v2, v1)
+  b1(v3: number, v4: int[-1, 4294967295]):
+    Jump -> next b2(v3, v4)
+  b2(v5: number, v6: int[-1, 4294967295]):
+    LoopHint
+    v8 = Integer
+    v9 = GreaterEq v6, v8 form=Integers
+    TestAndBranch v9 -> taken b3(| 0), notTaken b6()
+  b3(v10: int[0, 4294967295]):
+    v11 = IsInsideView v0, v10 typedArrayType=10 [keyIsIntegral]
+    TestAndBranch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12: guard):
+    v13 = GetTypedArrayElement v0, v10, v12 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v14 = Add v5, v13 form=Numbers
+    v15 = Decrement v10 form=Integers
+    Jump -> next b2(v14, v15)
+  b5() frequency=Rare:
+    v16 = Decrement v10 form=Integers
+    Jump -> next b1(v5, v16)
+  b6():
+    Return v5
+}

@@ -14,6 +14,7 @@
 #include "AOTFunctionDescription.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTIdentifierTable.h"
+#include "AOTModuleTable.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPlacementTestSupport.h"
 #include "AOTProgramTableEncoder.h"
@@ -527,6 +528,10 @@ static void printStatics(const TablesContext& context)
         RecordLine(context, "layout"_s).field("filledAtProgramEntry"_s, layout.sizeFilledAtProgramEntry).field("fromArrayProfileToLastArray"_s, layout.distanceFromArrayProfileToLastArray);
     for (const StaticsRun& run : tables.staticsRuns())
         RecordLine(context, "run"_s).field("firstWord"_s, run.firstWord).field("words"_s, run.numberOfWords).hex("bits"_s, run.bits());
+    for (const StaticsOfFiles& group : tables.staticsOfFiles())
+        RecordLine(context, "files"_s).field("firstWord"_s, group.firstWord).field("firstImportedGroup"_s, group.firstImportedGroup);
+    for (uint32_t group : tables.staticsOfImportedFiles())
+        RecordLine(context, "importedFiles"_s).field("group"_s, group);
     for (const StaticsRange& range : tables.staticsRoots())
         RecordLine(context, "roots"_s).field("offset"_s, range.offset).field("size"_s, range.size);
     for (const StaticsRange& range : tables.staticsNarrowRoots())
@@ -569,6 +574,11 @@ static void printFunctions(const TablesContext& context)
     }
     for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
         RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint())).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+    forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
+        RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
+            .field("line"_s, place.line).field("column"_s, place.column);
+        return IterationStatus::Continue;
+    });
 }
 
 static void printFunctionTraces(const TablesContext& context)
@@ -666,6 +676,22 @@ static void printModules(const TablesContext& context)
     ModuleNumbers evaluationRequests(tables.evaluationRequests(), tables.modules().size());
     for (uint32_t index = 0; index < evaluationRequests.size(); ++index)
         RecordLine(context, "evaluationRequest"_s, index).field("target"_s, ModuleID(evaluationRequests[index]));
+    ModuleTable table(tables);
+    for (uint32_t index = 0; index < table.size(); ++index) {
+        if (!table.data(ModuleID(index)).isESModuleOfProgram())
+            continue;
+        ModuleID head = table.headOfLoadGroup(ModuleID(index));
+        if (head.index() != index) {
+            RecordLine(context, "loadedTogether"_s).field("module"_s, ModuleID(index)).field("head"_s, head);
+            continue;
+        }
+        ModuleNumbers loadedWithIt = table.groupsLoadedWith(head);
+        if (loadedWithIt.empty())
+            continue;
+        RecordLine(context, "groupsLoadedWith"_s).field("head"_s, head).list("heads"_s, loadedWithIt, [&](uint32_t module) {
+            context.printer.print(ModuleID(module));
+        });
+    }
     for (const LinkPlanStepData& step : tables.entryPointLinkPlan())
         RecordLine(context, "linkPlanStep"_s).field("module"_s, step.targetModule()).flag("resolvesNames"_s, step.resolvesNames);
     for (const LinkPlanRootData& root : tables.linkPlanRoots()) {
@@ -692,8 +718,15 @@ static void printModules(const TablesContext& context)
     auto requiredNames = tables.requiredNames();
     for (uint32_t index = 0; index < requiredNames.size(); ++index)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
-    for (const ModuleFailureData& failure : tables.moduleFailures())
+    for (const ExportStatementData& statement : tables.exportStatements())
+        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString());
+    for (const ModuleFailureData& failure : tables.moduleFailures()) {
+        if (failure.isAskedByExportStatement()) {
+            RecordLine(context, "failure"_s).field("exportSpecifier"_s, failure.exportSpecifierString()).field("exportName"_s, failure.specifierString());
+            continue;
+        }
         RecordLine(context, "failure"_s).field("importer"_s, failure.importerModule()).field("specifier"_s, failure.specifierString());
+    }
     RecordLine(context, "modulesByPath"_s).list("modules"_s, ModuleNumbers(tables.modulesByPath(), tables.modules().size()), [&](uint32_t module) {
         context.printer.print(ModuleID(module));
     });

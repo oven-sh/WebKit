@@ -1,0 +1,86 @@
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Replaced" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
+layout L1 kind=Instance name="Fixed" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Replaced" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="Fixed" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+
+function f2 name="a-store-to-the-prototype-property" parameters=[{type=f0}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    v3 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+    Branch v3 -> taken b1(), notTaken b3()
+  b1():
+    v4 = NewObject layout=L0
+    PropSet v0, v1 key="prototype"
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v4 variable=g0
+    Return v1
+  b3():
+    Return v1
+# CHECK: b1():
+# CHECK-NEXT: [[beforeStore]]: L0 = NewObject layout=L0
+# CHECK-NEXT: PropSet v0, v1 key="prototype"
+# CHECK: b2():
+# CHECK-NEXT: PutModuleVariable [[beforeStore]] variable=g0
+}
+
+function f3 name="a-call-of-code-that-nobody-knows" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = NewObject layout=L0
+    v4 = Call v0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v3 variable=g0
+    Return v4
+  b3():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: [[beforeCall]]: L0 = NewObject layout=L0
+# CHECK-NEXT: = Call v0
+# CHECK: b2():
+# CHECK-NEXT: PutModuleVariable [[beforeCall]] variable=g0
+}
+
+function f4 name="a-store-to-a-variable-changes-no-prototype-property" parameters=[{type=i32}, {type=boolean}] results=[{type=anything}] {
+    v2 = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v3 = NewObject layout=L0
+    PutModuleVariable v0 variable=g0
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v3 variable=g0
+    Return v0
+  b3():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+# CHECK: b2():
+# CHECK-NEXT: [[late]]: L0 = NewObject layout=L0
+# CHECK-NEXT: PutModuleVariable [[late]] variable=g0
+}
+
+function f5 name="nothing-replaces-the-prototype-property" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L1
+    v3 = Call v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v2 variable=g0
+    Return v3
+  b2():
+    Return v3
+# CHECK: b0(v0: anything, v1: boolean):
+# CHECK-NEXT: = Call v0
+# CHECK: b1():
+# CHECK-NEXT: [[lateToo]]: L1 = NewObject layout=L1
+# CHECK-NEXT: PutModuleVariable [[lateToo]] variable=g0
+}

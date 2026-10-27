@@ -16,6 +16,7 @@
 
 namespace JSC {
 
+class JSCell;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
@@ -46,6 +47,7 @@ JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t regist
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
 JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSObject* prototype = nullptr);
 JS_EXPORT_PRIVATE NativeExecutable* builtinExecutable(JSGlobalObject*, uint32_t id);
+std::optional<FunctionID> compiledBuiltinFunctionID(const JSCell*);
 
 // The host can run a module or a function of its library from the text. That text requires the modules of the library, and an image without ImageFlag::AdmitsLibraryText holds only what seen code reaches of them.
 JS_EXPORT_PRIVATE bool refusesLibraryText();

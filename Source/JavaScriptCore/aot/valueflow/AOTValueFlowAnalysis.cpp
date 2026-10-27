@@ -17,6 +17,7 @@
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowWidenedSolve.h"
 #include <wtf/MonotonicTime.h>
+#include <wtf/Threading.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -514,8 +515,15 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
 
 ValueFlowSolution::~ValueFlowSolution() = default;
 
+auto ValueSetMakerPool::makerOfCurrentThread() -> MakerOfThread&
+{
+    return m_makersOfThreads[Thread::currentSingleton().uid() % numberOfThreadsToldApart];
+}
+
 ValueSetMaker& ValueSetMakerPool::take()
 {
+    if (ValueSetMaker* maker = makerOfCurrentThread().idleMaker.exchange(nullptr, std::memory_order_acquire))
+        return *maker;
     {
         Locker locker { m_lock };
         if (!m_idleMakers.isEmpty())
@@ -530,6 +538,9 @@ ValueSetMaker& ValueSetMakerPool::take()
 
 void ValueSetMakerPool::giveBack(ValueSetMaker& maker)
 {
+    ValueSetMaker* nobody = nullptr;
+    if (makerOfCurrentThread().idleMaker.compare_exchange_strong(nobody, &maker, std::memory_order_release, std::memory_order_relaxed))
+        return;
     Locker locker { m_lock };
     m_idleMakers.append(&maker);
 }

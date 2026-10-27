@@ -23,6 +23,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTSlimClosure.h"
 #include "AOTStaticFields.h"
+#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "NumericStrings.h"
@@ -36,6 +37,7 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     // What the first look changes (a dictionary is made flat, members are made, an absent field is marked as read) it changes once. A second look, which runs no code, sees what every later read sees.
     if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
         VM& vm = *instance->vm;
+        DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Structure* structureNow = asObject(base)->structure();
         PropertyCaches& caches = *instance->state->propertyCaches;
@@ -284,7 +286,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     bool shouldFile = access.caches().shouldFile(cell->structureID(), uid, accessFor(mode));
     if (access.caches().countsNames()) [[unlikely]]
         access.caches().countMiss(mode == PutMode::Define ? "definition"_s : "store"_s, shouldFile, cell, uid);
-    if (mode != PutMode::Define && cell->isObject() && cell->structure()->isDictionary() && !cell->structure()->isCompiledStructure()) {
+    // An object that is being filled stays a dictionary until a store comes again.
+    if (shouldFile && mode != PutMode::Define && cell->isObject() && cell->structure()->isDictionary() && !cell->structure()->isCompiledStructure()) {
         bool isStored = tryStoreToPermanentDictionary(access, asObject(cell), value, mode, slot);
         RETURN_IF_EXCEPTION(scope, void());
         if (isStored)
@@ -485,6 +488,40 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, 
     OPERATION_RETURN(scope, answer);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfGetTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfGetTrap);
+    ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateDenialOfHasTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateDenialOfHasTrap);
+    ProxyObject::finishHas(globalObject, jsBoolean(false), asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnByAnswerOfDescriptorTrap, size_t, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasOwnByAnswerOfDescriptorTrap);
+    OPERATION_RETURN(scope, ProxyObject::hasOwnByAnswerOfTrap(globalObject, asObject(JSValue::decode(target)), JSValue::decode(property), JSValue::decode(answer)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateConsentOfDeleteTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateConsentOfDeleteTrap);
+    ProxyObject::finishDelete(globalObject, asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishStoreByTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue value, EncodedJSValue answer, uint32_t isStrict))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishStoreByTrap);
+    ProxyObject::finishSet(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), JSValue::decode(property), JSValue::decode(value), isStrict);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTHasWithProxyTrap, size_t, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasWithProxyTrap);
@@ -675,7 +712,9 @@ static bool answerImpliesResult(const PropertyAnswer& answer, Structure* structu
     Slot slot = slotFor(answer, structure);
     switch (Slot::presenceOf(slot.kind)) {
     case SlotPresence::Unknown:
-        return slot.kind == Slot::Kind::Uncacheable;
+        if (isIn && slot.kind == Slot::Kind::FieldOrInherited)
+            return result;
+        return slot.kind == Slot::Kind::Uncacheable || (isIn && slot.kind == Slot::Kind::InheritedField);
     case SlotPresence::ReadsSlot:
         return true;
     case SlotPresence::Present:
@@ -693,7 +732,8 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
     PropertyName propertyName(name.uid);
-    bool shouldFile = caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
+    // What is filed for a proxy sends a read and an `in` to its traps. Whether it has a property of its own no stub asks a trap, so what would be filed would be filed at each question.
+    bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     if (caches.countsNames()) [[unlikely]]
         caches.countMiss(isIn ? "in"_s : "has own"_s, shouldFile, object, name.uid);
     if (shouldFile) {

@@ -213,12 +213,21 @@ enum class ReturnedObjects : uint8_t { AreBuilt, StayVirtual };
 // An analysis goes through the function about this often: the solver until its decisions stand, a count, and both again for each round of candidates given up.
 inline constexpr uint64_t expectedNumberOfSweeps = 16;
 
+class Heat;
+
+struct BlocksThatMayGetTests {
+    const Heat& heat;
+    BitVector asked { };
+    BitVector answers { };
+};
+
 struct SinkingPolicy {
     ReturnedObjects returnedObjects { ReturnedObjects::AreBuilt };
     bool recordsLosses { true };
     bool leavesWhenNoAllocationPays { false };
     // In a field whose slot has room for them. The parts of a result and of an argument have the types of the fields alone.
     bool followsUndefinedAndNullInFields { false };
+    BlocksThatMayGetTests* blocksThatMayGetTests { nullptr };
     // Ascending: what addTracesOfFruitlessAllocations() has listed behind earlier analyses of the function. Allocations with such a number are not followed again.
     const Vector<uint64_t>* tracesOfFruitlessAllocations { nullptr };
 };
@@ -271,11 +280,13 @@ struct VirtualReturn {
     ObjectState state;
 };
 
-// The first five are filled for a block when AllocationSinking::prepare() is called for it.
+// The first six are filled for a block when AllocationSinking::prepare() is called for it.
 struct SinkingInputs {
     BitVector throwingValues;
     BitVector valuesWritingObjects;
     BitVector valuesCallingUnknownCode;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsEndedByValues;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsReadByValues;
     BitVector throwingTerminators;
     BitVector conditionsOnlyBranchedOn;
     BitVector blocksInCycles;
@@ -283,6 +294,7 @@ struct SinkingInputs {
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
     bool hasOperationsOnSlots { false };
+    bool hasObjectsGivenPrototypes { false };
     bool isLargeForItsWork { false };
 };
 
@@ -432,6 +444,8 @@ public:
     const SinkingPolicy& policy() const { return m_policy; }
     const VirtualObjectContext& objectContext() const LIFETIME_BOUND { return m_objectContext; }
     ShapeContext shapeContext(VirtualObjectID) const;
+    // By family. Empty: none does.
+    const Vector<VirtualObjectID>& objectsWhoseCreationMayBeOrderedWithGuards() const LIFETIME_BOUND;
 
     uint32_t numberOfCandidates() const { return m_candidates.size(); }
     Candidate& at(VirtualObjectID object) LIFETIME_BOUND { return m_candidates[object.index()]; }
@@ -468,6 +482,7 @@ public:
     bool checksShortcuts() const { return m_checksShortcuts; }
     const BitVector& loadableFieldsOf(VirtualObjectID);
     bool storesByNameWaitIn(BlockID) const;
+    bool mayGetTests(BlockID) const;
     // The object has to be built where no store by name may stand. It is built where the store stands instead, in the rare arm, as an object that takes no such value always was.
     void refuseUnprovenValues(VirtualObjectID);
     void didStoreUndefinedOrNull(VirtualObjectID, uint32_t field);
@@ -597,6 +612,7 @@ private:
     Vector<std::optional<BitVector>> m_blocksWithLiveDefinition;
     Vector<uint64_t> m_tracesOfAllocations;
     Vector<VirtualFamily> m_families;
+    mutable std::optional<Vector<VirtualObjectID>> m_objectsWhoseCreationMayBeOrderedWithGuards;
     KeyOrderTable m_orders;
     SinkingDecisions m_decisions;
     SinkingInputs m_inputs;

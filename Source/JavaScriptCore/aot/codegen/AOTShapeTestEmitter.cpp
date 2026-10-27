@@ -113,7 +113,8 @@ Condition ShapeTestEmitter::passes(Word32 shapeWord, LayoutSetID tested, const S
         Word32 shiftedBits = test.count <= 32
             ? shiftRightUnsigned(word32(static_cast<uint32_t>(test.bits)), distanceFromLast)
             : low32(Integer(m_out.lShr(m_out.constInt64(static_cast<int64_t>(test.bits)), distanceFromLast.value())));
-        return logicalAnd(passesRange(shapeWord, test), hasBits(shiftedBits, 1));
+        Condition isInRange = passesRange(shapeWord, test);
+        return logicalAnd(isInRange, hasBits(shiftedBits, 1));
     }
     case ShapeTestForm::BitSet:
         return passesBitSet(shapeWord, tested, test);
@@ -126,7 +127,7 @@ Condition ShapeTestEmitter::passes(Word32 shapeWord, LayoutSetID tested, const S
 
 Condition ShapeTestEmitter::passesRange(Word32 shapeWord, const ShapeTest& test)
 {
-    return below(add(shapeWord, word32(test.last())), word32(test.count));
+    return below(add(shapeWord, test.last()), test.count);
 }
 
 ShapeTestEmitter::BitSetConstant ShapeTestEmitter::bitSetConstant(LayoutSetID tested)
@@ -145,12 +146,12 @@ Condition ShapeTestEmitter::passesBitSet(Word32 shapeWord, LayoutSetID tested, c
     Pointer words(m_out.relocatable(RelocationSpace::Constants, constant.index));
     if (constant.entries == PagedBitSet::Entries::Hashed) {
         // A shape out of reach finds another number in its slot, like any shape that is no member.
-        Word32 slot = shiftRightUnsigned(mul(distanceFromLast, word32(PagedBitSet::multiplierIn(constant.headOfHashedSet))), word32(PagedBitSet::shiftIn(constant.headOfHashedSet)));
+        Word32 slot = shiftRightUnsigned(mul(distanceFromLast, PagedBitSet::multiplierIn(constant.headOfHashedSet)), PagedBitSet::shiftIn(constant.headOfHashedSet));
         static_assert(sizeof(PagedBitSet::Slot) == sizeof(uint16_t));
         Word32 held(m_out.load16ZeroExt32(m_out.address(m_heaps.AOTImage_tables, offsetBy(words, zeroExtended(slot), PagedBitSet::logBytesPerSlot).value(), PagedBitSet::offsetOfSlots)));
         return equal(held, distanceFromLast);
     }
-    Word32 index = select(below(distanceFromLast, word32(test.count)), distanceFromLast, word32(test.count));
+    Word32 index = select(below(distanceFromLast, test.count), distanceFromLast, test.count);
     auto addressOf = [&](Word32 element, unsigned logSize) {
         return m_out.address(m_heaps.AOTImage_tables, offsetBy(words, zeroExtended(element), logSize).value());
     };

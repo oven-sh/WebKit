@@ -296,7 +296,7 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
         return origin;
     };
     for (uint32_t steps = 0; steps < 64; ++steps) {
-        value = sameObjectThroughCasts(function, value);
+        value = sameObjectThroughCasts(function, value).valueInFrontOfFacts();
         ValueLocation location = useLists.locationOf(value);
         if (location.placement != ValuePlacement::Parameter) {
             origin.opcode = function.at(value).opcode;
@@ -329,7 +329,7 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
                     isSame = false;
                     break;
                 }
-                argument = sameObjectThroughCasts(function, argument);
+                argument = sameObjectThroughCasts(function, argument).valueInFrontOfFacts();
                 if (argument == value)
                     continue;
                 if (only && only != argument)

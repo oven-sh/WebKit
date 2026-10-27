@@ -28,6 +28,7 @@
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestCoverage.h"
 #include "AOTValueIdentity.h"
@@ -262,7 +263,7 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     : m_context(context)
 {
     auto addUse = [&](const OwnKeyWalkSite& site, ValueID object) {
-        ValueID origin = context.analyses.sameObjectThroughCasts(object);
+        ValueID origin = context.analyses.sameObjectThroughCasts(object).valueInFrontOfFacts();
         if (context.function.at(origin).opcode == Opcode::NewObject)
             m_uses.append(AllocationAtPoint { origin, { site.block, site.index } });
     };
@@ -343,6 +344,12 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         return std::nullopt;
 
     OwnKeyWalkSite site { .walk = *walk, .block = point.block, .index = point.index, .value = id };
+    for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
+        if (function.at(later).opcode == Opcode::AssumeType && function.at(later).operand(0) == id) {
+            site.provenTypeOfList = function.at(later).type;
+            break;
+        }
+    }
     if (*walk == OwnKeyWalk::Spread) {
         site.source = value.sourceOperand();
         site.target = value.targetOperand();
@@ -426,7 +433,7 @@ static bool hasOrdinaryOwnKeys(LayoutKind kind) { return hasOrdinaryOwnKeysOf(ki
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
 {
-    ValueID origin = context.analyses.sameObjectThroughCasts(value);
+    ValueID origin = context.analyses.sameObjectThroughCasts(value).valueInFrontOfFacts();
     const Value& allocation = context.function.at(origin);
     if (allocation.opcode != Opcode::NewObject || allocation.prototypeOperand())
         return false;
@@ -573,7 +580,7 @@ static std::optional<OwnKeyWalkPlan> planWalkByLayouts(FunctionPassContext& cont
 
 static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
-    ValueID id = context.analyses.sameObjectThroughCasts(site.source);
+    ValueID id = context.analyses.sameObjectThroughCasts(site.source).valueInFrontOfFacts();
     const Value& allocation = context.function.at(id);
     if (allocation.opcode == Opcode::NewObject) {
         const Layout& layout = context.program.at(allocation.layout());
@@ -894,7 +901,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     case OwnKeyWalk::Keys:
         return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendName).span());
     case OwnKeyWalk::Values:
-        return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendRead).span());
+        return appendArray(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendRead).span());
     case OwnKeyWalk::Entries: {
         TypeID entryType = elementTypeOf(original.type);
         TypeID entryContents = elementTypeOf(entryType);
@@ -1012,10 +1019,11 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
 {
     IRBuilder& builder = emission.builder();
-    if (!JSONSerializerBuilder(builder, emission.inputs(), ValueID()).hasPlanFor(site.source))
+    JSONSerializerBuilder planner(builder, emission.inputs(), ValueID());
+    if (!planner.hasPlanFor(site.source))
         return PassOutcome::Unchanged;
     // A string builder for one string, number, boolean or null costs three times what the stub of the call needs to write it.
-    if (site.walk == OwnKeyWalk::Stringify && !emission.typeOf(site.source).hasObjects())
+    if (site.walk == OwnKeyWalk::Stringify && (!emission.typeOf(site.source).hasObjects() || planner.writesOnePrimitive(site.source)))
         return PassOutcome::Unchanged;
 
     std::optional<BuiltinCallPlan> textFormCall;
@@ -1492,8 +1500,12 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
 
     Vector<ValueID, 2> castsOfParameter;
     ValueID source = function.at(copy).sourceOperand();
+    // A cast on the way may name the fact that the word has been filled. What takes the place of the word here is looked at behind the same fact.
+    ValueID factOfSource;
     while (isCastWithoutTest(function.at(source).opcode)) {
         castsOfParameter.append(source);
+        if (function.at(source).opcode == Opcode::AssumeType && function.at(source).factOperand())
+            factOfSource = function.at(source).factOperand();
         source = function.at(source).operand(0);
     }
     const UseLists& useLists = context.analyses.useLists();
@@ -1624,6 +1636,8 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     }
     if (hasOther) {
         builder.moveToEndOf(arms.last());
+        if (factOfSource && context.program.typeOf(function, other).mayBeUnspecified())
+            other = builder.append(makeCastBehindFact(function, context.types, other, factOfSource));
         IRBuilder::BranchBlocks hasNothing = builder.emitBranch(builder.appendTypeTest(other, Type::fromPrimitives(primitivesWithoutProperties)), frequency, frequency);
         endArm();
         builder.moveToEndOf(hasNothing.notTaken);

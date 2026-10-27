@@ -255,7 +255,8 @@ CellPointer SavedFrameEmitter::allocateGenerator(CellPointer closure, LBasicBloc
     Pointer classInfos = loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.instanceClassInfos));
     Pointer classInfo(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, classInfos.value(), static_cast<ptrdiff_t>(BuiltinClasses::Generator.index()) * sizeof(const ClassInfo*))));
     branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_classInfo), classInfo), slowPath);
-    branchUnless(equal(loadField<Pointer>(structure, m_heaps.Structure_realm), loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject))), slowPath);
+    Pointer realm = loadField<Pointer>(structure, m_heaps.Structure_realm);
+    branchUnless(equal(realm, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject))), slowPath);
 
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeof(Generator));
@@ -312,7 +313,8 @@ void SavedFrameEmitter::generateIsGeneratorUnstarted(const ValueContext& value)
 {
     CellPointer generator = in<CellPointer>(value->generatorOperand());
     Integer saved(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::InternalFields), generator.value(), Generator::offsetOfSavedFrame())));
-    defineTest(value, logicalAnd(isZero(saved), isZero(Word32(m_out.load32(stateOf(generator))))));
+    Condition hasNoSavedFrame = isZero(saved);
+    defineTest(value, logicalAnd(hasNoSavedFrame, isZero(Word32(m_out.load32(stateOf(generator))))));
 }
 
 void SavedFrameEmitter::generateIsGeneratorRunning(const ValueContext& value)
@@ -323,7 +325,8 @@ void SavedFrameEmitter::generateIsGeneratorRunning(const ValueContext& value)
 
 void SavedFrameEmitter::generateMarkGeneratorRunning(const ValueContext& value)
 {
-    m_out.store32(m_out.constInt32(static_cast<int32_t>(Generator::State::Running)), stateOf(in<CellPointer>(value->generatorOperand())));
+    LValue running = m_out.constInt32(static_cast<int32_t>(Generator::State::Running));
+    m_out.store32(running, stateOf(in<CellPointer>(value->generatorOperand())));
 }
 
 // As the stub that steps a generator: a suspension stores its state, and a body that returned left the state as it was.
@@ -332,8 +335,9 @@ void SavedFrameEmitter::generateTakeGeneratorStepStatus(const ValueContext& valu
     CellPointer generator = in<CellPointer>(value->generatorOperand());
     Word32 state(m_out.load32(stateOf(generator)));
     Condition hasReturned = equal(state, word32(static_cast<int32_t>(Generator::State::Running)));
-    m_out.store32(select(hasReturned, word32(static_cast<int32_t>(Generator::State::Completed)), state).value(), stateOf(generator));
-    define(value, select(hasReturned, word32(static_cast<int32_t>(GeneratorStepStatus::Completed)), word32(static_cast<int32_t>(GeneratorStepStatus::Yielded))));
+    Word32 stateBehindStep = select(hasReturned, static_cast<int32_t>(Generator::State::Completed), state);
+    m_out.store32(stateBehindStep.value(), stateOf(generator));
+    define(value, select<Word32>(hasReturned, static_cast<int32_t>(GeneratorStepStatus::Completed), static_cast<int32_t>(GeneratorStepStatus::Yielded)));
 }
 
 void SavedFrameEmitter::generateReturnAsyncResult(const ValueContext& value)
@@ -408,7 +412,8 @@ void SavedFrameEmitter::branchUnlessUnmodifiedGenerator(Operand operand, const T
     branchUnless(isZero(hasOtherPrototype), otherwise);
     branchUnless(Condition(m_out.isNull(m_out.loadPtr(cell.value(), m_heaps.JSObject_butterfly))), otherwise);
     CellPointer prototype(m_out.load64(loadStructure(cell).value(), m_heaps.Structure_prototype));
-    branchUnless(equal(loadStructureID(prototype), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), otherwise);
+    Word32 structureID = loadStructureID(prototype);
+    branchUnless(equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyGeneratorPrototypeStructureID))), otherwise);
 }
 
 void SavedFrameEmitter::generateIsUnmodifiedGenerator(const ValueContext& value)
@@ -431,7 +436,8 @@ void SavedFrameEmitter::generateIsUnmodifiedAsyncGenerator(const ValueContext& v
         branchUnless(Condition(m_out.isNull(m_out.loadPtr(generator.value(), m_heaps.JSObject_butterfly))), otherwise);
         Boxed prototype(m_out.load64(loadStructure(generator).value(), m_heaps.Structure_prototype));
         branchUnless(isCell(prototype), otherwise);
-        branchUnless(equal(loadStructureID(unboxCell(prototype)), loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyAsyncGeneratorPrototypeStructureID))), otherwise);
+        Word32 structureID = loadStructureID(unboxCell(prototype));
+        branchUnless(equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(coroutines.emptyAsyncGeneratorPrototypeStructureID))), otherwise);
         m_out.jump(targets.taken.block());
     });
 }

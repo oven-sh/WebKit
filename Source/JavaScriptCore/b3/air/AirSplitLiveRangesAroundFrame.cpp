@@ -21,6 +21,7 @@
 #include "AirTmpMap.h"
 #include "B3Procedure.h"
 #include <wtf/BitVector.h>
+#include <wtf/FrequencyEstimator.h>
 #include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -76,6 +77,9 @@ public:
         if (m_isInRegion.isEmpty() || !isEnteredOnLikelyPath() || !canPlaceShufflesOnBorder())
             return false;
         findTmpsLiveAcrossBorder();
+        if (holdsLikelyCycle() && !savesMoreThanItCosts(numberOfRegisters))
+            return false;
+        makeTmpsOfRegion();
         if (!m_hasSplitTmp)
             return false;
 
@@ -200,8 +204,90 @@ private:
             for (size_t index : m_isLive)
                 m_tmpsLiveAtHead[block].append(Tmp::tmpForLinearIndex(m_code, index));
         });
-        for (size_t blockIndex : isTarget) {
-            for (Tmp tmp : m_tmpsLiveAtHead[m_code[blockIndex]]) {
+    }
+
+    // Every turn of such a loop needs the frame. What needs it only on an unlikely way out of a loop is entered far less often than its frequency says.
+    bool holdsLikelyCycle()
+    {
+        enum class State : uint8_t { Unseen, Open, Done };
+        IndexMap<BasicBlock*, State> states(m_code.size(), State::Unseen);
+        Vector<std::pair<BasicBlock*, unsigned>, 16> path;
+        for (size_t blockIndex : m_isInRegion) {
+            if (states[m_code[blockIndex]] != State::Unseen)
+                continue;
+            states[m_code[blockIndex]] = State::Open;
+            path.append({ m_code[blockIndex], 0 });
+            while (!path.isEmpty()) {
+                auto& [block, next] = path.last();
+                if (next == block->numSuccessors()) {
+                    states[block] = State::Done;
+                    path.removeLast();
+                    continue;
+                }
+                const FrequentedBlock& edge = block->successor(next++);
+                if (shareOf(edge) < 1 || !isInRegion(edge.block()))
+                    continue;
+                if (states[edge.block()] == State::Open)
+                    return true;
+                if (states[edge.block()] == State::Unseen) {
+                    states[edge.block()] = State::Open;
+                    path.append({ edge.block(), 0 });
+                }
+            }
+        }
+        return false;
+    }
+
+    static double shareOf(const FrequentedBlock& edge)
+    {
+        constexpr WTF::FrequencyEstimatorConstants constants;
+        if (edge.isRare())
+            return constants.rareEdgeShare;
+        return edge.frequency() == FrequencyClass::Unlikely ? constants.unlikelyEdgeShare : 1;
+    }
+
+    static double frequencyOf(BasicBlock* from, const FrequentedBlock& edge)
+    {
+        double shares = 0;
+        for (const FrequentedBlock& successor : from->successors())
+            shares += shareOf(successor);
+        return std::min(from->frequency() * shareOf(edge) / shares, edge.block()->frequency());
+    }
+
+    // A call that stays outside the region saves the frame. Each value that is live on an edge across the border costs a move there.
+    bool savesMoreThanItCosts(const CountByBank& numberOfRegistersWithoutFrame)
+    {
+        constexpr double instructionsToEnterAndLeaveFrame = 5;
+        constexpr double instructionsToSaveAndRestoreRegister = isARM64() ? 1 : 2;
+        double frequencyOfEntering = 0;
+        double moves = 0;
+        CountByBank liveIntoRegion { };
+        forEachBorderEdge([&](BasicBlock* from, FrequentedBlock& edge) {
+            double frequency = frequencyOf(from, edge);
+            const Vector<Tmp>& live = m_tmpsLiveAtHead[edge.block()];
+            moves += frequency * live.size();
+            if (isInRegion(from))
+                return;
+            frequencyOfEntering += frequency;
+            CountByBank count { };
+            for (Tmp tmp : live)
+                ++count[tmp.bank()];
+            forEachBank([&](Bank bank) {
+                liveIntoRegion[bank] = std::max(liveIntoRegion[bank], count[bank]);
+            });
+        });
+        double instructionsOfFrame = instructionsToEnterAndLeaveFrame;
+        forEachBank([&](Bank bank) {
+            unsigned calleeSaves = m_code.regsInPriorityOrder(bank).size() - numberOfRegistersWithoutFrame[bank];
+            instructionsOfFrame += instructionsToSaveAndRestoreRegister * std::min(liveIntoRegion[bank], calleeSaves);
+        });
+        return (m_code[0]->frequency() - frequencyOfEntering) * instructionsOfFrame > moves;
+    }
+
+    void makeTmpsOfRegion()
+    {
+        for (BasicBlock* block : m_code) {
+            for (Tmp tmp : m_tmpsLiveAtHead[block]) {
                 if (m_tmpInRegion[tmp])
                     continue;
                 m_tmpInRegion[tmp] = m_code.newTmp(tmp.bank());

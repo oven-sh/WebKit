@@ -1,0 +1,90 @@
+# function put(list: number[], index: number, value: number): void {
+#   list[index] = value;
+# }
+# declare const input: any;
+# const list: number[] = [0.5, 1.5];
+# put(list, input | 0, +input);
+# put(list, 1, 2.5);
+# (globalThis as any).answer = list[0] + list[1];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=124 kind=Variable
+typesite w1 module=m0 position=13 kind=Parameter function=f1
+typesite w2 module=m0 position=29 kind=Parameter function=f1
+typesite w3 module=m0 position=44 kind=Parameter function=f1
+typesite w4 module=m0 position=231 kind=Element
+typesite w5 module=m0 position=241 kind=Element
+typesite w6 module=m0 position=69 kind=Element
+data d0 root=Array{contents=number elements=[Number{value=0.5}, Number{value=1.5}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v7 = Integer
+    v8 = BitOr v6, v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="input" [isFreeName]
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = ToNumber v11
+    v13 = Call v1, -, v3, v8, v12 calleeName="put"
+    v14 = Integer integer=1
+    v15 = Double number=2.5
+    v16 = Call v1, -, v3, v14, v15 calleeName="put"
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="globalThis" [isFreeName]
+    v19 = Convert v18 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v20 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v21 = Integer
+    v22 = ElemGet v3, v21
+    v23 = Convert v22 declared={type=number site=w4} illTypedCause=ContainerWriterUnseen
+    v24 = Integer integer=1
+    v25 = ElemGet v3, v24
+    v26 = Convert v25 declared={type=number site=w5} illTypedCause=ContainerWriterUnseen
+    v27 = Add v23, v26
+    PropSet v20, v27 key="answer"
+    v29 = Undefined
+    Return v29
+}
+function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}, {type=number site=w3}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Convert v2 declared={type=number site=w6}
+    ElemSet v0, v1, v3
+    v5 = Undefined
+    Return v5
+}
+
+# The storage holds raw doubles, which the collector does not look at. From the entry to the return nothing reads the state of the collector or of the array.
+# CHECK-LABEL: name="put" role=Source
+# CHECK-NOT: collectorState
+# CHECK-NOT: Patchpoint(
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:PutArrayElement)
+# CHECK-NOT: collectorState
+# CHECK-NOT: Patchpoint(
+# CHECK: Store(b@[[value]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:PutArrayElement)
+# CHECK-NEXT: Jump(Terminal
+# CHECK-NEXT: Successors: #[[done]]
+# CHECK-NEXT: BB#[[done]]:
+# CHECK-NOT: collectorState
+# CHECK: Return(Terminal)
+# CHECK-LABEL: end of function
+# The test of the storage kind, the test for NaN, the bounds check and the store. The count includes the six instructions of the unlikely arm that appends at the end of the array.
+# X64: instructions: 16, patchpoints: 0
+# ARM64: instructions: 17, patchpoints: 0

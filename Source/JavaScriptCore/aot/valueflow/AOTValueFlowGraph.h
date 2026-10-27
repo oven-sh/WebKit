@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
@@ -210,10 +211,15 @@ private:
         IsCoveredNode = 1 << 3,
     };
 
+    AOT_CLASS_THRESHOLD(unsigned, mostCoverings, 6);
+
+    // coveringsFlowedInto: one bit a covering: the node flows into its covered node.
     struct Gate {
-        uint32_t mask : 24;
-        uint32_t flags : 8;
+        uint32_t mask : 22;
+        uint32_t flags : 4;
+        uint32_t coveringsFlowedInto : mostCoverings;
     };
+    static_assert(sizeof(Gate) == sizeof(uint32_t));
 
     struct Row {
         uint64_t low;
@@ -299,7 +305,7 @@ private:
         uint64_t lowMembersNotCoverable { 0 };
         uint64_t lowMembersHeldByCoveredNode { 0 };
         uint32_t setHeldByCoveredNode { 0 };
-        BitVector flowsIntoCovered;
+        uint8_t bitInGates { 0 };
         Vector<uint32_t> nodesJustRetired;
         BitVector isRetired;
         BitVector hasStoppedAt;
@@ -362,6 +368,8 @@ private:
     void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
+    using ShardsInOrder = std::array<uint8_t, numberOfShards>;
+    static ShardsInOrder longestFirst(const std::array<size_t, numberOfShards>& sizes);
     void giveBackLargeBuffers();
     static void forEachListOfOneRound(auto& graph, NOESCAPE const auto& functor);
 
@@ -384,16 +392,27 @@ private:
     void layPredecessorsInRows();
 
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
+    bool flowsIntoCovered(const Covering& covering, uint32_t node) const { return m_gates[node].coveringsFlowedInto & covering.bitInGates; }
+    bool noteFlowIntoCovered(const Covering& covering, uint32_t node)
+    {
+        bool didFlowBefore = flowsIntoCovered(covering, node);
+        m_gates[node].coveringsFlowedInto |= covering.bitInGates;
+        return didFlowBefore;
+    }
+    void append(Covering&&);
     bool takesNoMore(uint32_t node) const;
     void noteWhatCoveredNodesHold();
     bool didCoveredNodeHoldAllOf(uint32_t covered, uint64_t low, uint32_t set) const;
     ValueSetID whatRetiredNodeTakes(uint32_t node, ValueSetMaker&) const;
     bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
     void connectPredecessorsOfRetiredNodes(Team&);
-    void connectStraightToCoveredNode(Covering&, uint32_t node);
+    bool isToBeConnectedStraightToCoveredNode(const Covering&, uint32_t node) const;
+    void connectStraightToCoveredNodes(Team&, size_t count, NOESCAPE const auto& forEachNodeToConnect);
     bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
     bool isFollowedBackThrough(const Covering& covering, uint32_t node) const { return !covering.retiresNoNodeByItself || (!(m_gates[node].flags & IsCoveredNode) && !covering.isMadeForPlaceholder(covering.contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))); }
-    void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
+    bool lengthensFlowIntoCovered(const Covering&, ValueFlowEdge) const;
+    void findEdgesThatLengthenFlowIntoCoveredNodes(Team&, std::span<const ValueFlowEdge> added);
+    void markNodesFlowingIntoCoveredNodes(std::span<const ValueFlowEdge> added);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 
     const ParallelLoops& m_loops;
@@ -427,7 +446,8 @@ private:
     ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };
     uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
     uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
-    BitVector m_hasMoved;
+    // A byte a node: the 64 nodes that stand side by side in one shard fill a cache line, so no two shards write to one line.
+    ArrayByNode<uint8_t> m_hasMoved;
     static_assert(numberOfShards <= 64);
     std::array<std::array<uint64_t, numberOfShards>, 2> m_shardsWithMessagesOfShard { };
 
@@ -440,6 +460,8 @@ private:
     Vector<Vector<uint32_t>> m_indicesBySource;
     Vector<Vector<ValueFlowEdge>> m_edgesByTarget;
     Vector<Vector<ValueFlowEdge>> m_edgesOnlyToLink;
+    Vector<Vector<ValueFlowEdge>> m_straightEdgesOfShare;
+    Vector<ValueFlowEdge> m_straightEdges;
 
     Vector<std::unique_ptr<Shard>> m_shards;
     std::array<Vector<Message>, 2> m_messages;
@@ -454,6 +476,7 @@ private:
     Vector<std::unique_ptr<Worker>> m_workers;
     Vector<Vector<uint32_t>> m_foundInShare;
     Vector<uint32_t> m_found;
+    Vector<uint32_t> m_edgesThatLengthenFlow;
     Counters m_counters;
 };
 

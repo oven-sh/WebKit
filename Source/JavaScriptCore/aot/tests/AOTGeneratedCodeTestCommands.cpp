@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTB3Dump.h"
 #include "AOTCodeGenerationDriver.h"
 #include "AOTCodeShapes.h"
 #include "AOTCompileFunctions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTFunctionCodeGenerator.h"
 #include "AOTHeat.h"
 #include "AOTInterningPhases.h"
 #include "AOTNativeTest.h"
@@ -29,6 +31,7 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include "B3Generate.h"
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -44,6 +47,17 @@ struct PrintedParts {
     bool calls { false };
     bool units { false };
     bool removesGuardOperands { false };
+};
+
+struct B3DumpRequest {
+    enum class Point : uint8_t { Lowered, AfterStep, Optimized, Air };
+
+    Point point { Point::Lowered };
+    String step;
+    std::optional<unsigned> runOfStep;
+    B3DumpScope scope { B3DumpScope::WholeProcedure };
+    Vector<FunctionID> functions;
+    bool printsOnlyEntryModules { false };
 };
 
 } // anonymous namespace
@@ -120,14 +134,14 @@ static ChosenRepresentations findChosenRepresentations(const Program& program)
     return hasUnchosen ? ChosenRepresentations::InSomeFunctions : ChosenRepresentations::InEveryFunction;
 }
 
-static void runStagesAfterPlacement(TestCommandContext& context, Pipeline& pipeline)
+static void runStagesAfterPlacement(TestCommandContext& context, Pipeline& pipeline, ASCIILiteral command)
 {
     switch (findChosenRepresentations(pipeline.program())) {
     case ChosenRepresentations::InNoFunction:
         pipeline.runRepresentationStage();
         break;
     case ChosenRepresentations::InSomeFunctions:
-        context.out.println("error: generate-code takes representations in every function or in none");
+        context.out.println("error: ", command, " takes representations in every function or in none");
         return;
     case ChosenRepresentations::InEveryFunction:
         pipeline.verify(IRForm::Placed);
@@ -141,7 +155,7 @@ static void runStagesAfterPlacement(TestCommandContext& context, Pipeline& pipel
     output.isComplete = true;
 }
 
-static std::unique_ptr<PipelineOutput> runRemainingStages(TestCommandContext& context)
+static std::unique_ptr<PipelineOutput> runRemainingStages(TestCommandContext& context, ASCIILiteral command)
 {
     context.build.resolveFunctionToDump(*context.program);
     PlacedTableSizes tableSizes;
@@ -154,7 +168,7 @@ static std::unique_ptr<PipelineOutput> runRemainingStages(TestCommandContext& co
         pipeline.runAllStages();
         break;
     case IRForm::Prepared:
-        context.out.println("error: generate-code starts from AsRead, Selected or Placed");
+        context.out.println("error: ", command, " starts from AsRead, Selected or Placed");
         return nullptr;
     case IRForm::Selected:
         chooseShapesOfBlocks(context.build, pipeline);
@@ -164,14 +178,14 @@ static std::unique_ptr<PipelineOutput> runRemainingStages(TestCommandContext& co
         pipeline.runProgramPass(PassID::ElideStackChecks);
         pipeline.runProgramPass(PassID::CollectRegExpLiterals);
         pipeline.runPlacementStage();
-        runStagesAfterPlacement(context, pipeline);
+        runStagesAfterPlacement(context, pipeline, command);
         break;
     case IRForm::Placed:
         chooseShapesOfBlocks(context.build, pipeline);
         pipeline.runProgramPass(PassID::NumberLiteralStrings);
         tableSizes = pipeline.output().placement->tableSizes();
         runner.setVerifierInputs({ .flow = &pipeline.flow(), .placed = &tableSizes });
-        runStagesAfterPlacement(context, pipeline);
+        runStagesAfterPlacement(context, pipeline, command);
         break;
     }
     if (!pipeline.output().isComplete)
@@ -239,6 +253,12 @@ static void printCode(PrintStream& out, const CompiledCode& code)
     });
     if (numberOfTailCallSites)
         out.print(" tailCallSites=", numberOfTailCallSites);
+    if (!sites.constructedCallees.isEmpty()) {
+        out.print(" constructedCallees=");
+        CommaPrinter comma(","_s);
+        for (const ConstructedCallee& row : sites.constructedCallees)
+            out.print(comma, "f", code.body.callees[row.callee].index());
+    }
     if (code.frame.isEnteredWithoutStackCheck)
         out.print(" enteredWithoutStackCheck");
     if (code.frame.isProvenToFitOnStack)
@@ -392,7 +412,7 @@ static void runGenerateCode(TestCommandContext& context)
     if (!parts)
         return;
 
-    std::unique_ptr<PipelineOutput> output = runRemainingStages(context);
+    std::unique_ptr<PipelineOutput> output = runRemainingStages(context, "generate-code"_s);
     if (!output) {
         context.form = context.program->form();
         return;
@@ -420,10 +440,185 @@ static void runGenerateCode(TestCommandContext& context)
     context.form = context.program->form();
 }
 
+static bool parseStep(StringView word, B3DumpRequest& request)
+{
+    size_t colon = word.find(':');
+    request.point = B3DumpRequest::Point::AfterStep;
+    request.step = word.left(colon).toString();
+    if (colon == notFound)
+        return !request.step.isEmpty();
+    request.runOfStep = parseTestNumber<unsigned>(word.substring(colon + 1));
+    return !request.step.isEmpty() && request.runOfStep && *request.runOfStep;
+}
+
+static std::optional<B3DumpRequest> parseB3DumpRequest(TestCommandContext& context, B3DumpRequest::Point defaultPoint)
+{
+    constexpr ASCIILiteral afterPrefix = "after="_s;
+
+    B3DumpRequest request;
+    request.point = defaultPoint;
+    bool takesPoint = defaultPoint != B3DumpRequest::Point::Air;
+    for (const String& word : context.arguments) {
+        if (word == "loops"_s) {
+            request.scope = request.scope == B3DumpScope::SizeOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::LoopsOnly;
+            continue;
+        }
+        if (word == "entry-modules"_s) {
+            request.printsOnlyEntryModules = true;
+            continue;
+        }
+        if (!takesPoint && word == "size"_s) {
+            request.scope = request.scope == B3DumpScope::LoopsOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::SizeOnly;
+            continue;
+        }
+        if (takesPoint && word == "optimized"_s) {
+            request.point = B3DumpRequest::Point::Optimized;
+            continue;
+        }
+        if (takesPoint && word.startsWith(afterPrefix) && parseStep(StringView(word).substring(afterPrefix.length()), request))
+            continue;
+        std::optional<uint32_t> function = word.startsWith('f') ? parseTestNumber<uint32_t>(StringView(word).substring(1)) : std::nullopt;
+        if (!function || *function >= context.program->functions.size()) {
+            printBadArgument(context.out, word);
+            return std::nullopt;
+        }
+        request.functions.append(FunctionID(*function));
+    }
+    return request;
+}
+
+static bool isRequested(const B3DumpRequest& request, const BuildContext& build, const Program& program, FunctionID id)
+{
+    if (request.printsOnlyEntryModules) {
+        FunctionID functionAsRead = findFunctionAsRead(&program, id);
+        return functionAsRead && program.entries.containsIf([&](const Entry& entry) {
+            return entry.module == program.at(functionAsRead).module;
+        });
+    }
+    if (request.functions.isEmpty())
+        return program.at(id).role != FunctionRole::Library && build.shouldDump(id);
+    return request.functions.contains(id) || request.functions.contains(findFunctionAsRead(&program, id));
+}
+
+static void printFunctionHeading(PrintStream& out, const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    out.print("function f", id.index());
+    if (function.name)
+        out.print(" name=\"", String::fromUTF8(program.string(function.name)), "\"");
+    out.println(" role=", nameOf(function.role));
+}
+
+static void lowerFunctionToB3(PrintStream& out, FunctionCodeGenerator& generator, const Function& function, const B3DumpRequest& request)
+{
+    constexpr ASCIILiteral lastStep = "lowerToAir"_s;
+
+    B3::Procedure& procedure = generator.procedure();
+    printOriginsAsOperations(procedure, function);
+    if (request.point == B3DumpRequest::Point::Lowered) {
+        if (request.scope == B3DumpScope::LoopsOnly)
+            procedure.resetReachability();
+        dumpB3(out, procedure, request.scope);
+    }
+
+    StringPrintStream dumpAtRequestedPoint;
+    bool didReachRequestedPoint = false;
+    unsigned numberOfRuns = 0;
+    auto dumpAfterStep = [&](B3::Procedure& procedure, ASCIILiteral step) {
+        switch (request.point) {
+        case B3DumpRequest::Point::Lowered:
+        case B3DumpRequest::Point::Air:
+            return;
+        case B3DumpRequest::Point::AfterStep:
+            if (request.step != step || (request.runOfStep && ++numberOfRuns != *request.runOfStep))
+                return;
+            break;
+        case B3DumpRequest::Point::Optimized:
+            if (step == lastStep)
+                return;
+            break;
+        }
+        didReachRequestedPoint = true;
+        dumpAtRequestedPoint.reset();
+        dumpB3(dumpAtRequestedPoint, procedure, request.scope);
+    };
+    B3::StepObserver observer = dumpAfterStep;
+    B3::Procedure* procedures[] = { &procedure };
+    B3::prepareForGeneration(procedures, &observer);
+
+    if (request.point == B3DumpRequest::Point::Lowered || procedure.report().failure)
+        return;
+    if (request.point == B3DumpRequest::Point::Air) {
+        dumpAir(out, procedure.code(), request.scope);
+        return;
+    }
+    if (!didReachRequestedPoint)
+        out.println(request.step, " did not run");
+    out.print(dumpAtRequestedPoint.toString());
+}
+
+static void lowerAllFunctionsToB3(PrintStream& out, const PipelineOutput& output, const CodeGenerationPlan& plan, BuildContext& build, const B3DumpRequest& request)
+{
+    const Program& program = *output.program;
+    CodeGenerationInputs inputs = createCodeGenerationInputs(output, plan);
+    CodeGenerationTotals totals;
+    ScratchTypeArena types(program.types);
+    CodeGenerationWorker worker { build, types.arena(), build.backEndScratch(0) };
+    build.resolveFunctionToDump(program);
+    Vector<FunctionID> ids = collectFunctionsWithBody(program);
+    AOT::stableSort(ids, { }, [&](FunctionID id) {
+        return findFunctionAsRead(&program, id).index();
+    });
+    for (FunctionID id : ids) {
+        if (!isRequested(request, build, program, id))
+            continue;
+        printFunctionHeading(out, program, id);
+        if (std::unique_ptr<FunctionCodeGenerator> generator = FunctionCodeGenerator::create(worker, inputs, id, totals)) {
+            generator->procedure().setSubjectOfClient(findFunctionAsRead(&program, id).index() + 1);
+            lowerFunctionToB3(out, *generator, program.at(id), request);
+            generator->finish();
+        }
+        out.println("end of function f", id.index());
+    }
+}
+
+static void runLoweringCommand(TestCommandContext& context, ASCIILiteral command, B3DumpRequest::Point defaultPoint)
+{
+    std::optional<B3DumpRequest> request = parseB3DumpRequest(context, defaultPoint);
+    if (!request)
+        return;
+
+    std::unique_ptr<PipelineOutput> output = runRemainingStages(context, command);
+    if (!output) {
+        context.form = context.program->form();
+        return;
+    }
+
+    BuildContext& build = context.build;
+    CodeGenerationPlan plan = prepareCodeGeneration(*output, build, context.form == IRForm::AsRead ? ProgramTablesUse::Written : ProgramTablesUse::NeverWritten);
+    if (!build.diagnostics().hasErrors())
+        lowerAllFunctionsToB3(context.out, *output, plan, build, *request);
+
+    context.program = WTF::move(output->program);
+    context.form = context.program->form();
+}
+
+static void runLowerToB3(TestCommandContext& context)
+{
+    runLoweringCommand(context, "lower-to-b3"_s, B3DumpRequest::Point::Lowered);
+}
+
+static void runLowerToAir(TestCommandContext& context)
+{
+    runLoweringCommand(context, "lower-to-air"_s, B3DumpRequest::Point::Air);
+}
+
 std::span<const TestCommand> generatedCodeTestCommands()
 {
     static constexpr TestCommand commands[] {
         { "generate-code"_s, IRForm::Selected, runGenerateCode, ProgramAsRead::WithLibrary },
+        { "lower-to-air"_s, IRForm::Selected, runLowerToAir, ProgramAsRead::WithLibrary },
+        { "lower-to-b3"_s, IRForm::Selected, runLowerToB3, ProgramAsRead::WithLibrary },
     };
     return commands;
 }

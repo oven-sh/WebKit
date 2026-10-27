@@ -138,6 +138,7 @@ private:
     void branchOnElementPresence(const ValueContext&, const ArrayStorageForm*, const ArrayElements&, Integer index, BranchTargets);
     TypedArrayElements typedArrayElementsInsideView(const ValueContext&, CellPointer view, Integer index);
     Word32 clampedToUint8(Integer);
+    Word32 clampedToUint8(Word32);
 };
 
 static_assert(sizeof(ElementAccessEmitter) == sizeof(OperationEmitter));

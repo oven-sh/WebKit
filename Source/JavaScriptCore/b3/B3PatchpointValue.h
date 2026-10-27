@@ -69,6 +69,10 @@ public:
     Effects effects;
 
     bool isLoopPoll { false };
+    // A loop poll that also throws an error which an earlier operation of the loop could not throw by itself. It stays in every version of its loop.
+    bool throwsWhatIsOwed { false };
+    // Of a loop poll: the client knows that the turns which stay on the likely paths of the loop are no more than the elements of an array, a view or a string.
+    bool likelyTurnsEndWithinData { false };
     std::optional<PureFunction> pureFunction;
     ClientTag clientTag;
 

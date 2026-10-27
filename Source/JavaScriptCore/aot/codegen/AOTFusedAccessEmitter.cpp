@@ -163,8 +163,9 @@ Condition FusedAccessEmitter::tryPutByIds(const ValueContext& store)
 
     Pointer cache = siteCacheAddress(siteCache);
     Integer header(m_out.load64(m_out.address(m_heaps.AOTInstance_siteCaches, cache.value(), Slot::offsetOfStructureID())));
-    return either<Condition>(equal(low32(header), loadStructureID(object)), [&] {
-        Word32 kind = bitAnd(low32(Integer(m_out.lShr(header.value(), m_out.constInt32(Slot::kindShiftInHeader)))), word32(UINT8_MAX));
+    Word32 structureIDOfSlot = low32(header);
+    return either<Condition>(equal(structureIDOfSlot, loadStructureID(object)), [&] {
+        Word32 kind = bitAnd(low32(Integer(m_out.lShr(header.value(), Slot::kindShiftInHeader))), UINT8_MAX);
         return either<Condition>(notEqual(kind, word32(static_cast<int32_t>(Slot::Kind::Uncacheable))), [&] {
             const B3::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
             LValue firstWordIndex = m_out.aShr(header.value(), m_out.constInt32(Slot::locationShiftInHeader));

@@ -169,8 +169,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
     JumpList entersDriver;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
     leave.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
-    // A trap that waits to be handled moves this limit above every stack pointer.
-    leave.append(jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
+    leave.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
     jit.loadPtr(calleeSlot, next);
     Jump isNotAsyncFunction = jit.branch8(CCallHelpers::NotEqual, Address(next, SavedFrame::offsetOfKind()), TrustedImm32(static_cast<int32_t>(CoroutineKind::AsyncFunction)));
 
@@ -297,7 +296,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
             jit.bindReturnLabel(StubFrameKind::HandlerOfJob);
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
             doesNotGoOn.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
-            doesNotGoOn.append(jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
+            doesNotGoOn.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit()));
             doesNotGoOn.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
         };
 
@@ -440,7 +439,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     jit.lshift64(TrustedImm32(3), scratch);
     jit.subPtr(sp, scratch, destination);
     jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(void*))), destination);
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, destination, softStackLimit()), throwStackOverflow());
+    jit.checkStackBeforeEntering(destination);
 
     jit.emitFunctionPrologue();
     jit.subPtr(scratch, sp);
@@ -490,7 +489,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     jit.move(sp, destination);
     jit.subLeftShift64(destination, inFrame, TrustedImm32(3), destination);
     jit.addPtr(TrustedImm32(sizeOfStepGeneratorFrame - static_cast<int32_t>(sizeof(CallerFrameAndPC))), destination, source);
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, source, softStackLimit()), throwStackOverflow());
+    jit.checkStackBeforeEntering(source);
 
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(sizeof(CallerFrameAndPC)), destination);

@@ -45,10 +45,16 @@ JS_EXPORT_PRIVATE String quotedSourceOfFailedExpression(VM&);
 StringView nameOfConstructorThatRunsOnTop(VM&);
 // An operation runs in the top frame, for an `instanceof` of compiled code: the expression as it is written. Null for any other frame and where the site holds no text.
 StringView instanceofExpressionOnTop(VM&);
+StringView nameOfCalleeForwardedOnTop(VM&);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
-JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
+// Without a member: the key is a value.
+JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier* member);
+// `o[k]++`, `o[k] += v`, `o[k] ??= v`: bytecode tests `o` by an operation of its own, ahead of the conversion of `k` and of the read.
+JSObject* createUpdateOfNullishError(JSGlobalObject*);
+// An operation runs in the top frame, for the read of such an update: the read makes that test.
+bool readOnTopTestsObjectOfUpdate(VM&);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);
@@ -73,6 +79,9 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 #endif
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
+// `export { exportName } from "specifier"`, worded as the link of a module that is not compiled words it.
+JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& exportName, const String& specifier);
+JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
 String functionNotCompiledMessage(const String& functionName);
 String functionNotCompiledMessage(const String& path, unsigned line);

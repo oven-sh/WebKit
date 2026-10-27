@@ -63,12 +63,17 @@ function f5 name="forwardsOrReturnsAnotherCall" parameters=[{type=number}] resul
 # CHECK: creator=ResultWrapper{worker=[[eitherWorker]] layout=L0} {
 # CHECK: [[call5]]:{{*}}= CallDirect v0 function=[[eitherWorker]]
 # CHECK-NEXT: [[tag5]]: i32 = ResultAt [[call5]]
-# CHECK-NEXT: [[other5]]: anything = ResultAt [[call5]] index=1
+# CHECK-NEXT: [[other5]]: anything|unspecified = ResultAt [[call5]] index=1
 # CHECK: Switch [[tag5]] cases=[1] -> case [[literal5]](), otherwise [[cell5]]()
 # CHECK: [[literal5]]():
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: number = AssumeType {{*}}, [[filled1]] provenType=number
+# CHECK-NEXT: {{*}}: number = AssumeType {{*}}, [[filled1]] provenType=number
 # CHECK-NEXT: = NewObject
 # CHECK: [[cell5]]():
-# CHECK-NEXT: Jump -> next {{*}}([[other5]])
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[other5There]]: anything = AssumeType [[other5]], [[filled2]] provenType=anything
+# CHECK-NEXT: Jump -> next {{*}}([[other5There]])
 
 function f6 name="forwardsByAllowedTailCall" parameters=[{type=number}] results=[{type=L0}] {
     v1 = CallDirect v0 function=f0
@@ -138,7 +143,7 @@ function f10 name="remember" parameters=[{type=anything}] results=[{type=anythin
 # CHECK: [[read4]]: number = Upcast [[x4]] castType=undefined|null|number
 # CHECK-NEXT: = CallDirect [[read4]] function=f10
 # CHECK-NEXT: = Results [[x4]], [[y4]]
-# CHECK: function [[eitherWorker]] name="forwardsOrReturnsAnotherCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything}, {type=number}, {type=number}]
+# CHECK: function [[eitherWorker]] name="forwardsOrReturnsAnotherCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything|unspecified}, {type=number|unspecified}, {type=number|unspecified}]
 # CHECK-NOT: NewObject
 # CHECK: [[otherInWorker5]]: anything = CallDirect v0 function=f10
 # CHECK: = Results {{*}}, [[otherInWorker5]], 

@@ -25,6 +25,7 @@ static BuiltinUseInputs inputsOf(FunctionPassContext& context, std::span<const V
 void reportBuiltinUseTests(TestSiteReporter& reporter)
 {
     BuiltinUseInputs inputs = inputsOf(reporter.context(), { });
+    inputs.identities = &reporter.context().analyses;
     reporter.forEachCandidate([&](const Value& candidate) {
         if (!builtinUseOpcodes.contains(candidate.opcode))
             return;

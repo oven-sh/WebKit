@@ -243,6 +243,8 @@ const RuntimeFunctionEntry* findRuntimeFunction(const Program&, RuntimeFunctionI
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
+// A name made at run time finds the module in the image. The image holds no code of a module of the host that has a source and this kind, and what a program writes of a module with an open namespace is the object: the loader answers for both.
+bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 bool namesWaysToModuleObjects(const Program&);

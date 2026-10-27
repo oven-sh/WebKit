@@ -487,6 +487,22 @@ bool Liveness::isAnyLiveAtHead(BlockID block) const
     return m_firstLiveValue[block.index()] != m_firstLiveValue[block.index() + 1];
 }
 
+bool Liveness::isAnyLiveAtHead(BlockID block, const BitVector& values, AnswersAboutValues& answers) const
+{
+    RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+    if (!m_sharedSetAtHead.isEmpty()) [[unlikely]] {
+        if (std::exchange(answers.m_liveness, this) != this)
+            answers.m_answersOfSharedSets.fill(0, m_sharedSets.numberOfSets());
+        return m_sharedSets.containsAny(m_sharedSetAtHead[block.index()], answers.m_answersOfSharedSets, [&](uint32_t index) {
+            return values.get(m_valuesInSharedSets[index].index());
+        });
+    }
+    uint32_t first = m_firstLiveValue[block.index()];
+    return std::ranges::any_of(m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first), [&](ValueID value) {
+        return values.get(value.index());
+    });
+}
+
 bool Liveness::isLiveAtHead(ValueID id, BlockID block) const
 {
     RELEASE_ASSERT(id.index() < m_useLists.numberOfValues());

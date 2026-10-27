@@ -1,0 +1,35 @@
+# class Pattern extends RegExp { constructor(source, flags) { super(source, flags) } }  "a,b".split(new Pattern(",", ""))  Object.defineProperties(globalThis.one, globalThis.other)
+# split() calls what it finds under Symbol.split on the pattern. The last line lets anything be defined on what has escaped, so that lookup may answer a value nobody knows, beside which
+# RegExp.prototype[Symbol.split], which has escaped, is not listed. It is among the callees all the same: it constructs the class of the pattern, with the pattern for its first argument.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: function f1 cause=ReachesNativeCode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Pattern" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=RegExp
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2, v0, v1 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = String string=","
+    v6 = String string=""
+    v7 = Construct v4, -, v5, v6
+    v8 = String string="a,b"
+    v9 = PropGet v8 key="split"
+    v10 = Call v9, v8, v7 calleeKey="split"
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectDefineProperties
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="one" [isFreeName]
+    v15 = PropGet v13 key="other" [isFreeName]
+    v16 = Call v12, v11, v14, v15
+    Return v10
+}
+function f1 name="Pattern" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = GetSuperBase v0 homeKind=Object
+    v5 = SuperConstruct v4, v1, v2, v3 layout=L0
+    Return v5
+}

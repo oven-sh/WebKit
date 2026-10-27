@@ -43,6 +43,10 @@ enum class ModuleObjectTrait : uint8_t {
     IsMain = 1 << 0,
     // `module.exports` is a variable of the program: moduleExports() reads it and setModuleExports() stores it. No code sees the module object of any other module.
     HasExportsVariable = 1 << 1,
+    // What require() keeps of a file that it has answered and that is no CommonJS file. The object has no `require`, and the engine stores the answer under `exports`.
+    IsNoCommonJSFile = 1 << 2,
+    // `module.loaded` stays false.
+    IsESModule = 1 << 3,
 };
 
 enum class ResolvedSpecifierForm : uint8_t { Path, PathForRequire, URL };
@@ -76,6 +80,10 @@ struct ModuleHost {
     void (*showChildren)(JSGlobalObject*, JSObject* module, JSObject* requiredAgain);
     // The module of the image that an import of the path with these attributes gets. The build has named each module by the rules of the host. Null in a host where attributes choose nothing.
     std::optional<ModuleID> (*findModuleWithAttributes)(JSGlobalObject*, const String& path, const ScriptFetchParameters&);
+    // What lies under `resolve` on the `require` of the module object, if it does what the host put there does, or else another function that does. Null in a host whose `require` has no such member.
+    JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
+    // The program has registered something with the host that answers to the name of a native module in its place. Null in a host where nothing can be registered.
+    bool (*replacesNativeModule)(JSGlobalObject*, const String& path);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -88,6 +96,8 @@ JS_EXPORT_PRIVATE String modulePath(ModuleID);
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
+// Of what findModule() answers: the host makes the module, and the image holds its number alone.
+JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
@@ -103,7 +113,6 @@ JS_EXPORT_PRIVATE JSObject* mainModuleObject(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* parentModuleObject(JSGlobalObject*, ModuleID);
 // Calls the functor with the module object of each CommonJS file that the module has required since the last call, in the order of the first require() of each.
 JS_EXPORT_PRIVATE bool forEachNewChild(JSGlobalObject*, ModuleID, const ScopedLambda<void(JSObject*)>&);
-JS_EXPORT_PRIVATE bool recordRequire(JSGlobalObject*, ModuleID target, ModuleID referrer);
 // The host calls this with every name that a function object of the program is given to load: require, module.require, Module._load, process.getBuiltinModule.
 JS_EXPORT_PRIVATE void willLoadByName(JSGlobalObject*, JSValue specifier, LoadByName = LoadByName::Require);
 // The host calls this with the file of the image that such a name has resolved to, before it looks into a cache of its own. It throws for a file that is no entry point.
@@ -114,7 +123,8 @@ JS_EXPORT_PRIVATE bool isCompiledModuleRecord(AbstractModuleRecord*);
 JS_EXPORT_PRIVATE JSPromise* importModule(JSGlobalObject*, ModuleID, std::optional<int64_t> referrerAsyncOrder);
 JS_EXPORT_PRIVATE void evaluateModuleSynchronously(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* moduleNamespace(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID);
+// The referrer is the file of the image whose require() the host answers.
+JS_EXPORT_PRIVATE JSValue requireModule(JSGlobalObject*, ModuleID, std::optional<ModuleID> referrer = std::nullopt);
 
 // A module of the image runs at most once and is in no module cache, and the code calls the module that each constant name stood for in the build.
 JS_EXPORT_PRIVATE void willSetRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
@@ -152,6 +162,8 @@ JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
 JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
 // On the new thread, once it has its instance, or ends without one.
 JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
+// On the new thread, before the first statement of the program runs, or once it has run code that is not compiled, or where it ends. Until then room is kept for what the thread has yet to take.
+JS_EXPORT_PRIVATE void didStartThread(VM*);
 
 } // namespace AOT
 } // namespace JSC

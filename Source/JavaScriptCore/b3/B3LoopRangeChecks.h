@@ -7,10 +7,17 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3AffineIndex.h"
+#include "B3IntRange.h"
 #include "B3Limits.h"
+#include "B3NaturalLoops.h"
+#include "B3Origin.h"
 #include "B3Value.h"
+#include <array>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <span>
 #include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/ScopedLambda.h>
@@ -20,7 +27,9 @@ namespace JSC { namespace B3 {
 
 class FastPreHeader;
 class LoopInvariance;
+class MemoryValue;
 class PhiChildren;
+class Variable;
 struct CountedLoop;
 struct HotRegion;
 
@@ -38,12 +47,72 @@ struct RangeCheckBound {
     int64_t maxOffset { 0 };
 };
 
+// relation(left, right + addend), as integers of 64 bits. Without a right side: relation(left, addend).
+struct EntryGuard {
+    Opcode relation { Oops };
+    Value* left { nullptr };
+    Signedness leftSignedness { Signedness::Signed };
+    Value* right { nullptr };
+    Signedness rightSignedness { Signedness::Signed };
+    int64_t addend { 0 };
+};
+
+struct StridedGuards {
+    int64_t minOffset { 0 };
+    int64_t maxOffset { 0 };
+    bool mustFitInt32 { false };
+    bool isStrengthReduced { false };
+    bool isIncreasing { false };
+    bool needsScaleGuard { false };
+    bool needsLowerGuard { false };
+    bool needsLimitGuard { false };
+};
+
+// Checks of index + k against one limit, for constants k in [minOffset, maxOffset].
+struct StridedRangeCheck : StridedGuards {
+    AffineIndex index;
+    Value* limit { nullptr };
+};
+
+// The value equals the index of checks[checkIndex] plus offset.
+struct ReducedIndex {
+    Value* value { nullptr };
+    unsigned checkIndex { 0 };
+    int64_t offset { 0 };
+};
+
+struct StridedRangeChecks {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StridedRangeChecks);
+
+    std::array<StridedRangeCheck, Limits::maxStridedRangeChecksPerLoop> checks { };
+    unsigned numberOfChecks { 0 };
+    // In the order of the region's blocks and of the values in each.
+    std::array<ReducedIndex, Limits::maxReducedIndicesPerLoop> reducedIndices { };
+    unsigned numberOfReducedIndices { 0 };
+    // Where the reduced indices advance. Null: on each back edge.
+    BasicBlock* indexStepBlock { nullptr };
+};
+
+struct StridedIndexVariable {
+    Variable* variable { nullptr };
+    Value* stride { nullptr };
+};
+using StridedIndexVariables = std::array<StridedIndexVariable, Limits::maxStridedRangeChecksPerLoop>;
+
 struct RangeCheckPlan {
     UncheckedKeyHashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
+    std::unique_ptr<StridedRangeChecks> strided;
+    Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
+    // The number of turns is at most each limit, and at most the bound of a counter that starts at zero or above. One of these is the length of a view, of the characters of a string
+    // or of an array, or a small number: any other number is the program's to choose.
+    bool endsWithinData { false };
+    // The length of an array may be set to more than the array holds. Where this is the only length that bounds the turns, the fast version is for an array that has room for as many.
+    MemoryValue* lengthThatArrayMustHold { nullptr };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
+    bool dependsOnLoopTest() const { return clampsBound() || strided; }
 };
 
 struct RangeCheckInputs {
@@ -57,6 +126,20 @@ struct RangeCheckInputs {
 };
 
 RangeCheckPlan planRangeChecks(const RangeCheckInputs&);
+
+struct MeetingCountersInputs {
+    Procedure& proc;
+    NaturalLoops& loops;
+    PhiChildren& phiChildren;
+    const HotRegion& region;
+    const LoopInvariance& invariance;
+};
+
+// For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.
+RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
+void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
+void appendStridedRangeCheckGuards(FastPreHeader&, const StridedRangeChecks&, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader, StridedIndexVariables&);
+void appendGuardThatArrayHoldsLength(FastPreHeader&, Origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)
 {

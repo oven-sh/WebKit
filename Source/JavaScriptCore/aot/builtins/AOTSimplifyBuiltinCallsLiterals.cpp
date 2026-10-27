@@ -174,7 +174,7 @@ std::optional<Vector<KnownValue, 8>> findConstantsOfListFor(FunctionPassContext&
     if (std::optional<Vector<KnownValue, 8>> constants = findConstantsOfWholeList(program, context.inputs.flow, function, operand))
         return constants;
 
-    ValueID id = sameObjectThroughCasts(function, operand);
+    ValueID id = sameObjectThroughCasts(function, operand).valueInFrontOfFacts();
     const Value& literal = function.at(id);
     if (!isUsedBy(context, operand, user, id))
         return std::nullopt;
@@ -303,7 +303,7 @@ unsigned takeConstantListsApart(FunctionPassContext& context)
         else if (isConstructionOfCollection(context.program, value))
             list = value.argumentsOperands()[0];
         std::optional<Vector<KnownValue, 8>> constants = list ? findConstantsOfListFor(context, list, site.value) : std::nullopt;
-        if (!constants || constants->isEmpty() || (value.opcode != Opcode::AppendSpread && isUsedBy(context, list, site.value, sameObjectThroughCasts(function, list))))
+        if (!constants || constants->isEmpty() || (value.opcode != Opcode::AppendSpread && isUsedBy(context, list, site.value, sameObjectThroughCasts(function, list).valueInFrontOfFacts())))
             return;
         if (!context.exceeds(LimitID::MaxArrayLiteralBatch, constants->size(), site.value))
             uses.append({ site, WTF::move(*constants) });

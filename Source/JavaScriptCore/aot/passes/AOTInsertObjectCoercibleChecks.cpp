@@ -66,7 +66,7 @@ static bool looksAtReceiverFirst(Rewrite& rewrite, const Value& access)
 // `Object.getOwnPropertyDescriptor(o, k).value`: the descriptor is some object or undefined. Behind the check SinkAllocations has an object whose fields the call can deliver by themselves.
 static bool mayBeTakenApart(Rewrite& rewrite, ValueID receiver)
 {
-    const Value& definition = rewrite.at(sameObjectThroughCasts(rewrite.function, receiver));
+    const Value& definition = rewrite.function.at(sameObjectThroughCasts(rewrite.function, receiver));
     if (definition.opcode != Opcode::CallBuiltin || definition.builtinCallForm() != BuiltinCallForm::Whole || !isNarrowedByCheck(rewrite.typeOf(receiver)))
         return false;
     return rewrite.program.builtins().at(definition.overload()).code.fieldsForm.has_value();
@@ -95,7 +95,7 @@ static ValueID findAccessBehindFailedTest(Rewrite& rewrite, const Terminator& br
 {
     constexpr unsigned maxBlocksOnTheWay = 4;
     const Function& function = rewrite.function;
-    Vector<ValueID, 4> namesOfSubject { sameObjectThroughCasts(function, function.at(branch.conditionOperand()).valueOperand()) };
+    Vector<ValueID, 4> namesOfSubject { sameObjectThroughCasts(function, function.at(branch.conditionOperand()).valueOperand()).valueInFrontOfFacts() };
     Vector<BlockID, maxBlocksOnTheWay> way;
     const Target* target = &branch.notTaken();
     while (way.size() < maxBlocksOnTheWay && !way.contains(target->block)) {
@@ -104,13 +104,13 @@ static ValueID findAccessBehindFailedTest(Rewrite& rewrite, const Terminator& br
         if (block.handler)
             return { };
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
-            if (index >= target->arguments.size() || namesOfSubject.contains(sameObjectThroughCasts(function, target->arguments[index])))
+            if (index >= target->arguments.size() || namesOfSubject.contains(sameObjectThroughCasts(function, target->arguments[index]).valueInFrontOfFacts()))
                 namesOfSubject.append(block.parameters[index]);
         }
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
             bool throwsForNullishReceiver = (readAccesses.contains(value.opcode) || writeAccesses.contains(value.opcode)) && looksAtReceiverFirst(rewrite, value);
-            if (throwsForNullishReceiver && namesOfSubject.contains(sameObjectThroughCasts(function, value.operand(checkedReceiverOperand))))
+            if (throwsForNullishReceiver && namesOfSubject.contains(sameObjectThroughCasts(function, value.operand(checkedReceiverOperand)).valueInFrontOfFacts()))
                 return id;
             bool isInvisible = isCastWithoutTest(value.opcode) || (effectRuleOf(value.opcode) == EffectRule::Declared && declaredBoundOf(value.opcode).isRemovableWhenUnused());
             if (!isInvisible)

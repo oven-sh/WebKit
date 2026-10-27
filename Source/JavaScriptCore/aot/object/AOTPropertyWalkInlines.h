@@ -23,6 +23,17 @@ ALWAYS_INLINE bool haveSameFieldsInKeyOrder(const JSObject* compiledObject, cons
     return compiledObject->structureID() == other->structureID() && !((uncheckedDowncast<Object>(compiledObject)->orderWord() ^ uncheckedDowncast<Object>(other)->orderWord()) & ~orderWordIntegrityBits);
 }
 
+ALWAYS_INLINE bool hasExtraProperties(const JSObject* compiledObject)
+{
+    ASSERT(isCompiledObject(compiledObject));
+    return uncheckedDowncast<Object>(compiledObject)->hasExtraProperties();
+}
+
+ALWAYS_INLINE JSValue readListedProperty(const JSObject* compiledObject, const PropertyListEntry& property, JSObject* extraProperties)
+{
+    return property.field ? uncheckedDowncast<Object>(compiledObject)->readInline(*property.field) : extraProperties->getDirect(property.offsetInExtraProperties);
+}
+
 // Empty for a field that is absent.
 ALWAYS_INLINE JSValue readListedField(const JSObject* compiledObject, const FieldAsProperty& property)
 {

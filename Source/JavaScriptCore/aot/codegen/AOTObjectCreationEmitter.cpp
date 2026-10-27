@@ -43,12 +43,14 @@ void ObjectCreationEmitter::generateDefineOwnProperty(const ValueContext& value)
     RELEASE_ASSERT(flags.contains(PropertyDescriptorFlags::HasSet) == !!setterID);
     RELEASE_ASSERT(!definedValueID || !getterID);
 
-    Boxed object = boxCell(in<CellPointer>(objectID));
+    Boxed object = in<Boxed>(objectID);
     Boxed key = in<Boxed>(value->computedKeyOperand());
     Boxed valueOrGetter = inOptional<Boxed>(definedValueID ? definedValueID : getterID).value_or(undefined());
     Boxed setter = inOptional<Boxed>(setterID).value_or(undefined());
     callVoidOperation(value, RuntimeOperation::DefineOwnProperty, { object, key, valueOrGetter, setter, word32(static_cast<int32_t>(descriptorBitsOf(flags))) });
-    define(value, get(objectID));
+    // A value of type never has no representation of an object.
+    if (!typeOf(value.id()).isNever())
+        define(value, unboxCell(object));
 }
 
 void ObjectCreationEmitter::generateDefineAccessors(const ValueContext& value)

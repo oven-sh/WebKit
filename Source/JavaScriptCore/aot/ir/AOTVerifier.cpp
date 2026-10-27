@@ -81,9 +81,9 @@ bool FunctionVerifier::run()
         &FunctionVerifier::verifyEdges,
         &FunctionVerifier::verifyTypes,
         &FunctionVerifier::verifyDominance,
+        &FunctionVerifier::verifyCastsWithoutFacts,
         &FunctionVerifier::verifyGuards,
         &FunctionVerifier::verifyProofs,
-        &FunctionVerifier::verifyUnspecifiedValues,
         &FunctionVerifier::verifyOperations,
     };
     for (Stage stage : stages) {
@@ -334,7 +334,8 @@ void FunctionVerifier::verifyInlineFrames()
         const InlineFrame& frame = m_function.inlineFrames[index];
         bool isValidFrame = frame.parent < index
             && isValid(frame.callee)
-            && frame.module == m_program.at(frame.callee).module;
+            && frame.module == m_program.at(frame.callee).module
+            && !(frame.calledBuiltin && m_function.inlineFrames[frame.parent].calledBuiltin);
         if (!isValidFrame) {
             fail(InternalErrorKind::InvalidInlineFrame, { }, { }, index);
             return;

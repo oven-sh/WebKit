@@ -12,12 +12,14 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTDominators.h"
 #include "AOTFlowResults.h"
 #include "AOTFlowUnseenCode.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTModuleGraph.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
@@ -362,63 +364,6 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
     }
 }
 
-// By node: the node that every way from the root to it passes last. The root has the highest number and is its own answer; a node that the root does not reach has none.
-static Vector<uint32_t> computeImmediateDominators(const Vector<ModuleList>& successors, uint32_t root)
-{
-    constexpr uint32_t none = UINT32_MAX;
-    uint32_t numberOfNodes = successors.size();
-    Vector<uint32_t> postOrder;
-    Vector<uint32_t> numberOf(FillWith { }, numberOfNodes, none);
-    BitVector isVisited(numberOfNodes);
-    isVisited.quickSet(root);
-    Vector<std::pair<uint32_t, uint32_t>, 32> stack { { root, 0 } };
-    while (!stack.isEmpty()) {
-        auto& [node, next] = stack.last();
-        if (next == successors[node].size()) {
-            numberOf[node] = postOrder.size();
-            postOrder.append(node);
-            stack.removeLast();
-            continue;
-        }
-        uint32_t successor = successors[node][next++];
-        if (!isVisited.quickSet(successor))
-            stack.append({ successor, 0 });
-    }
-    Vector<ModuleList> predecessors(numberOfNodes);
-    for (uint32_t node : postOrder) {
-        for (uint32_t successor : successors[node])
-            predecessors[successor].append(node);
-    }
-
-    Vector<uint32_t> dominatorOf(FillWith { }, numberOfNodes, none);
-    dominatorOf[root] = root;
-    bool didChange = true;
-    while (didChange) {
-        didChange = false;
-        for (uint32_t index = postOrder.size() - 1; index--;) {
-            uint32_t node = postOrder[index];
-            uint32_t found = none;
-            for (uint32_t other : predecessors[node]) {
-                if (dominatorOf[other] == none)
-                    continue;
-                if (found == none)
-                    found = other;
-                while (other != found) {
-                    while (numberOf[other] < numberOf[found])
-                        other = dominatorOf[other];
-                    while (numberOf[found] < numberOf[other])
-                        found = dominatorOf[found];
-                }
-            }
-            if (dominatorOf[node] != found) {
-                dominatorOf[node] = found;
-                didChange = true;
-            }
-        }
-    }
-    return dominatorOf;
-}
-
 // Something starts the evaluation of a module: the host, for an entry point; an operation that names the module and is no bare site; the loader, on its way through a module that it evaluates itself.
 static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& isStart)
 {
@@ -664,14 +609,19 @@ static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& 
 }
 
 // `children` and `parent` of a module object say which `require` came first and which has run at all.
-static bool somebodyAsksWhoRequiredWhom(const Program& program, const FlowResults& flow)
+static bool asksWhoRequiredWhom(const Program& program, const FlowResults& flow)
 {
     if (!namesWaysToModuleObjects(program))
         return false;
     if (!flow.hasResults() || !flow.unseenCode().empty())
         return true;
     // `if (!module.parent)` asks whether somebody has required the file. `children` is a list whoever has required what.
-    return !flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty();
+    if (!flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty())
+        return true;
+    // The `id` says whether a file was required before the loader came to this one.
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID idOfModuleObject = builtins.findOwnMember(Builtins::ModuleObject, builtins.nameOf(byteCast<uint8_t>("id"_span)));
+    return idOfModuleObject && !flow.usesOf(idOfModuleObject).isEmpty();
 }
 
 static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bool(ModuleID)> auto& recordsNothingThatIsSeen, ModuleID evaluated, Function& function, IRBuilder& builder)
@@ -783,6 +733,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     plan.isCalledWhereRequired.ensureSize(modules.size());
     Vector<ModuleID> moduleWithBody(program.functions.size());
     bool loadsTwoGraphsAtOnce = mayLoadTwoGraphsAtOnce(program, loops);
+    bool somebodyAsksWhoRequiredWhom = asksWhoRequiredWhom(program, flow);
     for (size_t index = 0; index < modules.size(); ++index) {
         const Module& module = modules[index];
         if (!isEvaluatedWithImporter(program, module) || needsLoader.quickGet(index))
@@ -790,7 +741,9 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         plan.isWalkedByCode.quickSet(index);
         // Whoever enters a graph of modules in which something is to be linked goes through the loader: the host with an entry point, import(), require(). So does a require() of an ES module where another graph may be in the middle of its load: the run time knows whether one is.
         bool isRequiredBetweenLoads = module.kind != ModuleKind::SourceText || (!loadsTwoGraphsAtOnce && !module.flags.contains(ModuleFlags::IsRequiredDuringLoad));
-        if (!needsLink.quickGet(index) && isRequiredBetweenLoads)
+        // A file that the loader has asked for has no parent, and the run time knows which of several files it has asked for.
+        bool loaderIsSeenToAsk = somebodyAsksWhoRequiredWhom && module.requests.size() > 1 && module.requests[1].isHoisted;
+        if (!needsLink.quickGet(index) && isRequiredBetweenLoads && !loaderIsSeenToAsk)
             plan.isCalledWhereRequired.quickSet(index);
         if (!hasCode(program, module))
             continue;
@@ -870,11 +823,23 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         for (const ModuleRequest& request : modules[index].requests)
             isStart.quickSet(request.target.index());
     }
+    // Whether the loader came to a file before a `require` did is read from the state of the file.
+    if (somebodyAsksWhoRequiredWhom) {
+        BitVector isImported(modules.size());
+        for (const ModuleList& imports : plan.imports) {
+            for (uint32_t target : imports)
+                isImported.quickSet(isFaceOfCommonJSFile(program, modules[target]) ? modules[target].requests[0].target.index() : target);
+        }
+        for (const ModuleCallSite& site : sites) {
+            if (site.kind == SiteKind::Record && isImported.quickGet(site.target.index()) && program.at(site.target).kind == ModuleKind::CommonJs)
+                isStart.quickSet(site.target.index());
+        }
+    }
     plan.hasNoState = findModulesWithoutState(plan, isStart);
 
     // What a program can tell of a `require` beyond the evaluation of the module.
     bool markIsSpelled = !recordsRequires || isMarkOfRequireSpelled(program, loops);
-    bool isAskedWhoRequiredWhom = !recordsRequires || somebodyAsksWhoRequiredWhom(program, flow);
+    bool isAskedWhoRequiredWhom = !recordsRequires || somebodyAsksWhoRequiredWhom;
     // What is recorded is who required whom and, of an ES module, the mark, which a module that exports the name itself does not get.
     auto recordsNothingThatIsSeen = [&](ModuleID target) {
         if (isAskedWhoRequiredWhom)
@@ -975,11 +940,12 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
 
     unsigned numberOfModulesWithoutState = 0;
     for (size_t index : plan.hasNoState) {
-        if (!plan.startsItself.quickGet(index))
+        if (!hasCode(program, modules[index]))
             continue;
         ++numberOfModulesWithoutState;
-        editor.at(modules[index].body).capabilities.add(calledByCodeAlone);
-        // For the loader it is a module that has nothing to run.
+        if (plan.startsItself.quickGet(index))
+            editor.at(modules[index].body).capabilities.add(calledByCodeAlone);
+        // For the loader it is a module that has nothing to run. One that does not start itself has nothing to run for anybody, and nothing calls its body.
         editor.at(ModuleID(static_cast<uint32_t>(index))).body = FunctionID();
     }
 

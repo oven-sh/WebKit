@@ -1,0 +1,90 @@
+# `new` lays the object below what the function holds under `prototype` at that moment. Another file stores there before anybody reads the object.
+# A function that the same body makes is made with the object, at the first read of either. Where the function is there from the start, the construction stays, alone or inside a function that the body calls.
+# The construction by a function that keeps what it was made with is put off by itself.
+#   made.js: const Stored = function () {}; const first = new Stored; function Declared() {} const second = new Declared; const third = make(); function Kept() {} const fourth = new Kept
+#   main.js: Stored.prototype = null; Declared.prototype = null; publish(first, second, third, fourth)
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 2
+
+# CHECK: variable g0 name="Stored" module=m1 declared={type=absent|f2}
+# CHECK-NEXT: variable g1 name="first" module=m1 declared={type=object|absent}
+# CHECK-NEXT: variable g2 name="Declared" module=m1
+# CHECK-NEXT: variable g3 name="second" module=m1 declared={type=object}
+# CHECK-NEXT: variable g4 name="third" module=m1 declared={type=object}
+# CHECK-NEXT: variable g5 name="Kept" module=m1
+# CHECK-NEXT: variable g6 name="fourth" module=m1 declared={type=object|absent}
+# CHECK-LABEL: function f1 name="made"
+# CHECK-NOT: callees=[f2]
+# CHECK: = Construct {{*}} callees=[f3]
+# CHECK: PutModuleVariable {{*}} variable=g3
+# CHECK: = Call {{*}} callees=[f4]
+# CHECK: PutModuleVariable {{*}} variable=g4
+# CHECK-NOT: callees=[f5]
+# CHECK: Return
+# CHECK: function {{*}} name="" {{*}}role=OutlinedBody
+# CHECK: = NewClosure function=f2
+# CHECK: PutModuleVariable {{*}} variable=g0
+# CHECK: = Construct {{*}} callees=[f2]
+# CHECK: PutModuleVariable {{*}} variable=g1
+# CHECK: function {{*}} name="" {{*}}role=OutlinedBody
+# CHECK-NOT: NewClosure
+# CHECK: = Construct {{*}} callees=[f5]
+# CHECK: PutModuleVariable {{*}} variable=g6
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/made.ts" displayPath="made.ts" body=f1
+entry module=m0
+variable g0 name="Stored" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g1 name="first" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g2 name="Declared" module=m1 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="second" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g4 name="third" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g5 name="Kept" module=m1 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
+variable g6 name="fourth" module=m1 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Null
+    PropSet v0, v1 key="prototype" mode=Strict
+    v3 = GetModuleVariable variable=g2
+    PropSet v3, v1 key="prototype" mode=Strict
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = GetModuleVariable variable=g1
+    v8 = GetModuleVariable variable=g3
+    v9 = GetModuleVariable variable=g4
+    v10 = GetModuleVariable variable=g6
+    v11 = Call v6, -, v7, v8, v9, v10
+    Return
+}
+function f1 name="made" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = Construct v0
+    PutModuleVariable v2 variable=g1
+    v4 = GetModuleVariable variable=g2
+    v5 = Construct v4
+    PutModuleVariable v5 variable=g3
+    v7 = NewClosure function=f4
+    v8 = Call v7, -
+    PutModuleVariable v8 variable=g4
+    v10 = GetModuleVariable variable=g5
+    v11 = Construct v10
+    PutModuleVariable v11 variable=g6
+    Return
+}
+function f2 name="Stored" module=m1 results=[{type=anything}] {
+    Return
+}
+function f3 name="Declared" module=m1 results=[{type=anything}] {
+    Return
+}
+function f4 name="make" module=m1 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = Construct v0
+    Return v1
+}
+function f5 name="Kept" module=m1 results=[{type=anything}] {
+    Return
+}

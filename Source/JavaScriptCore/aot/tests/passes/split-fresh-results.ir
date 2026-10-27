@@ -186,7 +186,7 @@ function f14 name="testFoldedInWorker" parameters=[{type=number}, {type=anything
 # CHECK: name="constantPart" module=m0 role=ResultWorker {{*}}results=[{type=7}, {type=number}]
 # CHECK: [[seven]]: 7 = Integer integer=7
 # CHECK: = Results [[seven]], v0
-# CHECK: name="literalOrAllowedTailCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything}, {type=number}, {type=number}]
+# CHECK: name="literalOrAllowedTailCall" module=m0 role=ResultWorker {{*}}results=[{type=i32}, {type=anything|unspecified}, {type=number|unspecified}, {type=number|unspecified}]
 # CHECK-NOT: NewObject
 # CHECK-NOT: ReturnCall
 # CHECK: = Results {{*}}, {{*}}, v0, v0

@@ -143,6 +143,7 @@ public:
     CompiledStructure* existingWithExtraProperties(const CompiledStructure&, Structure& extraPropertiesStructure);
     CompiledStructure* holdingExtraProperties(VM&, const CompiledStructure&, JSObject* extraProperties);
     CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries);
+    CompiledStructure* withKeyOrderOfOneObject(VM&, const CompiledStructure&, std::span<const uint16_t> entries, std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder);
     CompiledStructure* withNumberedKeyOrder(VM&, const CompiledStructure&);
 
     JSCell* allocate(VM&, uint32_t allocation);
@@ -185,6 +186,8 @@ private:
     CompiledStructure* find(const Variant&) const;
     CompiledStructure* findOrCreate(VM&, const Variant&);
     static Variant variantOf(const CompiledStructure&);
+    // No table lists such a Structure.
+    static bool belongsToOneObject(const Variant& variant) { return variant.heldExtraProperties || variant.keysNamedByOrder; }
 
     template<typename Appender> void visitUsualStructures(Appender&, size_t begin, size_t end);
     template<typename Appender> void visitRecords(Appender&, size_t begin, size_t end);

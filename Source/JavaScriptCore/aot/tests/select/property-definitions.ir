@@ -1,7 +1,7 @@
 # A descriptor literal passed to a built-in and a run of accessor definitions each become one operation
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: DescriptorLiteralGroups = 6
+# STATISTIC: DescriptorLiteralGroups = 7
 # STATISTIC: AccessorGroupGroups = 6
 
 module m0 path="main.js" displayPath="main.js"
@@ -340,4 +340,35 @@ function f30 name="closure-between" results=[{type=object}] {
 # CHECK-NEXT: [[second]]:{{*}}= NewClosure function=f0
 # CHECK-NEXT: DefineAccessors v0, [[first]], [[second]] keys=["a", "b"] getterMask=3 enumerableMask=3
 # CHECK-NEXT: = FinishObject v0
+}
+function f31 name="defined-on-anything" parameters=[{type=anything}, {type=string}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: overload=
+# CHECK: DefineOwnProperty v0, v1, v2 descriptorFlags=[HasValue, HasWritable, IsWritable]
+}
+function f32 name="defined-on-what-is-no-object" parameters=[{type=undefined|number}, {type=string}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    Unreachable
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v5:{{*}}= NewObject -, v2, v4 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
+}
+function f33 name="defined-on-anything-and-handed-on" parameters=[{type=anything}, {type=string}, {type=anything}, {type=anything}] results=[{type=object}] {
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = CallBuiltin v3, v0, v1, v6 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver
+    Return v7
+# CHECK-NOT: DefineOwnProperty
+# CHECK: v5:{{*}}= NewObject -, v2, v4 layout=L0 fields=[0, 1]
+# CHECK-NOT: DefineOwnProperty
 }

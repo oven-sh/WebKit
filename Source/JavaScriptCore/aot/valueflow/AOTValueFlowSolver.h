@@ -658,6 +658,7 @@ private:
     struct Linked;
     struct NodeToLink;
     void link(const NodeOfSet&, bool isRead, NodesOfName& others, uint32_t numberOfName, Linked&);
+    size_t connectWhereSetsMeet(const NodeOfSet&, bool isRead, std::span<const NodeOfSet> others, Linked&);
     void linkNode(const NodeToLink&, bool isRead, Linked&);
     void insertNode(const NodeToLink&, bool isRead);
     void insertNodesOfShards(const ListWithRoomToFill<NodeToLink>&, bool isRead);
@@ -998,6 +999,7 @@ private:
 
     bool m_saturates { false };
     ValueSetID m_untrackedObjectAlone;
+    bool m_hasSaidThatAllElseIsAtRest { false };
     ListWithRoomToFill<uint32_t> m_layoutOrCalleeOfMember;
     ListWithRoomToFill<uint32_t> m_lastCountThatSaw;
     uint32_t m_numberOfCounts { 0 };
@@ -1030,10 +1032,18 @@ private:
         Vector<ChainedNode> chained;
     };
     struct Linked {
+        struct LongList {
+            NodeOfSet node;
+            bool isRead { false };
+            ShortList<NodeOfSet>* others { nullptr };
+        };
+
         Vector<ValueFlowEdge> edges;
         uint64_t testsWhetherSetsMeet { 0 };
         Vector<ShortList<NodeOfSet>*> listsMostlyAtRest;
+        Vector<LongList> longLists;
     };
+    void connectAcrossLongLists(std::span<const Linked::LongList>);
     struct PartOfNameWatched {
         ValueFlowStatementID statement;
         ValueSetID within;

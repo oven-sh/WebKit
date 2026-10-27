@@ -26,6 +26,7 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypeArena.h"
@@ -1668,6 +1669,7 @@ static size_t rewriteAwaitedCalls(FunctionPassContext& context, IRBuilder& build
         markErased(erasedValues, site.casts.span());
     }
     eraseEverywhere(builder, erasedValues);
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, context.analyses);
     context.analyses.didChangeValues();
     context.build.statistics().count(StatisticID::AwaitedCallsResolved, sites.size());
     return sites.size();

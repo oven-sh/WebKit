@@ -30,9 +30,11 @@ public:
     void generateEvaluateRequiredModule(const ValueContext&);
     void generateAbandonModuleEvaluation(const ValueContext&);
 
+    bool hasSingleNamespaceInValueWord(ModuleID);
+    Boxed loadModuleValue(ModuleID);
+
 private:
     Word32 moduleIndex(ModuleID);
-    Boxed loadModuleValue(ModuleID);
     TypedPointer statusOf(ModuleID);
 };
 

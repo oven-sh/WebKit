@@ -53,6 +53,30 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         return storeUnless(load(uint64_t()), traitsOf(SlotRepresentation::OptionalInt64).absentBits);
     case Kind::OptionalDouble:
         return storeUnless(load(uint64_t()), traitsOf(SlotRepresentation::OptionalDouble).absentBits);
+    case Kind::OptionalInt64UnlessMarker:
+    case Kind::OptionalDoubleUnlessMarker: {
+        static_assert(undefinedInteger < nullInteger && nullInteger < absentInteger && maxSlotInteger < undefinedInteger);
+        static_assert(undefinedDouble < nullDouble && nullDouble < absentDouble && PNaNAsBits < undefinedDouble);
+        static_assert(static_cast<uint64_t>(absentInteger - undefinedInteger) == absentDouble - undefinedDouble);
+        uint64_t bits = load(uint64_t());
+        if (bits - (move.kind == Kind::OptionalInt64UnlessMarker ? static_cast<uint64_t>(undefinedInteger) : undefinedDouble) <= absentDouble - undefinedDouble) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
+    case Kind::OptionalBooleanUnlessMarker: {
+        static_assert((JSValue::ValueFalse | 1) == JSValue::ValueTrue);
+        uint8_t bits = load(uint8_t());
+        if ((bits | 1) != JSValue::ValueTrue) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
+    case Kind::JSValueUnlessMarker: {
+        static_assert(JSValue::ValueEmpty < JSValue::ValueUndefined && JSValue::ValueNull < JSValue::ValueUndefined);
+        uint64_t bits = load(uint64_t());
+        if (bits <= JSValue::ValueUndefined) [[unlikely]]
+            return moveInOtherWay();
+        return storeAlways(bits);
+    }
     case Kind::Word:
         return storeAlways(load(uint64_t()));
     case Kind::HalfWord:
@@ -67,6 +91,25 @@ ALWAYS_INLINE bool tryMove(uintptr_t cellCageBase, const MappedCopy::Move& move,
         if (integer < minInlineInt32) [[unlikely]]
             return integer != absentInt32 && moveInOtherWay();
         return storeAlways(move.kind == Kind::BoxedOptionalInt32 ? static_cast<uint64_t>(JSValue::encode(jsNumber(integer))) : std::bit_cast<uint64_t>(static_cast<double>(integer)));
+    }
+    case Kind::OptionalInt32AsOptionalInt64: {
+        int32_t integer = load(int32_t());
+        if (integer < minInlineInt32) [[unlikely]]
+            return integer != absentInt32 && moveInOtherWay();
+        return storeAlways(static_cast<uint64_t>(static_cast<int64_t>(integer)));
+    }
+    case Kind::Int32AsInt64:
+        return storeAlways(static_cast<uint64_t>(static_cast<int64_t>(load(int32_t()))));
+    case Kind::BoxedOptionalInt64:
+    case Kind::OptionalInt64AsOptionalInt32:
+    case Kind::OptionalInt64AsDouble: {
+        int64_t wideInteger = load(int64_t());
+        int32_t integer = static_cast<int32_t>(wideInteger);
+        if (integer != wideInteger || integer < minInlineInt32) [[unlikely]]
+            return wideInteger != absentInteger && moveInOtherWay();
+        if (move.kind == Kind::OptionalInt64AsOptionalInt32)
+            return storeAlways(static_cast<uint32_t>(integer));
+        return storeAlways(move.kind == Kind::BoxedOptionalInt64 ? static_cast<uint64_t>(JSValue::encode(jsNumber(integer))) : std::bit_cast<uint64_t>(static_cast<double>(integer)));
     }
     case Kind::BoxedInt32:
         return storeAlways(static_cast<uint64_t>(JSValue::encode(jsNumber(load(int32_t())))));

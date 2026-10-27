@@ -87,6 +87,9 @@ private:
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
     CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, uint32_t freeCellOffset);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy);
+    static Representation representationWantedBy(const InitialField&);
+    bool isNarrowedWhereStored(const InitialField&) const;
+    Operand takeForSlot(const InitialField&);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
     void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, ZeroedBy);
     void barrierIfCellWasStored(const ValueContext&, CellPointer, const InitialFields&);

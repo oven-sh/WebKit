@@ -12,6 +12,7 @@ const key = b.keyFrom("propertyKey");
 const keyedArguments = { target: b.object, propertyKey: b.propertyKey.loose };
 const argumentListProtocols = [b.runs("OwnValues", "ToPrimitive", b.named("length"))];
 const listedArguments = b.ownValues("argumentsList");
+const setterForReceiverCell = "Reflect.set.setter";
 
 export default b.declarations(
   b.namespace(
@@ -178,11 +179,24 @@ export default b.declarations(
           args: { ...keyedArguments, value: b.any, receiver: b.any },
           returns: b.bool,
           throws: true,
-          // As in `get`: the setter that is found on the target runs with the receiver as `this`.
+          // As in `get`: the setter that is found on the target runs with the receiver as `this`. Where none is found the value is defined on the receiver.
           uses: {
-            target: [b.everything, b.accessorReadByKey("Setter", key, b.nativeMemory)],
+            target: [
+              b.accessorReadByKey("Setter", key, b.nativeCell(setterForReceiverCell)),
+              b.keptCalled(setterForReceiverCell, {
+                times: "Once",
+                this: b.operand("receiver"),
+                args: [b.operand("value")],
+                result: "Ignored",
+              }),
+              // The receiver may be the target itself, or a proxy of it.
+              b.definesName(key, b.operand("value")),
+              b.storedByKey(key, b.operand("value")),
+              ...b.ownPropertyTraps,
+              b.runs("PrototypeChain"),
+            ],
             value: [b.everything],
-            receiver: [b.everything],
+            receiver: [b.everything, b.definesName(key, b.operand("value"))],
           },
           implementation: b.hostCall,
         },

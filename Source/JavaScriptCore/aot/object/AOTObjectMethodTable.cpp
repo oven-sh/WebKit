@@ -18,6 +18,7 @@
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
@@ -240,16 +241,16 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
     if (field && name.isSymbol()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (field)
-        return defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow);
-    return defineExtraProperty(object, globalObject, name, descriptor, shouldThrow);
+        RELEASE_AND_RETURN(scope, defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow));
+    RELEASE_AND_RETURN(scope, defineExtraProperty(object, globalObject, name, descriptor, shouldThrow));
 }
 
 JSValue Object::getDirectFromNativeCode(VM& vm, PropertyName name, unsigned* attributes)
@@ -300,17 +301,22 @@ bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, u
 
 bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
 {
+    const FieldData* field = state().objects->layouts.field(vm, layout(), name);
+    return field && tryDefineAbsentGetterInSlot(vm, globalObject, *field, name, getter, attributes);
+}
+
+bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, const FieldData& field, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
+{
     State& state = this->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
-    const FieldData* field = layouts.field(vm, layout(), name);
-    if (!field || !field->isAccessor() || isNotExtensible() || attributes != attributesOf(*field))
+    if (!field.isAccessor() || isNotExtensible() || attributes != attributesOf(field))
         return false;
-    if (isInSlot(*field) || livesInExtraProperties(vm, *this, *field) || !layouts.objectHasType(layouts.typeOf(*field), getter))
+    if (isInSlot(field) || livesInExtraProperties(vm, *this, field) || !layouts.objectHasType(layouts.typeOf(field), getter))
         return false;
-    if (!store(vm, *field, GetterSetter::create(vm, globalObject, getter, nullptr)))
+    if (!store(vm, field, GetterSetter::create(vm, globalObject, getter, nullptr)))
         return false;
-    didCreateField(state, *field, true);
-    if (field->isFilledAtBirth)
+    didCreateField(state, field, true);
+    if (field.isFilledAtBirth)
         tryFinishBirth();
     if (structure()->mayBePrototype()) [[unlikely]]
         didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name);
@@ -606,11 +612,12 @@ static void finishSlotOfExtraProperty(Object* object, PropertySlot& slot, bool f
 bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (const FieldData* field = object->fieldNamed(object->state(), name)) {
         if (field->isPrivate()) [[unlikely]]
             return false;
         if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             prepareForLookup(globalObject, object, name.uid());
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -625,13 +632,11 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
             return true;
         }
     } else
-        object->state().objects->layouts.didReadAbsentField(globalObject->vm(), object->layout(), name.uid());
+        object->state().objects->layouts.didReadAbsentField(vm, object->layout(), name.uid());
     if (object->hasExtraProperties() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
-        VM& vm = globalObject->vm();
         if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, name.uid())) {
             if (!*source)
                 return false;
-            auto scope = DECLARE_THROW_SCOPE(vm);
             JSValue value = (*source)->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, false);
             slot.setValue(object, 0, value);
@@ -643,6 +648,7 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     if (!extra)
         return false;
     bool found = extra->methodTable()->getOwnPropertySlot(extra, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     finishSlotOfExtraProperty(object, slot, found);
     return found;
 }
@@ -666,77 +672,45 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     const LayoutData& layout = object->layout();
     validateKeyListing(vm, *object);
     std::span<const FieldData> fields = layout.fields();
+    // No object has two keys of one name, so only a list that has the keys of another object is searched.
+    bool listsOnlyThisObject = names.canAddKnownUniqueForStructure();
+    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        if (listsOnlyThisObject) [[likely]]
+            names.addUnchecked(name);
+        else
+            names.add(name);
+    };
     JSObject* extra = object->extraProperties();
+    ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
-    auto extraKeyNames = object->extraKeyNames();
-    KeyOrderStorage storage;
-    std::span<const uint16_t> order = object->keyOrder(state, storage);
+    if (names.includeStringProperties() || names.includeSymbolProperties())
+        forEachOwnKey(vm, state, *object, static_cast<KeysListed>(names.includeStringProperties() | names.includeSymbolProperties() << 1), mode, add);
+    if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
+        return;
     auto isIncluded = [&](unsigned attributes) {
         return mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum);
     };
-    auto addKeysInOrder = [&](bool symbols) {
-        forEachPositionedKey(order, layout.numberOfFields, extraKeyNames.size(), [&](uint16_t index) {
-            const FieldData& field = fields[index];
-            if (field.isPrivate() || !(symbols ? layouts.hasSymbolKey(field) : layouts.hasStringKey(field)))
-                return;
-            unsigned attributes = field.attributes();
-            if (!object->isInSlot(field)) {
-                FieldProperty property = findFieldProperty(vm, *object, field);
-                if (!property)
-                    return;
-                attributes = property.attributes;
-            }
-            if (isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, layouts.nameOf(vm, field)));
-        }, [&](size_t ordinal) {
-            UniquedStringImpl* name = extraKeyNames[ordinal];
-            unsigned attributes;
-            if (name->isSymbol() == symbols && extra->getDirect(vm, name, attributes) && isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, name));
-        });
-    };
-    auto addFieldsUnderPrivateNames = [&] {
-        if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
-            return;
-        for (const FieldData& field : fields) {
-            if (field.isPrivate() || layouts.hasSymbolKey(field) || layouts.hasStringKey(field))
+    for (const FieldData& field : fields) {
+        if (field.isPrivate() || layouts.hasSymbolKey(field) || layouts.hasStringKey(field))
+            continue;
+        unsigned attributes = field.attributes();
+        if (!object->isInSlot(field)) {
+            FieldProperty property = findFieldProperty(vm, *object, field);
+            if (!property)
                 continue;
-            unsigned attributes = field.attributes();
-            if (!object->isInSlot(field)) {
-                FieldProperty property = findFieldProperty(vm, *object, field);
-                if (!property)
-                    continue;
-                attributes = property.attributes;
-            }
-            if (isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, layouts.nameOf(vm, field)));
+            attributes = property.attributes;
         }
-    };
-    if (names.includeStringProperties())
-        addKeysInOrder(false);
-    if (!layout.hasFieldsWithSymbolKeys) {
-        addFieldsUnderPrivateNames();
-        if (extra)
-            extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
+        if (isIncluded(attributes))
+            add(layouts.nameOf(vm, field));
+    }
+    if (!extra)
         return;
-    }
-    auto addExtraKeys = [&](bool symbols) {
-        if (!extra)
-            return;
-        extra->structure()->forEachProperty(vm, [&](const auto& entry) {
-            if (entry.key()->isSymbol() == symbols && isIncluded(entry.attributes()))
-                names.add(Identifier::fromUid(vm, entry.key()));
-            return true;
-        });
-    };
-    if (names.includeStringProperties())
-        addExtraKeys(false);
-    if (names.includeSymbolProperties()) {
-        addKeysInOrder(true);
-        addFieldsUnderPrivateNames();
-        addExtraKeys(true);
-    }
+    extra->structure()->forEachProperty(vm, [&](const auto& entry) {
+        if (PropertyName(entry.key()).isPrivateName() && isIncluded(entry.attributes()))
+            names.add(entry.key());
+        return true;
+    });
 }
 
 static bool getOwnPropertyDescriptorForStore(JSGlobalObject* globalObject, Object* object, PropertyName name, const PutPropertySlot& slot, PropertyDescriptor& descriptor)
@@ -803,17 +777,9 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
     return true;
 }
 
-// A store for another receiver ends in a definition on the receiver. A proxy asks its handler for two traps and, where it has neither, hands the question and the definition on to its target.
-static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
+static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
-        return false;
-    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
-    if (!proxy->handler().isObject() || proxy->target() != target)
-        return false;
-    JSObject* handler = asObject(proxy->handler());
-    State& state = target->state();
     for (const Identifier* trap : { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) {
         UniquedStringImpl* uid = trap->impl();
         if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
@@ -841,16 +807,52 @@ static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
     return true;
 }
 
+JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
+{
+    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
+        return nullptr;
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
+    // A proxy that has been revoked holds null for both.
+    if (!proxy->handler().isObject())
+        return nullptr;
+    JSObject* handler = asObject(proxy->handler());
+    Object* compiledHandler = compiledObjectOrNull(handler);
+    Object* compiled = compiledHandler ? compiledHandler : compiledObjectOrNull(proxy->target());
+    if (!compiled)
+        return nullptr;
+    State& state = compiled->state();
+    if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
+        return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
+
+    StructureID structure = handler->structureID();
+    HandlerKnownByItsSlots& known = state.handlersKnownByTheirSlots[(structure.bits() >> 4) % State::numberOfHandlersKnownByTheirSlots];
+    auto isEmpty = [&](const FieldData* field) {
+        return !field || !compiledHandler->isInSlot(*field);
+    };
+    if (known.structure != structure || known.prototype != handler->getPrototypeDirect().getObject()) {
+        JSGlobalObject* realm = handler->realm();
+        if (handler->getPrototypeDirect() != JSValue(realm->objectPrototype()) || !locksBuiltins(realm))
+            return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
+        known = { structure, realm->objectPrototype(), compiledHandler->fieldNamed(state, vm.propertyNames->defineProperty.impl()), compiledHandler->fieldNamed(state, vm.propertyNames->getOwnPropertyDescriptor.impl()) };
+    }
+    return isEmpty(known.fieldOfDefineProperty) && isEmpty(known.fieldOfGetOwnPropertyDescriptor) ? proxy->target() : nullptr;
+}
+
+static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
+{
+    return RuntimeHooks::targetThatProxyDefinesOn(vm, receiver) == target;
+}
+
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     if (field && name.isSymbol()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
-    return putWithKnownField(cell, globalObject, name, value, slot, field);
+    RELEASE_AND_RETURN(scope, putWithKnownField(cell, globalObject, name, value, slot, field));
 }
 
 bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
@@ -931,13 +933,13 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
 {
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = object->state();
     const FieldData* field = object->fieldNamed(state, name);
     if (field) {
         if (field->isPrivate()) [[unlikely]]
             return true;
         if (name.isSymbol()) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
             prepareForLookup(globalObject, object, name.uid());
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -958,18 +960,21 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     JSObject* extra = object->extraProperties();
     if (!extra)
         return true;
-    std::optional<uint32_t> ordinal = field ? std::nullopt : object->extraKeyOrdinal(name);
+    PlaceOfExtraKey place;
+    if (!field)
+        place = object->placeOfExtraKey(name);
+    StructureID extraStructureBefore = extra->structureID();
     bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     slot.disableCaching();
     if (!isDeleted)
         return false;
     if (field)
         removeFieldFromKeyOrder(vm, state, *object, *field);
-    else if (ordinal)
-        object->removeExtraKeyFromOrder(vm, state, *ordinal);
-    object->didChangeExtraProperties(vm);
+    if (extra->structureID() != extraStructureBefore)
+        object->didChangeExtraProperties(vm);
     if (!field)
-        object->didRemoveExtraKey(state);
+        object->didRemoveExtraKey(vm, state, place);
     didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
     return true;
 }

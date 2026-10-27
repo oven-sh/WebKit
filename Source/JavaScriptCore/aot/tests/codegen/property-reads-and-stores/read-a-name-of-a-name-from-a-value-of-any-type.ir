@@ -1,0 +1,86 @@
+# function townOf(person: any): any {
+#   return person.home.town;
+# }
+# declare const input: any;
+# for (let i = 0; i < input.length; i++) (globalThis as any).answer = townOf(input[i]);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=100 kind=Variable
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w0}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = PropGet v8 key="length"
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Less v6, v10
+    Branch v11 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="globalThis" [isFreeName]
+    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="input" [isFreeName]
+    v19 = Convert v18 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v20 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v21 = ElemGet v19, v20
+    v22 = Call v1, -, v21 calleeName="townOf"
+    PropSet v16, v22 key="answer"
+    Jump -> next b5()
+  b5():
+    v24 = Increment v20
+    v25 = Convert v24 declared={type=number site=w0}
+    Jump -> next b2(v25)
+  b6(v26):
+    Jump -> next b7()
+  b7():
+    v27 = Undefined
+    Return v27
+}
+function f1 name="townOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
+    v2 = PropGet v1 key="home"
+    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v4 = PropGet v3 key="town"
+    Return v4
+}
+
+# Each step of a chain on a value of which nothing is known is one call of the shared code that looks a name up, with the cache of its place. The answer of the first goes into the second as it is: nothing tests it in line.
+# CHECK-LABEL: name="townOf" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[homeSite]] = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, {{*}}:PropGet)
+# CHECK-NEXT: Int64 b@[[person]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[home]] = Patchpoint(b@[[person]]:Register({{*}}), b@[[homeSite]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways|{{*}}:PropGet)
+# CHECK-NEXT: Int64 b@[[townSite]] = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, {{*}}:PropGet)
+# CHECK-NEXT: Int64 b@[[town]] = Patchpoint(b@[[home]]:Register({{*}}), b@[[townSite]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways|{{*}}:PropGet)
+# CHECK-NEXT: Return(b@[[town]], Terminal)
+# CHECK-LABEL: end of function
+# The answer of the first call is in the register in which the second takes it: no move stands between them.
+# X64-LABEL: name="townOf" role=Source
+# X64-NEXT: instructions: 4, patchpoints: 4
+# ARM64-LABEL: name="townOf" role=Source
+# ARM64-NEXT: instructions: 3, patchpoints: 4

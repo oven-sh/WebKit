@@ -12,17 +12,28 @@
 
 namespace JSC { namespace B3 {
 
-static Value* findLiveReplacement(const Value* deleted, const SparseCollection<Value>& liveValues)
+Value* InductionRecords::findLiveReplacement(const Value* deleted, const SparseCollection<Value>& liveValues)
 {
     if (deleted->opcode() != Identity)
         return nullptr;
     // A sweep deletes values in program order, so the operand of a dead Identity may already be freed.
     Value* replacement = deleted->child(0);
-    for (unsigned index = liveValues.size(); index--;) {
-        if (liveValues.at(index) == replacement)
-            return replacement;
+    // To make the set costs as much as many walks.
+    constexpr unsigned walksBeforeSet = 16;
+    if (!m_knowsLiveValues && m_numberOfWalksOverLiveValues++ < walksBeforeSet) {
+        for (unsigned index = liveValues.size(); index--;) {
+            if (liveValues.at(index) == replacement)
+                return replacement;
+        }
+        return nullptr;
     }
-    return nullptr;
+    if (!m_knowsLiveValues) {
+        m_liveValues.clear();
+        for (Value* value : liveValues)
+            m_liveValues.add(value);
+        m_knowsLiveValues = true;
+    }
+    return m_liveValues.contains(replacement) ? replacement : nullptr;
 }
 
 std::optional<InductionRecord> InductionRecords::resolve(const InductionRecord& record)
@@ -42,104 +53,194 @@ std::optional<InductionRecord> InductionRecords::resolve(const InductionRecord& 
     return result;
 }
 
+void InductionRecords::name(const Value* value, Place place)
+{
+    if (!value)
+        return;
+    Places& places = m_placesOf.add(value, Places()).iterator->value;
+    if (!places.contains(place))
+        places.append(place);
+    m_isReferenced.set(value->index());
+}
+
+void InductionRecords::forget(const Value* value, Place place)
+{
+    if (!value)
+        return;
+    auto places = m_placesOf.find(value);
+    if (places == m_placesOf.end())
+        return;
+    places->value.removeFirst(place);
+    if (!places->value.isEmpty())
+        return;
+    m_placesOf.remove(places);
+    m_isReferenced.clear(value->index());
+}
+
+void InductionRecords::removeRecordAt(unsigned index)
+{
+    InductionRecord& record = m_records[index];
+    Place place { index, false };
+    forget(record.phi, place);
+    forget(record.next, place);
+    forget(record.test, place);
+    record = { };
+    --m_numberOfRecords;
+}
+
+void InductionRecords::removeDemotedAt(unsigned index)
+{
+    DemotedInduction& demoted = m_demoted[index];
+    Place place { index, true };
+    forget(demoted.next, place);
+    forget(demoted.test, place);
+    auto at = m_demotedAt.find({ demoted.variable, demoted.header });
+    at->value.removeFirst(index);
+    if (at->value.isEmpty())
+        m_demotedAt.remove(at);
+    demoted = { };
+    --m_numberOfDemoted;
+}
+
+void InductionRecords::dropGapsIfMany()
+{
+    if (m_records.size() + m_demoted.size() <= 2 * (m_numberOfRecords + m_numberOfDemoted) + 8)
+        return;
+    Vector<InductionRecord, 2> records = std::exchange(m_records, { });
+    Vector<DemotedInduction, 2> allDemoted = std::exchange(m_demoted, { });
+    clear();
+    for (const InductionRecord& record : records) {
+        if (record.phi)
+            add(record);
+    }
+    for (const DemotedInduction& demoted : allDemoted) {
+        if (demoted.next)
+            addDemoted(demoted);
+    }
+}
+
 void InductionRecords::add(const InductionRecord& record)
 {
-    m_records.removeAllMatching([&](const InductionRecord& other) {
-        return other.phi == record.phi;
-    });
+    RELEASE_ASSERT(record.phi && record.next);
+    remove(record.phi);
+    Place place { static_cast<unsigned>(m_records.size()), false };
     m_records.append(record);
-    recomputeReferences();
+    ++m_numberOfRecords;
+    name(record.phi, place);
+    name(record.next, place);
+    name(record.test, place);
 }
 
 std::optional<InductionRecord> InductionRecords::find(const Value* phi) const
 {
     if (!m_isReferenced.get(phi->index()))
         return std::nullopt;
-    for (const InductionRecord& record : m_records) {
-        if (record.phi == phi)
-            return resolve(record);
+    auto places = m_placesOf.find(phi);
+    if (places == m_placesOf.end())
+        return std::nullopt;
+    for (Place place : places->value) {
+        if (!place.isDemoted && m_records[place.index].phi == phi)
+            return resolve(m_records[place.index]);
     }
     return std::nullopt;
 }
 
 void InductionRecords::remove(const Value* phi)
 {
-    bool didRemove = m_records.removeAllMatching([&](const InductionRecord& record) {
-        return record.phi == phi;
-    });
-    if (didRemove)
-        recomputeReferences();
+    auto places = m_placesOf.find(phi);
+    if (places == m_placesOf.end())
+        return;
+    for (Place place : Places(places->value)) {
+        if (!place.isDemoted && m_records[place.index].phi == phi)
+            removeRecordAt(place.index);
+    }
+    dropGapsIfMany();
 }
 
 void InductionRecords::clear()
 {
     m_records.clear();
     m_demoted.clear();
+    m_numberOfRecords = 0;
+    m_numberOfDemoted = 0;
+    m_placesOf.clear();
+    m_demotedAt.clear();
     m_isReferenced.clearAll();
+    m_liveValues.clear();
+    m_knowsLiveValues = false;
+    m_numberOfWalksOverLiveValues = 0;
 }
 
 void InductionRecords::addDemoted(const DemotedInduction& demoted)
 {
+    unsigned index = m_demoted.size();
+    RELEASE_ASSERT(demoted.next);
     m_demoted.append(demoted);
-    recomputeReferences();
+    ++m_numberOfDemoted;
+    m_demotedAt.add({ demoted.variable, demoted.header }, Vector<unsigned, 1>()).iterator->value.append(index);
+    name(demoted.next, { index, true });
+    name(demoted.test, { index, true });
 }
 
 void InductionRecords::didCreatePhi(Variable* variable, BasicBlock* block, Value* phi)
 {
-    for (unsigned i = 0; i < m_demoted.size(); ++i) {
-        DemotedInduction demoted = m_demoted[i];
-        if (demoted.variable != variable || demoted.header != block)
-            continue;
-        m_demoted.removeAt(i);
-        add(InductionRecord { phi, demoted.next, demoted.test, demoted.step, demoted.doesNotWrap, false });
+    auto at = m_demotedAt.find({ variable, block });
+    if (at == m_demotedAt.end())
         return;
-    }
+    unsigned index = at->value.first();
+    DemotedInduction demoted = m_demoted[index];
+    removeDemotedAt(index);
+    add(InductionRecord { phi, demoted.next, demoted.test, demoted.step, demoted.doesNotWrap, false });
 }
 
 void InductionRecords::clearDemoted()
 {
-    if (m_demoted.isEmpty())
+    if (!m_numberOfDemoted)
         return;
+    for (unsigned index = 0; index < m_demoted.size(); ++index) {
+        if (m_demoted[index].next)
+            removeDemotedAt(index);
+    }
     m_demoted.clear();
-    recomputeReferences();
 }
 
 void InductionRecords::willDeleteReferencedValue(const Value* value, const SparseCollection<Value>& liveValues)
 {
+    auto found = m_placesOf.find(value);
+    if (found == m_placesOf.end())
+        return;
     Value* replacement = findLiveReplacement(value, liveValues);
-    auto redirect = [&](Value*& reference) {
-        if (reference == value)
-            reference = replacement;
-    };
-    m_records.removeAllMatching([&](InductionRecord& record) {
-        redirect(record.next);
-        redirect(record.test);
-        return record.phi == value || !record.next;
-    });
-    m_demoted.removeAllMatching([&](DemotedInduction& demoted) {
-        redirect(demoted.next);
-        redirect(demoted.test);
-        return !demoted.next;
-    });
-    recomputeReferences();
-}
-
-void InductionRecords::recomputeReferences()
-{
-    m_isReferenced.clearAll();
-    auto mark = [&](const Value* value) {
-        if (value)
-            m_isReferenced.set(value->index());
-    };
-    for (const InductionRecord& record : m_records) {
-        mark(record.phi);
-        mark(record.next);
-        mark(record.test);
+    for (Place place : Places(found->value)) {
+        if (place.isDemoted) {
+            DemotedInduction& demoted = m_demoted[place.index];
+            if (demoted.next == value)
+                demoted.next = replacement;
+            if (demoted.test == value)
+                demoted.test = replacement;
+            forget(value, place);
+            if (demoted.next)
+                name(replacement, place);
+            else
+                removeDemotedAt(place.index);
+            continue;
+        }
+        InductionRecord& record = m_records[place.index];
+        if (record.phi == value) {
+            removeRecordAt(place.index);
+            continue;
+        }
+        if (record.next == value)
+            record.next = replacement;
+        if (record.test == value)
+            record.test = replacement;
+        forget(value, place);
+        if (!record.next) {
+            removeRecordAt(place.index);
+            continue;
+        }
+        name(replacement, place);
     }
-    for (const DemotedInduction& demoted : m_demoted) {
-        mark(demoted.next);
-        mark(demoted.test);
-    }
+    dropGapsIfMany();
 }
 
 } } // namespace JSC::B3

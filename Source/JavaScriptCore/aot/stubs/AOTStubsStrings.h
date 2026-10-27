@@ -10,6 +10,7 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubHelpers.h"
+#include "RegisterSet.h"
 #include <initializer_list>
 
 namespace JSC { namespace AOT {
@@ -116,6 +117,8 @@ void branchUnlessASCIIOutsideRange(StubAssembler&, const ScannedBytes&, uint8_t 
 // Calls operationAOTFlatten in a frame of its own, which only preservedGPRs survive, then jumps to continuation or to the exception handler. Overwrites T9.
 void flattenSubject(StubAssembler&, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation);
 
+PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
+
 // AOTStubsStringConversions.cpp A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
 PreludeExit emitToLowerCasePrelude(StubAssembler&);
 PreludeExit emitToUpperCasePrelude(StubAssembler&);
@@ -139,6 +142,8 @@ struct FlatSubstringRegisters {
     GPRReg result;
     GPRReg firstScratch;
     GPRReg secondScratch;
+    // What else the caller holds in registers. result is the register in which a function returns its value.
+    RegisterSet alsoKept { };
 };
 // string is no rope, and bits 32 to 63 of start and length are zero.
 [[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);

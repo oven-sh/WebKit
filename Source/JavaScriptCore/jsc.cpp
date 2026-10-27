@@ -1802,6 +1802,11 @@ JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* g
     metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), key);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+#if ENABLE(AOT)
+    // Bun: compiled code calls the functions that Bun puts on import.meta.
+    AOT::Shell::addMissingImportMetaFunctions(globalObject, metaProperties);
+#endif
+
     return metaProperties;
 }
 

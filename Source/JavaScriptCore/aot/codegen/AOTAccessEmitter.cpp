@@ -17,6 +17,7 @@
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
+#include "AOTShapeTestEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
@@ -229,7 +230,7 @@ Boxed AccessEmitter::getFreeName(const ValueContext& value)
 Condition AccessEmitter::countMissAtSite(Pointer site)
 {
     Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
-    LValue offset = m_out.bitAnd(m_out.lShr(site.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
+    LValue offset = m_out.bitAnd(m_out.lShr(site.value(), SiteCacheState::slotAddressShift), SiteCacheState::offsetMask);
     LValue state = m_out.add(states.value(), offset);
     TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
     Word32 count(m_out.load8ZeroExt32(missesLeft));
@@ -244,18 +245,77 @@ Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Ki
     auto partOfSlot = [&](ptrdiff_t offset) {
         return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
     };
-    branchUnless(equal(Word32(m_out.load32(partOfSlot(Slot::offsetOfStructureID()))), loadStructureID(object)), whenSlotIsOfOtherStructure);
-    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), word32(static_cast<int32_t>(kind))), whenSlotIsOfOtherKind);
+    Word32 structureIDOfSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
+    branchUnless(equal(structureIDOfSlot, loadStructureID(object)), whenSlotIsOfOtherStructure);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(kind)), whenSlotIsOfOtherKind);
     // An own property has no holder.
     Pointer holder(m_out.load64(partOfSlot(Slot::offsetOfPayload())));
     Pointer owner = select(isZero(Integer(holder.value())), Pointer(object.value()), holder);
     Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, owner.value(), JSObject::butterflyOffset())));
     Pointer storage = select(hasBits(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags()))), Slot::isOutOfLine), butterfly, owner);
-    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), m_out.constInt32(3));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
     return Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0)));
 }
 
 // A site that has no answer for the Structure of the object has the name looked up, so the first object of a Structure is answered like those behind it.
+// Only a target that is not extensible or has a property that is not configurable binds what a trap may answer. The Structure of a compiled object says yes for all of them: what was done to one object stands in the object, and what its fields are born with in the layout.
+Condition AccessEmitter::mayBindAnswersOfTraps(ValueID id, uint32_t bitsOfStructureThatMayBind)
+{
+    CellPointer target = in<CellPointer>(id);
+    auto isNoLongerAsBorn = [&] {
+        return hasBits(emitter<ShapeTestEmitter>().orderWordOf(target), ~orderAndCountMask);
+    };
+    auto askStructure = [&] {
+        Pointer structure = loadStructure(target);
+        return either<Condition>(hasBits(loadField<Word32>(structure, m_heaps.Structure_bitField), bitsOfStructureThatMayBind), [&] {
+            return either<Condition>(hasCellType(target, CompiledObjectType), [&] {
+                Condition isBornFree = hasBits(loadByte(structure, m_heaps.AOTCompiledStructure_flags), static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable));
+                return logicalNot(logicalAnd(isBornFree, logicalNot(isNoLongerAsBorn())));
+            }, [&] {
+                return boolean(true);
+            });
+        }, [&] {
+            return boolean(false);
+        });
+    };
+    // What a layout that has all its fields itself says of them is known here.
+    const Type& type = typeOf(id);
+    bool isBornFree = type.hasOnlyLayouts() && std::ranges::none_of(membersOf(m_program, type), [&](LayoutID id) {
+        const Layout& layout = m_program.at(id);
+        return expectedBaseOf(layout) || layout.flow.baseState != BaseState::None || std::ranges::any_of(layout.fields, [](const Field& field) {
+            return field.form.contains(FieldForm::IsNotConfigurable);
+        });
+    });
+    if (!isBornFree)
+        return askStructure();
+    return either<Condition>(hasCellType(target, CompiledObjectType), isNoLongerAsBorn, askStructure);
+}
+
+void AccessEmitter::generateValidateAnswerOfGetTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateAnswerOfGetTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->answerOperand()) }, { .isOnRarePath = true });
+}
+
+void AccessEmitter::generateValidateDenialOfHasTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateDenialOfHasTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
+}
+
+void AccessEmitter::generateValidateConsentOfDeleteTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateConsentOfDeleteTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
+}
+
+void AccessEmitter::generateHasOwnByAnswerOfDescriptorTrap(const ValueContext& value)
+{
+    define(value, callOperation<Condition>(value, RuntimeOperation::HasOwnByAnswerOfDescriptorTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->answerOperand()) }));
+}
+
+void AccessEmitter::generateFinishStoreByTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::FinishStoreByTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->answerOperand()), word32(value->mode() == ECMAMode::Strict) }, { .isOnRarePath = true });
+}
+
 void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
 {
     SiteCacheID cache = value->siteCache();
@@ -320,7 +380,8 @@ TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool see
     Word32 structureID = loadStructureID(global);
     if (seesScriptBindings) {
         Integer epoch = zeroExtended(loadField<Word32>(global, m_heaps.JSGlobalObject_globalLexicalBindingEpoch));
-        Integer current = bitOr(zeroExtended(structureID), Integer(m_out.shl(epoch.value(), m_out.constInt32(32))));
+        Integer wideStructureID = zeroExtended(structureID);
+        Integer current = bitOr(wideStructureID, Integer(m_out.shl(epoch.value(), 32)));
         branchUnless(equal(current, Integer(m_out.load64(filedStructureID))), miss);
     } else
         branchUnless(equal(structureID, Word32(m_out.load32(filedStructureID))), miss);
@@ -450,7 +511,8 @@ void AccessEmitter::generatePropDefine(const ValueContext& value)
     if (m_program.nameClassOf(value->key()) == NameClass::Index) {
         std::optional<uint32_t> index = parseIndex(byteCast<Latin1Character>(m_program.strings[m_program.at(value->key()).text]));
         if (index && *index <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-            putByVal(value, object, Boxed(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index))))), in<Boxed>(value->valueOperand()), PutMode::Define);
+            Boxed key(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index)))));
+            putByVal(value, object, key, in<Boxed>(value->valueOperand()), PutMode::Define);
             return;
         }
     }
@@ -583,7 +645,8 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
 
 void AccessEmitter::generateElemHas(const ValueContext& value)
 {
-    defineTest(value, hasByVal(value, in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand())));
+    Boxed object = in<Boxed>(value->objectOperand());
+    defineTest(value, hasByVal(value, object, in<Boxed>(value->propertyOperand())));
 }
 
 void AccessEmitter::generateElemDelete(const ValueContext& value)

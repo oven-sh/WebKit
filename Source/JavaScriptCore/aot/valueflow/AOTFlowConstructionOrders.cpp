@@ -15,6 +15,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
+#include "AOTLedger.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -222,7 +223,7 @@ bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, con
         ValueID value = valuesToVisit.takeLast();
         if (isVisited.set(value.index()) || (!valuesBehindChecks.get(value.index()) && !program.typeOf(constructor, value).hasObjects()))
             continue;
-        ValueID object = sameObjectThroughConversionsToObject(constructor, value);
+        ValueID object = sameObjectThroughConversionsToObject(constructor, value).valueInFrontOfFacts();
         if (std::ranges::contains(constructorRoots, object))
             continue;
 
@@ -399,7 +400,7 @@ struct ConstructionEventCollector {
             ValueID stored = access.operand(*storedOf(access.opcode));
             event.storesValue = mayBeValue(stored);
             event.storesSelfReference = mayHoldObject(stored);
-            if (ValueID definition = sameObjectThroughCasts(function, stored); !event.storesSelfReference && callsTakingObject.contains(definition)) {
+            if (ValueID definition = sameObjectThroughCasts(function, stored).valueInFrontOfFacts(); !event.storesSelfReference && callsTakingObject.contains(definition)) {
                 event.holder = definition;
                 event.storesSelfReference = true;
             }
@@ -409,7 +410,7 @@ struct ConstructionEventCollector {
 
     bool isObjectWhereverItIsAllocated(ValueID value)
     {
-        ValueLocation location = useLists.locationOf(sameObjectThroughCasts(function, value));
+        ValueLocation location = useLists.locationOf(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
         if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || analyses.isInCycle(location.block))
             return false;
         bool isOneOfThem = false;
@@ -417,7 +418,7 @@ struct ConstructionEventCollector {
             ValueID passed = valuePassedOn(function, edge, location.index);
             if (!passed || analyses.isInCycle(edge.from))
                 return false;
-            ValueID allocation = sameObjectThroughCasts(function, passed);
+            ValueID allocation = sameObjectThroughCasts(function, passed).valueInFrontOfFacts();
             std::optional<ObjectID> allocated = escape.objectDefinedBy(allocation);
             if (!allocated || function.at(allocation).opcode != Opcode::NewObject || useLists.locationOf(allocation).block != edge.from)
                 return false;
@@ -760,14 +761,20 @@ struct ConstructionGraphBuilder {
         return arePlain;
     }
 
-    bool holdsObjectOfProgramThatStopsStores(ValueSetID holders)
+    ValueSetID objectsOfProgramThatStopStoresAmong(ValueSetID holders)
     {
         AOT_THRESHOLD(uint32_t, fewestHoldersAskedTogether, 8);
         auto stopsStores = [&](ValueFlowObjectID holder) {
             return !universe.builtinOf(holder) && markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
         };
-        if (ValueSets::isComplement(holders) || sets.size(holders) < fewestHoldersAskedTogether)
-            return sets.anyMember(holders, stopsStores);
+        if (sets.size(holders) < fewestHoldersAskedTogether) {
+            Vector<ValueFlowObjectID, 8> stopping;
+            sets.forEachMember(holders, [&](ValueFlowObjectID holder) {
+                if (stopsStores(holder))
+                    stopping.append(holder);
+            });
+            return stopping.isEmpty() ? ValueSets::nothing : maker.of(stopping.span());
+        }
         if (!objectsOfProgramThatStopStores) {
             Vector<ValueFlowObjectID> stopping;
             for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
@@ -776,7 +783,25 @@ struct ConstructionGraphBuilder {
             }
             objectsOfProgramThatStopStores = maker.of(stopping.span());
         }
-        return sets.meet(holders, *objectsOfProgramThatStopStores);
+        return sets.meet(holders, *objectsOfProgramThatStopStores) ? maker.intersect(holders, *objectsOfProgramThatStopStores) : ValueSets::nothing;
+    }
+
+    // A property that cannot be written stops the stores under its own name and no others.
+    bool holdsObjectOfProgramThatStopsStoresUnder(ValueSetID holders, PropertyKeyID key)
+    {
+        if (ValueSets::isComplement(holders))
+            return true;
+        ValueSetID stopping = objectsOfProgramThatStopStoresAmong(holders);
+        if (stopping == ValueSets::nothing)
+            return false;
+        bool mayHoldNamesNobodyLists = holdersOfNamesNobodyLists.ensure(stopping.index(), [&] {
+            return !actorsOpenOnNamesOfObjectsOfProgramAmong(inputs, maker, stopping).isEmpty();
+        }).iterator->value;
+        if (program.isIndexLike(key) || mayHoldNamesNobodyLists)
+            return true;
+        return mayFindNameIn(inputs, heap, maker, stopping, key, [&](ValueSetID members) {
+            return findKindsOfMembersOf(inputs, members);
+        });
     }
 
     bool mayBeStoppedAbove(const ChainOfReceivers& chain, PropertyKeyID key)
@@ -786,7 +811,7 @@ struct ConstructionGraphBuilder {
         const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
         if (accessorsUnder(above, key, true) != ValueSets::nothing || accessorsUnder(above, key, false) != ValueSets::nothing || sets.meet(above, members.holdersOfUndeclaredProperties))
             return true;
-        if (holdsObjectOfProgramThatStopsStores(above))
+        if (holdsObjectOfProgramThatStopsStoresUnder(above, key))
             return true;
         bool mayBeStopped = false;
         sets.forEachMember(maker.intersect(above, members.holders), [&](ValueFlowObjectID holder) {
@@ -1069,6 +1094,7 @@ struct ConstructionGraphBuilder {
     ValueSetMaker& maker { heap.maker() };
     MapByNumber<uint32_t, ChainOfReceivers> chains { };
     std::optional<ValueSetID> objectsOfProgramThatStopStores { };
+    MapByNumber<uint32_t, bool> holdersOfNamesNobodyLists { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
     ConstructionGraph graph { };
 };
@@ -1215,6 +1241,11 @@ struct StoredNamesProblem {
         std::span<const ConstructionEvent> events = node.summary->eventsAt(point);
         if (events.empty())
             return;
+        // An event that enters no function asks what held in front of the operation before it notes anything, so a row of stores copies no state.
+        if (uint32_t position = static_cast<uint32_t>(events.data() - node.summary->events.span().data()); events.size() == 1 && node.resolvedEvents[position].callees.isEmpty()) {
+            applyEvent(state, state, position);
+            return;
+        }
         State stateBeforeOperation = state;
         for (const ConstructionEvent& event : events)
             applyEvent(state, stateBeforeOperation, static_cast<uint32_t>(&event - node.summary->events.span().data()));

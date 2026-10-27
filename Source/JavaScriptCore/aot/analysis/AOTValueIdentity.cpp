@@ -27,9 +27,9 @@ static ValueID stripCasts(const Function& function, ValueID value, NOESCAPE cons
     return id;
 }
 
-ValueID sameObjectThroughCasts(const Function& function, ValueID value)
+RootThroughCasts sameObjectThroughCasts(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); });
+    return RootThroughCasts(stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); }));
 }
 
 ValueID sameObjectBehindFacts(const Function& function, ValueID value)
@@ -46,9 +46,9 @@ ValueID sameObjectBehindFacts(const Function& function, ValueID value)
     return id;
 }
 
-ValueID sameObjectThroughConversionsToObject(const Function& function, ValueID value)
+RootThroughCasts sameObjectThroughConversionsToObject(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode) || opcode == Opcode::Convert || conversionsToObject.contains(opcode); });
+    return RootThroughCasts(stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode) || opcode == Opcode::Convert || conversionsToObject.contains(opcode); }));
 }
 
 ValueID definitionThroughUpcasts(const Function& function, ValueID value)
@@ -76,12 +76,12 @@ std::optional<ValueID> constantThroughCasts(const Program& program, const Functi
     const Value& constant = function.at(chain.last());
     if (!isRematerializable(constant))
         return std::nullopt;
-    const Type& constantType = program.typeOf(function, chain.last());
+    const Type& constantType = program.typeOf(function, chain.last().valueInFrontOfFacts());
     for (ValueID cast : chain) {
         if (cast != chain.last() && !constantType.isSubsetOf(program.typeOf(function, cast), program))
             return std::nullopt;
     }
-    return chain.last();
+    return chain.last().valueInFrontOfFacts();
 }
 
 std::optional<int64_t> integerConstantThroughCasts(const Program& program, const Function& function, ValueID id)

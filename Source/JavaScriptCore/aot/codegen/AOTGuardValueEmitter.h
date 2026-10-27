@@ -20,6 +20,7 @@ public:
 
     void generateAllGuards(const ValueContext&) { }
     void generateEntered(const ValueContext&) { }
+    void generateSpecified(const ValueContext&) { }
 };
 
 } } } // namespace JSC::AOT::Typed

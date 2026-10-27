@@ -1,0 +1,19 @@
+# for (const text of ["new Intl.Segmenter()", "Collator"]) new Function(text)();
+# RUN: valueflow-results
+# CHECK: feature 9 IntlCollator Unnamed
+# CHECK-NOT: feature 13 IntlSegmenter Unnamed
+# CHECK: feature 13 IntlSegmenter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+data d0 root=Array { contents=string elements=[String { value="new Intl.Segmenter()" }, String { value="Collator" }] }
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Data data=d0
+    v3 = ElemGet v2, v1
+    v4 = Builtin builtin=Function
+    v5 = Construct v4, -, v3
+    v6 = Call v5, -
+    Return
+}

@@ -3314,9 +3314,25 @@ private:
             } else
                 m_range = LiveRange::unionOf(allocator.m_intervalArena, m_range, other.m_range);
             other.m_range = LiveRange();
-            reserve(allocator, m_size + other.m_size);
-            for (Tmp member : other.members())
-                m_members[m_size++] = member;
+            if (other.m_size > m_size) {
+                other.reserveInFront(allocator, m_size);
+                other.m_members -= m_size;
+                other.m_roomInFront -= m_size;
+                other.m_capacity += m_size;
+                for (unsigned i = 0; i < m_size; ++i)
+                    other.m_members[i] = m_members[i];
+                m_members = other.m_members;
+                m_roomInFront = other.m_roomInFront;
+                m_capacity = other.m_capacity;
+                m_size += other.m_size;
+            } else {
+                reserve(allocator, m_size + other.m_size);
+                for (Tmp member : other.members())
+                    m_members[m_size++] = member;
+            }
+            other.m_members = nullptr;
+            other.m_roomInFront = 0;
+            other.m_capacity = 0;
             other.m_size = 0;
             if (!m_liveness)
                 makeMapIfLarge(allocator);
@@ -3384,20 +3400,79 @@ private:
             for (unsigned i = 0; i < m_size; ++i)
                 members[i] = m_members[i];
             m_members = members;
+            m_roomInFront = 0;
             m_capacity = capacity;
+        }
+
+        void reserveInFront(GreedyAllocator& allocator, unsigned room)
+        {
+            if (room <= m_roomInFront)
+                return;
+            room = std::max(room, m_size);
+            unsigned total = room + m_capacity;
+            total += total & 1;
+            Tmp* members = reinterpret_cast<Tmp*>(allocator.m_intervalArena.allocate(total / 2)) + room;
+            for (unsigned i = 0; i < m_size; ++i)
+                members[i] = m_members[i];
+            m_members = members;
+            m_roomInFront = room;
+            m_capacity = total - room;
         }
 
         Tmp* m_members { nullptr };
         unsigned m_size { 0 };
+        unsigned m_roomInFront { 0 };
         unsigned m_capacity { 0 };
         LiveRange m_range;
         std::unique_ptr<LivenessMap<bank>> m_liveness;
     };
 
     using GroupIndex = uint32_t;
-    template<Bank bank>
-    using TmpGroupMap = IndexMap<Tmp::Indexed<bank>, GroupIndex>;
     static constexpr GroupIndex noGroup = std::numeric_limits<GroupIndex>::max();
+
+    // A Tmp has the label of its group. Where two groups become one, the members of the smaller one get the label of the larger one.
+    template<Bank bank>
+    class TmpGroupMap {
+    public:
+        explicit TmpGroupMap(unsigned numberOfTmps)
+            : m_labels(numberOfTmps, noGroup)
+        {
+        }
+
+        GroupIndex operator[](Tmp tmp) const
+        {
+            GroupIndex label = m_labels[tmp];
+            return label == noGroup ? noGroup : m_groupOfLabel[label];
+        }
+
+        void addGroup(GroupIndex group)
+        {
+            ASSERT(group == m_groupOfLabel.size());
+            m_groupOfLabel.append(group);
+            m_labelOfGroup.append(group);
+        }
+
+        void addMember(GroupIndex group, Tmp tmp) { m_labels[tmp] = m_labelOfGroup[group]; }
+
+        void merge(GroupIndex group, std::span<const Tmp> members, GroupIndex mergedGroup, std::span<const Tmp> mergedMembers)
+        {
+            if (mergedMembers.size() <= members.size()) {
+                for (Tmp member : mergedMembers)
+                    m_labels[member] = m_labelOfGroup[group];
+                return;
+            }
+            GroupIndex label = m_labelOfGroup[mergedGroup];
+            for (Tmp member : members)
+                m_labels[member] = label;
+            m_labelOfGroup[group] = label;
+            m_groupOfLabel[label] = group;
+        }
+
+    private:
+        IndexMap<Tmp::Indexed<bank>, GroupIndex> m_labels;
+        Vector<GroupIndex> m_groupOfLabel;
+        Vector<GroupIndex> m_labelOfGroup;
+    };
 
     template<Bank bank>
     void coalesceSingletons(Tmp tmp0, Tmp tmp1, Vector<AffinityGroup<bank>>& groups, TmpGroupMap<bank>& tmpToGroup)
@@ -3405,8 +3480,9 @@ private:
         ASSERT(m_map.get<bank>(tmp0).coalescables.template contains<bank>(tmp1) && m_map.get<bank>(tmp1).coalescables.template contains<bank>(tmp0));
         auto newIndex = groups.size();
         groups.constructAndAppend(*this, tmp0, tmp1);
-        tmpToGroup[tmp0] = newIndex;
-        tmpToGroup[tmp1] = newIndex;
+        tmpToGroup.addGroup(newIndex);
+        tmpToGroup.addMember(newIndex, tmp0);
+        tmpToGroup.addMember(newIndex, tmp1);
         dataLogLnIf(verbose(), "Created group ", newIndex, ": ", groups[newIndex]);
     }
 
@@ -3443,7 +3519,7 @@ private:
             return false;
 
         groups[groupIndex].addMember(*this, singleton);
-        tmpToGroup[singleton] = groupIndex;
+        tmpToGroup.addMember(groupIndex, singleton);
         dataLogLnIf(verbose(), "Added ", singleton, " to group ", groupIndex);
         return true;
     }
@@ -3494,8 +3570,7 @@ private:
         if (conflict)
             return false;
 
-        for (Tmp member : groups[groupIndex1].members())
-            tmpToGroup[member] = groupIndex0;
+        tmpToGroup.merge(groupIndex0, groups[groupIndex0].members(), groupIndex1, groups[groupIndex1].members());
         groups[groupIndex0].merge(*this, groups[groupIndex1]);
         dataLogLnIf(verbose(), "Merged group ", groupIndex1, " into ", groupIndex0);
         return true;
@@ -3507,7 +3582,7 @@ private:
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::coalesceTmps"_s);
 
         Vector<AffinityGroup<bank>> groups;
-        TmpGroupMap<bank> tmpToGroup(Tmp::indexEnd(m_code, bank), noGroup);
+        TmpGroupMap<bank> tmpToGroup(Tmp::indexEnd(m_code, bank));
 
         buildCoalescingGroups<bank>(groups, tmpToGroup);
         validateCoalescing<bank>(groups, tmpToGroup);
@@ -5292,20 +5367,51 @@ private:
         return move;
     }
 
-    void sortAndRemoveRepeatedOrdinals(Vector<unsigned>& ordinals)
-    {
-        if (ordinals.size() < m_mentions.numberOfInsts / 8) [[likely]] {
-            std::ranges::sort(ordinals);
-            removeRepeatedElements(ordinals);
-            return;
+    class SetOfOrdinals {
+    public:
+        explicit SetOfOrdinals(unsigned numberOfInsts)
+            : m_numberOfInsts(numberOfInsts)
+        {
         }
-        BitVector isListed(m_mentions.numberOfInsts);
-        for (unsigned ordinal : ordinals)
-            isListed.quickSet(ordinal);
-        ordinals.shrink(0);
-        for (size_t ordinal : isListed)
-            ordinals.append(static_cast<unsigned>(ordinal));
-    }
+
+        ALWAYS_INLINE void add(unsigned ordinal)
+        {
+            if (m_hasBits) {
+                m_bits.quickSet(ordinal);
+                return;
+            }
+            m_list.append(ordinal);
+            if (m_list.size() >= m_numberOfInsts / 8) [[unlikely]]
+                moveListToBits();
+        }
+
+        Vector<unsigned> takeInOrder()
+        {
+            if (m_hasBits) {
+                for (size_t ordinal : m_bits)
+                    m_list.append(static_cast<unsigned>(ordinal));
+                return WTF::move(m_list);
+            }
+            std::ranges::sort(m_list);
+            removeRepeatedElements(m_list);
+            return WTF::move(m_list);
+        }
+
+    private:
+        NEVER_INLINE void moveListToBits()
+        {
+            m_hasBits = true;
+            m_bits.ensureSize(m_numberOfInsts);
+            for (unsigned ordinal : m_list)
+                m_bits.quickSet(ordinal);
+            m_list.shrink(0);
+        }
+
+        Vector<unsigned> m_list;
+        BitVector m_bits;
+        unsigned m_numberOfInsts;
+        bool m_hasBits { false };
+    };
 
     template <Bank bank>
     void emitSpillCodeAndEnqueueNewTmps()
@@ -5314,7 +5420,7 @@ private:
         std::ranges::sort(m_newlySpilledTmps, [](Tmp a, Tmp b) {
             return a.tmpIndex(bank) < b.tmpIndex(bank);
         });
-        Vector<unsigned> ordinals;
+        SetOfOrdinals mentioningInsts(m_mentions.numberOfInsts);
         for (Tmp tmp : m_newlySpilledTmps) {
             ASSERT(tmp.bank() == bank);
             TmpData& tmpData = m_map.get<bank>(tmp);
@@ -5331,21 +5437,20 @@ private:
 
             if (!tmpData.splitFrom) {
                 for (Point point : useDefsOf(tmp))
-                    ordinals.append(point / PointOffsets::PointsPerInst);
+                    mentioningInsts.add(point / PointOffsets::PointsPerInst);
                 continue;
             }
-            if (tmpData.liveRange.intervals().isEmpty())
-                continue;
-            Point first = pointAtOffset(tmpData.liveRange.intervals().first().begin(), PointOffsets::Pre);
-            Point end = tmpData.liveRange.intervals().last().end();
             auto useDefs = useDefsOf(tmpData.splitFrom);
-            for (auto iterator = std::ranges::lower_bound(useDefs, first); iterator != useDefs.end() && *iterator < end; ++iterator)
-                ordinals.append(*iterator / PointOffsets::PointsPerInst);
+            auto iterator = useDefs.begin();
+            for (Interval interval : tmpData.liveRange.intervals()) {
+                iterator = std::lower_bound(iterator, useDefs.end(), pointAtOffset(interval.begin(), PointOffsets::Pre));
+                for (; iterator != useDefs.end() && *iterator < interval.end(); ++iterator)
+                    mentioningInsts.add(*iterator / PointOffsets::PointsPerInst);
+            }
         }
         m_newlySpilledTmps.shrink(0);
-        sortAndRemoveRepeatedOrdinals(ordinals);
 
-        for (unsigned ordinal : ordinals) {
+        for (unsigned ordinal : mentioningInsts.takeInOrder()) {
             {
                 BasicBlock* block = m_code[m_instBlockIndex[ordinal]];
                 Point positionOfHead = this->positionOfHead(block);

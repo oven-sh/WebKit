@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bmalloc/bmalloc.h>
 #include <limits>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
@@ -24,8 +25,16 @@
 
 namespace JSC {
 
+// What is mapped cannot be counted where /proc/self/statm cannot be read.
+enum class UncountedAddressSpace : bool {
+    // The whole limit is left. A request for address space that there is no room for is refused by the system.
+    IsFree,
+    // Nothing is left. For who decides whether somebody else may take address space.
+    IsTaken,
+};
+
 // Returns SIZE_MAX when there is no limit, and on every system but Linux. Allocates nothing.
-inline size_t addressSpaceLeft()
+inline size_t addressSpaceLeft(UncountedAddressSpace uncounted = UncountedAddressSpace::IsFree)
 {
 #if OS(LINUX)
     struct rlimit limit;
@@ -40,6 +49,8 @@ inline size_t addressSpaceLeft()
             mappedPages = mappedPages * 10 + (text[i] - '0');
         close(file);
     }
+    if (!mappedPages && uncounted == UncountedAddressSpace::IsTaken)
+        return 0;
     size_t mapped = mappedPages * pageSize();
     return limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
 #else
@@ -57,6 +68,18 @@ inline size_t availableAddressSpace()
 inline bool hasAddressSpaceLimit()
 {
     return availableAddressSpace() != std::numeric_limits<size_t>::max();
+}
+
+// What requests to malloc that may not fail fall back on when all the address space has been taken: bmalloc::api::keepAddressSpaceBallast().
+static constexpr size_t sizeOfAddressSpaceBallast = 8 * MB;
+
+// Called where address space may have come back: a thread has started or ended, a collection has freed storage.
+inline void keepAddressSpaceBallast()
+{
+#if USE(MIMALLOC)
+    if (hasAddressSpaceLimit() && bmalloc::api::sizeOfAddressSpaceBallastKept() != sizeOfAddressSpaceBallast)
+        bmalloc::api::keepAddressSpaceBallast(sizeOfAddressSpaceBallast, addressSpaceLeft(UncountedAddressSpace::IsTaken), sizeOfAddressSpaceBallast);
+#endif
 }
 
 // malloc, stacks and mapped files get 1/N of the address space still free under RLIMIT_AS.

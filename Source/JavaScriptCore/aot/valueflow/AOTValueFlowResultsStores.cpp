@@ -44,9 +44,9 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
     const ParallelLoops& loops = inputs.loops();
     ValueSetMaker& maker = heap.maker();
     uint32_t numberOfLayouts = program.layouts.size();
-    Vector<ValueFlowObjectID> objectsThatSelectLayout = collectInParallel<ValueFlowObjectID>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& objects) {
-        if (namedLayoutOf(ValueFlowObjectID(index)) && selectsLayoutByPrototype(ValueFlowObjectID(index)))
-            objects.append(ValueFlowObjectID(index));
+    Vector<ValueFlowObjectID> objectsThatSelectLayout = collectInParallel<ValueFlowObjectID>(loops, universe.numberOfSiteObjects(), [&](unsigned position, Vector<ValueFlowObjectID>& objects) {
+        if (namedLayoutOf(universe.siteObjectAt(position)) && selectsLayoutByPrototype(universe.siteObjectAt(position)))
+            objects.append(universe.siteObjectAt(position));
     });
     Vector<ValueFlowObjectID> objectsOfEveryEscapedClass;
     Vector<ValueFlowObjectID> objectsOfEveryLostClass;
@@ -112,13 +112,13 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
         }
     }
 
-    Vector<ObjectOfLayout> objectsWithLayouts = collectInParallel<ObjectOfLayout>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ObjectOfLayout>& found) {
-        ValueFlowObjectID object(index);
+    Vector<ObjectOfLayout> objectsWithLayouts = collectInParallel<ObjectOfLayout>(loops, universe.numberOfSiteAndLayoutObjects(), [&](unsigned position, Vector<ObjectOfLayout>& found) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         LayoutID named = namedLayoutOf(object);
         if (!named)
             return;
         found.append({ named, object });
-        auto selected = m_selectedLayouts.find(index);
+        auto selected = m_selectedLayouts.find(object.index());
         if (selected == m_selectedLayouts.end())
             return;
         for (LayoutID layout : m_listsOfSelectedLayouts[selected->value.list]) {
@@ -248,15 +248,14 @@ void StoresByLayout::noteListedWrites()
 
 // The objects that are copied onto those of a layout, with what is copied onto them in turn, where the analysis follows each of them: whatever such an object holds
 // was stored through a set that lists it, whoever else has its layout.
-auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedObjects>
+auto StoresByLayout::objectsCopiedOnto(ValueSetMaker& maker, LayoutID target) const -> std::optional<CopiedObjects>
 {
     const ValueSets& sets = m_inputs.sets();
-    ValueSetMaker& maker = m_heap.maker();
     ValueSetID objectsNotFollowed = maker.unite(m_inputs.universe().placeholdersAlone(), maker.unite(m_heap.escaped(), m_heap.lost()));
     ValueSetID sources = ValueSets::nothing;
     ValueSetID copiedOnto = m_layoutsOfObjects.objectsWith(target);
     while (true) {
-        ValueSetID found = m_heap.writtenUnder(copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
+        ValueSetID found = m_heap.writtenUnder(maker, copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
         if (ValueSets::isComplement(found) || sets.meet(found, objectsNotFollowed))
             return std::nullopt;
         if (sets.isSubset(found, sources))
@@ -287,7 +286,7 @@ auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedO
             return std::nullopt;
     }
     auto isStoredUnder = [&](ValueFlowName name) {
-        return m_heap.writtenUnder(sources, name) != ValueSets::nothing;
+        return m_heap.writtenUnder(maker, sources, name) != ValueSets::nothing;
     };
     constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
     if (std::ranges::any_of(namesNobodyLists, [&](ValueFlowNameKind kind) { return isStoredUnder(ValueFlowName::of(kind)); }))
@@ -308,8 +307,10 @@ void StoresByLayout::followCopiedProperties()
         if (m_storesOfLayout[index].getsCopiedProperties)
             targets.append(LayoutID(index));
     }
-    Vector<std::optional<CopiedObjects>> sourcesOfTargets = WTF::map(targets, [&](LayoutID target) {
-        return objectsCopiedOnto(target);
+    ValueSetMakers makers(m_inputs);
+    Vector<std::optional<CopiedObjects>> sourcesOfTargets(targets.size());
+    forEachIndexInParallel(m_inputs.loops(), targets.size(), [&](unsigned position, unsigned worker) {
+        sourcesOfTargets[position] = objectsCopiedOnto(makers.of(worker), targets[position]);
     });
     for (size_t position = 0; position < targets.size(); ++position) {
         if (!sourcesOfTargets[position])
@@ -665,6 +666,7 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         return;
     }
 }
@@ -1102,10 +1104,20 @@ void StoresByLayout::noteWrites()
         found.append(WTF::move(parts));
     });
 
-    auto isSameForEveryLayout = [](const WritesThroughSet& write) {
+    auto liesUnderKey = [](const WritesThroughSet& write) {
         ValueFlowNameKind kind = write.name().kind;
-        bool liesUnderKey = kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter;
-        return liesUnderKey && write.familyOfReceiver == UINT32_MAX && !write.fillsTypedResult && !write.createsData;
+        return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter;
+    };
+    auto asksNothingOfLayout = [](const WritesThroughSet& write) {
+        return write.familyOfReceiver == UINT32_MAX && !write.fillsTypedResult && !write.createsData;
+    };
+    auto isSameForEveryLayout = [&](const WritesThroughSet& write) {
+        return liesUnderKey(write) && asksNothingOfLayout(write);
+    };
+    // noteWritesInto() puts the forms of an accessor down under a key unless the name says that nobody knows the key.
+    auto touchesNoKey = [&](const WritesThroughSet& write) {
+        ValueFlowNameKind kind = write.name().kind;
+        return !liesUnderKey(write) && (!write.accessorForms || kind == ValueFlowNameKind::GetterUnderUnknownKey || kind == ValueFlowNameKind::SetterUnderUnknownKey);
     };
 
     auto isNotedInTables = [](ValueFlowNameKind kind) {
@@ -1301,6 +1313,9 @@ void StoresByLayout::noteWrites()
         const BitVector& classes;
         Vector<uint32_t> notedOnce { };
         Vector<uint32_t> notedForEachClass { };
+        // What the table of each class gets outside keys, which is the same for all of them.
+        Vector<uint32_t> gatheredForEachClass { };
+        StoresIntoObjects gathered { };
     };
     WritesIntoEveryClass writesIntoEveryClass[] {
         { m_storesIntoEveryEscapedClass, &ObjectsOfSet::holdsObjectOfEveryEscapedClass, m_isEscapedClass },
@@ -1311,8 +1326,13 @@ void StoresByLayout::noteWrites()
             if (!(objectsOfSet[position].*list.isHeld))
                 continue;
             for (uint32_t index = firstWriteOfSet[position]; index < firstWriteOfSet[position + 1]; ++index)
-                (isSameForEveryLayout(writes[index]) ? list.notedOnce : list.notedForEachClass).append(index);
+                (isSameForEveryLayout(writes[index]) ? list.notedOnce : asksNothingOfLayout(writes[index]) && touchesNoKey(writes[index]) ? list.gatheredForEachClass : list.notedForEachClass).append(index);
         }
+    }
+    for (WritesIntoEveryClass& list : writesIntoEveryClass) {
+        for (uint32_t position : list.gatheredForEachClass)
+            noteWritesInto(makers.of(0), list.gathered, LayoutID(), writes[position]);
+        RELEASE_ASSERT(list.gathered.underKey.isEmpty());
     }
 
     Vector<Vector<uint32_t>> writesThroughPlaceholdersInto(numberOfLayouts);
@@ -1393,6 +1413,7 @@ void StoresByLayout::noteWrites()
                 continue;
             for (uint32_t position : list.notedForEachClass)
                 noteWritesInto(maker, m_storesOfLayout[layout], LayoutID(layout), writes[position]);
+            m_storesOfLayout[layout].uniteWhatLiesOutsideKeys(maker, list.gathered);
         }
         for (uint32_t position : writesThroughPlaceholdersInto[layout]) {
             note(maker, m_storesOfLayout[layout], writes[position].name(), writes[position].value, false, false);

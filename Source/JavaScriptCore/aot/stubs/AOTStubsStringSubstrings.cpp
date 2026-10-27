@@ -10,8 +10,11 @@
 
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
+#include "AOTStubRegisters.h"
 #include "JSString.h"
+#include "RegisterSet.h"
 #include "SmallStrings.h"
+#include <wtf/Vector.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -22,8 +25,18 @@ static_assert(maxSingleCharacterString == 0xff);
 
 AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, const FlatSubstringRegisters& registers, JumpList& fails)
 {
-    const auto [string, start, length, result, firstScratch, secondScratch] = registers;
-    RELEASE_ASSERT(noOverlap(string, start, length, result, firstScratch, secondScratch, instanceGPR));
+    const auto [string, start, length, result, firstScratch, secondScratch, alsoKept] = registers;
+    RELEASE_ASSERT(noOverlap(string, start, length, result, firstScratch, secondScratch, instanceGPR) && result == GPRInfo::returnValueGPR);
+    RegisterSet lostToLeaf = registersClobberedByPreserveMostLeaves();
+    lostToLeaf.add(leafArgumentGPR(0), IgnoreVectors);
+    lostToLeaf.add(leafArgumentGPR(1), IgnoreVectors);
+    RegisterSet kept = alsoKept;
+    kept.merge(RegisterSet(string, start, length));
+    kept.filter(lostToLeaf);
+    Vector<GPRReg, 8> savedAroundLeaf;
+    kept.forEach([&](Reg reg) {
+        savedAroundLeaf.append(reg.gpr());
+    });
 
     Jump isAtMostTwo = jit.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(2));
     Label isLong = jit.label();
@@ -46,17 +59,28 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
     jit.storePair64(secondScratch, firstScratch, result, TrustedImm32(2 * sizeof(EncodedJSValue)));
     Label isMade = jit.label();
 
-    jit.addOutOfLinePart([registers, isAtMostTwo, isLong, isWhole, makesRope, hasAllocator, isMade](StubAssembler& part) {
-        const auto [string, start, length, result, characters, codeUnit] = registers;
+    jit.addOutOfLinePart([registers, savedAroundLeaf, isAtMostTwo, isLong, isWhole, makesRope, hasAllocator, isMade](StubAssembler& part) {
+        const auto [string, start, length, result, characters, codeUnit, alsoKept] = registers;
         isWhole.link(&part);
         part.move(string, result);
         part.jump().linkTo(isMade, &part);
 
         isAtMostTwo.link(&part);
         Jump isAtMostOne = part.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(1));
-        // Two units of a 16-bit string make an 8-bit string if both are ASCII. The operation looks at them.
+        // Two units of a 16-bit string make an 8-bit string if both are ASCII. The engine keeps the ones it has made, and the operation makes the others.
         part.loadPtr(Address(string, JSString::offsetOfValue()), characters);
         part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &part);
+        part.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+        part.load32(BaseIndex(characters, start, CCallHelpers::TimesTwo), codeUnit);
+        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(static_cast<int32_t>(0xff80ff80))).linkTo(isLong, &part);
+        part.preserving(savedAroundLeaf.span(), [&] {
+            part.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
+            part.move(codeUnit, leafFunctionGPR);
+            part.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), leafArgumentGPR(0));
+            part.move(leafFunctionGPR, leafArgumentGPR(1));
+            part.callLeaf(Entry::operationAOTFindKeptStringOfTwoCharacters, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(savedAroundLeaf.size() * sizeof(CPURegister)));
+        });
+        part.branchTestPtr(CCallHelpers::NonZero, result).linkTo(isMade, &part);
         part.move(TrustedImm32(0), characters);
         part.jump().linkTo(hasAllocator, &part);
 

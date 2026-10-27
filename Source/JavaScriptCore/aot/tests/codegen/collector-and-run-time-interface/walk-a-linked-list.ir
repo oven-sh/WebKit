@@ -1,0 +1,121 @@
+# type Entry = { follower: Entry | null; weight: number };
+# function total(entry: Entry | null): number {
+#   let sum = 0;
+#   while (entry !== null) {
+#     sum += entry.weight;
+#     entry = entry.follower;
+#   }
+#   return sum;
+# }
+# declare const input: any;
+# const last: Entry = { follower: null, weight: +input };
+# (globalThis as any).answer = total({ follower: last, weight: 1.5 }) + total(input ? last : null);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized loops f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code faulting-loop-polls
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=250 kind=Variable
+typesite w1 module=m0 position=72 kind=Parameter function=f1
+typesite w2 module=m0 position=57 kind=Result
+typesite w3 module=m0 position=329 kind=CallResult
+typesite w4 module=m0 position=370 kind=CallResult
+typesite w5 module=m0 position=109 kind=Variable
+layout L0 name="Entry" module=m0 position=5 fields=[{key="follower" declared={type=undefined|null|L0 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Null
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = ToNumber v6
+    v8 = Convert v7 declared={type=number}
+    v9 = NewObject -, v3, v8 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="globalThis" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v16 = Double number=1.5
+    v17 = Convert v16 declared={type=number}
+    v18 = NewObject -, v11, v17 layout=L0 fields=[0, 1]
+    v19 = FinishObject v18
+    v20 = Call v1, -, v19 calleeName="total"
+    v21 = Convert v20 declared={type=number site=w3}
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="input" [isFreeName]
+    v24 = ToBoolean v23
+    Branch v24 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v25):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v11)
+  b4(v26):
+    Jump -> next b5()
+  b5():
+    v27 = Null
+    Jump -> next b6(v27)
+  b6(v28):
+    v29 = Call v1, -, v28 calleeName="total"
+    v30 = Convert v29 declared={type=number site=w4}
+    v31 = Add v21, v30
+    PropSet v15, v31 key="answer"
+    v33 = Undefined
+    Return v33
+}
+function f1 name="total" module=m0 position=57 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w5}
+    Jump -> next b2(v0, v2)
+  b2(v3: undefined|null|L0, v4: number):
+    LoopHint
+    v6 = TypeTest v3 testedType=null
+    Branch v6 -> taken b3(| 0), notTaken b5(| 0)
+  b3(v7):
+    Jump -> next b4()
+  b4():
+    v8 = Convert v4 declared={type=number site=w2}
+    Return v8
+  b5(v9):
+    Jump -> next b6()
+  b6():
+    v10 = PropGet v9 key="weight"
+    v11 = Add v4, v10
+    v12 = Convert v11 declared={type=number site=w5}
+    v13 = PropGet v9 key="follower"
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w1 flags=[OmitsUndefined]}
+    Jump -> next b2(v14, v12)
+}
+
+# Nothing bounds the length of a list, so the loop polls once a turn. A turn has two loads, the addition, the poll and the test for the end: no call and no other branch.
+# CHECK-LABEL: loop #
+# CHECK: Int64 b@[[entry]] = Phi(
+# CHECK-NOT: Branch(
+# CHECK-NOT: Patchpoint(
+# CHECK: Double b@[[weight]] = Load(b@[[entry]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int64 b@[[follower]] = Load(b@[[entry]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
+# CHECK-NEXT: Patchpoint({{*}}isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, {{*}}:LoopHint)
+# CHECK-NEXT: Int32 b@[[isLast]] = Equal(b@[[follower]], $2(b@{{*}}), {{*}}:TypeTest)
+# CHECK-NEXT: Branch(b@[[isLast]], Terminal, {{*}}:TypeTest)
+# CHECK-NOT: Branch(
+# CHECK-NOT: Patchpoint(
+# CHECK-LABEL: end of loop
+# x86-64 adds the weight from memory behind the load of the follower, so the follower gets a register of its own and a turn ends with a move and a jump.
+# X64: loop #{{*}}, instructions: 5, patchpoints: 1
+# ARM64: loop #{{*}}, instructions: 4, patchpoints: 1

@@ -433,6 +433,7 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     case PassID::ReadCapturesFromEnvironments:
     case PassID::RemoveUnreadFields:
     case PassID::RemoveUnusedResults:
+    case PassID::ProveResults:
     case PassID::RemoveUnusedParameters:
     case PassID::RemoveUnreachableFunctions:
     case PassID::SplitFreshResults:

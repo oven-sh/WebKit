@@ -48,8 +48,8 @@ static_assert(JSValue::ValueNull < JSValue::ValueUndefined && static_cast<uintpt
 static_assert(nullCell32 < undefinedCell32 && (static_cast<uintptr_t>(undefinedCell32) << cell32Shift) + JSCell::typeInfoTypeOffset() < FaultSite::reach);
 static_assert(traitsOf(SlotRepresentation::LiteralString).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::LiteralString).nullBits == JSValue::ValueNull);
 
-static constexpr std::array<ThrowKind, numberOfEnumerators<NullishAccess>> throwKindOfNullishAccess { ThrowKind::NullishRead, ThrowKind::NullishWrite, ThrowKind::NullishIterate, ThrowKind::NullishSpread };
-static_assert(allMembersOf<NullishAccess> == std::array { NullishAccess::Read, NullishAccess::Write, NullishAccess::Iterate, NullishAccess::Spread });
+static constexpr std::array<ThrowKind, numberOfEnumerators<NullishAccess>> throwKindOfNullishAccess { ThrowKind::NullishRead, ThrowKind::NullishWrite, ThrowKind::NullishIterate, ThrowKind::NullishSpread, ThrowKind::NullishUpdate };
+static_assert(allMembersOf<NullishAccess> == std::array { NullishAccess::Read, NullishAccess::Write, NullishAccess::Iterate, NullishAccess::Spread, NullishAccess::Update });
 
 namespace {
 

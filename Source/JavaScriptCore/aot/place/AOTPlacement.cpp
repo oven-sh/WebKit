@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
@@ -506,6 +507,11 @@ static void numberBuiltinCells(const PlacementContext& context, PlacedSites& sit
     cells.appendVector(eagerCells);
     for (const BuiltinUseRecord& use : context.inputs.flow.builtinUses())
         cells.append(BuiltinCellKey::object(BuiltinID(use.builtin)));
+    // Where the keys of a holder may be listed, the run time tells a member that compiled code has asked for from one that the program has read.
+    for (size_t index = 0, size = cells.size(); index < size; ++index) {
+        if (cells[index].kind() == BuiltinCellKey::Kind::Object && firstReadChangesListedKeys(builtins, context.inputs.flow, cells[index].builtin()))
+            cells.append(BuiltinCellKey::value(cells[index].builtin()));
+    }
     sortAndRemoveKeysWithoutCell(builtins, cells);
 
     numbering.eagerBuiltinCells = eagerCells.map([&](BuiltinCellKey key) {

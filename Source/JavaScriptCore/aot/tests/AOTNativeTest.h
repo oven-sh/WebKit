@@ -197,7 +197,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(prototypeSetByKeyTests) \
     v(publishedEnumeratorProgramTests) \
     v(publishedEnumeratorTests) \
-    v(readerRecordTests) \
     v(readerStreamTests) \
     v(regExpCompilerTests) \
     v(replacedBuiltinTests) \

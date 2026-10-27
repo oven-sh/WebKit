@@ -18,6 +18,7 @@
 namespace JSC {
 
 class CallFrame;
+class JSGlobalObject;
 class Structure;
 class VM;
 
@@ -26,6 +27,7 @@ namespace AOT {
 class CacheRegistry;
 class CallSiteCache;
 class Image;
+class Modules;
 class ProgramIdentifiers;
 class RegExpLiterals;
 class RuntimeReporter;
@@ -73,6 +75,12 @@ public:
     const Image* image { nullptr };
     bool hasCompiledCode { false };
     bool validatesRuntime { false };
+    // Some object has become a dictionary for the names that it is being given.
+    bool hasObjectsBeingFilled { false };
+    // Its Date.prototype has the members that JSON.stringify reads on a date, and keeps them. Only compared with, never read through: a realm may be gone.
+    JSGlobalObject* realmWhoseDatesAreWrittenInPlace { nullptr };
+    // They run the CommonJS files of a graph in front of the jobs in which the loader of `bun run` would.
+    Modules* modulesWhoseFilesRunAheadOfLoader { nullptr };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.

@@ -28,11 +28,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="conversionBehindBlockParameterAsRead" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
-    Jump -> next b1(v2)
-  b1(v3):
-    v4 = Convert v3 declared={type=undefined|null|L0} illTypedCause=FromLooseType
-    v5 = PropGet v4 key="id"
-    Return v5
+    v3 = Boolean boolean=true
+    Branch v3 -> taken b1(v2), notTaken b2()
+  b1(v4):
+    v5 = Convert v4 declared={type=undefined|null|L0} illTypedCause=FromLooseType
+    v6 = PropGet v5 key="id"
+    Return v6
+  b2():
+    v7 = NewObject layout=L0
+    Jump -> next b1(v7)
 # CHECK-NOT: JSONSourceOpen
 # CHECK: = CallBuiltin -, v0, {{*}} overload=JSONParse/0
 # CHECK-NOT: JSONSourceOpen

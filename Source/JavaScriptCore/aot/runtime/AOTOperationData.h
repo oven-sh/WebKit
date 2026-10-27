@@ -35,6 +35,16 @@ struct StaticsRun {
 };
 static_assert(sizeof(StaticsRun) == 16 && isImageRecord<StaticsRun>);
 
+// A group of files that the first entry point does not bring along. Their variables get their first words when code is entered that can name them: that of a file of the group, or of a file that imports one.
+// The words of the groups lie in the order of the records, one group behind the other: a group ends where the next begins. A group that only imports such groups has no words.
+// The last record ends the lists. Behind the last word lies one byte for each group, in their order: whether its words are filled.
+struct StaticsOfFiles {
+    uint32_t firstWord;
+    // In ProgramTables::staticsOfImportedFiles(): the groups of this table that its files import.
+    uint32_t firstImportedGroup;
+};
+static_assert(sizeof(StaticsOfFiles) == 8 && isImageRecord<StaticsOfFiles>);
+
 struct StaticsRange {
     uint32_t offset;
     uint32_t size;
@@ -303,6 +313,7 @@ enum class ThrowKind : uint8_t {
     UninitializedBinding,
     NotAFunction,
     ErrorWithMessage,
+    NullishUpdate,
 };
 
 enum class ThrowSiteSource : uint32_t {
@@ -344,11 +355,13 @@ struct ThrowSiteWord {
     uint32_t a : 17;
 };
 static_assert(sizeof(ThrowSiteWord) == 4);
-static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && numberOfEnumerators<Typed::Representation> <= 1u << 4);
+static_assert(static_cast<unsigned>(ThrowKind::NullishUpdate) < 1u << 3 && numberOfEnumerators<Typed::Representation> <= 1u << 4);
 
 #define FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
+    v(staticsOfFiles, StaticsOfFiles) \
+    v(staticsOfImportedFiles, uint32_t) \
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \

@@ -38,5 +38,5 @@ function f3 name="index" parameters=[{type=int[0, 2147483647]}, {type=number}] r
 }
 # X64: f0: size=55 frame=none {{*}}constants=0
 # X64: f1: size=90 frame=none {{*}}constants=0
-# X64: f2: size=88 frame=none {{*}}constants=0
+# X64: f2: size=86 frame=none {{*}}constants=0
 # X64: f3: size=75 frame=none {{*}}constants=1

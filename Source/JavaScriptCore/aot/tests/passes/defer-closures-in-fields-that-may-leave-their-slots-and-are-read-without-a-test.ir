@@ -1,0 +1,47 @@
+# object.run, resolved to a read of the slot without a test: the field is filled at creation and never deleted or redefined, and its type is only expected, so its slot took every value and stayed filled.
+# A slot that defers its closure holds objects alone: a number that somebody stores (Reflect.set) lies outside the slot from then on, and the read would take the empty slot for a closure that is not made yet. The field does not defer.
+# A read behind a test that the slot is filled reads by name where the test fails: it keeps nothing from deferring
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 1
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="ReadWithoutTest" fields=[{key="run" declared={type=function flags=[IsExpected]} flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}]
+layout L1 name="ReadBehindTest" fields=[{key="walk" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+# CHECK: layout L0 name="ReadWithoutTest"
+# CHECK-NOT: deferral=
+# CHECK: layout L1 name="ReadBehindTest"{{*}}deferral=CapturesNothing
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f3
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f1 name="readsWithoutTest" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="run" receivers=[L0] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f1 name="readsWithoutTest"
+# CHECK: = GetSlot v0 key="run"
+function f2 name="readsBehindTest" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="walk" receivers=[L1] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="walk" receivers=[L1] level=Proven
+    Return v3
+  b2():
+    v4 = PropGet v0 key="walk"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="readsBehindTest"
+# CHECK: = GetDeferredClosureSlot v0, v2 key="walk"
+function f3 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
+    Return
+}

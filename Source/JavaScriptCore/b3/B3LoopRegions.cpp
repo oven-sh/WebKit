@@ -31,9 +31,6 @@ static bool loopsBackThroughInvariantTests(NaturalLoops& loops, const NaturalLoo
 
 std::expected<HotRegion, GaveUp> findHotRegion(NaturalLoops& loops, const NaturalLoop& loop, std::optional<UnswitchedEdge> unswitched)
 {
-    if (!isInnermostLoop(loops, loop))
-        return std::unexpected(GaveUp(GaveUpReason::NotInnermost));
-
     HotRegion region;
     region.loop = &loop;
     region.header = loop.header();
@@ -53,6 +50,9 @@ std::expected<HotRegion, GaveUp> findHotRegion(NaturalLoops& loops, const Natura
             if (unswitched && block == unswitched->block && successor.block() != unswitched->successor)
                 continue;
             hasBackEdge |= successor.block() == loop.header();
+            // A loop inside that only rare edges lead into is one more slow path.
+            if (loops.innerMostLoopOf(successor.block()) != &loop)
+                return std::unexpected(GaveUp(GaveUpReason::NotInnermost));
             if (region.blockSet.add(successor.block()))
                 region.blocks.append(successor.block());
         }
@@ -104,7 +104,7 @@ IndexSet<BasicBlock*> findRejoiningBlocks(NaturalLoops& loops, const HotRegion& 
         for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
             if (predecessor == region.header || !loops.belongsTo(predecessor, *region.loop) || !visited.add(predecessor))
                 continue;
-            if (!region.contains(predecessor) && !canCloneRareBlock(predecessor, invalidation))
+            if (!region.contains(predecessor) && (loops.innerMostLoopOf(predecessor) != region.loop || !canCloneRareBlock(predecessor, invalidation)))
                 continue;
             rejoiningBlocks.add(predecessor);
             worklist.append(predecessor);
@@ -212,9 +212,26 @@ Value* FastPreHeader::appendIntConstant(Origin origin, Type type, int64_t value)
     return m_last->appendIntConstant(m_proc, origin, type, value);
 }
 
+Value* FastPreHeader::append(Origin origin, Opcode opcode, Value* left, Value* right)
+{
+    return m_last->appendNew<Value>(m_proc, opcode, origin, left, right);
+}
+
+Value* FastPreHeader::appendAddConstant(Origin origin, Value* value, int64_t addend)
+{
+    return addend ? append(origin, Add, value, appendIntConstant(origin, value->type(), addend)) : value;
+}
+
+Value* FastPreHeader::appendWidened(Origin origin, Value* value, Signedness signedness)
+{
+    if (value->type() == Int64)
+        return value;
+    return m_last->appendNew<Value>(m_proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
+}
+
 void FastPreHeader::appendGuard(Origin origin, Opcode relation, Value* left, Value* right)
 {
-    m_last->appendNew<Value>(m_proc, Branch, origin, m_last->appendNew<Value>(m_proc, relation, origin, left, right));
+    m_last->appendNew<Value>(m_proc, Branch, origin, append(origin, relation, left, right));
     BasicBlock* closed = startNextBlock();
     closed->setSuccessors(FrequentedBlock(m_last), FrequentedBlock(m_slowLoopHeader, FrequencyClass::Rare));
 }

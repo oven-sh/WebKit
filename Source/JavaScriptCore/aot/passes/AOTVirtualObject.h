@@ -135,7 +135,8 @@ struct VirtualObjectContext {
     const FlowResults* flow { nullptr };
 };
 
-DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation);
+enum class ListedValues : bool { HaveTypesOfFields, MayAlsoBeUndefinedOrNull };
+DescribedObject describeVirtualObject(FunctionAnalyses&, ValueID allocation, ListedValues = ListedValues::HaveTypesOfFields);
 
 using InitialFieldFunctor = ScopedLambda<void(const VirtualField&, ValueID)>;
 void forEachInitialField(const VirtualObjectContext&, const VirtualObjectDescription&, NOESCAPE const InitialFieldFunctor&);

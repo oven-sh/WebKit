@@ -227,17 +227,30 @@ static std::optional<Value> simplifyGeneratorStep(FunctionPassContext& context, 
     return simplified;
 }
 
-static bool mayBeMadeByBuiltinConstructor(const Program& program, LayoutID layout)
+// No class where the program makes the objects itself. Nothing where nobody knows.
+static std::optional<BuiltinClassID> findClassOfBuiltinConstructor(const Program& program, LayoutID layout)
 {
     for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
         const LayoutFlow& flow = program.at(layout).flow;
-        if (flow.baseState == BaseState::None)
-            return false;
-        if (flow.baseState != BaseState::Layout)
-            return true;
-        layout = flow.base;
+        switch (flow.baseState) {
+        case BaseState::None:
+            return BuiltinClassID();
+        case BaseState::BuiltinClass:
+            return flow.baseClass;
+        case BaseState::Unknown:
+            return std::nullopt;
+        case BaseState::Layout:
+            layout = flow.base;
+            continue;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
-    return true;
+    return std::nullopt;
+}
+
+static bool mayBeMadeByBuiltinConstructor(const Program& program, LayoutID layout)
+{
+    return findClassOfBuiltinConstructor(program, layout) != BuiltinClassID();
 }
 
 static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& type)
@@ -441,43 +454,75 @@ static KnownBoolean evaluateNumberTest(BuiltinID builtin, const Type& operand)
     return operand.integers.intersectWith(safeIntegers).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
-static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
+namespace {
+
+struct AnswersAboutClass {
+    bool holdsForLayouts { false };
+    bool holdsForSomeClass { false };
+    bool failsForSomePart { false };
+};
+
+} // anonymous namespace
+
+// Nothing where it is not known of every part of the type whether the question holds for it.
+static std::optional<AnswersAboutClass> askEveryPartAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
 {
     const BuiltinTable& table = program.builtins();
-    auto isOfKind = [&](BuiltinClassID builtinClass) {
-        for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
-            if (builtin == Builtins::ErrorIsError ? current == BuiltinClasses::Error : current == BuiltinClasses::TypedArray || current == BuiltinClasses::DataView)
-                return true;
-        }
-        return false;
+    auto isAskedFor = [&](BuiltinClassID builtinClass) {
+        if (builtin == Builtins::ErrorIsError)
+            return builtinClass == BuiltinClasses::Error;
+        if (builtin == Builtins::ArrayIsArray)
+            return builtinClass == BuiltinClasses::Array;
+        return builtinClass == BuiltinClasses::TypedArray || builtinClass == BuiltinClasses::DataView;
     };
-    if (builtin != Builtins::ErrorIsError && builtin != Builtins::ArrayBufferIsView)
-        return KnownBoolean::Unknown;
-    if (!operand.hasObjects())
-        return KnownBoolean::False;
+    auto evaluate = [&](BuiltinClassID builtinClass) {
+        for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
+            if (isAskedFor(current))
+                return KnownBoolean::True;
+        }
+        return table.at(builtinClass).origin == BuiltinOrigin::Engine ? KnownBoolean::False : KnownBoolean::Unknown;
+    };
+    if (builtin != Builtins::ErrorIsError && builtin != Builtins::ArrayBufferIsView && builtin != Builtins::ArrayIsArray)
+        return std::nullopt;
+    if (builtin == Builtins::ArrayIsArray && (mayBeProxy(operand) || !operand.builtins.isEmpty()))
+        return std::nullopt;
     if (operand.anyObject)
-        return KnownBoolean::Unknown;
+        return std::nullopt;
+
+    AnswersAboutClass answers;
+    answers.failsForSomePart = operand.primitives || operand.anyFunction || !operand.functions.isEmpty() || !operand.builtins.isEmpty();
     if (operand.layouts) {
         auto all = program.at(operand.layouts).all();
-        bool areRecords = all && std::ranges::all_of(*all, [&](LayoutID layout) {
-            return program.at(layout).kind == LayoutKind::Record;
-        });
-        if (!areRecords)
-            return KnownBoolean::Unknown;
+        if (!all)
+            return std::nullopt;
+        bool failsForSomeLayout = false;
+        for (LayoutID layout : *all) {
+            KnownBoolean answer = KnownBoolean::False;
+            if (program.at(layout).kind != LayoutKind::Record) {
+                std::optional<BuiltinClassID> builtinClass = findClassOfBuiltinConstructor(program, layout);
+                answer = builtinClass && *builtinClass ? evaluate(*builtinClass) : KnownBoolean::Unknown;
+            }
+            if (answer == KnownBoolean::Unknown)
+                return std::nullopt;
+            (answer == KnownBoolean::True ? answers.holdsForLayouts : failsForSomeLayout) = true;
+        }
+        if (answers.holdsForLayouts && failsForSomeLayout)
+            return std::nullopt;
+        answers.failsForSomePart |= failsForSomeLayout;
     }
-    bool hasOthers = operand.primitives || operand.layouts || operand.anyFunction || !operand.functions.isEmpty() || !operand.builtins.isEmpty();
-    bool hasSome = false;
     for (const ClassPart& part : operand.classes) {
-        if (isOfKind(part.builtinClass))
-            hasSome = true;
-        else if (table.at(part.builtinClass).origin == BuiltinOrigin::Engine)
-            hasOthers = true;
-        else
-            return KnownBoolean::Unknown;
+        switch (evaluate(part.builtinClass)) {
+        case KnownBoolean::Unknown:
+            return std::nullopt;
+        case KnownBoolean::False:
+            answers.failsForSomePart = true;
+            break;
+        case KnownBoolean::True:
+            answers.holdsForSomeClass = true;
+            break;
+        }
     }
-    if (hasSome && hasOthers)
-        return KnownBoolean::Unknown;
-    return hasSome ? KnownBoolean::True : KnownBoolean::False;
+    return answers;
 }
 
 static bool isOfNoClassOfHost(const Program& program, const Type& operand)
@@ -530,16 +575,21 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
 
-    KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
-    if (answer == KnownBoolean::Unknown)
-        answer = evaluateQuestionAboutClass(context.program, overload->builtin, operand);
-    switch (answer) {
+    switch (evaluateNumberTest(overload->builtin, operand)) {
     case KnownBoolean::Unknown:
         break;
     case KnownBoolean::False:
         return makeBooleanConstant(false);
     case KnownBoolean::True:
         return makeBooleanConstant(true);
+    }
+    if (std::optional<AnswersAboutClass> answers = askEveryPartAboutClass(context.program, overload->builtin, operand)) {
+        if (!answers->holdsForLayouts && !answers->holdsForSomeClass)
+            return makeBooleanConstant(false);
+        if (!answers->failsForSomePart)
+            return makeBooleanConstant(true);
+        if (!answers->holdsForSomeClass)
+            return makeTypeTest(arguments[0], context.types.intern(Type::forLayoutSet(operand.layouts)));
     }
 
     if (mayBeMadeByBuiltinConstructor(context.program, operand))

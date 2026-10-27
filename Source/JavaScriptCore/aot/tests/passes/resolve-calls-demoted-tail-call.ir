@@ -60,7 +60,7 @@ function f9 name="tail-call-behind-a-converted-argument" parameters=[{type=f0}, 
     v2 = Call v0, -, v1 @40
     ReturnCall v2
 # CHECK-NOT: @{{*}} tail
-# CHECK: [[argument9]]: number = AssumeType v1 provenType=number
+# CHECK: [[argument9]]: number = AssumeType v1, [[here63]] provenType=number
 # CHECK-NEXT: [[call9]]: Promise = CallDirect [[argument9]] function=f0 [calleeIsPredicted] @40
 # CHECK-NEXT: ReturnCall [[call9]]
 # CHECK-NOT: @{{*}} tail

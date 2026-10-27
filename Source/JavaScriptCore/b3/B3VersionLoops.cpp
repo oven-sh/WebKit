@@ -12,10 +12,13 @@
 #include "B3ClampLoopBound.h"
 #include "B3CountedLoops.h"
 #include "B3EnsureLoopPreHeaders.h"
+#include "B3FixSSA.h"
+#include "B3InsertionSetInlines.h"
 #include "B3Limits.h"
 #include "B3LoopInvariance.h"
 #include "B3LoopRangeChecks.h"
 #include "B3LoopRegions.h"
+#include "B3LoopUtilities.h"
 #include "B3LoopVersionPlan.h"
 #include "B3MovedLoadCheck.h"
 #include "B3NaturalLoops.h"
@@ -63,6 +66,7 @@ public:
 
         for (unsigned i = m_versions.size(); i--;)
             buildFastPreHeader(*m_versions[i], i);
+        storeValuesThatOnlyPreHeadersName();
         for (auto& version : m_versions)
             copyFastLoop(*version);
         splitEdgesIntoSlowPaths();
@@ -86,10 +90,13 @@ private:
         RegionCloner::ValueMap hoistedMap;
         RegionCloner::ValueMap peeledMap;
         FastLoopBounds bounds;
+        Value* start { nullptr };
         RegionCloner::BlockMap hotCopies;
         RegionCloner::BlockMap excursionCopies;
         Value* testedCopy { nullptr };
         Value* testedCopyInExcursion { nullptr };
+        StridedIndexVariables stridedIndexVariables { };
+        unsigned numberOfReducedIndicesCopied { 0 };
     };
 
     void findSingleDefinitions()
@@ -134,11 +141,37 @@ private:
             return replacement;
         if (!m_cloner.contains(value->owner))
             return value;
-        Variable* variable = m_definitionVariables.get(value);
-        RELEASE_ASSERT(variable);
-        Value* siblingLoopValue = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variable);
-        m_cloner.substitute(version.hoistedMap, value, siblingLoopValue);
-        return siblingLoopValue;
+        Value* valueOfCopiedBlock = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variableHolding(value));
+        m_cloner.substitute(version.hoistedMap, value, valueOfCopiedBlock);
+        return valueOfCopiedBlock;
+    }
+
+    Variable* variableHolding(Value* value)
+    {
+        if (value->opcode() == Get)
+            return value->as<VariableValue>()->variable();
+        return m_definitionVariables.ensure(value, [&] {
+            RELEASE_ASSERT(!m_didStoreValuesThatOnlyPreHeadersName);
+            Variable* variable = addVariableForDemotedValue(m_proc, value);
+            m_singleDefinitions.add(variable, value);
+            m_blocksOfValuesThatOnlyPreHeadersName.add(value->owner);
+            m_valuesThatOnlyPreHeadersName.add(value);
+            return variable;
+        }).iterator->value;
+    }
+
+    void storeValuesThatOnlyPreHeadersName()
+    {
+        m_didStoreValuesThatOnlyPreHeadersName = true;
+        InsertionSet insertionSet(m_proc);
+        for (BasicBlock* block : m_blocksOfValuesThatOnlyPreHeadersName.values(m_proc)) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Value* value = block->at(index);
+                if (m_valuesThatOnlyPreHeadersName.contains(value))
+                    insertionSet.insert<VariableValue>(index + 1, Set, value->origin(), m_definitionVariables.get(value), value);
+            }
+            insertionSet.execute(block);
+        }
     }
 
     void mapOperands(Version& version, Value* value, RegionCloner::ValueMap& map, IsPeeled isPeeled)
@@ -205,11 +238,25 @@ private:
                 break;
             }
         }
+        appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
+            return hoistedValueOrSelf(version, value);
+        });
+        if (plan.rangeChecks.strided) {
+            appendStridedRangeCheckGuards(*version.front, *plan.rangeChecks.strided, *plan.countedLoop, [&](Value* value) {
+                return hoistedValueOrSelf(version, value);
+            }, version.stridedIndexVariables);
+        }
+        if (omitsPollBehindGuard(plan)) {
+            appendGuardThatArrayHoldsLength(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.lengthThatArrayMustHold, [&](Value* value) {
+                return hoistedValueOrSelf(version, value);
+            });
+        }
         if (!plan.rewritesLoopTest())
             return;
         version.bounds = appendEntryGuards(*version.front, plan.rangeChecks, *plan.countedLoop, [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
+        version.start = hoistedValueOrSelf(version, plan.countedLoop->start);
     }
 
     void closeWithGuard(Version& version, unsigned index, Value* terminal)
@@ -252,9 +299,41 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    enum class OmitsPoll : uint8_t { No, BehindGuard, Yes };
+
+    OmitsPoll omitsPoll(const LoopVersionPlan& plan, Value* poll) const
+    {
+        auto* patchpoint = poll->as<PatchpointValue>();
+        if (!m_proc.policy().loops.omitsPollsFromLoopsThatEndWithinData || patchpoint->throwsWhatIsOwed)
+            return OmitsPoll::No;
+        if (patchpoint->likelyTurnsEndWithinData)
+            return OmitsPoll::Yes;
+        if (!plan.rangeChecks.endsWithinData)
+            return OmitsPoll::No;
+        return plan.rangeChecks.lengthThatArrayMustHold ? OmitsPoll::BehindGuard : OmitsPoll::Yes;
+    }
+
+    bool omitsPollBehindGuard(const LoopVersionPlan& plan) const
+    {
+        if (!plan.rangeChecks.lengthThatArrayMustHold)
+            return false;
+        for (BasicBlock* block : plan.region.blocks) {
+            for (Value* value : *block) {
+                if (isLoopPoll(value) && omitsPoll(plan, value) == OmitsPoll::BehindGuard)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     void copyValue(Version& version, Value* value, BasicBlock* copy, RegionCloner::ValueMap& map, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
+        // Every turn moves the counter, and the fast loop is left before the counter gets to its bound or to the limit of a range check.
+        if (kind == CopyKind::FastLoop && isLoopPoll(value) && omitsPoll(plan, value) != OmitsPoll::No) {
+            m_proc.count(Counter::LoopPollsRemoved);
+            return;
+        }
         if (isReplaced(version, value, kind)) {
             if (value->type() == Void)
                 return;
@@ -275,6 +354,14 @@ private:
                 m_cloner.substitute(map, value, copy->appendNew<Const32Value>(m_proc, value->origin(), outcome->value));
                 return;
             }
+            if (const StridedRangeChecks* strided = plan.rangeChecks.strided.get(); strided && version.numberOfReducedIndicesCopied < strided->numberOfReducedIndices) {
+                const ReducedIndex& reduced = strided->reducedIndices[version.numberOfReducedIndicesCopied];
+                if (reduced.value == value) {
+                    ++version.numberOfReducedIndicesCopied;
+                    m_cloner.substitute(map, value, appendStridedIndexPlus(copy, value->origin(), version.stridedIndexVariables[reduced.checkIndex].variable, copy->appendNew<Const64Value>(m_proc, value->origin(), reduced.offset)));
+                    return;
+                }
+            }
         }
         Value* clone = m_cloner.appendClone(value, copy, map);
         if (!plan.rewritesLoopTest())
@@ -287,17 +374,44 @@ private:
             version.testedCopyInExcursion = clone;
     }
 
+    Value* appendStridedIndexPlus(BasicBlock* block, Origin origin, Variable* variable, Value* addend)
+    {
+        return block->appendNew<Value>(m_proc, Add, origin, block->appendNew<VariableValue>(m_proc, Get, origin, variable), addend);
+    }
+
+    void appendStridedIndexSteps(Version& version, BasicBlock* block)
+    {
+#pragma clang loop unroll(disable)
+        for (auto [variable, stride] : version.stridedIndexVariables) {
+            if (variable)
+                block->appendNew<VariableValue>(m_proc, Set, stride->origin(), variable, appendStridedIndexPlus(block, stride->origin(), variable, stride));
+        }
+    }
+
+    static bool stepsStridedIndices(const LoopVersionPlan& plan, BasicBlock* block)
+    {
+        if (!plan.rangeChecks.strided)
+            return false;
+        if (BasicBlock* stepBlock = plan.rangeChecks.strided->indexStepBlock)
+            return block == stepBlock;
+        return block->last()->opcode() == Jump && block->successorBlock(0) == plan.region.header;
+    }
+
     void fillCopies(Version& version, const Vector<BasicBlock*, 8>& blocks, const RegionCloner::BlockMap& copies, BasicBlock* nextIterationHeader, const RegionCloner::BlockMap* otherCopies, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
+        MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
         for (BasicBlock* block : blocks) {
             BasicBlock* copy = copies.get(block);
+            m_proc.movedLoadLog().didCopy(block, copy);
             Value* terminal = block->last();
             RegionCloner::ValueMap map;
             for (Value* value : *block) {
                 if (value != terminal)
                     copyValue(version, value, copy, map, kind);
             }
+            if (kind == CopyKind::FastLoop && stepsStridedIndices(plan, block))
+                appendStridedIndexSteps(version, copy);
             if (isReplaced(version, terminal, kind)) {
                 copy->appendNew<Value>(m_proc, Jump, terminal->origin());
                 copy->setSuccessors(FrequentedBlock(plan.hoisted.likelySuccessors.get(terminal)));
@@ -336,6 +450,7 @@ private:
         version.front->last()->appendNew<Value>(m_proc, Jump, header->at(0)->origin());
         version.front->last()->setSuccessors(FrequentedBlock(fastHeader));
         if (excursionEnd) {
+            appendStridedIndexSteps(version, excursionEnd);
             excursionEnd->appendNew<Value>(m_proc, Jump, header->at(0)->origin());
             excursionEnd->setSuccessors(FrequentedBlock(fastHeader));
         }
@@ -350,7 +465,7 @@ private:
         const CountedLoop& original = *version.plan.countedLoop;
         CountedLoop fast = original;
         fast.preHeader = version.front->last();
-        fast.start = hoistedValueOrSelf(version, original.start);
+        fast.start = version.start;
         fast.header = version.hotCopies.get(original.header);
         fast.test = version.hotCopies.get(original.test);
         fast.latch = version.hotCopies.get(original.latch);
@@ -412,6 +527,9 @@ private:
     Vector<std::unique_ptr<Version>> m_versions;
     UncheckedKeyHashMap<Variable*, Value*> m_singleDefinitions;
     UncheckedKeyHashMap<Value*, Variable*> m_definitionVariables;
+    IndexSet<Value*> m_valuesThatOnlyPreHeadersName;
+    IndexSet<BasicBlock*> m_blocksOfValuesThatOnlyPreHeadersName;
+    bool m_didStoreValuesThatOnlyPreHeadersName { false };
     IndexSet<BasicBlock*> m_slowPathBlocks;
 };
 
