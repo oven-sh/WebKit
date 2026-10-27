@@ -314,14 +314,15 @@ struct StoredUnderKey {
     ValueSetID valueFromOperations { ValueSets::nothing };
     ValueSetID getters { ValueSets::nothing };
     ValueSetID setters { ValueSets::nothing };
-    bool isStoredAfterCreation { false };
-    bool mayBeAccessor { false };
+    bool isStoredAfterCreation : 1 { false };
+    bool mayBeAccessor : 1 { false };
+    bool isGivenValueByOperation : 1 { false };
+    bool isGivenValueByDefinition : 1 { false };
+    bool isNamedByOperation : 1 { false };
+    bool isStoredByConstructor : 1 { false };
+    bool mayBeOtherThanIntegers : 1 { false };
     uint8_t accessorForms { 0 };
-    bool isGivenValueByOperation { false };
-    bool isGivenValueByDefinition { false };
-    bool isNamedByOperation { false };
-    bool isStoredByConstructor { false };
-    bool mayBeOtherThanIntegers { false };
+    OptionSet<Actor> writers;
     Range integers { Range::empty() };
 
     ValueFlowNumbers numbers() const { return { mayBeOtherThanIntegers, integers }; }
@@ -427,6 +428,8 @@ struct StoresIntoObjects {
     bool isGivenValueByOperationUnderUnknownKey { false };
     ValueSetID gettersUnderUnknownKey { ValueSets::nothing };
     uint8_t formsOfAccessorsUnderUnknownKey { 0 };
+    // Who wrote under a name that nobody lists: an unknown key, an accessor under one, a copy.
+    OptionSet<Actor> writersUnderNamesNobodyLists;
 
     bool getsNameNobodyLists() const { return underUnknownKey != ValueSets::nothing || isStoredUnderIndex || getsAccessorUnderUnknownKey || getsCopiedProperties; }
 };
@@ -450,6 +453,7 @@ public:
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
+    OptionSet<Actor> writersSeenUnder(LayoutID, PropertyKeyID) const;
     bool getsCopiedProperties(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool getsNameNobodyLists(LayoutID) const;
     Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
@@ -518,6 +522,7 @@ private:
         bool leavesOutComputedKey;
         uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
+        OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
 
@@ -580,6 +585,7 @@ private:
     ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;
     void noteWrites();
     void noteWritesInto(ValueSetMaker&, StoresIntoObjects&, LayoutID, const WritesThroughSet&);
+    static void noteWriters(StoresIntoObjects&, const WritesThroughSet&);
     std::span<const uint32_t> sharedStoresOf(LayoutID layout) const LIFETIME_BOUND
     {
         if (m_firstSharedStoresOfLayout.isEmpty())

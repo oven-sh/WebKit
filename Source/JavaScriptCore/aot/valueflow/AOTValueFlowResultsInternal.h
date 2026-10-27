@@ -33,6 +33,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class Ledger;
+class LedgerOfVariables;
+
 FlowResultTables createUnknownResultTables(const Program&, BuildContext&);
 
 struct ValueFlowContainerFacts {
@@ -77,21 +80,6 @@ private:
 
 using ValueFlowClassesOfBuiltinResults = HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-enum class ValueFlowAccessThroughObjectKind : uint8_t {
-    Read,
-    Observation,
-    Store,
-};
-
-struct ValueFlowAccessThroughObject {
-    VariableID variable;
-    FunctionID function;
-    ValueID site;
-    ValueFlowAccessThroughObjectKind kind { ValueFlowAccessThroughObjectKind::Observation };
-
-    friend auto operator<=>(const ValueFlowAccessThroughObject&, const ValueFlowAccessThroughObject&) = default;
-};
-
 constexpr std::optional<uint32_t> indexOfValueStoredIntoProperty(Opcode opcode)
 {
     switch (opcode) {
@@ -107,25 +95,6 @@ constexpr std::optional<uint32_t> indexOfValueStoredIntoProperty(Opcode opcode)
         return std::nullopt;
     }
 }
-
-struct ValueFlowVariablesOnObjects {
-    std::span<const ValueFlowAccessThroughObject> accessesTo(VariableID variable) const LIFETIME_BOUND
-    {
-        auto found = std::ranges::equal_range(accesses, variable, { }, &ValueFlowAccessThroughObject::variable);
-        return { found.begin(), found.end() };
-    }
-
-    Vector<NamespaceUse> namespaceUses;
-    Vector<ValueFlowAccessThroughObject> accesses;
-    BitVector staticFieldsInUnknownHands;
-    BitVector staticFieldsOfEscapedClassObjects;
-    BitVector deletedStaticFields;
-    BitVector redefinedStaticFields;
-    BitVector staticFieldsStoredOtherTypes;
-    BitVector staticFieldsStoredIntegersBehindChecks;
-    BitVector staticFieldsStoredByBuiltins;
-    BitVector classObjectsStoredUnderStaticFieldsAlone;
-};
 
 struct ValueFlowNumbers {
     static constexpr ValueFlowNumbers any() { return { true, Range::full() }; }
@@ -181,6 +150,7 @@ struct ValueFlowLayoutsOfSites;
 class ValueFlowHeapIndex;
 class ValueFlowHeapView;
 class ValueFlowNodesAskedFor;
+class LedgerOfClassesAndClosures;
 
 using ValueFlowKindsOfMadeNodes = uint16_t;
 constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<ValueFlowMadeNodeKind> kinds)
@@ -191,18 +161,14 @@ constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<Value
     return bits;
 }
 
-// What a function holds under `prototype` is the prototype of what it constructs, and counts as one from the store on.
-struct ValueFlowPrototypes {
-    ValueSetID objects { ValueSets::nothing };
-    ValueSetID functionsWithNonObjectPrototype { ValueSets::nothing };
-};
-
 struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
     BuildContext& build;
     const ValueFlowNumbersOfValues* numbersOfValues { nullptr };
-    const ValueFlowVariablesOnObjects* variablesOnObjects { nullptr };
+    const Ledger* ledger { nullptr };
+    const LedgerOfVariables* ledgerOfVariables { nullptr };
+    const BitVector* functionsNamedByUnsolvedCode { nullptr };
     const ValueFlowContainerResults* containers { nullptr };
     const BitVector* symbolsCreatedOnce { nullptr };
     const ValueFlowClassesOfBuiltinResults* classesOfBuiltinResults { nullptr };
@@ -212,7 +178,7 @@ struct ValueFlowResultInputs {
     const ValueFlowLayoutsOfSites* layoutsOfSites { nullptr };
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
-    const ValueFlowPrototypes* prototypes { nullptr };
+    const LedgerOfClassesAndClosures* classesAndClosures { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
     const ValueFlowUniverse& universe() const { return solution.bodies().universe(); }
@@ -228,7 +194,6 @@ struct ValueFlowResultInputs {
     bool isLost(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(ValueFlowProgramNodes::lost()), object); }
     bool isHeldByNativeCode(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)), object); }
     // Of an object that has neither escaped nor is lost.
-    bool mayBecomePrototype(ValueFlowObjectID object) const { return sets().contains(prototypes->objects, object); }
 
     bool isLayoutOfDictionaries(LayoutID layout) const { return layoutsOfDictionaries && layout && layoutsOfDictionaries->get(layout.index()); }
     bool isDictionary(ValueFlowObjectID object) const { return layoutsOfDictionaries && isLayoutOfDictionaries(universe().layoutOf(object)); }
@@ -901,26 +866,13 @@ struct ValueFlowWriteUnderNewName {
 Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&);
 void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUsesOfHeap&, FlowBuiltinTables&);
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
-ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&);
+ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&, const ValueFlowHeapIndex&);
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
-ValueFlowPrototypes findPrototypes(const ValueFlowResultInputs&);
 void computeFunctionResults(const ValueFlowResultInputs&, ValueFlowStampedCalls&, FlowResultTables&);
 void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
 void reportOperationsWithoutValue(const ValueFlowResultInputs&);
 void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
-struct ValueFlowAccessesThroughObjects;
-struct ValueFlowAccessesThroughObjectsDeleter {
-    void operator()(ValueFlowAccessesThroughObjects*) const;
-};
-std::unique_ptr<ValueFlowAccessesThroughObjects, ValueFlowAccessesThroughObjectsDeleter> collectAccessesThroughObjects(const ValueFlowResultInputs&, const ValueFlowStampedCalls&);
-ValueFlowVariablesOnObjects computeVariablesOnObjects(const ValueFlowResultInputs&, ValueFlowAccessesThroughObjects&, const ValueFlowUsesOfHeap&);
-struct ValueFlowOperationsOnLocations;
-struct ValueFlowOperationsOnLocationsDeleter {
-    void operator()(ValueFlowOperationsOnLocations*) const;
-};
-std::unique_ptr<ValueFlowOperationsOnLocations, ValueFlowOperationsOnLocationsDeleter> noteOperationsOnLocations(const ValueFlowResultInputs&, const FlowResultTables&);
-void computeLocationResults(const ValueFlowResultInputs&, ValueFlowOperationsOnLocations&, FlowResultTables&);
 void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);

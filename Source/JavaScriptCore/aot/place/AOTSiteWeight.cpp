@@ -24,7 +24,7 @@ static double activationsThatCount(const Program& program, const Heat& heat, Fun
 
 FunctionSiteWeights::FunctionSiteWeights(const Program& program, const Heat& heat, FunctionID function, FunctionAnalyses& analyses)
     : m_activations(activationsThatCount(program, heat, function))
-    , m_isLeastInEveryBlock(quantizeHeat(m_activations, frequencyConstants.maxFrequency) == minSiteWeight)
+    , m_isLeastInEveryBlock(quantizeHeat(m_activations, frequencyConstants.maxFrequency).isSamePredictionAs(minSiteWeight))
     , m_analyses(analyses)
 {
 }
@@ -36,18 +36,18 @@ SiteWeight FunctionSiteWeights::weightOf(BlockID block) const
     return quantizeHeat(m_activations, m_analyses.blockFrequencies().frequencyOf(block).predicted());
 }
 
-double FunctionSiteWeights::heatOf(BlockID block) const
+SiteHeat FunctionSiteWeights::heatOf(BlockID block) const
 {
-    constexpr double leastHeat = static_cast<double>(minSiteWeight) / (1u << siteWeightFractionBits);
+    constexpr double leastHeat = static_cast<double>(minSiteWeight.predicted()) / (1u << siteWeightFractionBits);
     if (!(m_activations * frequencyConstants.maxFrequency >= leastHeat))
         return leastHeat;
     double heat = m_activations * m_analyses.blockFrequencies().frequencyOf(block).predicted();
     return heat >= leastHeat ? heat : leastHeat;
 }
 
-bool FunctionSiteWeights::isInLoop(BlockID block) const
+Expected<bool> FunctionSiteWeights::isInLoop(BlockID block) const
 {
-    return m_analyses.blockFrequencies().frequencyOf(block).predicted() > 1;
+    return m_analyses.blockFrequencies().frequencyOf(block) > 1.0;
 }
 
 } } } // namespace JSC::AOT::Typed

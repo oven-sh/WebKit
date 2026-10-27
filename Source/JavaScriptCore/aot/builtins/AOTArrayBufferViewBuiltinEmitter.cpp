@@ -96,8 +96,8 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCal
 {
     BuiltinClassID constructedClass = m_builtins.at(m_builtins.at(call.overload()).builtin).instanceClass;
     RELEASE_ASSERT(constructedClass);
-    TypedArrayType type = m_builtins.at(constructedClass).typedArrayType;
-    RELEASE_ASSERT(isTypedView(type));
+    TypedArrayType type = m_builtins.typedArrayTypeOf(constructedClass);
+    RELEASE_ASSERT(isTypedView(type) && m_builtins.typedArrayClassOf(constructedClass) == constructedClass);
     StubCallResult view = callStub(call.context(), newTypedArray(), { word32(type).value(), numberOperand(call.argument(0)).value() }, { .calledBuiltin = functionOf(call.overload()) });
     finish(call, CellPointer(view.first));
 }

@@ -100,6 +100,8 @@ const functionKind = (name: string, pristineTest: "Mark" | "ClosureAsCreated" = 
     pristineTest,
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
+    // As for Function: the compiler follows no function made from text.
+    namesDefinedOnNewInstances: [],
     usesFeature: "Interpreter",
     nativeSymbols: [`call${name}Constructor`, `construct${name}Constructor`],
     call: fromText,

@@ -202,7 +202,7 @@ static std::span<const uint32_t> fieldsListedBy(const Value& allocation)
     return Value::opcodesWithFields.contains(allocation.opcode) ? allocation.fields() : std::span<const uint32_t>();
 }
 
-static bool allocationImplies(const Program& program, const Value& allocation, const Value& impliedAllocation, Proof proof)
+static bool allocationImplies(const Program& program, const Function& function, const Value& allocation, const Value& impliedAllocation, Proof proof)
 {
     switch (proof) {
     case Proof::Shape:
@@ -221,7 +221,7 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
     case Proof::Pristine:
         return program.at(allocation.type).singleBuiltinClass()->builtinClass == program.at(impliedAllocation.type).singleBuiltinClass()->builtinClass;
     case Proof::ArrayStorage:
-        return program.at(allocation.type).singleBuiltinClass()->arrayStorage == program.at(impliedAllocation.type).singleBuiltinClass()->arrayStorage;
+        return arrayStorageOfNewArray(program, function, allocation) == arrayStorageOfNewArray(program, function, impliedAllocation) && (allocatesWritableStorage(function, allocation) || !allocatesWritableStorage(function, impliedAllocation));
     case Proof::None:
     case Proof::TestedType:
     case Proof::Truthiness:
@@ -257,7 +257,7 @@ bool GuardAvailability::originImplies(const GuardOrigin& origin, const GuardOrig
         return false;
     case GuardSource::Allocation:
         return origin.source == GuardSource::Allocation && std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
-            return !proofs.contains(proof) || allocationImplies(program, m_function.at(origin.test), m_function.at(implied.test), proof);
+            return !proofs.contains(proof) || allocationImplies(program, m_function, m_function.at(origin.test), m_function.at(implied.test), proof);
         });
     }
 

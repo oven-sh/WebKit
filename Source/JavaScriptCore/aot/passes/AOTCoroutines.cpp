@@ -163,7 +163,7 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
     plan.didNarrowResult = declared.isExpected() || !types.at(declared.written()).isSubsetOf(types.at(plan.allocatedType), context.program);
     if (plan.didNarrowResult) {
         TypeID met = types.intersectionOf(plan.allocatedType, declared.expected().predicted());
-        declared.establish(Proven::byConstruction(met == TypeTable::never ? plan.allocatedType : met));
+        declared.establish(Proven::byConstruction(met != TypeTable::never && types.at(met).isSubsetOf(types.at(plan.allocatedType), context.program) ? met : plan.allocatedType));
     }
 
     // A ramp is built before its body exists, so the result type of this call cannot come from the callee. A worker takes no driver.
@@ -930,7 +930,7 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
         for (ValueID id : staleCalls[index].calls) {
             Value& call = caller.edit(id);
             call.type = resultTypeOf(program, caller, call, arenas.types);
-            call.setExpected(ExpectedType(expectedTypeOf(program, caller, call, arenas.types)));
+            call.setExpected(expectedTypeOf(program, caller, call, arenas.types));
         }
     });
 }

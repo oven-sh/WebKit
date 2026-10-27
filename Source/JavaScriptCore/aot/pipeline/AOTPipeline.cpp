@@ -51,6 +51,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
+#include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
 #include "AOTPromoteEnvironmentsToVariables.h"
 #include "AOTReadCapturesFromEnvironments.h"
@@ -1472,6 +1473,96 @@ static void forgetLongExpectations(Program& program, BuildContext& build)
         expectations.forget(variable.declared);
 }
 
+// Whether a parameter that is tested at the entrance goes into a position as it is: the front end hands it on to a capture or a result of its own type without a conversion.
+static bool storesTestedParameter(const Function& function)
+{
+    Vector<ValueID, 8> tests;
+    for (size_t index = 0; index < function.values.size(); ++index) {
+        if (function.values[index].opcode == Opcode::Convert && function.values[index].illTypedCause() == IllTypedCause::UnseenCaller)
+            tests.append(ValueID(static_cast<uint32_t>(index)));
+    }
+    if (tests.isEmpty())
+        return false;
+    BitVector isTestedParameter = valuesThatAre(function, CFG(function), tests.span());
+    bool result = false;
+    auto look = [&](const auto& user) {
+        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            result |= isTestedParameter.get(operand.index()) && user.operandKind(operandIndex) == OperandKind::Declared;
+        });
+    };
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values)
+            look(function.at(id));
+        look(block.terminator);
+    }
+    return result;
+}
+
+// An expected type decides which test is worth making and never what is right, so a program means the same under any expected types.
+// TestingSwitch::ShuffleExpectedTypes gives every expected position and conversion of the program's own code another of the types that are expected somewhere in it, drawn from the seed and the number of its type.
+// So does the test of a parameter at the entrance: to the function every caller then hands over a value of another type than it says.
+static void shuffleExpectedTypes(Program& program, BuildContext& build)
+{
+    if (!build.recordedOptions().has(TestingSwitch::ShuffleExpectedTypes)) [[likely]]
+        return;
+
+    auto isShuffled = [&](const DeclaredType& declared, bool isTestAtEntrance = false) {
+        if ((!declared.isExpected() && !isTestAtEntrance) || !declared.written() || declared.has(PositionFlags::IsInt32Promise))
+            return false;
+        const Type& type = program.at(declared.written());
+        // That a value is an int32 where the program promises one is shown at build time, from what is expected of the other int32s, and a build is refused where it cannot be shown.
+        return type.isJavaScriptValue() && !(type.primitives & Primitive::Absent) && !type.isNever() && !type.isAnything() && !type.isInt32OrNullish();
+    };
+    auto forEachExpectation = [&](const Invocable<bool(DeclaredType&, bool isTestAtEntrance)> auto& functor) {
+        for (Function& function : program.functions) {
+            if (function.role == FunctionRole::Library)
+                continue;
+            for (DeclaredType& declared : function.parameters)
+                functor(declared, false);
+            for (DeclaredType& declared : function.results)
+                functor(declared, false);
+            bool shufflesTestsAtEntrance = !storesTestedParameter(function);
+            for (Value& value : function.editAllValues()) {
+                if (value.opcode != Opcode::Convert)
+                    continue;
+                DeclaredType declared = value.declared();
+                if (functor(declared, shufflesTestsAtEntrance && value.illTypedCause() == IllTypedCause::UnseenCaller))
+                    value.setDeclared(declared);
+            }
+        }
+        for (Layout& layout : program.layouts) {
+            if (layout.module && program.at(layout.module).flags.contains(ModuleFlags::IsLibrary))
+                continue;
+            for (Field& field : layout.fields)
+                functor(field.declared, false);
+        }
+        for (Variable& variable : program.variables)
+            functor(variable.declared, false);
+    };
+
+    BitVector isExpectedSomewhere(program.types.size());
+    forEachExpectation([&](DeclaredType& declared, bool isTestAtEntrance) {
+        if (isShuffled(declared, isTestAtEntrance))
+            isExpectedSomewhere.set(declared.written().index());
+        return false;
+    });
+    Vector<TypeID> drawn;
+    for (size_t index : isExpectedSomewhere)
+        drawn.append(TypeID(static_cast<uint32_t>(index)));
+    if (drawn.size() < 2)
+        return;
+    uint32_t seed = build.recordedOptions().layoutSeed;
+    forEachExpectation([&](DeclaredType& declared, bool isTestAtEntrance) {
+        if (!isShuffled(declared, isTestAtEntrance))
+            return false;
+        // Always another one.
+        size_t own = std::ranges::lower_bound(drawn, declared.written(), { }, [](TypeID type) { return type; }) - drawn.begin();
+        size_t steps = 1 + WTF::pairIntHash(seed, declared.written().index()) % (drawn.size() - 1);
+        declared.changeType(Proven::byConversion(ExpectedType(drawn[(own + steps) % drawn.size()])));
+        return true;
+    });
+}
+
 void Pipeline::runReadStage()
 {
     TimedStage stage(*this, Stage::ReadAndVerify);
@@ -1481,6 +1572,7 @@ void Pipeline::runReadStage()
     stage.run(PassID::CopyClosureFactories);
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
+    shuffleExpectedTypes(m_program, m_build);
     markEnforcedFields(m_program, m_build);
     stage.run(FunctionSchedule::Type);
     stage.run(PassID::NarrowFieldTypes);
@@ -1530,9 +1622,6 @@ void Pipeline::runOptimizeStage()
     m_analyses.estimateHeatFor(HeatFor::Everything);
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
-    Vector<InternalError> functionsThatEndInFirstBlock;
-    if (m_build.options().checksThatFunctionsGetPastEntry && !m_runner.isStopped())
-        functionsThatEndInFirstBlock = findFunctionsThatEndInFirstBlock(m_program, findReachableFunctions(m_program, m_analyses.callGraph(flow()), m_build), m_build);
     stage.run(FunctionSchedule::Optimize);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
@@ -1544,8 +1633,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);
-    if (!m_runner.isStopped())
-        reportFunctionsThatEndInFirstBlock(m_program, WTF::move(functionsThatEndInFirstBlock), m_build);
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);

@@ -7,96 +7,22 @@
 
 #if ENABLE(AOT)
 
-#include "AOTExpected.h"
+#include "AOTLedgerEntries.h"
 #include "AOTPlaces.h"
-#include "AOTTypeKinds.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsInternal.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class WriteForm : uint8_t { AtCreation, Store, Define, DefineAccessor, Delete, Link, Freeze };
-enum class ReadForm : uint8_t { AsValue, AsCallee, Test };
-
-// `by` is the statement of flow that wrote, where there is one. An operation that flows without a rule has none: function and site name it.
-struct Write {
-    Actor actor { Actor::Statements };
-    WriteForm form { WriteForm::Store };
-    ValueFlowStatementID by;
-    ValueSetID arrives;
-    FunctionID function;
-    ValueID site;
-};
-
-struct Read {
-    Actor actor { Actor::Statements };
-    ReadForm form { ReadForm::AsValue };
-    ValueFlowStatementID by;
-    FunctionID function;
-    ValueID site;
-};
-
-struct Reach {
-    Actor actor { Actor::Statements };
-    ValueFlowNodeID position;
-};
-
-// What was seen, and who has not accounted for the place. A list is closed only by signatures: nobody's silence closes it.
-template<typename Entry>
-class AccountOf {
-public:
-    AccountOf(std::span<const Entry> seen, OptionSet<Actor> open)
-        : m_seen(seen)
-        , m_open(open)
-    {
-    }
-
-    std::optional<ProvenValue<std::span<const Entry>>> all() const { return m_open.isEmpty() ? std::optional(Proven::byClosedSet(m_seen)) : std::nullopt; }
-    Expected<std::span<const Entry>> seen() const { return m_seen; }
-    OptionSet<Actor> open() const { return m_open; }
-
-private:
-    std::span<const Entry> m_seen;
-    OptionSet<Actor> m_open;
-};
-
-using Writers = AccountOf<Write>;
-using Readers = AccountOf<Read>;
-using Reachers = AccountOf<Reach>;
-
-constexpr UnprovenCause causeOf(OptionSet<Actor> open)
-{
-    for (Actor actor : { Actor::UnseenCode, Actor::NativeCode, Actor::Table, Actor::ReceiversNobodyKnows, Actor::KeysNobodyKnows, Actor::Loader, Actor::Creation, Actor::Statements }) {
-        if (!open.contains(actor))
-            continue;
-        switch (actor) {
-        case Actor::UnseenCode:
-            return UnprovenCause::UnseenCode;
-        case Actor::NativeCode:
-        case Actor::Table:
-            return UnprovenCause::ReachesNativeCode;
-        case Actor::ReceiversNobodyKnows:
-            return UnprovenCause::UnknownObject;
-        case Actor::KeysNobodyKnows:
-            return UnprovenCause::UnknownKeyStore;
-        case Actor::Loader:
-        case Actor::Creation:
-        case Actor::Statements:
-            return UnprovenCause::UnknownWriter;
-        }
-    }
-    return UnprovenCause::Unknown;
-}
-
-// The actor of a write is a function of the statement that asked for the written node, of the objects it writes through and of the name it writes under.
-inline Actor actorOf(const ValueFlowResultInputs& inputs, const ValueFlowStatement& statement, ValueSetID writtenThrough, ValueFlowName name)
+// The actor of a write is a function of the statement that asked for the written node, of the name it writes under, and of whether the statement lists the object or reaches it through one that stands for others.
+inline Actor actorOf(const ValueFlowStatement& statement, ValueFlowName name, bool receiverIsListed)
 {
     switch (statement.kind) {
     case ValueFlowStatementKind::Operation:
     case ValueFlowStatementKind::Lookup:
     case ValueFlowStatementKind::CallGroup:
     case ValueFlowStatementKind::Coroutine:
-        if (ValueSets::isComplement(writtenThrough) || inputs.sets().meet(writtenThrough, inputs.universe().placeholdersAlone()))
+        if (!receiverIsListed)
             return Actor::ReceiversNobodyKnows;
         if (shapeOf(name.kind).reach == ValueFlowNameReach::UnknownKey || shapeOf(name.kind).sort == ValueFlowNameSort::Copy)
             return Actor::KeysNobodyKnows;
@@ -115,6 +41,11 @@ inline Actor actorOf(const ValueFlowResultInputs& inputs, const ValueFlowStateme
         return Actor::UnseenCode;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline Actor actorOf(const ValueFlowResultInputs& inputs, const ValueFlowStatement& statement, ValueSetID writtenThrough, ValueFlowName name)
+{
+    return actorOf(statement, name, !ValueSets::isComplement(writtenThrough) && !inputs.sets().meet(writtenThrough, inputs.universe().placeholdersAlone()));
 }
 
 inline WriteForm formOf(const ValueFlowStatement& statement, ValueFlowName name)
@@ -139,6 +70,7 @@ inline WriteForm formOf(const ValueFlowStatement& statement, ValueFlowName name)
 
 // THE ONE RELATION, asked of one object: the actors that have not accounted for it. An object that no claim takes out is open.
 // Statements, KeysNobodyKnows and ReceiversNobodyKnows are seen writes: the solve has listed each of them, so they are open on nothing but the two objects that stand for others.
+// A part that does not follow a write through one of the two to the objects that it stands for says so itself.
 inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
     if (ValueFlowResultInputs::isPlaceholder(object))
@@ -149,9 +81,12 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
     OptionSet<ObjectMutation> marked = markedMutationsOf(inputs, object);
     OptionSet<Actor> open;
 
-    if (marked.contains(ObjectMutation::ReachUnknownJavaScript) || inputs.isLost(object))
+    if (marked.contains(ObjectMutation::ReachUnknownJavaScript))
         open.add(Actor::UnseenCode);
-    if (inputs.isHeldByNativeCode(object) || !inputs.sets().contains(tables.objectsWithoutPropertiesOfNativeCode(), object))
+    if (FunctionID function = universe.closureFunction(object); function && (!inputs.functionsNamedByUnsolvedCode || inputs.functionsNamedByUnsolvedCode->get(function.index())))
+        open.add(Actor::UnseenCode);
+    bool isMadeWithoutNativeCode = universe.kindOf(object) == ValueFlowObjectKind::Namespace || inputs.sets().contains(tables.objectsWithoutPropertiesOfNativeCode(), object);
+    if (inputs.isHeldByNativeCode(object) || !isMadeWithoutNativeCode)
         open.add(Actor::NativeCode);
 
     switch (universe.kindOf(object)) {
@@ -164,9 +99,6 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
     case ValueFlowObjectKind::CoroutineResult:
         open.add({ Actor::Table, Actor::Creation });
         break;
-    case ValueFlowObjectKind::Namespace:
-        open.remove(Actor::NativeCode);
-        break;
     case ValueFlowObjectKind::Site:
         switch (universe.siteOf(object)->origin) {
         case ValueFlowSiteOrigin::Operation:
@@ -178,6 +110,7 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
             break;
         }
         break;
+    case ValueFlowObjectKind::Namespace:
     case ValueFlowObjectKind::Closure:
     case ValueFlowObjectKind::RestArray:
     case ValueFlowObjectKind::FunctionPrototype:

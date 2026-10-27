@@ -66,7 +66,7 @@ void followTypes(const Program& program, ValueFlowTypedResult& result)
             isNamed.set(index);
             for (const Field& field : program.at(layout).fields) {
                 if (field.key)
-                    visit(expectationOf(field.declared));
+                    visit(expectationOf(field.declared).predicted());
             }
         }
     }
@@ -207,7 +207,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         if (type.primitives & Primitive::AnySymbol)
             members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
 
-        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && program.at(type.layouts).mayHoldObjectsWithoutLayout());
+        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty();
         std::span<const LayoutID> layoutsOfType = membersOf(program, type);
         for (size_t index = 0; index < result.layouts.size() && !layoutsOfType.empty(); ++index) {
             if (std::ranges::binary_search(layoutsOfType, result.layouts[index]))
@@ -228,7 +228,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     };
     auto fillField = [&](ClimbingSet object, const Field& field) {
         ValueFlowNodeID node = context.written(object, ValueFlowName::property(program, field.key));
-        context.add(node, valueOf(expectationOf(field.declared)));
+        context.add(node, valueOf(expectationOf(field.declared).predicted()));
         if (!field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined)
             context.add(node, universe.undefinedValue());
     };

@@ -55,7 +55,7 @@ struct StoreByNameUse {
 
     PropertyKeyID key;
     LayoutSetID receivers;
-    double heat { 0 };
+    SiteHeat heat { 0 };
 };
 
 struct StoreOfUndefined {
@@ -71,7 +71,7 @@ struct FillBesideCreation {
     FunctionID maker;
     PropertyKeyID key;
     bool storesUndefined { false };
-    double heat { 0 };
+    SiteHeat heat { 0 };
 };
 
 struct SourceOfResult {
@@ -90,8 +90,8 @@ struct KeysStoredTogether {
 
 struct SlotUseCreation {
     LayoutID layout;
-    double heat { 0 };
-    bool isInLoop { false };
+    SiteHeat heat { 0 };
+    Expected<bool> isInLoop { false };
 };
 
 // `{ ...defaults, ...given }`, `const { secret, ...visible } = record`.
@@ -99,7 +99,7 @@ struct CopyIntoNewObject {
     LayoutID target;
     LayoutSetID sources;
     std::span<const PropertyKeyID> excludedKeys;
-    double heat { 0 };
+    SiteHeat heat { 0 };
 };
 
 struct SlotUseFreshObject {
@@ -113,10 +113,10 @@ struct SlotUseFreshObject {
 struct FunctionUses {
     FunctionID function;
     Vector<SlotUseCreation> creations;
-    Vector<std::pair<LayoutID, double>> placesThatMake;
+    Vector<std::pair<LayoutID, SiteHeat>> placesThatMake;
     Vector<FunctionID> functionsCalledByName;
     Vector<FunctionID> functionsCalledByNameInLoops;
-    Vector<std::pair<SlotRow, double>> fills;
+    Vector<std::pair<SlotRow, SiteHeat>> fills;
     Vector<FillBesideCreation> fillsBesideCreation;
     Vector<CopyIntoNewObject> copiesIntoNewObjects;
     Vector<SourceOfResult, 1> sourcesOfResult;
@@ -331,7 +331,7 @@ static Vector<Vector<ObjectUnderConstruction, 1>> findObjectsUnderConstruction(c
 // Equal accesses are added up in the order of their heat, so that the sum does not depend on who found which.
 static bool accessIsOrderedBefore(const SlotAccessUse& a, const SlotAccessUse& b)
 {
-    return a.access != b.access ? a.access < b.access : a.fillHeat < b.fillHeat;
+    return a.access != b.access ? a.access < b.access : (a.fillHeat < b.fillHeat).predicted();
 }
 
 static void foldEqualAccesses(Vector<SlotAccessUse>& sorted)
@@ -526,7 +526,7 @@ private:
         bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
         if (callee == m_id && call.isConstruction() && !isClassConstructor)
             return;
-        (m_weights.isInLoop(block) ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
+        (m_weights.isInLoop(block).predicted() ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
     }
 
     void scanSlotAccess(BlockID block, const Value& value)
@@ -559,7 +559,7 @@ private:
             return;
         LastStore last = std::exchange(result.iterator->value, current);
         if (last.receivers == current.receivers && last.key != current.key)
-            m_uses.keysStoredTogether.append({ std::min(last.key, current.key), std::max(last.key, current.key), current.receivers, std::min(last.weight, weight) });
+            m_uses.keysStoredTogether.append({ std::min(last.key, current.key), std::max(last.key, current.key), current.receivers, lesserOf(last.weight, weight) });
     }
 
     void scanStoreByName(BlockID block, const Value& store)
@@ -622,7 +622,7 @@ private:
         const Value& target = m_function.at(rootOf(copy.targetOperand()));
         if (target.opcode != Opcode::NewObject || !m_inputs.context.isCompiledObject(target.layout()))
             return;
-        m_uses.copiesIntoNewObjects.append({ target.layout(), m_program.expectedOrTypeOf(m_function, copy.sourceOperand()).layouts, copy.excludedKeys(), m_weights.heatOf(block) });
+        m_uses.copiesIntoNewObjects.append({ target.layout(), m_program.expectedOrTypeOf(m_function, copy.sourceOperand()).predicted().layouts, copy.excludedKeys(), m_weights.heatOf(block) });
     }
 
     void scanAllocation(BlockID block, const Value& allocation)
@@ -741,7 +741,7 @@ static Vector<StoreByNameUse> mergeStoresByName(const ParallelLoops& loops, std:
 {
     Vector<StoreByNameUse> stores = listsOfAll(functions, &FunctionUses::storesByName);
     parallelSort(loops, stores.mutableSpan(), [](const StoreByNameUse& a, const StoreByNameUse& b) {
-        return std::tuple(a.key, a.receivers, a.heat) < std::tuple(b.key, b.receivers, b.heat);
+        return std::tuple(a.key, a.receivers, a.heat.predicted()) < std::tuple(b.key, b.receivers, b.heat.predicted());
     });
     foldEntriesOfOnePlace(stores, std::mem_fn(&StoreByNameUse::place), [](StoreByNameUse& folded, const StoreByNameUse& store) {
         folded.heat += store.heat;
@@ -788,7 +788,7 @@ static void findRowsStoredTogether(const SlotPlanContext& context, std::span<con
     });
     foldEntriesOfOnePlace(rows, placeOf, addWeight);
     parallelSort(loops, rows.mutableSpan(), [&](const RowsStoredTogether& a, const RowsStoredTogether& b) {
-        return a.weight != b.weight ? a.weight > b.weight : placeOf(a) < placeOf(b);
+        return !a.weight.isSamePredictionAs(b.weight) ? (a.weight > b.weight).predicted() : placeOf(a) < placeOf(b);
     });
 }
 
@@ -817,17 +817,17 @@ static void markFunctionsWhoseNewClosuresAreStoredInto(std::span<const FunctionU
     }
 }
 
-static void distributeFillHeat(const SlotPlanContext& context, SlotUses& uses, PropertyKeyID key, LayoutSetID receivers, double heat)
+static void distributeFillHeat(const SlotPlanContext& context, SlotUses& uses, PropertyKeyID key, LayoutSetID receivers, SiteHeat heat)
 {
-    if (!heat)
+    if (!heat.predicted())
         return;
-    Vector<std::pair<SlotRow, double>, 8> holders;
-    double made = 0;
+    Vector<std::pair<SlotRow, SiteHeat>, 8> holders;
+    SiteHeat made = 0;
     context.forEachHolder(key, receivers, [&](LayoutID member, SlotRow row) {
         holders.append({ row, uses.layouts[member.index()].creationHeat });
         made += holders.last().second;
     });
-    if (!made)
+    if (!made.predicted())
         return;
     for (auto [row, madeOfHolder] : holders)
         uses.rows[row].fillHeat += heat * (madeOfHolder / made);
@@ -905,8 +905,8 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
 static void countStoresOfFactories(const SlotPlanContext& context, std::span<const FunctionUses> functions, SlotUses& uses)
 {
     const Program& program = context.program;
-    Vector<double> heatOfPlacesThatMake(FillWith { }, program.layouts.size(), 0.0);
-    Vector<double> heatOfPlacesThatFill(FillWith { }, uses.rows.size(), 0.0);
+    Vector<SiteHeat> heatOfPlacesThatMake(FillWith { }, program.layouts.size(), 0.0);
+    Vector<SiteHeat> heatOfPlacesThatFill(FillWith { }, uses.rows.size(), 0.0);
     for (const FunctionUses& function : functions) {
         for (auto [layout, heat] : function.placesThatMake)
             heatOfPlacesThatMake[layout.index()] += heat;
@@ -918,11 +918,11 @@ static void countStoresOfFactories(const SlotPlanContext& context, std::span<con
     }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID layout(index);
-        if (!heatOfPlacesThatMake[index] || !context.isCompiledObject(layout))
+        if (!heatOfPlacesThatMake[index].predicted() || !context.isCompiledObject(layout))
             continue;
         for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(layout); ++field) {
             SlotRow row = context.rows.rowOf(layout, field);
-            if (heatOfPlacesThatFill[row] * 2 >= heatOfPlacesThatMake[index])
+            if ((heatOfPlacesThatFill[row] * 2 >= heatOfPlacesThatMake[index]).predicted())
                 ++uses.rows[row].storesOfConstructorWithValue;
         }
     }
@@ -935,7 +935,7 @@ static void addUpCreations(const SlotPlanContext& context, std::span<const Funct
         for (const SlotUseCreation& creation : function.creations) {
             LayoutUse& use = uses.layouts[creation.layout.index()];
             use.creationHeat += creation.heat;
-            use.isMadeInLoop |= creation.isInLoop || runsInLoop.quickGet(function.function.index());
+            use.isMadeInLoop |= creation.isInLoop.predicted() || runsInLoop.quickGet(function.function.index());
         }
     }
 }
@@ -996,19 +996,19 @@ static void distributeCopies(const SlotPlanContext& context, SlotUses& uses, std
 
     // A source may itself be put together from copies.
     BitVector rowsFilledByCopies(uses.rows.size());
-    Vector<double> heatOfCopies(uses.rows.size());
+    Vector<SiteHeat> heatOfCopies(uses.rows.size());
     for (unsigned round = 0; round < mostRoundsOverCopies; ++round) {
-        heatOfCopies.fill(0.0);
+        heatOfCopies.fill(SiteHeat(0.0));
         for (const FunctionUses& function : functions) {
             for (const CopyIntoNewObject& copy : function.copiesIntoNewObjects) {
                 auto allSources = copy.sources ? program.at(copy.sources).all() : std::nullopt;
                 if (!allSources)
                     continue;
                 std::span<const LayoutID> sources = *allSources;
-                double made = 0;
+                SiteHeat made = 0;
                 for (LayoutID source : sources)
                     made += uses.layouts[source.index()].creationHeat;
-                bool knowsSources = made && sources.size() <= mostSourcesLookedAt && std::ranges::all_of(sources, [&](LayoutID source) {
+                bool knowsSources = made.predicted() && sources.size() <= mostSourcesLookedAt && std::ranges::all_of(sources, [&](LayoutID source) {
                     return context.isCompiledObject(source);
                 });
                 if (!knowsSources)
@@ -1017,14 +1017,14 @@ static void distributeCopies(const SlotPlanContext& context, SlotUses& uses, std
                     PropertyKeyID key = program.at(copy.target).fields[field].key;
                     if (!key || std::ranges::contains(copy.excludedKeys, key))
                         continue;
-                    double filled = 0;
+                    SiteHeat filled = 0;
                     for (LayoutID source : sources) {
                         std::optional<uint32_t> fieldOfSource = program.at(source).findField(key);
                         if (!fieldOfSource)
                             continue;
                         SlotRow rowOfSource = context.rows.rowOf(source, *fieldOfSource);
-                        double madeOfSource = uses.layouts[source.index()].creationHeat;
-                        filled += rowsFilledByCopies.quickGet(rowOfSource) ? madeOfSource : std::min(madeOfSource, uses.rows[rowOfSource].fillHeat);
+                        SiteHeat madeOfSource = uses.layouts[source.index()].creationHeat;
+                        filled += rowsFilledByCopies.quickGet(rowOfSource) ? madeOfSource : lesserOf(madeOfSource, uses.rows[rowOfSource].fillHeat);
                     }
                     heatOfCopies[context.rows.rowOf(copy.target, field)] += copy.heat * (filled / made);
                 }
@@ -1032,7 +1032,7 @@ static void distributeCopies(const SlotPlanContext& context, SlotUses& uses, std
         }
         bool hasChanged = false;
         for (size_t row = 0; row < heatOfCopies.size(); ++row) {
-            if (heatOfCopies[row] && heatOfCopies[row] >= uses.rows[row].holderHeat * 0.4999)
+            if (heatOfCopies[row].predicted() && (heatOfCopies[row] >= uses.rows[row].holderHeat * 0.4999).predicted())
                 hasChanged |= !rowsFilledByCopies.quickSet(row);
         }
         if (!hasChanged)
@@ -1071,7 +1071,7 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
     distributeCopies(context, uses, functions);
     forEachIndexInParallel(loops, rows.size(), [&](unsigned row) {
         SlotRowUse& use = rows[row];
-        if (use.heatFilledBesideCreation && use.heatFilledBesideCreation >= use.holderHeat * 0.4999 && use.heatFilledBesideCreation <= use.holderHeat * 2)
+        if (use.heatFilledBesideCreation.predicted() && (use.heatFilledBesideCreation >= use.holderHeat * 0.4999).predicted() && (use.heatFilledBesideCreation <= use.holderHeat * 2).predicted())
             ++use.storesOfConstructorWithValue;
     });
     forEachIndexInParallel(loops, storesOfUndefined.size(), [&](unsigned index) {
@@ -1083,6 +1083,7 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
     forEachIndexInParallel(loops, uses.accesses.size(), [&](unsigned index) {
         const SlotAccessUse& use = uses.accesses[index];
         context.forEachHolder(use.access.key, use.access.receivers, [&](LayoutID, SlotRow row) {
+            add(rows[row].accessSites, use.sites);
             addSaturated(rows[row].accessWeight, use.weight);
             add(rows[row].storesWithoutAllocation, use.storesWithoutAllocation);
             add(rows[row].storesIntoFilledSlots, use.storesIntoFilledSlots);

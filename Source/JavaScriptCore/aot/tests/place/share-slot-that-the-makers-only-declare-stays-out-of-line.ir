@@ -96,4 +96,4 @@ function f3 name="Alone" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
 # CHECK: "original" OptionalCell32 out@8
 # CHECK: L4 CompiledObject
 # CHECK-NEXT: .0 "parent" OptionalCell32 @
-# CHECK-NEXT: .1 "original" OptionalCell32 @
+# CHECK-NEXT: .1 "original" JSValue @

@@ -324,50 +324,57 @@ bool mayReturnOperand(Opcode opcode)
     return false;
 }
 
-static bool isReadThatMayPrecedeItsStore(const Value& value)
-{
-    return value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore();
-}
-
 bool isUnspecifiedAtDefinition(const Function& function, const Value& value)
 {
-    if (value.opcode == Opcode::Unspecified || isReadThatMayPrecedeItsStore(value))
+    if (value.opcode == Opcode::Unspecified)
         return true;
     return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
 }
 
-static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+bool isValidatedWhereLookedAt(const Function& function, const Value& value)
+{
+    return isUnspecifiedAtDefinition(function, value) || (value.opcode == Opcode::GetModuleVariable && value.isValidatedWhereLookedAt());
+}
+
+// False: a parameter of a block that has been emptied, so no edge says what it is handed.
+static bool forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
     const Function& function = analyses.function();
     const Value& value = function.at(id);
     if (value.opcode != Opcode::Parameter) {
         forEachReturnedOperand(function, value, functor);
-        return;
+        return true;
     }
 
     BlockID block = analyses.useLists().blockOf(id);
+    if (!block)
+        return false;
     uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
     for (Edge edge : analyses.cfg().incomingEdges(block)) {
         if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
             functor(passed);
     }
+    return true;
 }
 
-UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses, Sources sources)
+UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
     : m_analyses(analyses)
-    , m_sources(sources)
-    , m_hasSource(analyses.opcodesOfValues().intersects(OpcodeSet { Opcode::Unspecified, Opcode::ResultAt, Opcode::GetModuleVariable }))
+    , m_hasSource(analyses.opcodesOfValues().intersects(OpcodeSet { Opcode::Unspecified, Opcode::ResultAt }))
 {
+    analyses.willFollowValuesThroughParameters();
     if (m_hasSource)
         m_isSpecified.ensureSize(analyses.function().values.size());
 }
 
 bool UnspecifiedValues::mayContain(ValueID start)
 {
+    m_analyses.willFollowValuesThroughParameters();
+    const Function& function = m_analyses.function();
+    if (m_analyses.program().typeOf(function, start).mayBeUnspecified())
+        return true;
     if (!m_hasSource)
         return false;
 
-    const Function& function = m_analyses.function();
     m_visited.shrink(0);
     Vector<ValueID, 8> worklist { start };
     while (!worklist.isEmpty()) {
@@ -375,14 +382,14 @@ bool UnspecifiedValues::mayContain(ValueID start)
         if (m_isSpecified.quickSet(id.index()))
             continue;
         m_visited.append(id);
-        if (m_sources == Sources::All ? isUnspecifiedAtDefinition(function, function.at(id)) : isReadThatMayPrecedeItsStore(function.at(id))) {
+        bool isFollowed = !isUnspecifiedAtDefinition(function, function.at(id)) && forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
+            worklist.append(source);
+        });
+        if (!isFollowed) {
             for (ValueID visited : m_visited)
                 m_isSpecified.quickClear(visited.index());
             return true;
         }
-        forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
-            worklist.append(source);
-        });
     }
     return false;
 }

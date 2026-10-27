@@ -77,7 +77,7 @@ static void mergeEdges(WeightedCallList& calls)
     calls.shrink(mergedSize);
 }
 
-static bool mayHaveNoLayout(const Program& program, const Type& object) { return object.anyObject || !object.classes.isEmpty() || hasMembersWithoutLayout(program, object); }
+static bool mayHaveNoLayout(const Type& object) { return object.anyObject || !object.classes.isEmpty(); }
 
 static bool saysNothingAboutCalls(OperandUses uses) { return uses.containsAll(callingUses); }
 
@@ -231,7 +231,7 @@ FunctionsUnderNames::FunctionsUnderNames(const Program& program, const CallGraph
                 const Type& type = program.typeOf(function, holder);
                 for (LayoutID layout : membersOf(program, type))
                     note(layout);
-                if (mayHaveNoLayout(program, type))
+                if (mayHaveNoLayout(type))
                     note(LayoutID());
             });
         };
@@ -1058,7 +1058,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 namesReadBy[index].append(static_cast<uint32_t>(*position));
             });
             auto readHoldersOf = [&](const Type& object) {
-                if (mayHaveNoLayout(program, object))
+                if (mayHaveNoLayout(object))
                     holdersReadBy[index].append(FunctionsUnderNames::holderOf({ }));
                 for (LayoutID member : membersOf(program, object)) {
                     LayoutID current = member;

@@ -458,6 +458,55 @@ static void testChosenOwner()
     });
 }
 
+static unsigned numberOfChoicesOnFlags(B3::Air::Code& code)
+{
+    unsigned result = 0;
+    for (B3::Air::BasicBlock* block : code) {
+        for (B3::Air::Inst& inst : *block)
+            result += inst.kind.opcode == B3::Air::MoveConditionallyOnFlags64;
+    }
+    return result;
+}
+
+// A choice and a branch ask the same comparison. It is made once, and the choice reads the flags.
+static void testOwnerChosenOnFlags()
+{
+    bool hasSeenKeptOwnerChosenOnFlags = false;
+    for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
+        for (Keeps keeps : allKeeps) {
+            B3::Policy policy;
+            policy.allocation.keepsValuesAfterLowering = true;
+            policy.air.peepholes.reusesConditionFlags = true;
+            B3::Procedure proc(policy);
+            proc.setHeapThatLoadsStayInFrontOf(weakTableStorage);
+            Graph graph(proc, numberOfPreservedRegisters);
+            B3::Origin origin = Graph::originOf(otherOrigin);
+            B3::BasicBlock* root = proc.addBlock();
+            B3::BasicBlock* isCell = proc.addBlock();
+            B3::BasicBlock* isNoCell = proc.addBlock();
+            B3::Value* owner = graph.argument(root, 0);
+            B3::Value* other = graph.argument(root, 1);
+            B3::Value* word = graph.argument(root, 2);
+            B3::Value* namesCell = root->appendNew<B3::Value>(proc, B3::Above, origin, word, root->appendNew<B3::Const64Value>(proc, origin, 10));
+            B3::Value* chosen = root->appendNew<B3::Value>(proc, B3::Select, origin, namesCell, owner, word);
+            root->appendNew<B3::Value>(proc, B3::Branch, origin, namesCell);
+            root->setSuccessors(B3::FrequentedBlock(isCell), B3::FrequentedBlock(isNoCell));
+            isNoCell->appendNew<B3::Value>(proc, B3::Return, origin, isNoCell->appendNew<B3::Const32Value>(proc, origin, 0));
+            B3::Value* pointer = graph.loadPointer(isCell, owner);
+            graph.safepoint(isCell, keeps, chosen);
+            graph.finish(isCell, keeps, chosen, other, graph.readThrough(isCell, pointer));
+            B3::prepareForGeneration(proc);
+            AOT_TEST_CHECK(!proc.report().failure);
+            hasSeenKeptOwnerChosenOnFlags |= holdsOwner(keeps) && numberOfChoicesOnFlags(proc.code());
+            InnerPointerFindings findings;
+            findInnerPointerViolations(proc.code(), rules(), findings);
+            AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+            AOT_TEST_CHECK(findings.violations.isEmpty() == holdsOwner(keeps));
+        }
+    }
+    AOT_TEST_CHECK(!isX86_64() || hasSeenKeptOwnerChosenOnFlags);
+}
+
 static void testOwnerThatStays()
 {
     for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
@@ -680,6 +729,7 @@ std::span<const NativeTest> innerPointerValidationTests()
         { "inner-pointer-safepoint-in-loop"_s, testSafepointInLoop },
         { "inner-pointer-joined"_s, testJoinedPointers },
         { "inner-pointer-chosen-owner"_s, testChosenOwner },
+        { "inner-pointer-owner-chosen-on-flags"_s, testOwnerChosenOnFlags },
         { "inner-pointer-owner-that-stays"_s, testOwnerThatStays },
         { "inner-pointer-the-scan-knows"_s, testPointerTheScanKnows },
         { "inner-pointer-gives-cells-on-one-way"_s, testPointerThatGivesCellsOnOneWay },

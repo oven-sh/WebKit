@@ -183,7 +183,7 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
         BuiltinID constructor = singleBuiltinOf(program.typeOf(function, value.constructorOperand()));
         bool isProvenConstructor = !!constructor;
         if (!constructor)
-            constructor = singleBuiltinOf(program.expectedOrTypeOf(function, value.constructorOperand()));
+            constructor = singleBuiltinOf(program.expectedOrTypeOf(function, value.constructorOperand()).predicted());
         if (!constructor)
             return;
         constructor = table.canonicalID(constructor);

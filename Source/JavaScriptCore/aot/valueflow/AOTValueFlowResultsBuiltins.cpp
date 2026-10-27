@@ -967,7 +967,7 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
     });
 }
 
-ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs)
+ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
     const ValueFlowUniverse& universe = inputs.universe();
@@ -1016,6 +1016,32 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
                 found.append({ universe.siteObject(call, 1), BuiltinClasses::Array });
         }
     });
+    // One object a built-in stands for all that it makes where native code calls it. The constructor of a typed array answers nothing else, and each allocation has noted its class there.
+    if (const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName)) {
+        HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classMadeAs;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            BuiltinClassID builtinClass(index);
+            BuiltinID constructor = builtins.at(builtinClass).constructor;
+            if (constructor && builtins.typedArrayClassOf(builtinClass) == builtinClass && universe.builtinTables().objectStandingFor(builtinClass))
+                classMadeAs.add(universe.resultOf(constructor, 0).index(), builtinClass);
+        }
+        for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                BuiltinClassID made = classMadeAs.get(object.index());
+                if (!made)
+                    return;
+                if (ValueSets::isComplement(node.value)) {
+                    noted.append({ object, { } });
+                    return;
+                }
+                inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID named) {
+                    noted.append({ object, named == universe.builtinTables().objectStandingFor(made) ? made : BuiltinClassID() });
+                });
+            });
+        }
+    }
     ValueFlowClassesOfBuiltinResults classes;
     for (auto [object, builtinClass] : noted) {
         auto result = classes.add(object.index(), builtinClass);

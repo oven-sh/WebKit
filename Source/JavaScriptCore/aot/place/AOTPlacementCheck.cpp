@@ -19,6 +19,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTOperationData.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpRecord.h"
@@ -1049,6 +1050,21 @@ static void checkVariable(const PlacementCheckContext& context, VariableID id, b
     context.expect(canHoldType(placed.representation, stored) && (!variable.owner || canLeaveSlot(placed.representation)), PlacementRule::RepresentationCannotHoldType, variable.owner);
 }
 
+static void checkEvalBindings(const PlacementCheckContext& context)
+{
+    const Type& anything = context.program.at(TypeTable::anything);
+    for (const EvalScope& scope : context.program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings) {
+            if (!isAssignableBinding(binding.kind) || binding.kind == EvalBindingKind::MappedArgument)
+                continue;
+            if (binding.variable)
+                context.expect(canHoldType(context.placement.variable(binding.variable).representation, anything), PlacementRule::RepresentationCannotHoldType);
+            else if (binding.layout && binding.field)
+                context.expect(canHoldType(context.slots.slot(binding.layout, *binding.field).representation, anything), PlacementRule::RepresentationCannotHoldType, binding.layout);
+        }
+    }
+}
+
 static void checkStaticsExtents(const PlacementCheckContext& context)
 {
     Vector<Extent> extents;
@@ -1523,10 +1539,12 @@ struct SiteCheck : PlacementCheckContext {
         const FieldAccess* access = accessAt(accessID);
         if (!access || !access->slot.hasStorage())
             return;
-        bool holdUndefinedAndNull = std::ranges::all_of(program.at(access->membersWithField).completeMembers(), [&](LayoutID member) {
+        bool holdUndefinedAndNull = true;
+        for (LayoutID member : program.at(access->membersWithField).completeMembers()) {
             std::optional<uint32_t> field = program.at(member).findField(access->key);
-            return field && slotHoldsUndefinedAndNull(program, { member, *field });
-        });
+            holdUndefinedAndNull &= field && slotHoldsUndefinedAndNull(program, { member, *field });
+            expect(!field || !fieldAt(program, { member, *field }).form.contains(FieldForm::IsAccessor), PlacementRule::ValueInAccessorSlot, id);
+        }
         checkStoredValue(id, stored, access->slot.representation, holdUndefinedAndNull, program.at(access->contents), [&](FunctionID deferred) {
             return std::ranges::all_of(program.at(access->membersWithField).completeMembers(), [&](LayoutID member) {
                 const PlacedSlot* slot = slotOf(member, access->key);
@@ -1549,6 +1567,7 @@ struct SiteCheck : PlacementCheckContext {
             if (fields[index] >= numberOfFields || !slot.hasStorage())
                 continue;
             const Field& declaration = fieldAt(program, declarationOf(program, { layout, fields[index] }));
+            expect(!values[index] || !declaration.form.contains(FieldForm::IsAccessor), PlacementRule::ValueInAccessorSlot, id);
             checkStoredValue(id, values[index], slot.representation, slotHoldsUndefinedAndNull(program, { layout, fields[index] }), program.at(slotTypeOf(program, declaration)), [&](FunctionID deferred) {
                 return slot.deferredFunction == deferred;
             });
@@ -1771,9 +1790,9 @@ static void checkSiteCaches(const PlacementCheckContext& context)
     if (sitesWithoutCache.empty())
         return;
     expect(context.siteCaches.count() == context.build.limit(LimitID::MaxSiteCaches), PlacementRule::SiteCacheOrder, sitesWithoutCache.front());
-    SiteWeight lowestPlacedWeight = placed.empty() ? 0 : std::ranges::min(placed, { }, &SiteCacheUse::weight).weight;
+    SiteWeight lowestPlacedWeight = placed.empty() ? 0 : std::ranges::min(placed, { }, [](const SiteCacheUse& use) { return use.weight.predicted(); }).weight;
     for (const SiteCacheUse& use : sitesWithoutCache)
-        expect(placed.empty() || use.weight <= lowestPlacedWeight, PlacementRule::SiteCacheOrder, use);
+        expect(placed.empty() || (use.weight <= lowestPlacedWeight).predicted(), PlacementRule::SiteCacheOrder, use);
 }
 
 void checkPlacement(const Program& program, const PlacementInputs& inputs, const Placement& placement, const SiteCaches& siteCaches, BuildContext& build)
@@ -1797,6 +1816,7 @@ void checkPlacement(const Program& program, const PlacementInputs& inputs, const
         context.expect(isValid, PlacementRule::KeyOrderInvalid, creation.layout);
     }
     checkStatics(context);
+    checkEvalBindings(context);
     checkGuardBits(context);
     if (failures.load(std::memory_order_relaxed))
         return;

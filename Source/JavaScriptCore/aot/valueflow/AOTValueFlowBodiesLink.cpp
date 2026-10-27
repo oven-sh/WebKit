@@ -384,8 +384,6 @@ ValueSetID ValueFlowUniverse::maskOf(ValueSetMaker& maker, const Program& progra
 {
     if (!type.isJavaScriptValue() || type.isAnything())
         return ValueSets::anything;
-    if (type.layouts && program.at(type.layouts).mayHoldObjectsWithoutLayout())
-        return ValueSets::anything;
 
     Vector<ValueFlowObjectID, 32> members;
     Vector<ValueSetID, 8> parts;
@@ -431,8 +429,6 @@ bool ValueFlowUniverse::namesProgramObjectsAlone(const Program& program, const T
         return false;
     if (!type.layouts)
         return !type.functions.isEmpty() || !type.builtins.isEmpty();
-    if (program.at(type.layouts).mayHoldObjectsWithoutLayout())
-        return false;
     bool isAllocated = !type.functions.isEmpty() || !type.builtins.isEmpty();
     for (LayoutID layout : membersOf(program, type)) {
         if (m_isLayoutOfTable.quickGet(layout.index()))

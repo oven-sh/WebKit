@@ -263,7 +263,7 @@ private:
     {
         if (type.isOpaque(OpaqueKind::Guard))
             return false;
-        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol || hasMembersWithoutLayout(m_program, type))
+        if (type.anyObject || type.anyFunction || !type.classes.isEmpty() || !type.isJavaScriptValue() || type.primitives & Primitive::Symbol)
             return true;
         return std::ranges::any_of(type.functions, [&](FunctionID function) {
             return !m_program.at(function).captures.isEmpty() || !m_flow.closuresGoUnnoticed(function);

@@ -841,6 +841,12 @@ LayoutID ProgramEditor::addLayout(Layout&& layout)
     return id;
 }
 
+void ProgramEditor::indexClassesAndNames(const ParallelLoops& loops)
+{
+    m_program.indexClasses();
+    m_program.indexNames(loops);
+}
+
 Layout& ProgramEditor::at(LayoutID id)
 {
     m_program.familyTables().didChangeLayouts();

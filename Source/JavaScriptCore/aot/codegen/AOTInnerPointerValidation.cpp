@@ -296,6 +296,7 @@ private:
         case B3::Air::MoveConditionally64:
         case B3::Air::MoveConditionallyTest32:
         case B3::Air::MoveConditionallyTest64:
+        case B3::Air::MoveConditionallyOnFlags64:
         case B3::Air::MoveConditionallyDouble:
         case B3::Air::MoveConditionallyFloat:
             return true;

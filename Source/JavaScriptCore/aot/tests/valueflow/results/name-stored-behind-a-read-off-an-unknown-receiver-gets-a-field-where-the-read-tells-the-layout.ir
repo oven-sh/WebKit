@@ -1,0 +1,60 @@
+# class Internals {}    publish({ held: new Internals }); publish({ kept: { a: 1 } })
+# function fill(given) { given.held.run = 1; given.kept.more = 1 }    function ask(given) { return given.held.run }    publish(fill, ask)
+# What a holder holds has escaped with it, and `given` is an object that nobody knows, so the read of `held` answers a value that nobody knows. Whether a rule sees the instance there hangs on which
+# comes first, the rule or the escape. The name hangs on no order: one kind of object of the program is written under `held`, so the store behind the read names a field of its layout, and the
+# read of `run` behind the same read lists that layout among its receivers.
+# A literal says what it has: the one that is written under `kept` gets no field.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Internals"
+# CHECK: fields=[{key="run" {{*}} flags=[IsAddedLate
+# CHECK: layout L1 name="Holder"
+# CHECK: layout L2 name="Plain"
+# CHECK-NOT: IsAddedLate
+# CHECK: function f0
+# CHECK: function f3 name="ask"
+# CHECK: PropGet {{*}} key="run" {{*}}receivers=[L0, ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Internals" module=m0 constructor=f1
+layout L1 name="Holder" module=m0 fields=[{key="held" declared={type=anything}}]
+layout L2 name="Plain" module=m0 fields=[{key="a" declared={type=anything}}]
+layout L3 name="Keeper" module=m0 fields=[{key="kept" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = NewObject -, v6 layout=L3 fields=[0]
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v4
+    v11 = Call v9, -, v7
+    v12 = NewClosure function=f2
+    v13 = NewClosure function=f3
+    v14 = Call v9, -, v12, v13
+    Return
+}
+function f1 name="Internals" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="fill" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="held"
+    v2 = Integer integer=1
+    PropSet v1, v2 key="run" mode=Strict
+    v4 = PropGet v0 key="kept"
+    PropSet v4, v2 key="more" mode=Strict
+    Return
+}
+function f3 name="ask" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="held"
+    v2 = PropGet v1 key="run"
+    Return v2
+}

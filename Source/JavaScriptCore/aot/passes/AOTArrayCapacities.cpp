@@ -690,7 +690,7 @@ struct CapacityPlanner {
     }
 
     // What a parameter of a block is given on the edges that are as likely as the block, where that is one value.
-    ValueID valueOnLikelyEdges(ValueID id)
+    Expected<ValueID> valueOnLikelyEdges(ValueID id)
     {
         if (function.at(id).opcode != Opcode::Parameter)
             return id;
@@ -713,7 +713,7 @@ struct CapacityPlanner {
     {
         if (!id)
             return { };
-        id = valueOnLikelyEdges(analyses.sameObjectThroughCasts(id));
+        id = valueOnLikelyEdges(analyses.sameObjectThroughCasts(id)).predicted();
         KnownValue known = knownValueOf(context.program, function, id);
         if (known.kind() == KnownValue::Kind::Integer)
             return plannedTermRange.contains(known.asInteger()) ? CapacityTerm { CapacityTermKind::Constant, { }, known.asInteger() } : CapacityTerm { };

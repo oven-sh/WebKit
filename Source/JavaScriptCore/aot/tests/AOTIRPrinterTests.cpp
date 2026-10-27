@@ -315,9 +315,6 @@ void testSets()
     expectText(test.print(types.intern(LayoutSet::open({ L0, L2 }))), "[L0, L2, ..]"_s);
     expectText(test.print(types.intern(LayoutSet::open({ }))), "[..]"_s);
     expectText(test.print(types.intern(LayoutSet::complete({ }))), "[]"_s);
-    expectText(test.print(types.intern(LayoutSet::complete({ L2, L0 }, true))), "[L0, L2, nolayout]"_s);
-    expectText(test.print(types.intern(LayoutSet::open({ L0 }, true))), "[L0, nolayout, ..]"_s);
-    expectText(test.print(types.intern(LayoutSet::complete({ }, true))), "[nolayout]"_s);
     expectText(test.print(types.intern(CalleeSet::complete({ f3, f1 }, { Builtins::GlobalThis }))), "[f1, f3, builtin(GlobalThis)]"_s);
     expectText(test.print(types.intern(CalleeSet::open({ f1 }, { }))), "[f1, ..]"_s);
     expectText(test.print(types.intern(CalleeSet::open({ }, { Builtins::MathMax }))), "[builtin(MathMax), ..]"_s);
@@ -443,7 +440,6 @@ void testObjectTypes()
     expectSpellings(test, {
         { Type::forLayout(L2, test.types), "L2"_s, "L2"_s },
         { Type::forLayouts(layouts, test.types), "L0|L2"_s, "L0|L2"_s },
-        { Type::forLayoutSet(test.types.intern(LayoutSet::complete({ L0, L2 }, true))), "L0|L2|nolayout"_s, "L0|L2|nolayout"_s },
         { Type::forEnvironment(L1), "env L1"_s, "env L1"_s },
         { Type::forEnvironment(L1).withPrimitives(Primitive::Absent), "absent|env L1"_s, "absent|env L1"_s },
         { Type::forFunction(f3), "f3"_s, "f3"_s },

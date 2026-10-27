@@ -249,9 +249,9 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
     });
 }
 
-static bool mayBeProxy(const Program& program, const Type& type)
+static bool mayBeProxy(const Type& type)
 {
-    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy) || hasMembersWithoutLayout(program, type);
+    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy);
 }
 
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
@@ -350,7 +350,7 @@ static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassCon
     if (!object || !keyOperand)
         return std::nullopt;
 
-    PropertyKeyID key = internKey(context.types, constantKeyOf(program, program.typeOf(context.function, keyOperand)));
+    PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(context.function, value), program.typeOf(context.function, keyOperand)));
     if (!key)
         return std::nullopt;
     return BuiltinOwnPropertyTest { object, key, program.builtins().canonicalID(overload->builtin) };
@@ -527,7 +527,7 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     // Number(value) and ToNumber differ only for a BigInt.
     if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
         return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
-    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(context.program, operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
+    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
 
     KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
@@ -551,7 +551,7 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
         Type views = Type::builtinClass(BuiltinClasses::DataView);
         for (uint32_t index = 0; index < table.classCount(); ++index) {
             BuiltinClassID builtinClass(index);
-            if (table.at(builtinClass).origin == BuiltinOrigin::Engine && table.at(builtinClass).typedArrayType != NotTypedArray)
+            if (table.typedArrayClassOf(builtinClass) == builtinClass)
                 views = views.unionWith(Type::builtinClass(builtinClass), context.types);
         }
         return makeTypeTest(arguments[0], context.types.intern(WTF::move(views)));

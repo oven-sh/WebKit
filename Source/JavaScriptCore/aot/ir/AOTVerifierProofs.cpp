@@ -51,6 +51,7 @@ static bool isOfKind(const Program& program, const Type& type, OperandKind kind)
     case OperandKind::StringBuilder:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
+    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::JSONHolders:

@@ -132,7 +132,7 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
         return static_cast<uint32_t>(index);
     });
     parallelSort(context.build.parallelLoops(), order.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return weights[a] != weights[b] ? weights[a] > weights[b] : a < b;
+        return !weights[a].isSamePredictionAs(weights[b]) ? (weights[a] > weights[b]).predicted() : a < b;
     });
 
     auto keysByWeight = order.span();
@@ -142,7 +142,7 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
         keysWithColumn.quickSet(key);
 
     auto usedKeysWithoutColumn = std::ranges::count_if(keysByWeight.subspan(numberOfColumns), [&](uint32_t key) {
-        return weights[key] > 0;
+        return weights[key].predicted() > 0;
     });
     context.build.statistics().count(StatisticID::KeysWithoutColumn, static_cast<uint64_t>(usedKeysWithoutColumn));
     return keysWithColumn;
@@ -236,14 +236,14 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
         LayoutID id(index);
         if (!context.isCompiledObject(id))
             continue;
-        double creations = uses.layouts[index].creationHeat;
-        bool isMadeInLoop = uses.layouts[index].isMadeInLoop;
+        SiteHeat creations = uses.layouts[index].creationHeat;
+        Expected<bool> isMadeInLoop = uses.layouts[index].isMadeInLoop;
         for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field) {
             const SlotRowUse& row = uses.rows[context.rows.rowOf(id, field)];
-            creations = std::max(creations, row.holderHeat);
+            creations = greaterOf(creations, row.holderHeat);
             isMadeInLoop |= row.hasHoldersMadeInLoop;
         }
-        if (creations < maxCreationsOfLayoutMadeSeldom && !isMadeInLoop)
+        if ((creations < maxCreationsOfLayoutMadeSeldom).predicted() && !isMadeInLoop.predicted())
             layouts.quickSet(index);
     }
     for (const TaggedFamily& family : program.taggedFamilies) {
@@ -493,6 +493,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
 
 static void add(SlotRowUse& sum, const SlotRowUse& use)
 {
+    sum.accessSites += use.accessSites;
     sum.accessWeight = saturatedSum(sum.accessWeight, use.accessWeight);
     sum.fillHeat += use.fillHeat;
     sum.holderHeat += use.holderHeat;
@@ -633,7 +634,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     }
 
     AOT::sort(m_sets, [](const Set& a, const Set& b) {
-        return std::tuple(b.weight, a.firstRow) < std::tuple(a.weight, b.firstRow);
+        return std::tuple(b.weight.predicted(), a.firstRow) < std::tuple(a.weight.predicted(), b.firstRow);
     });
 }
 

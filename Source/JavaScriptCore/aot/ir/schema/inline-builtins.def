@@ -37,6 +37,7 @@ inline MapIterator(IterationKind) SetIterator(IterationKind) ; Allocates reads(C
 
 inline PromiseResolve ; asOverload ; family PromiseBuiltin
 inline PromiseThen PromiseCatch ; asOverload ; family PromiseBuiltin ; optionalSlowPath
+inline DataViewByteLength ; reads(TypedArrayStorage) ; family BufferBuiltin
 inline DataViewGet(TypedArrayType) ; Allocates reads(TypedArrayStorage, TypedArrayElements) throws ; family BufferBuiltin
 inline DataViewSet(TypedArrayType) ; reads(TypedArrayStorage) writes(TypedArrayElements) throws ; family BufferBuiltin
 inline Atomics(AtomicsOperation) ; Allocates reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) throws ; family BufferBuiltin

@@ -430,8 +430,12 @@ struct ConstructionEventCollector {
     {
         const Use& use = objectUse.use;
         Opcode opcode = function.at(use.user).opcode;
-        if (isCast(opcode))
+        if (isCast(opcode)) {
+            // What a cast hands on is followed as far as its type admits a reference. A check that turns the object away hands it on all the same: to the generic version of the function, which does with it what the body says.
+            if (!mayBeReference(program.typeOf(function, use.user)))
+                addLeak(use);
             return;
+        }
         if (std::optional<ConstructionEventKind> access = accessEventOf(opcode, use.operandIndex)) {
             if (opcode == Opcode::PrivateSet)
                 addAccess(ConstructionEventKind::Read, use);

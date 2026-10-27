@@ -233,6 +233,11 @@ struct PropertyCacheWords {
     uint32_t numbersOfNamesOfTraps[numberOfTrapsOfProxies];
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
+    UniquedStringImpl* lengthUID;
+    UniquedStringImpl* nameUID;
+    const void* lookupOfOrdinaryObjects;
+    const void* lookupOfArrays;
+    const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;

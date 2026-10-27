@@ -74,7 +74,8 @@ struct FieldData {
     uint32_t hasGuardOfStores : 1;
     // Compiled code reads the field without the test of the cell.
     uint32_t keepsStateOfBirth : 1;
-    uint32_t unused : 28 - nameBits { 0 };
+    uint32_t slotHoldsUndefinedAndNull : 1;
+    uint32_t unused : 27 - nameBits { 0 };
     uint16_t flags;
     uint16_t operandIndex;
     SlotData slot;
@@ -209,7 +210,7 @@ struct LayoutData {
     // What lies in front of the record, from the record backwards: the slot of the extra properties, the data of the extension, the data of the class.
     uint32_t hasExtraPropertiesSlot : 1;
     uint32_t hasExtensionData : 1;
-    uint32_t hasFieldThatKeepsStateOfBirth : 1;
+    uint32_t hasSlotWithUnusedMarkers : 1;
     uint32_t isCopiedByWords : 1;
     uint32_t index;
     uint32_t shape;

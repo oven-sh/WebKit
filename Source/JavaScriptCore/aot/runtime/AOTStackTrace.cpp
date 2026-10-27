@@ -1009,7 +1009,8 @@ std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* 
 {
     if (vm.aotState().classCalledWithoutNew != callFrame) [[likely]]
         return std::nullopt;
-    FunctionID function = uncheckedDowncast<Closure>(callFrame->jsCallee())->function();
+    Closure* classObject = uncheckedDowncast<Closure>(callFrame->jsCallee());
+    FunctionID function = classObject->function();
     if (FunctionDescription(function).visibility() == TraceVisibility::Hidden)
         return std::nullopt;
     const Image& image = *Image::current();
@@ -1017,6 +1018,10 @@ std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM& vm, CallFrame* 
         if (auto code = image.imageFunctionOf(candidate))
             return TraceFrame { CompiledFunctionID(*code), function, CallSiteIndex(0), false, false, true };
     }
+    // Where every construction is compiled at its place, the constructor has code only as what a construction by value enters.
+    CodeLocation entered = image.locate(std::bit_cast<const void*>(ClosureWord::addressOf(classObject->entry(), std::bit_cast<uintptr_t>(image.code().data()))));
+    if (entered.kind == CodeKind::Function)
+        return TraceFrame { CompiledFunctionID(entered.function), function, CallSiteIndex(0), false, false, true };
     return std::nullopt;
 }
 

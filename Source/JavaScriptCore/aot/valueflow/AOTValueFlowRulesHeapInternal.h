@@ -10,6 +10,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTIRProgram.h"
+#include "AOTPrototypesAtCreation.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
 #include "AOTVector.h"
@@ -194,7 +195,6 @@ private:
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
-    void appendPrototypeOf(BuiltinClassID, Members&) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
 
     ValueFlowObjectID objectOfMember(BuiltinID member, ModuleID) const;
@@ -204,9 +204,10 @@ private:
     ClimbingSet prototypeObjectsAboveEscapedEntries(std::span<const ValueFlowClassOfEntries>, ClimbingSet holders);
     ClimbingSet holdersOfAccessorsThatRunOnUnknownObject(const HeapKey&);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
-    ClimbingSet escapedHoldersOfWhatStaysBehindUnder(ValueFlowName);
+    ValueFlowNodeID readWhatStaysBehindUnder(ValueFlowName);
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
+    bool mayHoldWhatNobodyHasAccountedFor(const HeapChain&, const HeapKey&);
     bool m_undescribedNativeCodeIsOfEngine { false };
     bool m_namesFunctionWhereItIsMade { false };
     bool isNameThatTableDoesNotListOnGlobalObject(const HeapKey&) const;
@@ -237,7 +238,6 @@ private:
     void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&, ValueFlowNodeID result);
     bool splitLookupThroughPlaceholders();
     void callAccessors(ClimbingSet functions, ValueFlowCallKind, const HeapReceiver&, const ValueFlowOperand* value, ValueFlowNodeID result);
-    void enterGettersOfTableThatReceiversFindByThemselves(ClimbingSet receivers, const HeapKey&, ValueFlowNodeID result);
     bool mayBeAccessorNobodyKnows(ClimbingSet functions) const { return mayBeUnknownObject(functions) || m_context.contains(functions, m_tables.undescribedNativeCode()); }
     bool mayHoldAccessorNobodyKnows(ClimbingSet chain, const HeapKey&, HeapPropertyPart);
     bool endsAtPropertyOfCreation(ValueFlowObjectID receiver, const HeapKey&);
@@ -281,6 +281,7 @@ private:
     ValueFlowNodeID valueOfDescriptorsInAnswer();
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     bool m_findsOwnPropertiesAlone { false };
+    bool m_answersNothingForNameThatIsLacking { false };
     void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
     void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);

@@ -84,7 +84,7 @@ void HashedIndex::insert(Slot slot)
 
 void add(Hasher& hasher, const LayoutSet& set)
 {
-    add(hasher, set.listsEveryLayout(), set.isWrittenWithMembersWithoutLayout(), static_cast<uint32_t>(set.written().size()), set.written());
+    add(hasher, set.listsEveryLayout(), static_cast<uint32_t>(set.written().size()), set.written());
 }
 
 void add(Hasher& hasher, const CalleeSet& set)
@@ -254,8 +254,6 @@ bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
         return true;
     if (!a.listsEveryLayout())
         return false;
-    if (a.mayHoldObjectsWithoutLayout() && !b.mayHoldObjectsWithoutLayout())
-        return false;
     std::span<const LayoutID> inA = a.completeMembers();
     std::span<const LayoutID> inB = b.completeMembers();
     if (inA.size() > inB.size())
@@ -270,8 +268,6 @@ bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
 
 bool overlaps(const LayoutSet& a, const LayoutSet& b)
 {
-    if (a.mayHoldObjectsWithoutLayout() && b.mayHoldObjectsWithoutLayout())
-        return true;
     if (!a.listsEveryLayout() || !b.listsEveryLayout())
         return true;
     std::span<const LayoutID> inA = a.completeMembers();

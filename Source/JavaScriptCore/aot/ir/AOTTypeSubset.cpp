@@ -355,11 +355,6 @@ static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
         return false;
     if (a.anyObject || b.anyObject)
         return true;
-    auto listsObjectsWithoutLayout = [](const Type& type) {
-        return type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || !type.classes.isEmpty();
-    };
-    if ((hasMembersWithoutLayout(types, a) && listsObjectsWithoutLayout(b)) || (hasMembersWithoutLayout(types, b) && listsObjectsWithoutLayout(a)))
-        return true;
     const BuiltinTable& builtins = types.builtins();
     return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
 }

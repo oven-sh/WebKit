@@ -10,8 +10,10 @@
 
 #include "AOTBlockCycles.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTClaimsAboutClassesAndClosures.h"
 #include "AOTFlowStamps.h"
 #include "AOTHeatGraph.h"
+#include "AOTLedgerOfClassesAndClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -756,104 +758,9 @@ static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& i
     return functions;
 }
 
-static constexpr bool looksIntoObject(ValueFlowNameKind kind)
+static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
-    switch (kind) {
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-        return true;
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
-{
-    struct FoundByWorker {
-        ValueSetsMet seenSets;
-        Vector<ValueSetID> callablesInSets;
-    };
-    constexpr uint32_t nodesPerTask = 4096;
-
-    const ValueFlowSolver& solver = inputs.solver();
-    ValueSetID callables = inputs.universe().callables();
-    uint32_t firstMadeNode = solver.input().numberOfNodes;
-    uint32_t numberOfMadeNodes = solver.graph().numberOfNodes() - firstMadeNode;
-    ValueSetMakers makers(inputs);
-    Vector<FoundByWorker> foundByWorker(inputs.loops().width());
-    forEachIndexInParallel(inputs.loops(), (numberOfMadeNodes + nodesPerTask - 1) / nodesPerTask, [&](unsigned task, unsigned worker) {
-        FoundByWorker& ofWorker = foundByWorker[worker];
-        uint32_t end = std::min(numberOfMadeNodes, (task + 1) * nodesPerTask);
-        for (uint32_t index = task * nodesPerTask; index < end; ++index) {
-            const ValueFlowNodeKey& key = *solver.keyOfMadeNode(ValueFlowNodeID(firstMadeNode + index));
-            switch (key.kind) {
-            case ValueFlowMadeNodeKind::Read:
-            case ValueFlowMadeNodeKind::Lookup:
-            case ValueFlowMadeNodeKind::ReadUnderKind:
-                break;
-            case ValueFlowMadeNodeKind::Constant:
-            case ValueFlowMadeNodeKind::Written:
-            case ValueFlowMadeNodeKind::CallGroup:
-            case ValueFlowMadeNodeKind::Hub:
-            case ValueFlowMadeNodeKind::Masked:
-            case ValueFlowMadeNodeKind::Marked:
-            case ValueFlowMadeNodeKind::WrittenUnderKind:
-            case ValueFlowMadeNodeKind::Instance:
-                continue;
-            }
-            if (key.set == inputs.universe().knownObjects())
-                continue;
-            if (looksIntoObject(key.name().kind) && ofWorker.seenSets.add(key.set) && inputs.sets().meet(key.set, callables))
-                ofWorker.callablesInSets.append(makers.of(worker).intersect(key.set, callables));
-        }
-    });
-    Vector<ValueSetID> callablesInSets;
-    for (FoundByWorker& ofWorker : foundByWorker)
-        callablesInSets.appendVector(WTF::move(ofWorker.callablesInSets));
-    sortAndRemoveDuplicates(inputs.loops(), callablesInSets);
-    return maker.uniteAll(callablesInSets.span());
-}
-
-static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto, ValueFlowObjectID object)
-{
-    if (inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object))
-        return false;
-    return !inputs.sets().contains(callablesLookedInto, object) && markedMutationsOf(inputs, object).isEmpty() && !inputs.mayBecomePrototype(object);
+    return ClaimsAboutClassesAndClosures::useOfClosure(inputs.classesAndClosures->reachersOf(object).value_or(Reachers { { }, everyActor })) == ClosureUse::CalledOnly;
 }
 
 static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueFlowObjectID object)
@@ -861,7 +768,7 @@ static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand&
     return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().seenValuesOf(operand.node), object));
 }
 
-static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
+static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -899,7 +806,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
             if (ValueSets::isComplement(targets))
                 continue;
             ValueFlowObjectID result = universe.siteObject(statement);
-            bool resultIsOnlyCalled = result && isOnlyCalled(inputs, callablesLookedInto, result);
+            bool resultIsOnlyCalled = result && isOnlyCalled(inputs, result);
             uint32_t numberOfBoundArguments = operands.size() > 3 ? operands.size() - 3 : 0;
             add(maker, valuesOfWorker[worker], numberOfBoundArguments, { targets, resultIsOnlyCalled ? ValueSets::nothing : targets });
         }
@@ -1111,9 +1018,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
 
     BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
     ValueSetMaker& maker = borrowedMaker.get();
-    ValueSetID callablesLookedInto = findCallablesLookedInto(inputs, maker);
-    times.didFinish("functions: callables looked into"_s);
-    tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs, callablesLookedInto);
+    tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs);
     tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
 
     BitVector isNamedByTable(numberOfFunctions);
@@ -1151,7 +1056,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         if (entries.mayBeIntoAnyFunction)
             return;
         flow.callers = CallerState::AllKnown;
-        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, callablesLookedInto, closure))
+        if (inputs.build.isEnabled(FlowResultKind::ObjectUses, index) && isOnlyCalled(inputs, closure))
             flow.closureUse = ClosureUse::CalledOnly;
         OptionSet<FunctionCapabilities>& capabilities = application.signatures[index].provenCapabilities;
         capabilities.add(FunctionCapabilities::IsNeverCalledByHost);

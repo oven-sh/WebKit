@@ -236,6 +236,9 @@ struct RealmWords {
     JSCell* functionPrototypeCall;
     JSCell* boundFunctionExecutable;
     Structure* emptyExtraPropertiesStructure;
+    // Of extra properties that hold elements and no name, and the first word of such a cell.
+    Structure* extraPropertiesWithElementsStructure;
+    uint64_t headerOfExtraPropertiesWithElements;
     // What a call without surplus arguments hands to a function that takes the list of them. Nothing writes to it.
     JSCell* emptyArgumentList;
     const ClassInfo* boundFunctionClassInfo;
@@ -399,7 +402,7 @@ struct Instance : InstanceHeader {
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.extraPropertiesWithElementsStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);

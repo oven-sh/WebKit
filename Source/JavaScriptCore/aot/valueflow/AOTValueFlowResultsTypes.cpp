@@ -12,6 +12,7 @@
 #include "AOTPredictedValues.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCFG.h"
+#include "AOTClaims.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
@@ -322,8 +323,10 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
 void NumbersOfPositions::followPositions(const FlowResultTables& tables)
 {
     PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
-    for (size_t variable : m_inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks)
-        m_numbers[variable].integers = Range::full();
+    for (uint32_t variable = 0; variable < m_inputs.program.variables.size(); ++variable) {
+        if (m_inputs.program.variables[variable].owner && isStoredIntegersThatOnlyChecksBound(m_inputs.ledger->writersOf(Place::variable(VariableID(variable)))))
+            m_numbers[variable].integers = Range::full();
+    }
     choosePositions(tables);
     times.didFinish("numbers: positions chosen"_s);
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
@@ -512,8 +515,8 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         return flow.writers == WriterState::AllKnown && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
     };
     auto everyStoreThroughObjectSpellsItsValue = [&](VariableID id) {
-        return std::ranges::all_of(m_inputs.variablesOnObjects->accessesTo(id), [&](const ValueFlowAccessThroughObject& access) {
-            return access.kind != ValueFlowAccessThroughObjectKind::Store || indexOfValueStoredIntoProperty(program.at(access.function).at(access.site).opcode);
+        return std::ranges::all_of(m_inputs.ledger->writersOf(Place::variable(id)).seen().predicted(), [&](const Write& write) {
+            return write.traits.contains(WriteTrait::SpellsItsValue);
         });
     };
 
@@ -612,11 +615,15 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
             }
         });
     }));
-    for (const ValueFlowAccessThroughObject& access : m_inputs.variablesOnObjects->accesses) {
-        if (access.kind != ValueFlowAccessThroughObjectKind::Store || !m_isFollowed.quickGet(access.variable.index()))
+    for (uint32_t variable = 0; variable < program.variables.size(); ++variable) {
+        if (!program.variables[variable].owner || !m_isFollowed.quickGet(variable))
             continue;
-        const Value& store = program.at(access.function).at(access.site);
-        m_writers.append({ access.variable.index(), access.function, store.operand(*indexOfValueStoredIntoProperty(store.opcode)) });
+        for (const Write& write : m_inputs.ledger->writersOf(Place::variable(VariableID(variable))).seen().predicted()) {
+            if (write.traits.contains(WriteTrait::NamesPlace))
+                continue;
+            const Value& store = program.at(write.function).at(write.site);
+            m_writers.append({ variable, write.function, store.operand(*indexOfValueStoredIntoProperty(store.opcode)) });
+        }
     }
     m_writers.appendVector(std::exchange(m_writersOfMaps, { }));
     sortAndRemoveDuplicates(m_inputs.loops(), m_writers);
@@ -1518,7 +1525,7 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
     else if (!everyReadSeesStore && startsWithoutValueInSolve(inputs.program, inputs.program.at(id)))
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
-    if (inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks.quickGet(id.index()))
+    if (isStoredIntegersThatOnlyChecksBound(inputs.ledger->writersOf(Place::variable(id))))
         widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.written()), numbers.ofVariable(id), types, update.position);
 }
 

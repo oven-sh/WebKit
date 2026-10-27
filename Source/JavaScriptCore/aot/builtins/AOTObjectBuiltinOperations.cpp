@@ -472,7 +472,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetOwnPropertyFields, void, (Instance* inst
     }
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (Object* compiled = compiledObjectOrNull(object)) {
+    if (Object* compiled = isPreparedBeforeLookups(vm, name.impl()) ? nullptr : compiledObjectOrNull(object)) {
         unsigned attributes = 0;
         JSValue value = compiled->getDirectFromNativeCode(vm, name, &attributes);
         if (value && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {

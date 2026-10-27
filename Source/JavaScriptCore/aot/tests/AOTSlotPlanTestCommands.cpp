@@ -236,7 +236,7 @@ static void printAccesses(const SlotPlanViewContext& view)
     SlotUses uses = collectSlotUsesFor(view);
     Vector<AccessRequest> requests = mergeDirections(uses.accesses.span());
     AOT::sort(requests, [](const AccessRequest& a, const AccessRequest& b) {
-        return std::tuple(b.weight, a.key, a.receivers) < std::tuple(a.weight, b.key, b.receivers);
+        return std::tuple(b.weight.predicted(), a.key, a.receivers) < std::tuple(a.weight.predicted(), b.key, b.receivers);
     });
     for (const AccessRequest& request : requests) {
         std::span<const LayoutID> members;
@@ -245,7 +245,7 @@ static void printAccesses(const SlotPlanViewContext& view)
         printer.print(request.key);
         out.print(" "_s);
         printLayoutIDs(printer, members);
-        out.print(" "_s, directionOf(request), " weight="_s, request.weight, " sites="_s, request.sites, "\n"_s);
+        out.print(" "_s, directionOf(request), " weight="_s, request.weight.predicted(), " sites="_s, request.sites, "\n"_s);
         printAgreement(printer, view.slots().agreementOf(program, request.key, members));
     }
 }
@@ -340,16 +340,16 @@ static void printColumns(const SlotPlanViewContext& view)
     const Vector<SiteWeight>& weights = uses.keyWeights;
     Vector<uint32_t> keys;
     for (uint32_t key = 0; key < weights.size(); ++key) {
-        if (weights[key])
+        if (weights[key].predicted())
             keys.append(key);
     }
     AOT::sort(keys, [&](uint32_t a, uint32_t b) {
-        return weights[a] != weights[b] ? weights[a] > weights[b] : a < b;
+        return !weights[a].isSamePredictionAs(weights[b]) ? (weights[a] > weights[b]).predicted() : a < b;
     });
     for (uint32_t key : keys) {
         PropertyKeyID id(key);
         printer.print(id);
-        out.print(" weight="_s, weights[key], view.slots().hasColumn(id) ? " column\n"_s : " no column\n"_s);
+        out.print(" weight="_s, weights[key].predicted(), view.slots().hasColumn(id) ? " column\n"_s : " no column\n"_s);
     }
 }
 

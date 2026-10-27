@@ -25,6 +25,7 @@ struct Int32ParameterCandidate {
 Vector<Int32ParameterCandidate> narrowFieldTypes(Program&, BuildContext&);
 void expectInt32ParametersWithRemainingChecks(Program&, std::span<const Int32ParameterCandidate>, BuildContext&);
 
+inline TypeID narrowedSlotTypeOf(const Field& field) { return field.declared.isExpected() ? TypeID() : field.slotType; }
 // The slot of a field whose type is only expected is boxed.
 TypeID slotTypeOf(const Program&, const Field&);
 // FieldData::type: what the run time tests a value against that it stores into the slot.

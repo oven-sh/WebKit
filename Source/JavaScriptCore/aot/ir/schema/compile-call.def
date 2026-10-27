@@ -123,9 +123,10 @@ enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed ClaimsToBackEnd MovedLoads }
+enum FlowOverride { None Widened }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes }
 enum Sabotage {
     None
     NoCallCollects StoresNeedNoBarrier
@@ -138,6 +139,7 @@ enum Sabotage {
     HoistedReadsAreStoredInTheirLoops CarriedVariablesAreWrittenByOthers DelayedStoresAreLeftOut TailCallsSwapTheirLastArguments RememberedReadsOutlastStoresThroughOtherNames RememberedReadsOutlastWrites FusedGeneratorsAreSeenByOthers DelayedStoresPassWhatMayThrow ParsedMembersComeOnce GrowingTextsAreHeldInOneState
     PartsOfViewsEndOneLater
     StoredValuesAreNeverRead
+    WhatIsGivenTakesThePlaceOfWhatComes
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }
@@ -155,7 +157,7 @@ record CompileOptions abi {
     bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
     action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
     heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
-    excludedCode: ExcludedCode sabotage: Sabotage reserved: UInt32
+    excludedCode: ExcludedCode sabotage: Sabotage flowOverride: FlowOverride
 }
 
 word "validate" sets checks Validate
@@ -167,6 +169,7 @@ word "only-passes" "<PassID>,.." "pass" custom applyOnlyPasses listOptionalPasse
 word "disable-in" "<first>[:<count>]" custom applyDisableIn
 word "limit" "<LimitID>:<n>" "limit" custom applyLimit listLimits
 word "heat" "<HeatOverride>" "heat override" names heatOverride
+word "flow" "<FlowOverride>" "flow override" names flowOverride
 word "testing" "<name>,.." "testing switch" custom applyTesting listTestingSwitches
 word "sabotage" "<Sabotage>" "sabotage" names sabotage
 word "count-branches" sets instrumentation CountBranches

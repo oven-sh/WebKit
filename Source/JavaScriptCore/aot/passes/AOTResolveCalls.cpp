@@ -48,9 +48,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(OperandIndex::TypeTest::value == testedOperandIndex);
 
-bool admitsUnlistedFunctions(const Program& program, const Type& type)
+bool admitsUnlistedFunctions(const Type& type)
 {
-    return type.anyFunction || type.anyObject || hasMembersWithoutLayout(program, type);
+    return type.anyFunction || type.anyObject;
 }
 
 static ValueID findStrongestLink(const Program& program, const Function& function, ValueID callee)
@@ -79,7 +79,7 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
         result.listByType(rest.functions.span(), rest.primitives || rest.anyFunction || rest.anyObject || rest.layouts || !rest.classes.isEmpty() || !rest.builtins.isEmpty());
         return result;
     }
-    if (!admitsUnlistedFunctions(program, rest))
+    if (!admitsUnlistedFunctions(rest))
         return result;
 
     for (ValueID id : CastChain(function, callee)) {
@@ -95,7 +95,7 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
 static CalleeCandidates calleeCandidatesOf(const Program& program, const Function& function, const Value& operation, ValueID callee)
 {
     CalleeCandidates result = calleeCandidates(program, function, callee);
-    if (result.proof() != CalleeProof::Unknown || !admitsUnlistedFunctions(program, program.typeOf(function, result.value)))
+    if (result.proof() != CalleeProof::Unknown || !admitsUnlistedFunctions(program.typeOf(function, result.value)))
         return result;
     // An incomplete stamp lists the functions that flow saw arrive at the operation, among whatever else arrives there.
     if (Value::opcodesWithCallees.contains(operation.opcode) && operation.callees())
@@ -134,7 +134,7 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
     CalleeCandidates result = calleeCandidatesOf(program, context.function, operation, callee);
     if (operation.opcode != Opcode::Call || !operation.accessSite() || !flow.hasResults())
         return result;
-    if (result.isProven() || !admitsUnlistedFunctions(program, program.typeOf(context.function, result.value)))
+    if (result.isProven() || !admitsUnlistedFunctions(program.typeOf(context.function, result.value)))
         return result;
     if (context.function.at(block).frequency.predicted() == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest()) {
         FunctionList closures = findClosuresArrivingOnWaysOfTheirOwn(context, result.value);
@@ -340,7 +340,7 @@ static void appendCalleeValidation(IRBuilder& builder, ValueID callee)
 {
     const Function& function = builder.function();
     if (builder.context().build.validates())
-        builder.append(makeValidateCallee(sameObjectThroughCasts(function, callee), function.at(callee).type));
+        builder.append(makeValidateCallee(sameObjectBehindFacts(function, callee), function.at(callee).type));
 }
 
 static Vector<ValueID, 8> insertCaptures(const ValueInsertion& insertion, FunctionID function, ValueID closure)
@@ -1013,21 +1013,24 @@ static ChainAnswers followChains(const Program& program, const LayoutList& layou
     return answers;
 }
 
-static LayoutList layoutsToConsider(const Program& program, const ReceiverCandidates& subject, const Type& subjectType, LayoutID tested)
+struct ConsideredLayouts {
+    LayoutList layouts;
+    // No object with another layout arrives.
+    bool areAll { false };
+};
+
+static ConsideredLayouts layoutsToConsider(const Program& program, const ReceiverCandidates& subject, const Type& subjectType, LayoutID tested)
 {
     if (subject.isProven())
-        return subject.proven;
-    // Objects that no layout describes were converted to the type of the family, so its layouts are only expected.
-    if (hasMembersWithoutLayout(program, subjectType))
-        return subject.predicted;
+        return { subject.proven, true };
     if (!subjectType.anyObject)
-        return { };
+        return { { }, true };
 
     // Nothing is known of the object. The layouts of the class and of what is below it are worth one test.
     LayoutList considered(program.layoutsBelow(tested));
     considered.unite(LayoutList(program.at(program.declaredMembersOf(tested)).completeMembers()));
     considered.add(tested);
-    return considered;
+    return { WTF::move(considered), false };
 }
 
 static bool isObjectOutsideLayouts(UnionPartKind kind)
@@ -1095,7 +1098,7 @@ static Vector<TestedInstanceOf, 2> planTestedInstanceOf(FunctionPassContext& con
     ValueID subject = instanceOf.valueOperand();
     ReceiverCandidates candidates = receiverCandidates(program, context.function, subject);
     auto appendFormOfLayouts = [&](PrototypeKnownBy knownBy) {
-        ChainAnswers answers = followChains(program, candidates.isProven() ? candidates.proven : candidates.predicted, tested, knownBy);
+        ChainAnswers answers = followChains(program, candidates.isProven() ? candidates.proven : candidates.expected.predicted(), tested, knownBy);
         // Where no object has to be asked, the bits have said it all.
         if (answers.decided.isEmpty() || (knownBy == PrototypeKnownBy::TestOfObject && !answers.testsObjects))
             return;
@@ -1289,7 +1292,7 @@ struct CallResolver {
         const Type& receiver = typeOf(value.objectOperand());
         if (receiver.mayBeUndefinedOrNull())
             return false;
-        return (!value.isFreeName() && receiver.layouts && !hasMembersWithoutLayout(program, receiver)) || classOfClassObject(program, receiver);
+        return (!value.isFreeName() && receiver.layouts) || classOfClassObject(program, receiver);
     }
 
     Vector<CallSite> collectSites()
@@ -1507,7 +1510,7 @@ struct CallResolver {
         if (!thisValue || !callee.has(FunctionFlags::HasThis) || !callee.thisType.written() || callee.thisType.isExpected())
             return false;
         const Type& declared = program.at(*callee.thisType.established());
-        return typeOf(thisValue).hasOnlyLayouts(program) && declared.hasOnlyLayouts(program) && !typeOf(thisValue).overlaps(declared, program);
+        return typeOf(thisValue).hasOnlyLayouts() && declared.hasOnlyLayouts() && !typeOf(thisValue).overlaps(declared, program);
     }
 
     CallArm directCallArm(FunctionID callee, const MemberConditions& conditions = { }, ValueID closure = { }) const
@@ -1534,7 +1537,7 @@ struct CallResolver {
                 check.setName(name.text);
             check.setOrigin(read.origin());
             check.type = resultTypeOf(program, function, check, context.types);
-            check.setExpected(ExpectedType(expectedTypeOf(program, function, check, context.types)));
+            check.setExpected(expectedTypeOf(program, function, check, context.types));
             function.edit(reads.read().value) = WTF::move(check);
         } else
             becomeUndefined(function, reads.read().value);
@@ -1728,7 +1731,7 @@ struct CallResolver {
 
         ReceiverCandidates candidates = receiverCandidates(program, function, receiver, access.receivers());
         if (!candidates.isProven())
-            return std::unexpected(!candidates.predicted.isEmpty() ? CallDeclineReason::NeedsTest : isCall ? CallDeclineReason::UnknownMember : CallDeclineReason::None);
+            return std::unexpected(!candidates.expected.predicted().isEmpty() ? CallDeclineReason::NeedsTest : isCall ? CallDeclineReason::UnknownMember : CallDeclineReason::None);
         bool checksReceiverAtRead = candidates.mayBeNullish;
         if (checksReceiverAtRead && !isCall)
             return declined;
@@ -1986,9 +1989,11 @@ struct CallResolver {
         // What stays behind the arms for expected callees expects them as well.
         if (!listsEveryCallee) {
             context.planAsksAboutPlace = true;
-            for (FunctionID member : candidates.listed().predicted()) {
-                if (hasFailedEarlier(makeTypeTest(candidates.value, context.types.intern(Type::forFunction(member))), site))
-                    return declined;
+            if (context.analyses.hasFailedTestOf(candidates.value)) {
+                for (FunctionID member : candidates.listed().predicted()) {
+                    if (hasFailedEarlier(makeTypeTest(candidates.value, context.types.intern(Type::forFunction(member))), site))
+                        return declined;
+                }
             }
         }
 
@@ -2204,7 +2209,7 @@ struct CallResolver {
             ValueInsertion insertion { builder.context(), function, context.types, original.origin(), insert };
 
             if (context.build.validates())
-                insert(makeValidateCallee(sameObjectThroughCasts(function, closure), function.at(closure).type));
+                insert(makeValidateCallee(sameObjectBehindFacts(function, closure), function.at(closure).type));
             Vector<ValueID, 8> captures;
             if (!callee.captures.isEmpty())
                 captures = closureCreation ? Vector<ValueID, 8>(function.at(closureCreation).variadicOperands()) : insertCaptures(insertion, only, closure);
@@ -2387,19 +2392,19 @@ struct CallResolver {
         ValueID subject = instanceOf.valueOperand();
         const Type& subjectType = typeOf(subject);
         ReceiverCandidates candidates = receiverCandidates(program, function, subject);
-        bool isLeftToTestsOfExpectedLayouts = !candidates.isProven() && !candidates.predicted.isEmpty() && std::ranges::any_of(planTestedInstanceOf(context, instanceOf), [&](const TestedInstanceOf& form) {
+        bool isLeftToTestsOfExpectedLayouts = !candidates.isProven() && !candidates.expected.predicted().isEmpty() && std::ranges::any_of(planTestedInstanceOf(context, instanceOf), [&](const TestedInstanceOf& form) {
             return !form.walksChain && std::ranges::none_of(form.tests.tests, [&](const Value& test) { return hasFailedEarlier(test, site); });
         });
         if (isLeftToTestsOfExpectedLayouts)
             return std::unexpected(CallDeclineReason::NeedsTest);
 
-        LayoutList considered = layoutsToConsider(program, candidates, subjectType, tested);
+        auto [considered, areAllConsidered] = layoutsToConsider(program, candidates, subjectType, tested);
         bool isOverLimit = context.exceeds(LimitID::MaxAccessPlanMembers, considered.size(), site.position.value);
         if (isOverLimit)
             considered.clear();
         ChainAnswers answers = followChains(program, considered, tested, PrototypeKnownBy::BitOfClass);
 
-        bool failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !answers.testsObjects && !hasMembersWithoutLayout(program, subjectType)
+        bool failedTestMeansFalse = areAllConsidered && !isOverLimit && !answers.leavesOutLayouts && !answers.testsObjects
             && std::ranges::none_of(unionPartsOf(subjectType), [](const UnionPart& part) { return isObjectOutsideLayouts(part.kind); });
         bool isAlwaysFalse = failedTestMeansFalse && answers.instances.isEmpty();
         // A miss walks the chain, so nothing is asked about the layouts that are no instances.
@@ -2495,7 +2500,7 @@ struct CallResolver {
         if (!forwarded) {
             forwarded = planForwardedConstruct(program, function, builtinCallOf(program, value));
             // Written any other way, the built-in has a frame of its own between the caller and the constructor.
-            if (forwarded && !(value.isReflectConstructSyntax() && isAlwaysConstructor(forwarded->callee) && (!forwarded->newTarget || isAlwaysConstructor(forwarded->newTarget))))
+            if (forwarded && !(value.isDoneInPlace() && isAlwaysConstructor(forwarded->callee) && (!forwarded->newTarget || isAlwaysConstructor(forwarded->newTarget))))
                 return declined;
         }
         if (!forwarded || (forwarded->list && !isAlwaysArray(typeOf(forwarded->list))))
@@ -3182,8 +3187,8 @@ static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& r
         hasFailedTest = true;
 
         ReceiverCandidates remaining = use->site.query.receivers;
-        remaining.predicted.subtract(use->site.plan.receivers);
-        RELEASE_ASSERT(remaining.predicted.size() < use->site.query.receivers.predicted.size());
+        remaining.stopExpecting(use->site.plan.receivers);
+        RELEASE_ASSERT(remaining.expected.predicted().size() < use->site.query.receivers.expected.predicted().size());
         use = plan(reporter.context(), site, &remaining);
     }
     if (!use)
@@ -3415,7 +3420,7 @@ static void reportForwardedListTest(TestSiteReporter& reporter)
     if (!plan || !plan->list || isAlwaysArray(reporter.typeOf(plan->list)))
         return;
 
-    const Type& expected = context.program.expectedOrTypeOf(context.function, plan->list);
+    const Type& expected = context.program.expectedOrTypeOf(context.function, plan->list).predicted();
     if (expected.anyObject || expected.findClassPart(BuiltinClasses::Array))
         reporter.report({ makeTypeTest(plan->list, context.types.intern(Type::builtinClass(BuiltinClasses::Array))) }, Effects::unknownCode());
 }

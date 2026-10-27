@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPrototypesAtCreation.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include <algorithm>
@@ -303,95 +304,11 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
 
 void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vector<ValueFlowObjectID, 8>& prototypes) const
 {
-    const Program& program = m_inputs.program;
-    const BuiltinTable& builtins = program.builtins();
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    auto appendPrototypeOf = [&](BuiltinClassID builtinClass) {
-        if (!builtinClass)
-            return;
-        BuiltinID prototype = builtins.at(builtinClass).prototype;
-        prototypes.append(prototype ? universe.objectOf(prototype) : ValueFlowUniverse::unknownObject());
-    };
-    auto hasHeritage = [&](LayoutID layout) {
-        return layout && program.at(layout).has(LayoutFlags::HasHeritage);
-    };
-
-    switch (universe.kindOf(object)) {
-    case ValueFlowObjectKind::Builtin:
-    case ValueFlowObjectKind::ModuleBuiltin: {
-        const Builtin& entry = builtins.at(universe.builtinOf(object));
-        switch (entry.prototypeLink) {
-        case BuiltinPrototypeLink::Unknown:
-            prototypes.append(ValueFlowUniverse::unknownObject());
-            return;
-        case BuiltinPrototypeLink::Null:
-            return;
-        case BuiltinPrototypeLink::Builtin:
-            prototypes.append(universe.objectOf(entry.inheritsFrom));
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    case ValueFlowObjectKind::Closure: {
-        const Function& function = program.at(universe.closureFunction(object));
-        if (!hasHeritage(function.constructedClass))
-            appendPrototypeOf(classOfFunctionObject(function));
-        return;
-    }
-    case ValueFlowObjectKind::Instance:
-        prototypes.append(universe.prototypeOf(universe.layoutOf(object)));
-        return;
-    case ValueFlowObjectKind::CoroutineResult:
-    case ValueFlowObjectKind::RestArray:
-    case ValueFlowObjectKind::FunctionPrototype:
-        appendPrototypeOf(universe.classOf(object));
-        return;
-    case ValueFlowObjectKind::ConstructedObject:
-        return;
-    case ValueFlowObjectKind::Prototype: {
-        LayoutID layout = universe.classLayoutOf(object);
-        if (hasHeritage(layout))
-            return;
-        FunctionID constructor = program.at(layout).constructor;
-        appendPrototypeOf(constructor ? classAbovePrototypeProperty(program.at(constructor)) : BuiltinClasses::Object);
-        return;
-    }
-    case ValueFlowObjectKind::Site: {
-        const ValueFlowSite& site = *universe.siteOf(object);
-        if (site.builtinClass)
-            appendPrototypeOf(site.builtinClass == BuiltinClasses::Arguments ? BuiltinClasses::Object : site.builtinClass);
-        if (!site.layout) {
-            if (!site.builtinClass)
-                prototypes.append(ValueFlowUniverse::unknownObject());
-            return;
-        }
-        switch (program.at(site.layout).kind) {
-        case LayoutKind::Record:
-        case LayoutKind::Container:
-        case LayoutKind::BuiltinResult:
-            if (!site.namesPrototype)
-                appendPrototypeOf(BuiltinClasses::Object);
-            return;
-        case LayoutKind::Instance:
-            prototypes.append(universe.prototypeOf(site.layout));
-            return;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    case ValueFlowObjectKind::Namespace:
-        return;
-    case ValueFlowObjectKind::Primitive:
-    case ValueFlowObjectKind::UnknownObject:
-    case ValueFlowObjectKind::ResultOfBuiltin:
-    case ValueFlowObjectKind::Key:
+    forEachPrototypeAtCreation(m_inputs.program, m_inputs.universe(), object, [&](ValueFlowObjectID prototype) {
+        prototypes.append(prototype);
+    }, [&](SilentAboutPrototype) {
         prototypes.append(ValueFlowUniverse::unknownObject());
-        return;
-    }
+    });
 }
 
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetID objects)

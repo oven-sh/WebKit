@@ -506,6 +506,7 @@ TypeFit FitWalk::fitOfPrimitive(PrimitiveSet primitive) const
     case PrimitiveSet::BigInt:
         return fitOfMember(BuiltinPrimitive::BigInt);
     case PrimitiveSet::Absent:
+    case PrimitiveSet::Unspecified:
         return TypeFit::Outside;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -669,8 +670,7 @@ Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)
 TypedArrayType typedArrayTypeOf(const BuiltinTable& table, const Type& type)
 {
     const ClassPart* part = type.singleBuiltinClass();
-    BuiltinClassID typedArrayClass = part ? table.typedArrayClassOf(part->builtinClass) : BuiltinClassID();
-    return typedArrayClass ? table.at(typedArrayClass).typedArrayType : NotTypedArray;
+    return part ? table.typedArrayTypeOf(part->builtinClass) : NotTypedArray;
 }
 
 } } } // namespace JSC::AOT::Typed

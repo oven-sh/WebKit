@@ -364,6 +364,13 @@ function checkTypesOfNamesDefinedOnNewInstances(model: TableModel, problems: Pro
     const { token, namesDefinedOnNewInstances, typesOfNamesDefinedOnNewInstances, namesMadeByStaticMembers } =
       builtinClass;
     const isListed = (name: ModelName): boolean => namesDefinedOnNewInstances?.includes(name) ?? false;
+    const { parent } = builtinClass;
+    if (namesDefinedOnNewInstances !== null && parent !== null && parent.namesDefinedOnNewInstances === null) {
+      problems.add(
+        null,
+        `the class ${token} lists the own names of its instances, and ${parent.token} above it does not, so the list says nothing`,
+      );
+    }
     for (const { name, type } of typesOfNamesDefinedOnNewInstances) {
       if (!isListed(name))
         problems.add(

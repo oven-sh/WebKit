@@ -31,6 +31,8 @@ struct TypeTestPlan;
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<Origin> origin { };
+    // The callee reads something and then calls it. What the read throws or runs is shown here.
+    std::optional<Origin> readBeforeCall { };
     std::optional<B3::PureFunction> pureFunction { };
     std::optional<ThrowSite> throwSite { };
     // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.

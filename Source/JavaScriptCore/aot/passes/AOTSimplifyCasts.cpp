@@ -239,6 +239,10 @@ struct CastSimplification : Rewrite {
             claimsKeptBehindChecks.append(id);
             return changed;
         }
+        if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            noteCastThatStays(id);
+            return changed;
+        }
         // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
         bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
@@ -276,6 +280,12 @@ struct CastSimplification : Rewrite {
     bool saysMoreThanTypeOnCredit(const Value& cast, ValueID operand)
     {
         return cast.opcode == Opcode::AssumeType && !cast.isBehindChecks() && isBehindCheck(operand);
+    }
+
+    // What the language asks of a value it asks in every version of the function. A type that is owed to a check answers in the typed version alone, so the test stays until the function has its generic version.
+    bool isTestOfLanguageAnsweredOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand);
     }
 
     bool isBehindCheck(ValueID value)
@@ -335,7 +345,7 @@ struct CastSimplification : Rewrite {
         ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
-        if (!program.expectedOrTypeOf(function, cast).isSubsetOf(program.expectedOrTypeOf(function, current), program))
+        if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
             return 0;
         Value& user = edit(id, ValueEdit::Definition);
         user.setOperand(operandIndex, cast);

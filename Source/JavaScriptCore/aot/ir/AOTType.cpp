@@ -215,24 +215,9 @@ static bool hasOnlyObjectPart(const Type& type, ObjectPart part)
         && (part == ObjectPart::Builtins || type.builtins.isEmpty());
 }
 
-bool Type::hasOnlyLayouts(const TypeTable& types) const
+bool Type::hasOnlyLayouts() const
 {
-    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts && !types.at(layouts).mayHoldObjectsWithoutLayout();
-}
-
-bool Type::hasOnlyLayouts(const Program& program) const
-{
-    return hasOnlyLayouts(program.types);
-}
-
-bool hasMembersWithoutLayout(const TypeTable& types, const Type& type)
-{
-    return type.layouts && types.at(type.layouts).mayHoldObjectsWithoutLayout();
-}
-
-bool hasMembersWithoutLayout(const Program& program, const Type& type)
-{
-    return hasMembersWithoutLayout(program.types, type);
+    return hasOnlyObjectPart(*this, ObjectPart::Layouts) && layouts;
 }
 
 bool Type::isSingleValue() const
@@ -263,7 +248,7 @@ bool Type::isSingleValue() const
 
 LayoutID Type::singleLayout(const Program& program) const
 {
-    if (hasOnlyLayouts(program)) {
+    if (hasOnlyLayouts()) {
         std::span<const LayoutID> members = membersOf(program, *this);
         if (members.size() == 1)
             return members[0];
@@ -418,10 +403,11 @@ Type Type::withUntestableBuiltinsWidened() const
 
 static void canonicalizeInternalValue(Type& type)
 {
-    if ((type.opaque && type.environment) || type.hasObjects() || type.primitives & ~Primitive::Absent) {
-        uint16_t absent = type.primitives & Primitive::Absent;
+    constexpr uint16_t markers = Primitive::Absent | Primitive::Unspecified;
+    if ((type.opaque && type.environment) || type.hasObjects() || type.primitives & ~markers) {
+        uint16_t kept = type.primitives & markers;
         type = Type::anything();
-        type.primitives |= absent;
+        type.primitives |= kept;
         return;
     }
     Type canonical;

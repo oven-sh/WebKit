@@ -208,7 +208,7 @@ private:
     LayoutSetID knownSetOf(ValueID id) const
     {
         const Type& type = m_program.typeOf(m_function, id);
-        if (!type.hasOnlyLayouts(m_program) || !type.layouts || !m_program.at(type.layouts).all())
+        if (!type.hasOnlyLayouts() || !type.layouts || !m_program.at(type.layouts).all())
             return { };
         return type.layouts;
     }

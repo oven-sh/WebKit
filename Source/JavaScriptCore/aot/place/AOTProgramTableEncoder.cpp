@@ -990,6 +990,7 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
         data.isFilledAtBirth = isFilledAtBirth(program, reference);
         data.holdsRawValueFromBirth = holdsRawValueFromBirth(program, reference);
         data.keepsStateOfBirth = keepsStateOfBirth(program, reference);
+        data.slotHoldsUndefinedAndNull = slotHoldsUndefinedAndNull(program, reference);
         data.hasGuardOfStores = declaration.key && program.at(id).kind == LayoutKind::Instance && !!encoder.placement.guardBits().find(declaredLayoutOf(program, id), ClassSide::Prototype, MemberGuardKind::PassedByStores, declaration.key);
         data.flags = fieldFlagsOf(encoder, reference);
         data.slot = slot.data();
@@ -1009,7 +1010,8 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
         layoutData.isCopiedByWords &= isCopiedByWords;
         layoutData.hasOnlyPlainSlots &= isCopiedByWords && !(data.flags & fieldIsStoredOnce);
         layoutData.hasFieldsWithSymbolKeys |= declaration.key && isSymbolKind(program.at(declaration.key).kind);
-        layoutData.hasFieldThatKeepsStateOfBirth |= data.keepsStateOfBirth;
+        bool typeTakesUndefinedAndNull = !(Primitive::UndefinedOrNull & ~program.at(recordedTypeOf(program, declaration)).primitives);
+        layoutData.hasSlotWithUnusedMarkers |= traitsOf(slot.representation).hasUndefined && !data.slotHoldsUndefinedAndNull && !typeTakesUndefinedAndNull;
     }
     return fields;
 }
@@ -2019,7 +2021,7 @@ static void appendClosureFunctionTables(TableEncoder& encoder)
         const Function& target = program.at(closureTargetOf(program, function));
         uint32_t length = target.length;
         if (length > UINT16_MAX) {
-            encoder.fail(ProgramTableRule::TableOutOfBounds, { }, function);
+            encoder.build.reportLimitExceeded(LimitID::MaxReservedStackArguments, length, Subject { .function = function });
             length = 0;
         }
         CaptureCounts counts { 0, 0 };

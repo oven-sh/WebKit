@@ -45,6 +45,8 @@ static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 // Kept beside the reserve, in one piece, for one cell that is larger than a block.
 static constexpr size_t largeCellReserveSize = MB;
 static constexpr size_t lastReserveDivisor = 4;
+// A VM takes at most this many blocks until the first statement of a small program runs. No reserve is kept beside them.
+static constexpr unsigned numberOfBlocksOfNewVM = 24;
 // A full collection is barren if the program can allocate less than 1/64 of the heap before there is no room again.
 static constexpr size_t barrenCollectionDivisor = 64;
 // After this many barren collections in a row, with no out-of-memory error in between, the error is owed.
@@ -171,8 +173,8 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
 bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
 {
     // The range keeps pieces of different sizes in pages of different sizes. These fill the pages that a VM takes until the first statement of a small program runs:
-    // 12 of 64 KB for cells outside blocks, 2 of 512 KB for blocks. The large ones come last: by then the small ones have divided what is free.
-    static constexpr ReservedRangeHeap::Pieces piecesOfVM[] = { { 8 * KB, 84 }, { std::max<size_t>(MarkedBlock::blockSize, 64 * KB), 14 } };
+    // 12 of 64 KB for cells outside blocks, and those of its blocks. The large ones come last: by then the small ones have divided what is free.
+    static constexpr ReservedRangeHeap::Pieces piecesOfVM[] = { { 8 * KB, 84 }, { MarkedBlock::blockSize, numberOfBlocksOfNewVM } };
     ReservedRangeHeap* range;
     {
         Locker locker { s_poolLock };
@@ -180,7 +182,8 @@ bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
             return true;
         range = s_firstRange;
     }
-    return range->tryEnsureRoomForNewThreads(count, piecesOfVM);
+    // One more: the threads that run take from the range meanwhile.
+    return range->tryEnsureRoomForNewThreads(count + 1, piecesOfVM);
 }
 
 MarkedBlockCage::MarkedBlockCage()
@@ -221,8 +224,10 @@ void* MarkedBlockCage::tryAllocateAligned(size_t alignment, size_t size)
     if (!m_range)
         return nullptr;
     void* result = m_range->tryAllocateAligned(alignment, size);
-    if (result)
+    if (result) {
         didAllocate(result, size);
+        ++m_numberOfBlocksTaken;
+    }
     return result;
 }
 
@@ -261,7 +266,7 @@ size_t MarkedBlockCage::reserveSize() const
 void MarkedBlockCage::keepReserveOnceHalfFull()
 {
 #if CPU(X86_64) || CPU(ARM64)
-    if (!m_range || m_hasReleasedReserve)
+    if (!m_range || m_hasReleasedReserve || m_numberOfBlocksTaken <= numberOfBlocksOfNewVM)
         return;
     size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
     if (m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)

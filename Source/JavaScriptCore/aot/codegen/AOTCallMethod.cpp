@@ -44,8 +44,8 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     // A cache of its own pays for a site in fast code. Elsewhere the tables find the method, and the site is one call in place of two.
     SiteCacheID siteCache = value->siteCache();
     if (!siteCache || value.shape() != CodeShape::Fast) {
-        // One site stands for the read and the call. It has the position of the call, which every stack trace taken in the callee shows.
-        define(value, calls.callByConvention(value, call, { .immediate = *number, .throwSite = siteThatNamesCallee }));
+        // One return address stands for the read and the call. The stub says which of the two it is at.
+        define(value, calls.callByConvention(value, call, { .immediate = *number, .readBeforeCall = value->readOrigin(), .throwSite = siteThatNamesCallee }));
         return;
     }
 

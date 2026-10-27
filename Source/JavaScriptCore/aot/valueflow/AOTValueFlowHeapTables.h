@@ -7,12 +7,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTActors.h"
 #include "AOTBuiltinTable.h"
 #include "AOTSystemResources.h"
 #include "AOTValueFlow.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <wtf/BitVector.h>
@@ -136,14 +138,14 @@ private:
     macro(ValueSetID, builtinObjectsAndPlaceholders) \
     macro(ValueSetID, accessors) \
     macro(ValueSetID, knownAccessors) \
-    macro(ValueSetID, gettersThatActOnReceiver) \
-    macro(ValueSetID, holdersOfGettersThatActOnReceiver) \
     macro(ValueSetID, whatIsNewToNativeCode) \
     macro(ValueSetID, closuresWithPrototypeProperty) \
     macro(ValueSetID, templateObjects) \
     macro(ValueSetID, argumentsObjects) \
     macro(ValueSetID, arraysThatOperationsAllocate) \
     macro(ValueSetID, objectsWithoutPropertiesOfNativeCode) \
+    macro(ValueSetID, objectsThatTheirClassAnswersFor) \
+    macro(ValueSetID, prototypeObjectsOfClassesThatListNoOwnNames) \
     macro(ValueSetID, objectsHoldingOnlyWhatWasWritten) \
     macro(ValueFlowObjectID, undescribedNativeCode) \
     macro(ValueFlowObjectID, accessorOfPrototypeLink) \
@@ -164,6 +166,14 @@ public:
 #define AOT_DECLARE_GETTER(Type, name) Type name() const { return m_##name; }
     FOR_EACH_AOT_VALUE_OF_HEAP_TABLES(AOT_DECLARE_GETTER)
 #undef AOT_DECLARE_GETTER
+
+    // Every object belongs to one of these parts, and none is closed because nobody asked.
+    // openTo(actor): the actor has not accounted for the object. It may have put a property there that nothing in the solve shows.
+    // objectsWithoutPropertiesOfNativeCode(): an operation of the program makes the object, and the solve shows all that lies on it.
+    // universe.namespaces(): the loader makes the object and lists its names, and it takes no other.
+    // objectsThatTheirClassAnswersFor(): every other object. A built-in makes it, or it is constructed below a built-in class, and which class that is only the solve finds. The table has accounted for it
+    // unless its chain holds one of prototypeObjectsOfClassesThatListNoOwnNames().
+    ValueSetID openTo(Actor actor) const { return m_openTo[indexOf(actor)]; }
 
     const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
@@ -264,7 +274,8 @@ private:
     Vector<BuiltinID> m_holdersWithClosedKeys;
     BitVector m_hasClosedKeys;
     ValueSetID m_builtinObjects;
-    ValueSetID m_holdersThatListNotAllMembers;
+    ValueSetID m_entriesOpenToTableOrNativeCode;
+    std::array<ValueSetID, numberOfActors> m_openTo;
     ValueSetID m_functionsOfEngine;
     ValueSetID m_prototypeObjectsOfEntries;
     ValueSetID m_anyPrimitive;

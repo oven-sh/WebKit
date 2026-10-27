@@ -41,7 +41,7 @@ static PassOutcome noteExpectedElements(const Program& program, Function& functi
     for (Value& value : function.editAllValues()) {
         if (value.opcode != Opcode::ElemGet && value.opcode != Opcode::ElemSet)
             continue;
-        ExpectedElements expected = expectedElementsOf(program, program.expectedOrTypeOf(function, value.objectOperand()));
+        ExpectedElements expected = expectedElementsOf(program, program.expectedOrTypeOf(function, value.objectOperand()).predicted());
         if (expected == value.expectedElements())
             continue;
         value.setExpectedElements(expected);

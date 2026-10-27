@@ -442,7 +442,7 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
         return IterationForm::Set;
-    if (isTypedView(builtins.at(id).typedArrayType))
+    if (isTypedView(builtins.typedArrayTypeOf(id)))
         return IterationForm::TypedArray;
     return std::nullopt;
 }
@@ -464,6 +464,20 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
     return findMethod(WellKnownSymbol::Iterator).isConstant();
 }
 
+// An object whose layout has nothing under @@iterator is not iterated: whoever expects only such objects has looked at what else is done with the value.
+static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Type& expected, IteratorKind kind)
+{
+    const Program& program = pass.program;
+    if (!expected.layouts || expected.anyObject || expected.anyFunction || !expected.classes.isEmpty() || !expected.functions.isEmpty() || !expected.builtins.isEmpty())
+        return false;
+    auto hasMethod = [&](LayoutID layout, WellKnownSymbol symbol) {
+        return hasMemberToFindUnder(program, layout, program.keyOf(program.builtins().nameOf(symbol)));
+    };
+    return std::ranges::none_of(pass.types.at(expected.layouts).seen().predicted(), [&](LayoutID layout) {
+        return hasMethod(layout, WellKnownSymbol::Iterator) || (kind == IteratorKind::Async && hasMethod(layout, WellKnownSymbol::AsyncIterator));
+    });
+}
+
 static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& planned)
 {
     const BuiltinTable& builtins = pass.program.builtins();
@@ -480,7 +494,7 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             .form = *form,
             .kind = form == IterationForm::Map ? JSC::IterationKind::Entries : JSC::IterationKind::Values,
             .builtinClass = part.builtinClass,
-            .typedArrayType = builtins.at(part.builtinClass).typedArrayType,
+            .typedArrayType = builtins.typedArrayTypeOf(part.builtinClass),
             .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.writtenContents.span())),
             .awaitsEachValue = planned.kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
         });
@@ -492,7 +506,7 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
     };
 
     const Type& proven = pass.program.typeOf(pass.function, planned.value);
-    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
+    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value).predicted();
     for (const Type* type : { &expected, &proven }) {
         for (const ClassPart& part : type->classes)
             addClass(part);
@@ -500,7 +514,8 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             add(IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
     }
     // An iteration over undefined or null throws: whoever expects nothing else says nothing about what is iterated.
-    if (!(expected.isUndefinedOrNull() ? proven : expected).anyObject)
+    bool expectsNothingIterable = expected.isUndefinedOrNull() || namesOnlyLayoutsWithoutIterator(pass, expected, planned.kind);
+    if (!(expectsNothingIterable ? proven : expected).anyObject)
         return candidates;
 
     // What an iterable that nobody knows anything about is tested for. Of the classes with an arm only a generator does anything with what it is sent.
@@ -594,7 +609,7 @@ static std::optional<BypassedIterator> findBypassedIterator(FunctionPassContext&
         .form = *form,
         .kind = static_cast<JSC::IterationKind>(implementation.inlineParameters[0]),
         .builtinClass = part->builtinClass,
-        .typedArrayType = builtins.at(part->builtinClass).typedArrayType,
+        .typedArrayType = builtins.typedArrayTypeOf(part->builtinClass),
         .testedType = pass.function.at(receiver).type,
         .classIsProven = true,
         .namesAreProven = true,
@@ -3028,7 +3043,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         if (!isResultRead(origin, ForInStepResult::Key) || function.at(origin.resultsOperand()).opcode != Opcode::ForInStep || !reporter.typeOf(operation->object).hasObjects())
             return;
         ValueID step = origin.resultsOperand();
-        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).hasOnlyLayouts(reporter.program()) || !reporter.typeOf(reporter.use()).isAnything()))
+        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).predicted().hasOnlyLayouts() || !reporter.typeOf(reporter.use()).isAnything()))
             return;
 
         for (const Use& read : reporter.analyses().useLists().usesOf(step)) {

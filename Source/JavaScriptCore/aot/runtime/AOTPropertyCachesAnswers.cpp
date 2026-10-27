@@ -25,6 +25,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "AOTVMState.h"
 #include "DeletePropertySlot.h"
 #include "ErrorInstance.h"
 #include "GetterSetter.h"
@@ -65,6 +66,67 @@ static bool isFunctionOwnName(VM& vm, UniquedStringImpl* uid)
 bool isNeverCachedName(VM& vm, UniquedStringImpl* uid)
 {
     return parseIndex(PropertyName(uid)) || uid == vm.propertyNames->underscoreProto.impl() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies());
+}
+
+static PropertyCaches* cachesWithPreparationBeforeLookupsUnder(VM& vm, UniquedStringImpl* uid)
+{
+    if (!uid->isSymbol())
+        return nullptr;
+    for (Instance* instance : vm.aotState().instances) {
+        PropertyCaches& caches = *instance->state->propertyCaches;
+        if (caches.preparationBeforeLookupsUnder(uid))
+            return &caches;
+    }
+    return nullptr;
+}
+
+bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid)
+{
+    return cachesWithPreparationBeforeLookupsUnder(vm, uid);
+}
+
+void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
+{
+    VM& vm = globalObject->vm();
+    PropertyCaches* caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    // What the function itself looks at is in the library's own form. A frozen object was asked when it was frozen, and takes no store since.
+    if (!caches || caches->isPreparingHolder() || caches->holderLookedAtByName() == compiledObject || uncheckedDowncast<Object>(compiledObject)->isFrozen())
+        return;
+    JSObject* function = caches->preparationBeforeLookupsUnder(uid);
+    caches->setIsPreparingHolder(true);
+    call(globalObject, function, JSC::getCallData(function), compiledObject, ArgList());
+    caches->setIsPreparingHolder(false);
+}
+
+LookByName::LookByName(VM& vm, JSValue holder, UniquedStringImpl* uid)
+{
+    if (!holder.isCell())
+        return;
+    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    if (m_caches)
+        m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
+}
+
+LookByName::~LookByName()
+{
+    if (m_caches)
+        m_caches->exchangeHolderLookedAtByName(m_previous);
+}
+
+void prepareForWalk(JSGlobalObject* globalObject, JSObject* object)
+{
+    Object* compiled = compiledObjectOrNull(object);
+    if (!compiled || !compiled->layout().hasFieldsWithSymbolKeys || !compiled->state().propertyCaches->hasPreparationsBeforeLookups())
+        return;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RuntimeLayoutTable& layouts = compiled->state().objects->layouts;
+    for (const FieldData& field : compiled->layout().fields()) {
+        if (!layouts.hasSymbolKey(field) || !compiled->isInSlot(field))
+            continue;
+        prepareForLookup(globalObject, compiled, layouts.nameOf(vm, field));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 Structure* structureForPrimitive(JSGlobalObject* globalObject, JSValue primitive)

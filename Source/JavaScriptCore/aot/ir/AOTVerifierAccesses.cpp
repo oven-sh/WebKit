@@ -10,6 +10,7 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTable.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTStringBuilderAnalysis.h"
@@ -152,6 +153,14 @@ void FunctionVerifier::verifyKeyedTail(BlockID block, ValueID id, const Value& v
         fail(InternalErrorKind::ArgumentCountMismatch, block, id, static_cast<uint32_t>(numberOfKeys));
 }
 
+// The operation reads and writes elements of the width that it names.
+static bool holdsOnlyViewsOf(const BuiltinTable& builtins, const Type& type, TypedArrayType typedArrayType)
+{
+    return type.hasOnlyClassObjects() && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
+        return builtins.typedArrayTypeOf(part.builtinClass) == typedArrayType;
+    });
+}
+
 void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const Value& value)
 {
     if (Value::opcodesWithKeyIsIntegral.contains(value.opcode) && value.keyIsIntegral()) {
@@ -164,6 +173,10 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
     bool mayLeaveTypeOut = value.opcode == Opcode::GetTypedArrayLength && value.typedArrayType() == NotTypedArray;
     if (Value::opcodesWithTypedArrayType.contains(value.opcode) && !isTypedView(value.typedArrayType()) && !mayLeaveTypeOut) {
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
+        return;
+    }
+    if (Value::opcodesWithTypedArrayType.contains(value.opcode) && !mayLeaveTypeOut && !holdsOnlyViewsOf(m_program.builtins(), typeOf(value.viewOperand()), value.typedArrayType())) {
+        fail(InternalErrorKind::OperandTypeMismatch, block, id, value.viewOperand().index());
         return;
     }
     if (Value::opcodesWithHoles.contains(value.opcode) && !hasValidHoles(value)) {

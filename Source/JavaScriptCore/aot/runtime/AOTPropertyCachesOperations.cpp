@@ -38,6 +38,11 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
         VM& vm = *instance->vm;
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Structure* structureNow = asObject(base)->structure();
+        PropertyCaches& caches = *instance->state->propertyCaches;
+        caches.didFileNothing();
+        // The object before this one that was changed in the same way has left the answer there.
+        if (structureNow != structureBefore && caches.tables().find(structureNow->id(), name, SlotAccess::Read))
+            return;
         PropertySlot again(slot.thisValue(), PropertySlot::InternalMethodType::VMInquiry, &vm);
         asObject(base)->getPropertySlot(instance->globalObject, Identifier::fromUid(vm, name.uid), again);
         scope.assertNoException();
@@ -153,6 +158,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance*
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, access.ident));
         OPERATION_RETURN(scope, encodedJSValue());
     }
+    LookByName look(vm, base, access.ident.impl());
     OPERATION_RETURN(scope, JSValue::encode(getAndCache(access, base)));
 }
 
@@ -335,6 +341,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdAndCache, void, (Instance* instance,
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
     PutMode mode = static_cast<PutMode>(putMode);
+    LookByName look(vm, base, access.ident.impl());
     if (base.isUndefinedOrNull()) [[unlikely]]
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, access.ident));
     else if (base.isCell())
@@ -750,8 +757,12 @@ static bool hasByValAndCache(Instance* instance, JSObject* object, JSValue prope
     auto scope = DECLARE_THROW_SCOPE(*instance->vm);
     if (auto longKeyName = findNameEqualToLongString(object, property, isIn)) [[unlikely]]
         return !!*longKeyName;
-    if (std::optional<uint32_t> index = property.tryGetAsUint32Index())
+    if (std::optional<uint32_t> index = property.tryGetAsUint32Index()) {
+        // The stub finds the text of the index there the next time.
+        if (isIn && object->type() == ProxyObjectType && *index < NumericStrings::cacheSize)
+            instance->vm->numericStrings.addJSString(*instance->vm, static_cast<int>(*index));
         RELEASE_AND_RETURN(scope, isIn ? object->hasProperty(globalObject, *index) : object->hasOwnProperty(globalObject, *index));
+    }
     if (property.isString() && !atomOfKey(property)) {
         auto existingAtom = asString(property)->toExistingAtomString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);

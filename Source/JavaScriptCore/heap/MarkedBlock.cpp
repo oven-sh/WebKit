@@ -801,18 +801,29 @@ void MarkedBlock::Handle::poisonRedZoneCells()
 }
 #endif
 
-// Under useZombieMode a sweep overwrites dead cells.
-static void scribbleDeadCells(MarkedBlock::Handle& handle)
+// Under useZombieMode a sweep overwrites dead cells, page by page: a decommitted page stays decommitted.
+static void scribbleDeadCells(MarkedBlock::Handle& handle, uint16_t decommittedPages)
 {
     JSC::Heap& heap = *handle.heap();
     if (heap.isShuttingDown() || handle.alignedMemoryAllocator() == heap.structureAllocator.get())
         return;
     size_t size = handle.cellSize();
     bool hasDestructors = handle.attributes().destruction != DoesNotNeedDestruction;
+    size_t pageSize = WTF::pageSize();
+    char* base = std::bit_cast<char*>(&handle.block());
     handle.forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
-        scribble(cell, size);
-        if (hasDestructors)
-            cell->zap(HeapCell::Destruction);
+        char* begin = std::bit_cast<char*>(cell);
+        char* end = begin + size;
+        for (char* part = begin; part < end;) {
+            size_t page = (part - base) / pageSize;
+            char* partEnd = std::min(end, base + (page + 1) * pageSize);
+            if (!(decommittedPages & (1u << page))) {
+                scribble(part, partEnd - part);
+                if (hasDestructors && part == begin)
+                    cell->zap(HeapCell::Destruction);
+            }
+            part = partEnd;
+        }
         return IterationStatus::Continue;
     });
 }
@@ -881,7 +892,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
         if (!isEmpty())
             decommitUnusedPages(isFirstSweepSinceFullCollection);
         if (Options::useZombieMode()) [[unlikely]]
-            scribbleDeadCells(*this);
+            scribbleDeadCells(*this, m_decommittedPages);
         Locker locker { m_directory->bitvectorLock().mutate() };
         m_directory->assertInUse(index());
         m_directory->setIsUnswept(index(), false);
@@ -916,7 +927,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
             if (!isEmpty())
                 decommitUnusedPages(isFirstSweepSinceFullCollection);
             if (Options::useZombieMode()) [[unlikely]]
-                scribbleDeadCells(*this);
+                scribbleDeadCells(*this, m_decommittedPages);
         }
         return;
     }

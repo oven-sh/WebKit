@@ -228,6 +228,8 @@ void IRPrinter::printType(const Type& type)
     }
     if (type.primitives & Primitive::Absent)
         m_out.print(bar, "absent"_s);
+    if (type.primitives & Primitive::Unspecified)
+        m_out.print(bar, "unspecified"_s);
 
     printStringLiterals(type, bar);
     printSymbolLiterals(type, bar);
@@ -340,8 +342,6 @@ void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
             m_out.print(bar);
             print(layout);
         });
-        if (set.isWrittenWithMembersWithoutLayout())
-            m_out.print(bar, "nolayout"_s);
     }
     if (type.environment) {
         m_out.print(bar, "env "_s);
@@ -423,8 +423,6 @@ void IRPrinter::print(LayoutSetID id)
         m_out.print(comma);
         print(member);
     });
-    if (set.isWrittenWithMembersWithoutLayout())
-        m_out.print(comma, "nolayout"_s);
     if (!set.listsEveryLayout())
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);

@@ -9,6 +9,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
+#include "AOTThreshold.h"
 #include "Structure.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -112,7 +113,11 @@ static constexpr uint32_t numberOfCachedEnumerators = 256;
 static constexpr unsigned enumeratorHashShift = 6;
 static constexpr uint32_t indexOfCachedEnumerator(uint32_t structureID, uint32_t orderWord) { return ((structureID >> enumeratorHashShift) + orderWord) % numberOfCachedEnumerators; }
 
+// What lies in front of the first element is made with it.
+AOT_THRESHOLD(uint32_t, maxIndexOfFirstElementMadeByStub, 7);
+
 // The Structure that an object with the Structure `before` gets with another prototype. The headers of their cells differ in the StructureID alone.
+// Where RealmWords::extraPropertiesWithElementsStructure stands in place of a prototype, which it never is: the Structure that the object gets with its first element, where nobody has to be asked or told.
 struct PrototypeTransition {
     EncodedJSValue prototype;
     uint32_t before;

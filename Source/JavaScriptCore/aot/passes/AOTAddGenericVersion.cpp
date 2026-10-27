@@ -1165,12 +1165,12 @@ struct PositionsProvenByTypes {
     bool isAssumedWithoutStart(Position position) const { return isAmong(numbersOfAssumedWithoutStart, position); }
     bool isCandidate(Position position) const { return isAssumed(position) || isAssumedWithoutStart(position); }
     bool holdsDeclaredType(Position position) const { return isAssumed(position) || !findDeclaredType(program, position)->isExpected(); }
-    const Type& declaredTypeOf(Position position) const { return program.at(findDeclaredType(program, position)->expected().predicted()); }
+    Expected<const Type&> declaredTypeOf(Position position) const { return program.at(findDeclaredType(program, position)->expected().predicted()); }
     bool isInside(const Type& type, TypeID other) const { return type.isSubsetOf(program.at(other), program); }
 
-    Type typeWithoutStartOf(Position position) const
+    Expected<Type> typeWithoutStartOf(Position position) const
     {
-        Type type = declaredTypeOf(position);
+        Type type = declaredTypeOf(position).predicted();
         type.primitives = type.primitives & ~Primitive::Undefined;
         return type;
     }
@@ -1283,7 +1283,7 @@ struct PositionsProvenByTypes {
                 return;
             body.variablesNamed.append(*position);
             const Type& arriving = program.typeOf(function, operand);
-            if (!arriving.isSubsetOf(declaredTypeOf(*position), program)) {
+            if (!arriving.isSubsetOf(declaredTypeOf(*position).predicted(), program)) {
                 // Of a position that flow has proven the types of the values may know less.
                 (isAssumed(*position) ? body.positionsGivenUp : body.variablesThatMayHoldUndefined).append(*position);
                 return;
@@ -1312,7 +1312,7 @@ struct PositionsProvenByTypes {
     {
         if (!isAssumed(position))
             return;
-        if (!(value ? program.typeOf(function, value) : program.at(TypeTable::undefined)).isSubsetOf(declaredTypeOf(position), program))
+        if (!(value ? program.typeOf(function, value) : program.at(TypeTable::undefined)).isSubsetOf(declaredTypeOf(position).predicted(), program))
             body.positionsGivenUp.append(position);
         else if (value)
             body.arrivals.append({ position, value });
@@ -1389,8 +1389,8 @@ struct PositionsProvenByTypes {
         if (std::optional<Position> variable = variableReadThroughCastsAndChecks(function, check.valueOperand())) {
             if (!holdsDeclaredType(*variable))
                 return false;
-            if (!isInside(declaredTypeOf(*variable), check.expectedType().predicted())) {
-                if (!isAssumedWithoutStart(*variable) || !isInside(typeWithoutStartOf(*variable), check.expectedType().predicted()))
+            if (!isInside(declaredTypeOf(*variable).predicted(), check.expectedType().predicted())) {
+                if (!isAssumedWithoutStart(*variable) || !isInside(typeWithoutStartOf(*variable).predicted(), check.expectedType().predicted()))
                     return false;
                 tested.sourcesWithoutStart.append(*variable);
             }
@@ -1403,7 +1403,7 @@ struct PositionsProvenByTypes {
         if (parameter == notFound || parameter >= function.numberOfEntryParameters())
             return appendResultsTestedBy(function, definition, check.expectedType().predicted(), tested.sources);
         Position position { Position::Kind::EntryParameter, id.index(), static_cast<uint32_t>(parameter) };
-        if (!isAssumed(position) || !isInside(declaredTypeOf(position), check.expectedType().predicted()))
+        if (!isAssumed(position) || !isInside(declaredTypeOf(position).predicted(), check.expectedType().predicted()))
             return false;
         tested.sources.append(position);
         return true;
@@ -1441,7 +1441,7 @@ struct PositionsProvenByTypes {
                     answered = typeOfConvert(typing, answered, answered, cast.declared);
             }
             Vector<Position, 2> sources;
-            if (answered.isSubsetOf(declaredTypeOf(result), program))
+            if (answered.isSubsetOf(declaredTypeOf(result).predicted(), program))
                 body.arrivals.append({ result, call });
             else if (!appendResultsTestedBy(function, call, function.result().expected().predicted(), sources))
                 body.positionsGivenUp.append(result);
@@ -1646,7 +1646,7 @@ struct PositionsProvenByTypes {
             if (!passes(tested))
                 continue;
             Value& check = function.edit(tested.check);
-            check.becomeAssumeType(check.valueOperand(), Proven::byPosition(check.expectedType().predicted()));
+            check.becomeAssumeType(check.valueOperand(), Proven::byEveryArrival(check.expectedType()));
             numberOfChecks.fetch_add(1, std::memory_order_relaxed);
         }
         settleProofsBehindAnsweredChecks(function);
@@ -1659,7 +1659,7 @@ struct PositionsProvenByTypes {
             Vector<TailCast, 4> casts;
             for (TailCast cast : terminator.casts())
                 casts.append(cast);
-            casts.append(TailCast { DeclaredType(Proven::byPosition(function.result().expected().predicted())), CastResolution::Assume });
+            casts.append(TailCast { DeclaredType(Proven::byEveryArrival(function.result().expected())), CastResolution::Assume });
             terminator.setCasts(casts.span());
         }
     }
@@ -1670,9 +1670,11 @@ struct PositionsProvenByTypes {
     void apply()
     {
         for (Position position : assumed)
-            edit(position).establish(Proven::byPosition(edit(position).expected().predicted()));
-        for (Position position : assumedWithoutStart)
-            edit(position).changeType(Proven::byPosition(program.types.intern(typeWithoutStartOf(position))));
+            edit(position).establish(Proven::byEveryArrival(edit(position).expected()));
+        for (Position position : assumedWithoutStart) {
+            ExpectedType withoutStart(program.types.intern(typeWithoutStartOf(position).predicted()));
+            edit(position).changeType(Proven::byEveryArrival(withoutStart));
+        }
 
         // Whoever has a proven parameter or result, tests one, or hands a value to one is typed anew. So is whoever names a proven variable.
         BitVector isChanged(program.functions.size());
@@ -2068,7 +2070,7 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     Vector<ValueID, 8> checks;
     for (const GuardedRead& read : collectGuardedReads(program, id, function, analyses, marked, changedValues)) {
         DeclaredType checked = read.declared;
-        checked.establish(Proven::byPosition(read.declared.expected().predicted()));
+        checked.establish(Proven::byConversion(read.declared.expected()));
         ConvertResolution resolution = resolveConvert(typing, typing.typeOf(read.declared), checked);
         if (resolution.cast != CastResolution::Check)
             continue;
@@ -2349,7 +2351,7 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
         // A test of a type may be a guess, or tell the members of a union apart: the side on which it fails is then an ordinary way through the function, which is worth its own code.
         bool testsState = provesForStretch(provesOf(test.opcode)) && provesOf(test.opcode) != Proof::ExactFunction;
         // What fails such a test is not what its annotation says, as what fails a test at the entrance, or it is undefined or null where the program goes on as if it had an object: it is about to throw.
-        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.expectedOrTypeOf(function, test.valueOperand()).without(pass.program.at(test.testedType()), pass.types).hasOnlyPrimitives(Primitive::UndefinedOrNull)))
+        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.expectedOrTypeOf(function, test.valueOperand()).predicted().without(pass.program.at(test.testedType()), pass.types).hasOnlyPrimitives(Primitive::UndefinedOrNull)))
             continue;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
             BlockID target = block.terminator.targets[index].block;

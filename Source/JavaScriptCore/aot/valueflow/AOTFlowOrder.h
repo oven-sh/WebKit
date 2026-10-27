@@ -10,15 +10,44 @@
 #include "AOTCFG.h"
 #include "AOTFlowIDs.h"
 #include "AOTVector.h"
+#include <array>
 #include <optional>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+#define FOR_EACH_AOT_WAY_INTO_FILE(v) \
+    v(EntryPoint) \
+    v(StaticImport) \
+    v(DeferredImport) \
+    v(Require) \
+    v(ImportCall) \
+    v(NameMadeAtRunTime) \
+    v(Host)
+
+#define FOR_EACH_AOT_RUNNER_OF_JOBS(v) \
+    v(EndOfTurn) \
+    v(RequireOfESModule) \
+    v(NameMadeAtRunTime) \
+    v(Builtin)
+
+#define AOT_LIST_ENUMERATOR(name) name,
+// A file whose body runs and that no way in has spoken for may begin at any time.
+enum class FlowWayIntoFile : uint8_t { FOR_EACH_AOT_WAY_INTO_FILE(AOT_LIST_ENUMERATOR) };
+enum class FlowRunnerOfJobs : uint8_t { FOR_EACH_AOT_RUNNER_OF_JOBS(AOT_LIST_ENUMERATOR) };
+#undef AOT_LIST_ENUMERATOR
+
+#define AOT_LIST_WAY(name) FlowWayIntoFile::name,
+#define AOT_LIST_RUNNER(name) FlowRunnerOfJobs::name,
+inline constexpr std::array allWaysIntoFile { FOR_EACH_AOT_WAY_INTO_FILE(AOT_LIST_WAY) };
+inline constexpr std::array allRunnersOfJobs { FOR_EACH_AOT_RUNNER_OF_JOBS(AOT_LIST_RUNNER) };
+#undef AOT_LIST_WAY
+#undef AOT_LIST_RUNNER
+
 struct FlowModuleLoad {
     FunctionID function;
     ModuleID target;
-    bool isSynchronous { false };
+    FlowWayIntoFile way { FlowWayIntoFile::NameMadeAtRunTime };
 };
 
 struct FlowCall {
@@ -43,6 +72,7 @@ struct FlowOrderInputs {
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
     BitVector modulesLoadedByHost;
+    BitVector modulesNamedByOperationsNobodyKnows;
     bool hostRunsWaitingJobs { false };
     Vector<FlowModuleLoad> moduleLoads;
     Vector<FlowCall> calls;
@@ -56,6 +86,7 @@ struct FlowModuleOrder {
     Vector<uint32_t> componentOf;
     BitVector modulesInCycles;
     Vector<BitVector> componentsCompletedBefore;
+    BitVector modulesThatJobsMayInterrupt;
 
     bool completesBefore(ModuleID first, ModuleID second) const;
     bool runsAfterRequests(ModuleID module) const { return module.index() < componentOf.size() && !modulesInCycles.get(module.index()); }

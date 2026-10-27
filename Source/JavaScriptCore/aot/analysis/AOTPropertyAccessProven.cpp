@@ -126,7 +126,7 @@ static bool addMemberArm(const PropertyAccessContext& context, const PropertyAcc
 static bool addProvenArms(const PropertyAccessContext& context, const PropertyAccessQuery& query, ProvenAccess& result)
 {
     const ReceiverCandidates& receivers = query.receivers;
-    RELEASE_ASSERT(receivers.predicted.isEmpty() && !receivers.mayBeNullish);
+    RELEASE_ASSERT(receivers.expected.predicted().isEmpty() && !receivers.mayBeNullish);
     if (!receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() > query.maxMembers)
         return false;
     if (receivers.proven.isEmpty())
@@ -149,7 +149,7 @@ static bool definesPropertyOfOrdinaryObject(const Program& program, const Functi
     if (function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject)
         return true;
     const Type& type = program.typeOf(function, access.objectOperand());
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record;
     });
 }
@@ -188,7 +188,7 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     if (!query || looksForNameThatFramesTellOf(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
         return ProvenAccess::unknown();
     query->receivers.mayBeNullish = false;
-    query->receivers.predicted.clear();
+    query->receivers.expected = LayoutList();
     query->isOnlyCalled = !query->isPrivate;
     query->usesOnlyPlansWithoutTests = true;
 

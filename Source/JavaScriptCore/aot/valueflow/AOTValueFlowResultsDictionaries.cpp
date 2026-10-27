@@ -122,12 +122,11 @@ static Type typeBehindDictionaries(const Program& program, const BitVector& layo
     bool namesDictionaries = false;
     if (type.layouts) {
         Vector<LayoutID> members = program.at(type.layouts).written();
-        bool hasMembersWithoutLayout = program.at(type.layouts).mayHoldObjectsWithoutLayout();
         namesDictionaries = members.removeAllMatching([&](LayoutID member) {
             return layoutsOfDictionaries.quickGet(member.index());
         });
         if (namesDictionaries)
-            behind.layouts = members.isEmpty() && !hasMembersWithoutLayout ? LayoutSetID() : types.intern(LayoutSet::complete(WTF::move(members), hasMembersWithoutLayout));
+            behind.layouts = members.isEmpty() ? LayoutSetID() : types.intern(LayoutSet::complete(WTF::move(members)));
     }
     for (ClassPart& part : behind.classes) {
         for (TypeID& contents : part.writtenContents)

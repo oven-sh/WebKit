@@ -18,6 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Program;
 struct Function;
+struct LocationFlow;
 struct Value;
 
 template<typename IDType>
@@ -278,6 +279,9 @@ MemoryAccess memoryAccessOf(const Function&, const Value&);
 enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedDuringActivation };
 
 LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);
+// The location has been stored to wherever a function that reads it is entered, and not sooner. In the function's own body that is everywhere. A copy of the body in another function names a fact that says where it begins.
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&);
+bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Value& read);
 
 } } } // namespace JSC::AOT::Typed
 

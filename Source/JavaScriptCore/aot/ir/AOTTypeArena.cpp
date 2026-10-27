@@ -1062,11 +1062,11 @@ bool TypeArena::shouldCacheResult(LayoutSetID a, LayoutSetID b) const
     return at(a).written().size() + at(b).written().size() >= minCachedSetSize;
 }
 
-LayoutSetID TypeArena::internCompleteSet(Vector<LayoutID>&& sortedMembers, bool hasMembersWithoutLayout)
+LayoutSetID TypeArena::internCompleteSet(Vector<LayoutID>&& sortedMembers)
 {
-    if (sortedMembers.isEmpty() && !hasMembersWithoutLayout)
+    if (sortedMembers.isEmpty())
         return { };
-    return intern(LayoutSet::complete(WTF::move(sortedMembers), hasMembersWithoutLayout));
+    return intern(LayoutSet::complete(WTF::move(sortedMembers)));
 }
 
 LayoutSetID TypeArena::computeResult(LayoutSetOperation operation, LayoutSetID a, LayoutSetID b)
@@ -1077,33 +1077,29 @@ LayoutSetID TypeArena::computeResult(LayoutSetOperation operation, LayoutSetID a
     std::span<const LayoutID> inSecond = second.completeMembers();
 
     Vector<LayoutID> members;
-    bool hasMembersWithoutLayout = false;
     switch (operation) {
     case LayoutSetOperation::Union:
         members.grow(inFirst.size() + inSecond.size());
         members.shrink(std::ranges::set_union(inFirst, inSecond, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout() || second.mayHoldObjectsWithoutLayout();
         break;
     case LayoutSetOperation::Intersection:
         members.grow(std::min(inFirst.size(), inSecond.size()));
         members.shrink(std::ranges::set_intersection(inFirst, inSecond, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout() && second.mayHoldObjectsWithoutLayout();
         break;
     case LayoutSetOperation::Difference:
         members.grow(inFirst.size());
         members.shrink(std::ranges::set_difference(inFirst, inSecond, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout();
         break;
     }
 
     auto isResult = [&](const LayoutSet& set) {
-        return members.size() == set.written().size() && hasMembersWithoutLayout == set.mayHoldObjectsWithoutLayout();
+        return members.size() == set.written().size();
     };
     if (isResult(first))
         return a;
     if (operation != LayoutSetOperation::Difference && isResult(second))
         return b;
-    return internCompleteSet(WTF::move(members), hasMembersWithoutLayout);
+    return internCompleteSet(WTF::move(members));
 }
 
 LayoutSetID TypeArena::cachedResult(LayoutSetOperation operation, LayoutSetID a, LayoutSetID b)

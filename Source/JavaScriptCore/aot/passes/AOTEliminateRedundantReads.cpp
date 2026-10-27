@@ -1630,11 +1630,12 @@ struct VariableCarrier : LoopEditor {
         }
         std::optional<Edge> entry = m_copy ? loops.findSingleEntry(loop) : std::nullopt;
         auto isReachedWheneverLoopIsEntered = [&](const VariableAccess& read) {
-            if (isUnspecifiedAtDefinition(m_function, m_function.at(read.id)))
+            if (typeOf(read.id).mayBeUnspecified())
                 return false;
             BlockID block = read.point.block;
+            // A turn of the copy that threw in front of the read and was caught inside the loop has passed the block and not the read.
             if (BlockID blockOfCopy = entry ? m_copy->cloneOf(block) : BlockID())
-                return dominators.dominates(blockOfCopy, entry->from);
+                return dominators.terminatorDominates(blockOfCopy, entry->from);
             return beginsBeforeAnyWayOut.get(block.index()) && (!firstWayOut || firstWayOut->block != block || read.point.index < firstWayOut->index);
         };
 
@@ -1810,6 +1811,10 @@ struct VariableCarrier : LoopEditor {
                 latchEdges.append(edge);
         }
 
+        Vector<FactAheadOfLoop, 8> facts;
+        for (const CarriedVariable& variable : m_variables)
+            facts.append(findFactAheadOfLoop(variable, pointBeforeTerminatorOf(m_function, entry.from)));
+
         IRBuilder builder = makeBuilder();
         BlockID preheader = entry.from;
         if (m_function.at(preheader).terminator.kind != TerminatorKind::Jump) {
@@ -1833,10 +1838,20 @@ struct VariableCarrier : LoopEditor {
         for (size_t index = 0; index < m_variables.size(); ++index) {
             const CarriedVariable& variable = m_variables[index];
             Vector<ValueID, 4>& definitions = definitionsOfVariables[index];
+            FactAheadOfLoop& fact = facts[index];
+            ValueID copiedRead = fact.readWithFact ? fact.readWithFact : variable.reads.first();
+            if (fact.enteredFunction) {
+                Value entered = IRBuilder::make(Opcode::Entered);
+                entered.setFunction(fact.enteredFunction);
+                builder.setOrigin(m_function.at(copiedRead).origin());
+                fact.fact = builder.insertBefore(pointBeforeTerminatorOf(m_function, preheader), WTF::move(entered));
+            }
             auto insertRead = [&](ProgramPoint point) {
-                Value read = m_function.at(variable.reads.first());
-                if (read.opcode == Opcode::GetModuleVariable && !variable.isReadWheneverLoopIsEntered && m_program.at(read.variable()).flow.initialization == InitializationState::StoredBeforeEveryRead)
-                    read.setMayPrecedeItsStore(true);
+                Value read = m_function.at(copiedRead);
+                if (fact.isNeeded) {
+                    read.setFactOperand(fact.fact);
+                    read.setMayPrecedeItsStore(fact.isMissing);
+                }
                 builder.setOrigin(read.origin());
                 return builder.insertBefore(point, WTF::move(read));
             };
@@ -1866,11 +1881,48 @@ struct VariableCarrier : LoopEditor {
         builder.applyInsertions();
 
         for (size_t index = 0; index < m_variables.size(); ++index) {
-            for (ValueID read : m_variables[index].reads)
-                becomeUpcast(m_function, read, definitionsOfVariables[index].first());
+            ValueID definition = definitionsOfVariables[index].first();
+            for (ValueID read : m_variables[index].reads) {
+                if (!facts[index].isMissing || typeOf(read).mayBeUnspecified()) {
+                    becomeUpcast(m_function, read, definition);
+                    continue;
+                }
+                Value& value = m_function.edit(read, ValueEdit::Definition);
+                ValueID factOfRead = value.factOperand();
+                value.becomeAssumeType(definition, Proven::behindFact(value.type));
+                value.setFactOperand(factOfRead);
+            }
         }
         repair(builder, definitionsOfVariables.span());
         return true;
+    }
+
+    struct FactAheadOfLoop {
+        bool isNeeded { false };
+        bool isMissing { false };
+        ValueID fact;
+        FunctionID enteredFunction;
+        ValueID readWithFact;
+    };
+
+    // The variable has its declared type ahead of the loop where a fact that one of the reads names is defined there, where one of them needs none, or where the first turn is sure to get to one of them.
+    FactAheadOfLoop findFactAheadOfLoop(const CarriedVariable& variable, ProgramPoint aheadOfLoop)
+    {
+        if (!holdsDeclaredTypeOnlyBehindEntry(m_program, m_function.at(variable.reads.first())))
+            return { };
+        for (ValueID id : variable.reads) {
+            const Value& read = m_function.at(id);
+            if (read.mayPrecedeItsStore())
+                continue;
+            if (!read.factOperand() || m_analyses.dominates(read.factOperand(), aheadOfLoop))
+                return { true, false, read.factOperand(), { }, id };
+        }
+        for (ValueID id : variable.reads) {
+            const Value& read = m_function.at(id);
+            if (variable.isReadWheneverLoopIsEntered && !read.mayPrecedeItsStore() && m_function.at(read.factOperand()).opcode == Opcode::Entered)
+                return { true, false, { }, m_function.at(read.factOperand()).function(), id };
+        }
+        return { true, true, { }, { }, { } };
     }
 
     // The environment that an inlined function reads its variables from is what its closure has captured. With the closure read ahead of the loop, so is the environment.
@@ -1881,7 +1933,6 @@ struct VariableCarrier : LoopEditor {
             return false;
         const UseLists& useLists = m_analyses.useLists();
         const NaturalLoops& loops = m_analyses.naturalLoops();
-        UnspecifiedValues unspecifiedValues(m_analyses);
 
         Vector<ValueID, 4> hoisted;
         for (unsigned position = 0; position < loop.size(); ++position) {
@@ -1891,7 +1942,7 @@ struct VariableCarrier : LoopEditor {
                 if (value.opcode != Opcode::GetCapture)
                     return false;
                 ValueID closure = m_analyses.definitionThroughUpcasts(value.operand(0));
-                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type || unspecifiedValues.mayContain(closure))
+                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type)
                     return false;
                 value.setOperand(0, closure);
                 hoisted.append(id);
@@ -1935,8 +1986,13 @@ struct VariableCarrier : LoopEditor {
             if (block.handler || block.terminator.kind != TerminatorKind::Branch || block.values.isEmpty() || block.terminator.conditionOperand() != block.values.last())
                 break;
             const Value& test = m_function.at(block.values.last());
+            // A fact and the cast that names it go ahead of the loop with the test, behind the tests in front of them.
+            auto isCastBehindFact = [&](ValueID value) {
+                return m_function.at(value).opcode == Opcode::AssumeType && m_function.at(value).factOperand() && useLists.locationOf(value).block == id;
+            };
             bool holdsNothingElse = std::ranges::all_of(block.values.span().first(block.values.size() - 1), [&](ValueID value) {
-                return m_function.at(value).opcode == Opcode::LoopHint;
+                Opcode opcode = m_function.at(value).opcode;
+                return opcode == Opcode::LoopHint || opcode == Opcode::Entered || isCastBehindFact(value);
             });
             if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;
@@ -1946,6 +2002,8 @@ struct VariableCarrier : LoopEditor {
                 break;
 
             ValueID tested = test.valueOperand();
+            if (isCastBehindFact(tested))
+                tested = m_function.at(tested).valueOperand();
             std::optional<size_t> parameterOfHeader;
             if (size_t position = proven.find(tested); position != notFound)
                 parameterOfHeader = tests[position].parameterOfHeader;
@@ -2161,6 +2219,7 @@ struct LoopPathSeparator : LoopEditor {
     Vector<VariableOfLoop> m_variablesWithStores { };
     bool m_likelyPathCannotLeave { false };
     bool m_pathThatOnlyComputesLeaves { false };
+    bool m_wayBackWidensLoopTypes { false };
 
     enum class PathsThatOnlyCompute : uint8_t { LeaveWhereTheyWidenParameters, Stay };
 
@@ -2653,8 +2712,11 @@ struct LoopPathSeparator : LoopEditor {
         m_isFinishedHeader.merge(isInCopy);
         if (!addWayBack(builder, plan, cloner.cloneOf(plan.header), isInCopy))
             m_context.build.statistics().count(StatisticID::LoopsWithoutWayBack);
-        else if (plan.letsVariablesBeCarried)
+        else if (plan.letsVariablesBeCarried) {
+            if (m_wayBackWidensLoopTypes)
+                retypeValues();
             carryVariables(builder, plan.header, cloner, isInCopy);
+        }
 
         // A parameter that the repair adds holds what the definitions it joins hold.
         restoreRememberedTypes();
@@ -2709,10 +2771,9 @@ struct LoopPathSeparator : LoopEditor {
         // What a test has proven, or a cast has passed on, is the same value: the narrowest of the types it is tested for in every turn is what the loop needs.
         const Block& header = m_function.at(loop.header());
         PropertyAccessContext accessContext { m_program, &m_context.inputs.flow };
-        UnspecifiedValues variablesReadEarly(m_analyses, UnspecifiedValues::Sources::VariablesReadEarly);
         Vector<TypeID> tested(header.parameters.size());
         for (size_t index = firstVariable; index < header.parameters.size(); ++index) {
-            if (variablesReadEarly.mayContain(header.parameters[index]))
+            if (typeOf(header.parameters[index]).mayBeUnspecified())
                 continue;
             Vector<ValueID, 8> sameValues { header.parameters[index] };
             for (size_t position = 0; position < sameValues.size() && sameValues.size() < 16; ++position) {
@@ -2854,6 +2915,13 @@ struct LoopPathSeparator : LoopEditor {
             testedTypes[index] = types.intern(testable);
             if (typeInLoop.hasLiteralStrings())
                 typesTakenFromCopy[index] = types.intern(wanted);
+        }
+        // The loop has the types of what entered it before there was a way back.
+        m_wayBackWidensLoopTypes = false;
+        for (size_t index = 0; index < numberOfParameters; ++index) {
+            const Type& given = types.at(plan.typesOfCarriedValues[index]);
+            const Type& typeInLoop = typeOf(m_function.at(header).parameters[index]);
+            m_wayBackWidensLoopTypes |= !(testedTypes[index] ? given.castTo(types.at(testedTypes[index]), types) : given).isSubsetOf(typeInLoop, m_program);
         }
 
         builder.setOrigin(m_function.at(header).terminator.origin());

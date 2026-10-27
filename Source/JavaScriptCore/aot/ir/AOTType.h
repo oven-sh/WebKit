@@ -135,6 +135,7 @@ struct Type {
     bool isAnyStringOrNullish() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull); }
     bool isObject() const { return hasObjects() && !primitives; }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
+    bool mayBeUnspecified() const { return primitives & Primitive::Unspecified; }
     bool mayBeNaN() const { return primitives & Primitive::WholeNumber; }
     bool hasLiteralStrings() const { return primitives & Primitive::LiteralString; }
     bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
@@ -143,8 +144,7 @@ struct Type {
     bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
     bool hasOnlyClassObjects() const { return !anyObject && !anyFunction && !layouts && functions.isEmpty() && builtins.isEmpty(); }
-    bool hasOnlyLayouts(const Program&) const;
-    bool hasOnlyLayouts(const TypeTable&) const;
+    bool hasOnlyLayouts() const;
     bool isSingleValue() const;
 
     LayoutID singleLayout(const Program&) const;
@@ -188,8 +188,6 @@ Wire::Primitives toWire(uint16_t primitives);
 std::span<const LayoutID> membersOf(const Program&, const Type&);
 std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
 
-bool hasMembersWithoutLayout(const Program&, const Type&);
-bool hasMembersWithoutLayout(const TypeTable&, const Type&);
 
 } } } // namespace JSC::AOT::Typed
 

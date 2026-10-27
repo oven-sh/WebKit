@@ -173,7 +173,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
         const Field& field = fields[index];
         if (!isEnumerableStringField(program, field))
             continue;
-        TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared));
+        TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared).predicted());
         node.members.append(ResultMember {
             .key = field.key,
             .node = ResultNodeRef { expectation ? expectation : TypeTable::anything },
@@ -652,7 +652,7 @@ void forEachLayoutReachedBy(const Program& program, TypeID root, const HeadLayou
                 return;
             for (const Field& field : program.at(layout).fields) {
                 if (isEnumerableStringField(program, field))
-                    visit(expectationOf(field.declared));
+                    visit(expectationOf(field.declared).predicted());
             }
         }
     }

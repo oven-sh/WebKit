@@ -310,6 +310,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTInnerPointerValidationTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
+    aot/tests/AOTLedgerTests.cpp
     aot/tests/AOTListedFieldsTests.cpp
     aot/tests/AOTLoadedProgramTestSupport.cpp
     aot/tests/AOTLocationsReadAtRunTimeTests.cpp

@@ -257,8 +257,7 @@ schema is the reference for every keyword, field, operand, payload name and flag
   (the symbols that the call with `callNumber=120` in module 0 makes; with a description, `symbol("x")@m0:120`).
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
-  family: the layouts below it. `nolayout` beside layouts says that the family also has members without a layout (`L3|nolayout`, in a layout
-  set `[L3, nolayout]`). `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
+  family: the layouts below it. `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
   converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
   symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
 - A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
@@ -400,7 +399,8 @@ If you write a command:
 testaot list options
 ```
 
-Every test file runs with `check=VerifyEachStage`: the program is verified after each stage. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
+Every test file runs with `check=VerifyEachStage,ValidateReferences,FlowFixpoint,UsedValuesAreListed`, the checks that no byte of the output depends on: the program is verified after each stage,
+the finished code is asked about its references, the rules of the flow analysis run once more over the solved sets, and no pass may leave a use of a value that no block lists. With the option `verifyAOTProgram`, which is on in `testaot` and `jsc`, a build verifies the program it reads and
 the program it hands to the back end. Bun turns the option off outside its own tests: there the code generator stops the build at an operation that it has no code for, a call that a
 required pass removes among them. `check=VerifyEachPass` verifies after each stage and each pass.
 

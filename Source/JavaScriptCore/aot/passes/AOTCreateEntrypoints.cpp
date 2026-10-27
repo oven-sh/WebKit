@@ -722,7 +722,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                 const Type& type = program.typeOf(function, candidates.value);
                 for (FunctionID listed : type.functions)
                     foundHere.append({ FoundKind::Function, listed.index() });
-                if (!admitsUnlistedFunctions(program, type) && type.classes.isEmpty())
+                if (!admitsUnlistedFunctions(type) && type.classes.isEmpty())
                     return;
                 for (FunctionID listed : candidates.expected().predicted())
                     foundHere.append({ FoundKind::Function, listed.index() });

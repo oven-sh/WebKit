@@ -31,7 +31,7 @@ static constexpr bool everyCastHasItsValueFirst()
     for (Opcode opcode : allMembersOf<Opcode>) {
         if (interpretedOf(opcode) != Interpretation::Cast)
             continue;
-        uint32_t numberOfOperands = opcode == Opcode::NarrowByField ? 2 : 1;
+        uint32_t numberOfOperands = opcode == Opcode::NarrowByField || opcode == Opcode::AssumeType ? 2 : 1;
         if (numberOfNamedOperandsOf(opcode) != numberOfOperands || hasVariadicOperand(opcode))
             return false;
     }

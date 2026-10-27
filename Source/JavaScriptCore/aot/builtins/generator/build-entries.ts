@@ -63,6 +63,7 @@ import {
   builtinMarks,
   pristineTests,
   targetPlatforms,
+  typedArrayTypes,
   type BuiltinKind,
   type BuiltinPath,
   type CallMode,
@@ -189,6 +190,7 @@ function pathOfDeclaration(declaration: Declaration): BuiltinPath | null {
     case "HostMethodCall":
     case "Startup":
     case "SeenCodeOnly":
+    case "InstancesWithoutOwnNames":
       return null;
   }
 }
@@ -272,6 +274,10 @@ function pristineTestOf(builder: ModelBuilder, { name, columns }: ClassDeclarati
   return "Mark";
 }
 
+// The cell type of a typed array says how wide its elements are, and every class below makes cells of that type.
+const isCellTypeOfTypedArray = (jsType: string) =>
+  typedArrayTypes.some(type => type !== "NotTypedArray" && type !== "TypeDataView" && jsType === `${type.slice(4)}ArrayType`);
+
 function declareClasses({ builder, sorted }: EntryContext): void {
   for (const { declaration, source } of select(sorted, "Class")) {
     const { name, columns } = declaration;
@@ -284,7 +290,6 @@ function declareClasses({ builder, sorted }: EntryContext): void {
       constructor: null,
       prototype: null,
       jsType: columns.jsType ?? "CellType",
-      typedArrayType: columns.typedArrayType ?? "NotTypedArray",
       instanceTest: instanceTestOf(columns),
       sharingMode: columns.sharingMode ?? null,
       instanceCppClass: columns.instanceCppClass ?? null,
@@ -316,6 +321,21 @@ function declareClasses({ builder, sorted }: EntryContext): void {
     const { declaration, source } = builder.writtenClassOf(builtinClass);
     const parentName = declaration.columns.extends;
     if (parentName !== undefined) builtinClass.parent = builder.resolveClass(parentName, source);
+    const { parent } = builtinClass;
+    if (parent !== null && isCellTypeOfTypedArray(parent.jsType) && builtinClass.jsType !== parent.jsType) {
+      builder.problems.add(
+        source,
+        `the class ${builtinClass.token} stands below ${parent.token}, whose instances have the cell type ${parent.jsType}, and names ${builtinClass.jsType}`,
+      );
+    }
+  }
+  for (const { declaration, source } of select(sorted, "InstancesWithoutOwnNames")) {
+    for (const name of declaration.classes) {
+      const builtinClass = builder.resolveClass(name, source);
+      if (builtinClass === null) continue;
+      if (builtinClass.namesDefinedOnNewInstances === null) builtinClass.namesDefinedOnNewInstances = [];
+      else builder.problems.add(source, `the class ${name} says twice which own names its instances have`);
+    }
   }
 }
 

@@ -433,6 +433,12 @@ static StringID internNameOfFunctionUnder(Program& program, const PropertyKey& k
     return program.strings.intern(name.span());
 }
 
+static void noteLooksForNameWhereClosuresMayBeRenamed(const FlowResults& results, FunctionID id, Function& function)
+{
+    if (results.closuresMayBeRenamed(id))
+        function.capabilities.add(FunctionCapabilities::NotesLooksForName);
+}
+
 static void applySignatureUpdates(const FlowApplyContext& context)
 {
     const Vector<FlowSignatureUpdate>& updates = context.application.signatures;
@@ -450,8 +456,7 @@ static void applySignatureUpdates(const FlowApplyContext& context)
         applyEntryParameterUpdates(function, update.entryParameters.span());
         applyResultUpdates(function, update.results.span());
         function.capabilities.add(update.provenCapabilities);
-        if (context.results.closuresMayBeRenamed(FunctionID(index)))
-            function.capabilities.add(FunctionCapabilities::NotesLooksForName);
+        noteLooksForNameWhereClosuresMayBeRenamed(context.results, FunctionID(index), function);
     });
 }
 
@@ -529,7 +534,7 @@ static void narrowContentsOfData(const FlowApplyContext& context)
 static void proveEveryPosition(Program& program, BuildContext& build)
 {
     auto prove = [](DeclaredType& declared) {
-        declared.establish(Proven::byPosition(declared.expected().predicted()));
+        declared.establish(Proven::byTestingSwitch(declared.expected()));
     };
     for (Layout& layout : program.layouts) {
         if (isOfRuntimeModule(program, layout.module))
@@ -703,6 +708,9 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
 
 static void applyUnknownResults(Program& program, const FlowResults& results, BuildContext& build)
 {
+    forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        noteLooksForNameWhereClosuresMayBeRenamed(results, FunctionID(index), program.functions[index]);
+    });
     ProgramEditor editor(program);
     Vector<FunctionID> functions = collectBodiesLargestFirst(program, program.functions.size(), build.parallelLoops());
     editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {

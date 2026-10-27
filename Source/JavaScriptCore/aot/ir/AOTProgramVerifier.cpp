@@ -161,7 +161,7 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
-        if (!set.listsEveryLayout() || (set.written().isEmpty() && !set.isWrittenWithMembersWithoutLayout()))
+        if (!set.listsEveryLayout() || set.written().isEmpty())
             return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
         for (LayoutID member : set.written()) {
             if (!member || program.at(member).isEnvironment())

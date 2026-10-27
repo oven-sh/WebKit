@@ -11,6 +11,7 @@
 #include "AOTCallGraph.h"
 #include "AOTEffectsDescription.h"
 #include "AOTFlowApply.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTHeatGraph.h"
 #include "AOTIRPrinter.h"
 #include "AOTRecordUsers.h"
@@ -220,7 +221,7 @@ static Vector<Vector<ValueID>> parseVariables(CommandWords& words, const Functio
     return words.parseAll("variable"_s, listParser(parseDefinition));
 }
 
-static void repairVariables(Session& session, const Vector<Vector<ValueID>>& variables, RegionCloner* cloner = nullptr)
+static void repairVariables(Session& session, const Vector<Vector<ValueID>>& variables, RegionCloner* cloner = nullptr, ValueID askedAboutFirst = { })
 {
     ValueSubstitution substitution(session.function);
     for (const Vector<ValueID>& definitions : variables) {
@@ -237,6 +238,8 @@ static void repairVariables(Session& session, const Vector<Vector<ValueID>>& var
     }
     if (cloner)
         cloner->addVariablesTo(repair, session.analyses);
+    if (askedAboutFirst)
+        mayBeUnspecified(session.analyses, askedAboutFirst);
     repair.run();
 }
 
@@ -382,10 +385,11 @@ static void repairSSA(TestCommandContext& context, CommandWords& words, Session&
     const Function& function = session.function;
     auto redirects = words.parseAll("redirect"_s, pairParser(':', edgeParser(function), edgeTargetParser(function)));
     Vector<Vector<ValueID>> variables = parseVariables(words, function);
+    ValueID askedAboutFirst = words.parseOptional("asksFirst"_s, valueParser(function)).value_or(ValueID());
     rewriteAndPrint(context, words, session, [&] {
         for (auto [edge, target] : redirects)
             session.builder.redirectEdge(edge, target, { });
-        repairVariables(session, variables);
+        repairVariables(session, variables, nullptr, askedAboutFirst);
     });
 }
 
@@ -456,6 +460,18 @@ static void substituteValues(TestCommandContext& context, CommandWords& words, S
     bool printsFrequencies = words.parseFlag("frequencies"_s);
     rewriteAndPrint(context, words, session, [&] { substitution.apply(session.function, &session.analyses); });
     if (printsFrequencies && !words.hasFailed())
+        session.analyses.blockFrequencies().dump(context.out, session.function);
+}
+
+static void recordFrequency(TestCommandContext& context, CommandWords& words, Session& session)
+{
+    BlockID block = words.parseRequired("block"_s, blockParser(session.function));
+    BlockFrequency frequency = words.parseRequired("frequency"_s, parseEnum<BlockFrequency>);
+    rewriteAndPrint(context, words, session, [&] {
+        session.function.edit(block, BlockEdit::Rest).frequency = frequency;
+        session.analyses.invalidate(FunctionAnalysis::Frequencies);
+    });
+    if (!words.hasFailed())
         session.analyses.blockFrequencies().dump(context.out, session.function);
 }
 
@@ -667,6 +683,7 @@ std::span<const TestCommand> analysisTestCommands()
         { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, ProgramAsRead::TypedAndVerified },
         { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, ProgramAsRead::TypedAndVerified },
         { "substitute"_s, IRForm::Prepared, runOnFunction<substituteValues>, ProgramAsRead::TypedAndVerified },
+        { "record-frequency"_s, IRForm::Prepared, runOnFunction<recordFrequency>, ProgramAsRead::TypedAndVerified },
         { "invalidate"_s, IRForm::Prepared, runOnFunction<invalidateAnalyses>, ProgramAsRead::TypedAndVerified },
         { "add-parameter"_s, IRForm::Prepared, runOnFunction<addParameters>, ProgramAsRead::TypedAndVerified },
         { "branch-with-proof"_s, IRForm::Prepared, runOnFunction<branchWithProof>, ProgramAsRead::TypedAndVerified },

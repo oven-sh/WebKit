@@ -1,0 +1,70 @@
+# class Entry { merge?: number; constructor(merge: number) { if (merge !== undefined) this.merge = merge; } }   new Entry(2);   new Entry(((value: any) => value)(undefined));
+# A class field without an initializer is defined as undefined. Behind the check of the parameter nothing is undefined, so by the types the store runs on every path.
+# The check turns undefined away, and the generic version of the constructor takes the other path: the object keeps the undefined of its definition, and whoever reads the field sees it.
+# So a block that nothing enters by a type that is owed to a check counts as entered. In `Decided` no check stands in front of the test: there the definition is seen by nobody
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L0 kind=Instance name="Entry" {{*}}{key="merge" declared={type=undefined|int[
+# CHECK: layout L1 kind=Instance name="Decided" {{*}}{key="merge" declared={type=int[
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+layout L0 kind=Instance name="Entry" constructor=f1 fields=[{key="merge" declared={type=undefined|number}}]
+layout L1 kind=Instance name="Decided" constructor=f3 fields=[{key="merge" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = Undefined
+# REPEAT: i = 0..1
+    v%(i*5+2) = NewClosure function=f%(i*2+1)
+    v%(i*5+3) = NewClass v%(i*5+2) layout=L%(i)
+    v%(i*5+4) = FinishClass v%(i*5+3) layout=L%(i)
+    v%(i*5+5) = Construct v%(i*5+4), -, v0
+    v%(i*5+6) = PropGet v%(i*5+5) key="merge"
+# END REPEAT
+    v12 = Construct v4, -, v1
+    v13 = PropGet v12 key="merge"
+    Return v13
+}
+function f1 name="Entry" kind=BaseConstructor flags=[HasNewTarget, IsChecked] parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Check v1 expectedType=number site=w0
+    v6 = CallDirect v4 function=f2
+    v7 = TypeTest v5 testedType=undefined
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8: anything):
+    Jump -> next b3()
+  b2(v9: anything):
+    PropSet v4, v9 key="merge" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="merge"
+    Return v1
+}
+function f3 name="Decided" kind=BaseConstructor flags=[HasNewTarget, IsChecked] parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = TypeTest v1 testedType=undefined
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7: anything):
+    Jump -> next b3()
+  b2(v8: anything):
+    PropSet v4, v8 key="merge" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v4
+}
+function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="merge"
+    Return v1
+}

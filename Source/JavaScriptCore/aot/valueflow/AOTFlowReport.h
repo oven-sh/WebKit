@@ -96,9 +96,6 @@ GradedSites gradeAccessSites(const Program&, const FlowResults&, AccessSiteObser
 
 Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program&, BuildContext&);
 
-Vector<InternalError> findFunctionsThatEndInFirstBlock(const Program&, const BitVector& isReachable, BuildContext&);
-void reportFunctionsThatEndInFirstBlock(const Program&, Vector<InternalError>&&, BuildContext&);
-
 struct FlowReportBodyRecords {
     Vector<Wire::TypeTestRecord> typeTests;
     Vector<Wire::RemainingCheckRecord> remainingChecks;

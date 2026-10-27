@@ -240,6 +240,11 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     Object* object = uncheckedDowncast<Object>(cell);
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
+    if (field && name.isSymbol()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        prepareForLookup(globalObject, object, name.uid());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     if (field)
         return defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow);
     return defineExtraProperty(object, globalObject, name, descriptor, shouldThrow);
@@ -602,6 +607,11 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     if (const FieldData* field = object->fieldNamed(object->state(), name)) {
         if (field->isPrivate()) [[unlikely]]
             return false;
+        if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            prepareForLookup(globalObject, object, name.uid());
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         JSValue value = object->readInline(*field);
         if (!value) [[unlikely]]
             value = object->read(*field);
@@ -794,7 +804,13 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
-    return putWithKnownField(cell, globalObject, name, value, slot, object->fieldNamed(object->state(), name));
+    const FieldData* field = object->fieldNamed(object->state(), name);
+    if (field && name.isSymbol()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        prepareForLookup(globalObject, object, name.uid());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return putWithKnownField(cell, globalObject, name, value, slot, field);
 }
 
 bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
@@ -872,6 +888,11 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     if (field) {
         if (field->isPrivate()) [[unlikely]]
             return true;
+        if (name.isSymbol()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            prepareForLookup(globalObject, object, name.uid());
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         FieldProperty current = findFieldProperty(vm, *object, *field);
         if (!current)
             return true;

@@ -1,7 +1,6 @@
-# A set with more layouts than a mask has bits counts as all shape words, and so does a set that has members without a layout. Two sets with such members may hold one object
+# A set with more layouts than a mask has bits counts as all shape words
 # FORM: Prepared
 # RUN: effects
-# RUN(L): locations f1 f2
 
 module m0 path="main.js" displayPath="main.js"
 # REPEAT: i = 0..64
@@ -15,25 +14,3 @@ function f0 name="sizes" parameters=[{type=object}] results=[{type=undefined}] {
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v1 ShapeTest: reads(ShapeWords/{{*}})
 # CHECK-NEXT: v2 ShapeTest: reads(ShapeWords)
-function f1 name="bothHaveMembersWithoutLayout" parameters=[{type=object}] results=[{type=undefined}] {
-    v1 = ShapeTest v0 layouts=[L0, nolayout]
-    v2 = ShapeTest v0 layouts=[L1, nolayout]
-    Return
-}
-# CHECK-LABEL: function f1
-# CHECK-NEXT: v1 ShapeTest: reads(ShapeWords)
-# CHECK-NEXT: v2 ShapeTest: reads(ShapeWords)
-# L-LABEL: function f1
-# L: overlap ShapeWords[L0|nolayout] ShapeWords[L1|nolayout]: May
-# L-NOT: overlap
-function f2 name="oneHasMembersWithoutLayout" parameters=[{type=object}] results=[{type=undefined}] {
-    v1 = ShapeTest v0 layouts=[L0, nolayout]
-    v2 = ShapeTest v0 layouts=[L1]
-    Return
-}
-# CHECK-LABEL: function f2
-# CHECK-NEXT: v1 ShapeTest: reads(ShapeWords)
-# CHECK-NEXT: v2 ShapeTest: reads(ShapeWords/1)
-# L-LABEL: function f2
-# L: overlap ShapeWords[{{*}}] ShapeWords[{{*}}]: None
-# L-NOT: overlap

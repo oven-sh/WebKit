@@ -494,7 +494,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
     ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
     ClimbingSet all = context.valueOf(heldNode);
     ClimbingSet held = context.restrict(all, objectsOfProgram);
-    held = context.unite(held, context.valueWithin(ClimbingSet(universe.holdersOfLibraryExports()), heldNode));
+    held = context.unite(held, context.valueWithin(ClimbingSet(universe.objectsOfLibraryFoundByNameAlone()), heldNode));
     if (context.contains(all, ValueFlowUniverse::untrackedObject()))
         held = context.unite(held, context.valueWithin(ClimbingSet(objectsOfProgram), ValueFlowProgramNodes::lost()));
     if (!context.meet(held, ValueSets::anything))

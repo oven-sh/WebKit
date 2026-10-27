@@ -284,7 +284,7 @@ static const Value* layoutTestBranchedOn(FunctionAnalyses& analyses, BlockID blo
         return nullptr;
     const Program& program = analyses.program();
     const Type& subject = program.typeOf(analyses.function(), test->valueOperand());
-    return subject.hasOnlyLayouts(program) && membersOf(program, subject).size() > 1 ? test : nullptr;
+    return subject.hasOnlyLayouts() && membersOf(program, subject).size() > 1 ? test : nullptr;
 }
 
 SlotValueTests::SlotValueTests(FunctionAnalyses& analyses, TypeArena& types, std::span<const BlockID> blocksThatBranchOnTypeTest)

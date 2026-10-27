@@ -19,6 +19,7 @@ class JSCellButterfly;
 class JSGlobalObject;
 class JSObject;
 class Structure;
+class Symbol;
 class VM;
 struct ClassInfo;
 
@@ -45,6 +46,8 @@ JS_EXPORT_PRIVATE Result forEachOwnProperty(VM&, JSObject*, Filter, const Scoped
 // Every own property but the private names, strings and symbols alike, enumerable or not, in the order of their creation: what the Structure of the ordinary object that would stand in the place of this compiled one lists.
 JS_EXPORT_PRIVATE Result forEachOwnPropertyAsCreated(VM&, JSObject*, const ScopedLambda<IterationStatus(const OwnProperty&)>&, Elements = Elements::NeedGenericPath);
 JS_EXPORT_PRIVATE void materializeLazyProperties(VM&, JSObject*);
+// The library keeps a field under the symbol in a form of its own. Whoever looks under the symbol with a key that is a value first calls the function on the compiled object that has the field.
+JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject* function);
 // Whether the compiled object has an own enumerable property, under a string or a symbol. The answer shows no name and no order, so it is no listing of the keys. Runs no code.
 JS_EXPORT_PRIVATE bool hasOwnEnumerableProperty(JSGlobalObject*, JSObject* compiledObject);
 JSCellButterfly* tryGetCachedOwnKeys(VM&, JSObject*, Filter);

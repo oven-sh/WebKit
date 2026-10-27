@@ -42,7 +42,7 @@ Word32 ShapeTestEmitter::orderWordOf(CellPointer cell)
 bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
 {
     const SlotPlan& slots = m_placement.slots();
-    return known.hasOnlyLayouts(m_program) && std::ranges::all_of(membersOf(m_program, known), [&](LayoutID member) {
+    return known.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, known), [&](LayoutID member) {
         return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
 }

@@ -240,7 +240,8 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
     m_out.appendTo(isNotInteger);
     join.add(integer(invalidArrayLength));
     Integer length = join.finish();
-    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call))));
+    bool isDoneInPlace = call.value() && (*call.value())->isDoneInPlace();
+    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call)), isDoneInPlace ? BuiltinID() : functionOf(call.overload())));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)

@@ -197,6 +197,7 @@ public:
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool mayBeUnspecified(ValueID);
+    bool isValidatedWhereLookedAt(ValueID);
     bool hasTypeOnlyBehindTest(ValueID parameter);
 
     class InitializationScope {
@@ -306,6 +307,7 @@ private:
     ValueID m_callWithLandingOfMisfit;
     LandingOfMisfit m_landingOfMisfit;
     std::optional<BitVector> m_unspecifiedValues;
+    std::optional<BitVector> m_valuesValidatedWhereLookedAt;
     std::optional<BitVector> m_parametersTypedOnlyBehindTest;
     Vector<uint32_t> m_numberOfGuardsSeen;
     unsigned m_initializationDepth { 0 };

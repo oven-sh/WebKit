@@ -227,24 +227,6 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     }
 }
 
-static Type objectsWithoutLayoutOf(const Type& type)
-{
-    Type objects = type.withOnlyObjects();
-    objects.layouts = { };
-    return objects;
-}
-
-static void intersectMembersWithoutLayout(Type& result, const Type& a, const Type& b, TypeArena& arena)
-{
-    bool areInFirst = hasMembersWithoutLayout(arena.table(), a);
-    bool areInSecond = hasMembersWithoutLayout(arena.table(), b);
-    if (areInFirst && areInSecond)
-        copyObjectParts(result, objectsWithoutLayoutOf(a).unionWith(objectsWithoutLayoutOf(b), arena));
-    else
-        copyObjectParts(result, areInFirst ? b : a);
-    result.layouts = arena.intersectionOf(a.layouts, b.layouts);
-}
-
 static void intersectListedObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     const BuiltinTable& builtins = arena.builtins();
@@ -257,36 +239,6 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     result.layouts = arena.intersectionOf(a.layouts, b.layouts);
 }
 
-static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, const Type& family, TypeArena& arena)
-{
-    if (hasMembersWithoutLayout(arena.table(), source)) {
-        copyObjectParts(result, family);
-        result.layouts = arena.intersectionOf(source.layouts, family.layouts);
-        return;
-    }
-
-    intersectListedObjects(result, source, family, arena, DeclaredParts::FromSecond);
-    if (isSubset(objectsWithoutLayoutOf(source), objectsWithoutLayoutOf(result), arena.table()))
-        return;
-    Vector<LayoutID> members;
-    if (result.layouts)
-        members = arena.at(result.layouts).written();
-    result.layouts = arena.intern(LayoutSet::complete(WTF::move(members), true));
-}
-
-static void intersectKnownObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
-{
-    if (declared == DeclaredParts::FromSecond && hasMembersWithoutLayout(arena.table(), b)) {
-        castToFamilyWithUnlistedMembers(result, a, b, arena);
-        return;
-    }
-    if (hasMembersWithoutLayout(arena.table(), a) || hasMembersWithoutLayout(arena.table(), b)) {
-        intersectMembersWithoutLayout(result, a, b, arena);
-        return;
-    }
-    intersectListedObjects(result, a, b, arena, declared);
-}
-
 static void intersectObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     if (!a.hasObjects() || !b.hasObjects())
@@ -296,7 +248,7 @@ static void intersectObjects(Type& result, const Type& a, const Type& b, TypeAre
     else if (b.anyObject)
         copyObjectParts(result, a);
     else
-        intersectKnownObjects(result, a, b, arena, declared);
+        intersectListedObjects(result, a, b, arena, declared);
 }
 
 Type intersect(const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)

@@ -66,6 +66,7 @@ static void checkHasNoResults(const FlowResults& flow)
     for (FunctionID id : { unreachedFunction, functionRunOnce, derivedFunction, functionPastTheProgram }) {
         checkFunctionIsUnknown(flow, id);
         AOT_TEST_CHECK(flow.indirectCallsFrom(id).empty());
+        AOT_TEST_CHECK(flow.closuresMayBeRenamed(id) && !flow.closuresMayBeRenamedOnlyWhereNobodySees(id) && flow.closuresAreGivenDisplayName(id) && !flow.closureIsMadeOnce(id));
     }
     checkSitesAreUnknown(flow, 0);
     checkSitesAreUnknown(flow, 5);

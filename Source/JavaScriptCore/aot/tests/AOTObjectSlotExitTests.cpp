@@ -401,7 +401,7 @@ static void checkFieldsWithAbsentBitsWithoutExtraPropertiesWord(LoadedProgram& p
 
 static bool everyFieldKeepsStateOfBirth(LoadedProgram& program, const LayoutData& layout)
 {
-    return layout.hasFieldThatKeepsStateOfBirth && std::ranges::all_of(declaredFieldsOf(program, layout), [](const FieldData& field) {
+    return std::ranges::all_of(declaredFieldsOf(program, layout), [](const FieldData& field) {
         return field.keepsStateOfBirth;
     });
 }
@@ -485,9 +485,9 @@ static void checkStoreThatFitsMovesFieldBack(LoadedProgram& program)
         Identifier name = nameOf(program, field);
         AOT_TEST_CHECK(put(program, object, name, other) && !object->isInSlot(field));
 
-        // A slot takes undefined wherever it has a marker for it, whatever the type of its field says.
         Costs costsBefore = costsOf(program);
-        AOT_TEST_CHECK(put(program, object, name, jsUndefined()) && object->isInSlot(field) == traitsOf(field.slot.representation()).hasUndefined);
+        AOT_TEST_CHECK(program.state().objects->layouts.slotAdmits(field, jsUndefined()) == field.slotHoldsUndefinedAndNull);
+        AOT_TEST_CHECK(put(program, object, name, jsUndefined()) && object->isInSlot(field) == field.slotHoldsUndefinedAndNull);
         AOT_TEST_CHECK(hasOwnProperty(program, object, name, jsUndefined(), noAttributes));
 
         AOT_TEST_CHECK(put(program, object, name, fittingValueFor(program, field)));

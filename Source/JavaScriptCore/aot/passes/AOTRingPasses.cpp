@@ -213,7 +213,7 @@ KnownValue knownValueOf(const DataNode& node)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-KnownValue knownValueOfType(const Program& program, const Type& type)
+KnownValue knownValueOfType(const Type& type)
 {
     if (!type.isJavaScriptValue())
         return { };
@@ -223,7 +223,7 @@ KnownValue knownValueOfType(const Program& program, const Type& type)
         return { };
     if (hasOnlyCallableObjects(type))
         return KnownValue::function();
-    return type.hasOnlyLayouts(program) ? KnownValue::object() : KnownValue();
+    return type.hasOnlyLayouts() ? KnownValue::object() : KnownValue();
 }
 
 KnownValue knownValueOf(const Program& program, const Function& function, ValueID id)
@@ -237,7 +237,7 @@ KnownValue knownValueOf(const Program& program, const Function& function, ValueI
         return KnownValue::function();
     if (resultRuleOf(definition.opcode) == ResultRule::Allocation && program.at(definition.type).isJavaScriptValue())
         return KnownValue::object();
-    return knownValueOfType(program, program.typeOf(function, id));
+    return knownValueOfType(program.typeOf(function, id));
 }
 
 enum class EqualityKind : uint8_t { Strict, Loose };
@@ -1224,7 +1224,7 @@ struct ConstantFolder {
         if (rules.contains(FoldingRule::SingleValueType)) {
             const Type& type = program.types.at(value.type);
             static_assert(std::has_single_bit(Primitive::Undefined) && std::has_single_bit(Primitive::Null) && std::has_single_bit(Primitive::False) && std::has_single_bit(Primitive::True) && std::has_single_bit(Primitive::Integer) && std::has_single_bit(Primitive::LiteralString));
-            if (std::has_single_bit(type.primitives) && becomeConstantIfRemovable(id, knownValueOfType(program, type)))
+            if (std::has_single_bit(type.primitives) && becomeConstantIfRemovable(id, knownValueOfType(type)))
                 return true;
         } else if (rules.contains(FoldingRule::SingleValueBehindCasts) && resultRuleOf(value.opcode) != ResultRule::None && becomeConstantIfRemovable(id, knownValueOf(id)))
             return true;
@@ -1524,15 +1524,15 @@ struct ConstantFolder {
         return becomeConstant(id, KnownValue::string(context.strings.intern(StringView(answer->text))));
     }
 
-    PropertyKeyID findConstantPropertyKey(ValueID key)
+    PropertyKeyID findNameGivenTo(const Value& operation, ValueID key)
     {
-        return internKey(context.types, constantKeyOf(program, typeOf(key)));
+        return internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, operation), typeOf(key)));
     }
 
     bool convertToNamedSuperAccess(ValueID id, const Value& value)
     {
         ValueID computedKey = value.computedKeyOperand();
-        PropertyKeyID key = computedKey ? findConstantPropertyKey(computedKey) : PropertyKeyID();
+        PropertyKeyID key = computedKey ? findNameGivenTo(value, computedKey) : PropertyKeyID();
         if (!key)
             return false;
         Value& access = function.edit(id, ValueEdit::Definition);
@@ -1543,7 +1543,7 @@ struct ConstantFolder {
 
     bool convertToNamedAccess(ValueID id, const Value& value)
     {
-        PropertyKeyID key = findConstantPropertyKey(value.propertyOperand());
+        PropertyKeyID key = findNameGivenTo(value, value.propertyOperand());
         if (!key)
             return false;
 
@@ -1660,7 +1660,7 @@ struct TrivialParameterRemover {
     {
         if (block.handler || block.subject == parameter)
             return { };
-        KnownValue value = knownValueOfType(context.program, context.types.at(function.at(parameter).type));
+        KnownValue value = knownValueOfType(context.types.at(function.at(parameter).type));
         switch (value.kind()) {
         case KnownValue::Kind::Undefined:
         case KnownValue::Kind::Null:

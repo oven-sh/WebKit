@@ -192,55 +192,25 @@ static Type narrowByTruthiness(const TypingContext& context, const Type& source,
     return falsy;
 }
 
-static bool mayBeMemberWithoutLayout(const TypingContext& context, const Type& type)
-{
-    return type.layouts && context.types.at(type.layouts).mayHoldObjectsWithoutLayout();
-}
-
-static Type withMembersWithoutLayout(const TypingContext& context, Type&& type)
-{
-    if (mayBeMemberWithoutLayout(context, type))
-        return WTF::move(type);
-    Vector<LayoutID> members;
-    if (type.layouts)
-        members = context.types.at(type.layouts).written();
-    type.layouts = context.types.intern(LayoutSet::complete(WTF::move(members), true));
-    return WTF::move(type);
-}
-
 static Type narrowByFailedTest(const TypingContext& context, const Type& source, const Type& tested)
 {
     const BuiltinTable& builtins = context.program.builtins();
     auto isUntestable = [&](BuiltinID builtin) {
         return !isTestableBuiltin(builtins, builtin);
     };
-    bool mayHaveNoLayout = mayBeMemberWithoutLayout(context, source);
-    if (!mayHaveNoLayout && std::ranges::none_of(tested.builtins, isUntestable))
+    if (std::ranges::none_of(tested.builtins, isUntestable))
         return source.without(tested, context.types);
     if (source.withOnlyObjects().isSubsetOf(tested, context.program))
         return source.without(tested, context.types);
 
     Type recognized = tested;
     removeAllMatching(recognized.builtins, isUntestable);
-    Type failing = source.without(recognized, context.types);
-    if (!mayHaveNoLayout)
-        return failing;
-    return withMembersWithoutLayout(context, WTF::move(failing));
-}
-
-static Type withoutMembersWithoutLayout(const TypingContext& context, const Type& type)
-{
-    if (!mayBeMemberWithoutLayout(context, type))
-        return type;
-    Type listed = type;
-    const Vector<LayoutID>& members = context.types.at(type.layouts).written();
-    listed.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet::complete(Vector<LayoutID>(members)));
-    return listed;
+    return source.without(recognized, context.types);
 }
 
 static Type narrowByTest(const TypingContext& context, const Type& source, const Type& tested, EdgeSide side)
 {
-    return side == EdgeSide::Taken ? source.castTo(withoutMembersWithoutLayout(context, tested), context.types) : narrowByFailedTest(context, source, tested);
+    return side == EdgeSide::Taken ? source.castTo(tested, context.types) : narrowByFailedTest(context, source, tested);
 }
 
 static Type zeroesJoined(const Type& other)
@@ -535,13 +505,13 @@ TypeID typeOnEdge(const Program& program, const Function& function, EdgeResultPo
     return arena.intern(computeTypeOnEdge({ program, function, arena, TypeLevel::Proven }, position));
 }
 
-TypeID expectedTypeOnEdge(const Program& program, const Function& function, EdgeResultPosition position, TypeID provenType, TypeArena& arena)
+ExpectedType expectedTypeOnEdge(const Program& program, const Function& function, EdgeResultPosition position, TypeID provenType, TypeArena& arena)
 {
     const Type& type = arena.at(provenType);
     Type met = type.intersectWith(computeTypeOnEdge({ program, function, arena, TypeLevel::Expected }, position), arena);
     if (met.isNever() || met == type)
         return { };
-    return arena.intern(met);
+    return ExpectedType(arena.intern(met));
 }
 
 } } } // namespace JSC::AOT::Typed

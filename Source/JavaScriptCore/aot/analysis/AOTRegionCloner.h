@@ -49,6 +49,7 @@ public:
     ValueID cloneOf(ValueID inSource) const;
     BlockID cloneOf(BlockID inSource) const;
     std::span<const BlockID> clonedBlocks() const { return m_clonedBlocks.span(); }
+    const Function& source() const { return m_source; }
 
     void repairSSA(FunctionAnalyses&);
     static void repairSSA(FunctionAnalyses&, std::span<const std::unique_ptr<RegionCloner>> clonersOfOneRegion);

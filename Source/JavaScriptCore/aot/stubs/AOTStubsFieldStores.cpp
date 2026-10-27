@@ -310,19 +310,18 @@ void storeField(StubAssembler& jit, const FieldStoreRegisters& r, FieldStoreEnd 
         branchUnlessTypeAccepts(jit, { value, r.type, r.field.representation, r.scratch, r.secondScratch }, isNotAccepted, isNotAccepted);
         unpackRepresentation();
     };
-    // RuntimeLayoutTable::slotAdmits(): the slot of an object's field that has markers for undefined and null holds them whatever the type of the field says.
     auto jumpIfSlotHoldsValueAsMarker = [&](Label isAdmitted) {
         Jump isNeitherUndefinedNorNull = jit.branchIfNotOther(value, r.scratch);
         // The mark of the cell may answer for the raw value of the field, and Object::store() knows for which fields it does. A cell that has the mark, as every object has until its constructor is through, takes the marker here.
         Jump cellHasNoMark = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(r.field.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit));
         LayoutData layoutWithSuchField { };
-        layoutWithSuchField.hasFieldThatKeepsStateOfBirth = 1;
+        layoutWithSuchField.hasSlotWithUnusedMarkers = 1;
         static_assert(sizeof(LayoutData) % sizeof(uint32_t) == 0);
-        uint32_t hasFieldThatKeepsStateOfBirth = std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(layoutWithSuchField)[0];
-        RELEASE_ASSERT(hasOneBitSet(hasFieldThatKeepsStateOfBirth));
+        uint32_t hasSlotWithUnusedMarkers = std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(layoutWithSuchField)[0];
+        RELEASE_ASSERT(hasOneBitSet(hasSlotWithUnusedMarkers));
         loadStructure(jit, r.field.object, r.scratch);
         jit.loadPtr(Address(r.scratch, CompiledStructure::offsetOfLayout()), r.scratch);
-        Jump someFieldTakesNoMarker = jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch), TrustedImm32(static_cast<int32_t>(hasFieldThatKeepsStateOfBirth)));
+        Jump someFieldTakesNoMarker = jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch), TrustedImm32(static_cast<int32_t>(hasSlotWithUnusedMarkers)));
         jit.move(TrustedImm32(static_cast<int32_t>(representationsWithUndefinedAndNull)), r.scratch);
         jit.urshift32(r.field.representation, r.scratch);
         jit.branchTest32(CCallHelpers::NonZero, r.scratch, TrustedImm32(1)).linkTo(isAdmitted, &jit);

@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTClaims.h"
 #include "AOTFlowOrder.h"
+#include "AOTLedger.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
 #include <algorithm>
@@ -33,12 +36,51 @@ static RuntimeModuleID findCompiledModuleWithObject(const Program& program, Buil
     return { };
 }
 
+enum class FlowUseOfFiles : uint8_t { CallsFunction, NamesBuiltin, RequiresBuiltinModule, NamesFileAtRunTime, BeginsNamedFile, BeginsNoFile, NobodyKnows };
+
+struct FlowUseOfFilesAndWay {
+    FlowUseOfFiles use { FlowUseOfFiles::NobodyKnows };
+    FlowWayIntoFile way { FlowWayIntoFile::NameMadeAtRunTime };
+};
+
+static FlowUseOfFilesAndWay useOfFilesBy(const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode::CallDirect:
+        return { FlowUseOfFiles::CallsFunction };
+    case Opcode::Builtin:
+        return { FlowUseOfFiles::NamesBuiltin };
+    case Opcode::RequireBuiltinModule:
+        return { FlowUseOfFiles::RequiresBuiltinModule };
+    case Opcode::ImportDynamic:
+    case Opcode::RequireDynamic:
+        return { FlowUseOfFiles::NamesFileAtRunTime };
+    case Opcode::RequireModule:
+    case Opcode::EvaluateModule:
+        return { FlowUseOfFiles::BeginsNamedFile, FlowWayIntoFile::Require };
+    case Opcode::ImportModule:
+        return { FlowUseOfFiles::BeginsNamedFile, FlowWayIntoFile::ImportCall };
+    case Opcode::ModuleNamespace:
+        switch (value.phase()) {
+        case ImportPhase::Evaluation:
+            return { FlowUseOfFiles::BeginsNoFile };
+        case ImportPhase::Defer:
+            return { FlowUseOfFiles::BeginsNamedFile, FlowWayIntoFile::DeferredImport };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    case Opcode::RecordRequire:
+        return { FlowUseOfFiles::BeginsNoFile };
+    default:
+        return { };
+    }
+}
+
 static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, const Vector<ModuleID>& moduleOfRuntimeModule, bool& libraryLoadsItsModulesByName)
 {
     struct Row {
         FlowCall call;
         ModuleID target;
-        bool isSynchronous;
+        FlowUseOfFilesAndWay use;
     };
     const Program& program = inputs.program;
     std::atomic<bool> namesModuleAtRunTime { false };
@@ -48,45 +90,55 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         const Function& function = program.functions[index];
         for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
             const Value& value = function.values[valueIndex];
-            auto load = [&](ModuleID target, bool isSynchronous) {
+            FlowUseOfFilesAndWay use = useOfFilesBy(value);
+            auto load = [&](ModuleID target, FlowUseOfFilesAndWay use) {
                 if (target)
-                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, target, isSynchronous });
+                    rows.append({ { FunctionID(index), ValueID(valueIndex), { } }, target, use });
             };
             auto loadRuntimeModule = [&](RuntimeModuleID module) {
                 if (module && module.index() < moduleOfRuntimeModule.size())
-                    load(moduleOfRuntimeModule[module.index()], true);
+                    load(moduleOfRuntimeModule[module.index()], { FlowUseOfFiles::BeginsNamedFile, FlowWayIntoFile::Require });
             };
-            switch (value.opcode) {
-            case Opcode::CallDirect:
-                rows.append({ { FunctionID(index), ValueID(valueIndex), value.function() }, { }, false });
+            auto loadNamedFiles = [&] {
+                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
+                    switch (kind) {
+                    case ModuleReferenceKind::Target:
+                        load(module, use);
+                        break;
+                    case ModuleReferenceKind::Referrer:
+                        break;
+                    }
+                });
+            };
+            switch (use.use) {
+            case FlowUseOfFiles::CallsFunction:
+                rows.append({ { FunctionID(index), ValueID(valueIndex), value.function() }, { }, { } });
                 break;
-            case Opcode::Builtin:
+            case FlowUseOfFiles::NamesBuiltin:
                 loadRuntimeModule(findCompiledModuleWithObject(program, program.builtins().canonicalID(value.builtin())));
                 break;
-            case Opcode::RequireBuiltinModule:
+            case FlowUseOfFiles::RequiresBuiltinModule:
                 loadRuntimeModule(value.runtimeModule());
                 break;
-            case Opcode::RequireModule:
-            case Opcode::EvaluateModule:
-                load(value.module(), true);
-                break;
-            case Opcode::ImportModule:
-                load(value.module(), false);
-                break;
-            case Opcode::ImportDynamic:
-            case Opcode::RequireDynamic:
+            case FlowUseOfFiles::NamesFileAtRunTime:
                 namesModuleAtRunTime.store(true, std::memory_order_relaxed);
                 break;
-            default:
+            case FlowUseOfFiles::BeginsNamedFile:
+            case FlowUseOfFiles::NobodyKnows:
+                loadNamedFiles();
+                break;
+            case FlowUseOfFiles::BeginsNoFile:
                 break;
             }
         }
     });
     for (const Row& row : rows) {
-        if (row.target)
-            order.moduleLoads.append({ row.call.caller, row.target, row.isSynchronous });
-        else
+        if (!row.target)
             order.calls.append(row.call);
+        else if (row.use.use == FlowUseOfFiles::NobodyKnows)
+            order.modulesNamedByOperationsNobodyKnows.set(row.target.index());
+        else
+            order.moduleLoads.append({ .function = row.call.caller, .target = row.target, .way = row.use.way });
     }
     libraryLoadsItsModulesByName = namesModuleAtRunTime.load(std::memory_order_relaxed);
 }
@@ -168,24 +220,27 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
 static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)
 {
     const Program& program = inputs.program;
-    const ValueFlowVariablesOnObjects& variables = *inputs.variablesOnObjects;
-    BitVector isLookedAtByNobodyListed;
-    for (const ValueFlowAccessThroughObject& access : variables.accesses) {
-        if (!program.at(access.variable).owner)
+    const Ledger& ledger = *inputs.ledger;
+    for (uint32_t index = 0; index < program.variables.size(); ++index) {
+        if (!program.variables[index].owner)
             continue;
-        bool isStore = access.kind == ValueFlowAccessThroughObjectKind::Store;
-        if (access.function || isStore)
-            order.staticFieldAccesses.append({ access.variable, access.function, access.site, isStore });
-        else
-            isLookedAtByNobodyListed.set(access.variable.index());
+        VariableID variable(index);
+        for (const Read& read : ledger.readersOf(Place::variable(variable)).seen().predicted()) {
+            if (!read.namesPlace && read.function)
+                order.staticFieldAccesses.append({ variable, read.function, read.site, false });
+        }
+        for (const Write& write : ledger.writersOf(Place::variable(variable)).seen().predicted()) {
+            bool putsValue = write.form == WriteForm::Store || write.form == WriteForm::AtCreation;
+            if (!write.traits.contains(WriteTrait::NamesPlace) && putsValue)
+                order.staticFieldAccesses.append({ variable, write.function, write.site, true });
+        }
     }
     for (const Layout& layout : program.layouts) {
         if (layout.staticFields.isEmpty() || !layout.constructor)
             continue;
         LayoutID constructedClass = program.at(layout.constructor).constructedClass;
         bool hasEscaped = !constructedClass || std::ranges::any_of(program.at(constructedClass).staticFields, [&](const StaticField& field) {
-            uint32_t variable = field.variable.index();
-            return variables.staticFieldsInUnknownHands.quickGet(variable) || variables.staticFieldsOfEscapedClassObjects.quickGet(variable) || isLookedAtByNobodyListed.get(variable);
+            return !isReadOnlyByListedOperations(ledger.readersOf(Place::variable(field.variable)));
         });
         if (!hasEscaped)
             continue;
@@ -202,6 +257,7 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     order.evaluatedModules = BitVector(program.modules.size());
     order.modulesLoadedByName = BitVector(program.modules.size());
     order.modulesLoadedByHost = BitVector(program.modules.size());
+    order.modulesNamedByOperationsNobodyKnows = BitVector(program.modules.size());
     order.staticFieldsOfEscapedClasses = BitVector(program.variables.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         if (inputs.isReached(FunctionID(index)) || isUnsolvedCode(inputs, tables, FunctionID(index)))

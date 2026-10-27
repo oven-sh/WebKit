@@ -58,17 +58,11 @@ public:
     bool shapeHasType(const RuntimeType&, uint32_t shape) const;
     // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
-    // A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
         if (field.isAccessor())
             return false;
-        if (fieldAccepts(field, value))
-            return true;
-        if (field.keepsStateOfBirth)
-            return false;
-        SlotTraits traits = traitsOf(field.slot.representation());
-        return (value.isUndefined() && traits.hasUndefined) || (value.isNull() && traits.hasNull);
+        return fieldAccepts(field, value) || (field.slotHoldsUndefinedAndNull && value.isUndefinedOrNull());
     }
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }

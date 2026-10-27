@@ -460,8 +460,8 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
 {
     const Program& program = context.program;
     const Type& type = program.typeOf(context.function, site.source);
-    bool areProven = type.hasOnlyLayouts(program) && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
-    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
+    bool areProven = type.hasOnlyLayouts() && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
+    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source).predicted()) };
 }
 
 static bool expectsOneLayout(FunctionPassContext& context, const OwnKeyWalkSite& site)
@@ -1904,7 +1904,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
 
     replacement.setOrigin(origin);
     replacement.type = resultTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types);
-    replacement.setExpected(ExpectedType(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types)));
+    replacement.setExpected(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types));
     rewrite.edit(id) = WTF::move(replacement);
 }
 

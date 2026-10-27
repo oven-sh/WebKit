@@ -317,6 +317,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
+    words.extraPropertiesWithElementsStructure = Structure::nonPropertyTransition(vm, words.emptyExtraPropertiesStructure, TransitionKind::AllocateContiguous, nullptr);
+    words.headerOfExtraPropertiesWithElements = cellHeaderFor(words.extraPropertiesWithElementsStructure);
     words.boundFunctionClassInfo = JSBoundFunction::info();
     words.objectPrototype = realm->objectPrototype();
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
@@ -710,14 +712,14 @@ struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)
 #endif
 
 // A leaf that preserves most registers is handed characters and numbers and no instance.
-// What takes the pending exception runs the collection that throwing put off: the places that call it say so, its row does not.
 static constexpr bool isCalledWithoutCollection(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
-    if (!operation || Typed::declaredBoundOf(*operation).mayCollect || preservesMostRegisters(*operation) || featureOf(entry))
-        return false;
-    return *operation != RuntimeOperation::Catch && *operation != RuntimeOperation::CatchException && *operation != RuntimeOperation::CatchValueAndException;
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation) && !featureOf(entry);
 }
+
+// What takes the pending exception runs the collection that throwing put off.
+static_assert(!isCalledWithoutCollection(Entry::operationAOTCatch) && !isCalledWithoutCollection(Entry::operationAOTCatchException) && !isCalledWithoutCollection(Entry::operationAOTCatchValueAndException));
 
 template<Entry entry, auto operation>
 static constexpr auto functionInTable = [] {

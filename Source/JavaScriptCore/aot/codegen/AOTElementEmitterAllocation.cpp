@@ -205,14 +205,14 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     return array;
 }
 
-CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form)
+CellPointer ArrayAllocationEmitter::newArrayOfHoles(const OperationContext& context, Integer length, const ArrayStorageForm& form, BuiltinID calledBuiltin)
 {
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     join.add(allocateArrayOfHoles(context, length, form, slowPath));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), length, word32(form.indexingType), word32(0) }, { .isOnRarePath = true }));
+    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), length, word32(form.indexingType), word32(0) }, { .calledBuiltin = calledBuiltin, .isOnRarePath = true }));
     return join.finish();
 }
 

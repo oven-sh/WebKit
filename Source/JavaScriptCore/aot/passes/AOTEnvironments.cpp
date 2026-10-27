@@ -13,6 +13,7 @@
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTClaims.h"
 #include "AOTDominators.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
@@ -363,8 +364,8 @@ static Variable createValueVariable(const Function& function, const PredictedVal
     else
         variable.declared.establish(*proven);
     variable.flags.add(VariableFlags::IsImmutable);
-    variable.flow.writers = WriterState::AllKnown;
-    variable.flow.stores = StoreCount::AtMostOnce;
+    variable.flow.writers = writerStateOf(writersOfVariableThatPassFillsOnce()).state;
+    variable.flow.stores = storeCountOf(writersOfVariableThatPassFillsOnce()).state;
     variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
     return variable;
 }
@@ -580,7 +581,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     };
     auto findConstant = [&](FunctionID closureFunction, uint32_t capture) {
         auto constantIn = [&](FunctionID function) {
-            return knownValueOfType(program, program.at(program.provenTypeOf(program.at(function).captures[capture])));
+            return knownValueOfType(program.at(program.provenTypeOf(program.at(function).captures[capture])));
         };
         KnownValue constant = constantIn(closureFunction);
         bool isSameInVersions = std::ranges::all_of(std::ranges::equal_range(versions, closureFunction, { }, &std::pair<FunctionID, FunctionID>::first), [&](const auto& entry) {
@@ -1816,9 +1817,9 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     Field field;
                     field.declared = wanted.declared;
                     field.flags = fieldOfClosure.flags | OptionSet<FieldFlags> { FieldFlags::IsHidden, FieldFlags::IsAddedLate };
-                    field.flow.location.writers = WriterState::AllKnown;
+                    field.flow.location.writers = writerStateOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.stores = fieldOfClosure.flow.location.stores;
-                    field.flow.location.storeNaming = StoreNaming::EveryStoreNamesLocation;
+                    field.flow.location.storeNaming = storeNamingOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.initialization = fieldOfClosure.flow.location.initialization;
                     field.flow.occupancy = fieldOfClosure.flow.occupancy;
                     field.flow.stability = fieldOfClosure.flow.stability;
@@ -1936,14 +1937,17 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     AOT::sort(plan.editedFunctions);
     removeRepeatedElements(plan.editedFunctions);
 
-    // Only the operations of the program and the scopes of eval reach a field of an environment, and the scan has seen them all.
+    // The scan has looked at the operations of every body and at the scopes of evaluated text. What it found in the way of a closure that is never made goes with the closure.
+    constexpr OptionSet<Actor> asked { Actor::Statements, Actor::Creation, Actor::UnseenCode };
+    Writers writersLeft { { }, actorsThatCanWrite(PlaceKind::EnvironmentField) - asked };
+    Readers readersLeft { { }, actorsThatCanRead(PlaceKind::EnvironmentField) - asked };
     for (uint32_t candidate = 0; candidate < candidates.fields.size(); ++candidate) {
         FieldReference reference = candidates.fields[candidate];
         if (plan.closures[candidate].fate == Fate::IsNeverMade) {
             LocationFlow& location = editor.at(reference.layout).fields[reference.field].flow.location;
-            location.writers = WriterState::AllKnown;
-            location.storeNaming = StoreNaming::EveryStoreNamesLocation;
-            location.reads = ReadState::NeverRead;
+            location.writers = writerStateOf(writersLeft).state;
+            location.storeNaming = storeNamingOf(writersLeft).state;
+            location.reads = readStateOf(readersLeft).state;
         }
         if (plan.closures[candidate].fate == Fate::IsMadeAtFirstUse) {
             Field& field = editor.at(reference.layout).fields[reference.field];

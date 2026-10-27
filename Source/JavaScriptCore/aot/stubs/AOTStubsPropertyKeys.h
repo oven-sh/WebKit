@@ -50,6 +50,7 @@ constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFam
 // The operands: the object and the token of the evaluation of the class. The immediate: the index of the field in the record of the layout that declares it.
 constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
 
+constexpr StubKey storeElementOfCompiledObject(PutMode mode) { return StubKey(StubFamily::StoreElementOfCompiledObject).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putById(PutMode mode) { return StubKey(StubFamily::PutById).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAfterFrontProbe(PutMode mode) { return StubKey(StubFamily::PutByIdAfterFrontProbe).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutByIdHashed).withForm(static_cast<uint8_t>(mode)); }

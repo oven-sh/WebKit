@@ -137,11 +137,17 @@ struct VectorGrowth {
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
+    // In place of an array: the extra properties of a compiled object.
+    bool isOfExtraProperties { false };
 };
 // For an array whose vector is as long as the array. Gives it the vector that JSObject::ensureLength() gives it for one more element. The public length stays. Preserves array alone.
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
 // The same for an array that is to have neededLength elements, which its vector has no room for. Preserves array and neededLength.
 void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, JumpList& slowPath);
+
+// AOTStubsElements.cpp
+// A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes storage, index and text.
+void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
 // AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);

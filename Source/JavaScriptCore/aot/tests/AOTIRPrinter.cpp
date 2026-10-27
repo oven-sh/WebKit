@@ -672,8 +672,6 @@ static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
         printer.out().print(bar);
         printer.print(member);
     }
-    if (layouts.isWrittenWithMembersWithoutLayout())
-        printer.out().print(bar, "nolayout"_s);
     if (!layouts.listsEveryLayout())
         printer.out().print(bar, "?"_s);
 }

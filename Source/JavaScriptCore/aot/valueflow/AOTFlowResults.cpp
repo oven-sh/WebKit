@@ -335,6 +335,8 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
 
 bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
 }
@@ -353,6 +355,8 @@ bool FlowResults::closuresGoOutOfSightUnnamed(FunctionID closureFunction) const
 
 bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresAreGivenDisplayName.get(analyzed.index());
 }

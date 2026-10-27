@@ -409,7 +409,7 @@ StubCallResult RuntimeCallEmitter::callOperationReturningPair(const OperationCon
 Operand RuntimeCallEmitter::callWithoutSite(RuntimeOperation operation, std::span<const Operand> arguments, Representation result, const CallOptions& options)
 {
     Effects effects = AOT::effectsOf(entryOf(operation));
-    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && !effects.mayCollect);
+    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && (!effects.mayCollect || options.followsThrow));
     return callChecked(nullptr, operation, arguments, result, options);
 }
 
@@ -592,9 +592,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
-    RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
+    RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
-    if (effects.mayCollect)
+    if (effects.mayCollect && context)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
     bool validates = generator().validates() && context;

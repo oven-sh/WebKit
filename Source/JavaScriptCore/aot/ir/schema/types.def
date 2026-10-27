@@ -19,8 +19,8 @@ record PropertyKey wire customText {
 }
 
 flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
-flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol }
-flags TypeFlags { HasIntegers AnyObject AnyFunction HasMembersWithoutLayout }
+flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol Unspecified }
+flags TypeFlags { HasIntegers AnyObject AnyFunction }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
 flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow }

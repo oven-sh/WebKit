@@ -288,7 +288,7 @@ static LayoutSetID withReceiversNobodyHasSeen(TypeArena& types, LayoutSetID stam
     const LayoutSet& receivers = types.at(stamp);
     if (!receivers.listsEveryLayout())
         return stamp;
-    if (receivers.written().isEmpty() || receivers.mayHoldObjectsWithoutLayout())
+    if (receivers.written().isEmpty())
         return { };
     return types.intern(LayoutSet::open(Vector<LayoutID>(receivers.written())));
 }

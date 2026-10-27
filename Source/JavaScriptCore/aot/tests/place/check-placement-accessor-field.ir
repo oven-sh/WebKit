@@ -1,0 +1,26 @@
+# RUN: check-placement accessor-field
+# DIAGNOSTIC: PlacementCheckFailed 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = PropGet v0 key="publish" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}
+function f1 name="later" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    PropSet v1, v0 key="x" mode=Strict
+    Return v1
+}
+
+# CHECK: mutated L0.0
+# CHECK: rule ValueInAccessorSlot

@@ -779,7 +779,7 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
             return std::nullopt;
         // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
         bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
-            return mayBeVariableReadEarly(context.analyses, entry.value);
+            return context.program.typeOf(context.function, entry.value).mayBeUnspecified();
         });
         if (wouldReadEmptyFirstState)
             return std::nullopt;

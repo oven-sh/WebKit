@@ -13,6 +13,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTClaims.h"
 #include "AOTDeferDefinitions.h"
 #include "AOTDefinitions.h"
 #include "AOTDescriptorLiteral.h"
@@ -165,7 +166,7 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             KnownValue stored;
             std::optional<Vector<KnownValue, 8>> list;
             if (value.opcode == Opcode::PutModuleVariable) {
-                stored = knownValueOfType(program, program.typeOf(program.functions[index], value.valueOperand()));
+                stored = knownValueOfType(program.typeOf(program.functions[index], value.valueOperand()));
                 list = findConstantsOfWholeLiteral(program, flow, program.functions[index], value.valueOperand());
             }
             stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
@@ -1134,7 +1135,7 @@ struct MovableCode {
         }
         auto isUnchanging = [&](const Value& value) {
             const Type& type = arenas.types.at(value.type);
-            if (type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
+            if (type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
                 return true;
             if (isOtherNameOfFirstOperand(function, value))
                 return known.unchanging.get(value.operand(0).index());
@@ -1405,7 +1406,7 @@ struct MovableCode {
         if (hasOnlyArrays(type, { }) && !hasName && typeOf(function, value.propertyOperand()).isNumber())
             return true;
         if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, object)) {
-            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
+            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
                 return (program.at(id).kind == LayoutKind::Record || program.at(id).kind == LayoutKind::Container) && !program.at(id).base;
             });
             // No such object ever gets an accessor, a lock or another prototype: above it stands Object.prototype, which nobody can change.
@@ -1676,7 +1677,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                     return true;
                 if (program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent)
                     return false;
-            } else if (!isCastWithoutTest(value.opcode) || value.numberOfOperands() != 1)
+            } else if (!isCastWithoutTest(value.opcode) || std::ranges::count_if(value.operands(), [](ValueID operand) { return !!operand; }) != 1)
                 return false;
         }
     };
@@ -1764,7 +1765,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                 for (ValueID link = taken;; link = function.at(link).operand(0)) {
                     if (stateOf(link) == State::Moves)
                         itemsUsedByCodeThatStays.append(itemOf[link.index()]);
-                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands())
+                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands() || !function.at(link).operand(0))
                         break;
                 }
             });
@@ -2249,8 +2250,8 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
                 variable.module = body.module;
                 variable.declared = proven ? DeclaredType(*proven) : DeclaredType(ExpectedType(type));
                 variable.initialization = VariableInitialization::Uninitialized;
-                variable.flow.writers = WriterState::AllKnown;
-                variable.flow.stores = StoreCount::AtMostOnce;
+                variable.flow.writers = writerStateOf(writersOfVariableThatPassFillsOnce()).state;
+                variable.flow.stores = storeCountOf(writersOfVariableThatPassFillsOnce()).state;
                 variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
                 addedInBody.add(added.variable.index(), editor.addVariable(WTF::move(variable)));
             }

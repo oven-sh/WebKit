@@ -106,7 +106,7 @@ effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProp
 opaque IteratorState Enumerator Exception ClassToken
 opaque StringBuilder engine
 opaque Cursor KeyOrder engine directCallsOnly
-opaque Guard FlatString CodeAddress JSONHolders engine functionLocal
+opaque Guard Fact FlatString CodeAddress JSONHolders engine functionLocal
 opaque BuilderCursor engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText

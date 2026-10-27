@@ -1,4 +1,4 @@
-# A protocol that finds a field under its key runs nothing where the type of the field holds nothing callable; what it finds is unknown code (?) where the type is only expected, which nothing checks, and where its family has members without a layout, which may be functions
+# A protocol that finds a field under its key runs nothing where the type of the field holds nothing callable; what it finds is unknown code (?) where the type is only expected, which nothing checks
 # FORM: Prepared
 # RUN: members-run-by ToPrimitive f0
 
@@ -6,8 +6,7 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="HoldsNumber" fields=[{key="toString" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 layout L1 name="ExpectsNumber" fields=[{key="toString" declared={type=number flags=[IsExpected]} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 layout L2 name="HoldsObject" fields=[{key="toString" declared={type=L0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
-layout L3 name="HoldsMemberOfOpenFamily" fields=[{key="toString" declared={type=L0|nolayout} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
-function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}] results=[{type=undefined}] {
+function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}] results=[{type=undefined}] {
     Return
 }
 
@@ -16,4 +15,3 @@ function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L
 # CHECK: v1: ObjectPrototypeValueOf, ?
 # CHECK-NEXT: v2: ObjectPrototypeValueOf
 # CHECK-NOT: ?
-# CHECK: v3: ObjectPrototypeValueOf, ?

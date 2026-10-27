@@ -960,8 +960,9 @@ namespace {
 struct OutliningNormalForm {
     enum class Mark : uint32_t { Value, Parameter, Terminator, InteriorTarget, ExitTarget, Proof, Result, Absent, InSite, LiveIn, Constant };
 
-    OutliningNormalForm(const Function& function, const OutliningSite& site, uint64_t maxLiveIns)
-        : function(function)
+    OutliningNormalForm(const Program& program, const Function& function, const OutliningSite& site, uint64_t maxLiveIns)
+        : program(program)
+        , function(function)
         , site(site)
         , maxLiveIns(maxLiveIns)
     {
@@ -972,6 +973,8 @@ struct OutliningNormalForm {
             for (BlockID blockID : site.interiorBlocks) {
                 const Block& block = function.at(blockID);
                 for (ValueID parameter : block.parameters) {
+                    if (isFact(parameter))
+                        continue;
                     append(Mark::Parameter, function.at(parameter).type.index());
                     definitions.append(parameter);
                 }
@@ -989,10 +992,13 @@ struct OutliningNormalForm {
 
     void append(auto... added) { (words.append(static_cast<uint32_t>(added)), ...); }
 
+    // A fact leaves nothing in the form: it makes no code, and the shared function is entered behind every fact that its operations name.
+    bool isFact(ValueID id) const { return program.typeOf(function, id).isOpaque(OpaqueKind::Fact); }
+
     void appendValue(ValueID id)
     {
         const Value& value = function.at(id);
-        if (isRematerializable(value))
+        if (isRematerializable(value) || isFact(id))
             return;
         append(Mark::Value, value.opcode, value.type.index());
         bool dependsOnModule = std::ranges::any_of(payloadFieldsOf(value.opcode), [](const PayloadFieldInfo& field) {
@@ -1037,9 +1043,11 @@ struct OutliningNormalForm {
             }
             size_t interiorIndex = site.interiorBlocks.find(target.block);
             RELEASE_ASSERT(interiorIndex != notFound);
-            append(Mark::InteriorTarget, interiorIndex, target.arguments.size());
-            for (ValueID argument : target.arguments)
-                appendReference(argument);
+            append(Mark::InteriorTarget, interiorIndex, target.arguments.size() - std::ranges::count_if(target.arguments, [&](ValueID argument) { return isFact(argument); }));
+            for (ValueID argument : target.arguments) {
+                if (!isFact(argument))
+                    appendReference(argument);
+            }
             append(Mark::Proof, target.proofs.size());
             words.append(target.proofs.span());
         }
@@ -1048,7 +1056,7 @@ struct OutliningNormalForm {
     // Says whether the value comes from outside the site.
     bool appendReference(ValueID id)
     {
-        if (!id) {
+        if (!id || isFact(id)) {
             append(Mark::Absent);
             return false;
         }
@@ -1097,6 +1105,7 @@ struct OutliningNormalForm {
         return result;
     }
 
+    const Program& program;
     const Function& function;
     const OutliningSite& site;
     uint64_t maxLiveIns;
@@ -1131,8 +1140,8 @@ static bool areEqualSites(const Program& program, const OutliningSite& first, co
 {
     if (first.hash != second.hash)
         return false;
-    OutliningNormalForm firstForm(program.at(first.function), first, first.liveIns.size());
-    OutliningNormalForm secondForm(program.at(second.function), second, second.liveIns.size());
+    OutliningNormalForm firstForm(program, program.at(first.function), first, first.liveIns.size());
+    OutliningNormalForm secondForm(program, program.at(second.function), second, second.liveIns.size());
     ASSERT(firstForm.liveIns == first.liveIns && secondForm.liveIns == second.liveIns);
     return firstForm.words == secondForm.words && firstForm.payloadWords() == secondForm.payloadWords();
 }
@@ -1429,6 +1438,12 @@ struct OutliningScan {
         // A call in tail position that returns here has one frame more than the program wrote. A body would add another.
         if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
+        // Reflect.construct(..) is shown at one place where it constructs and at another where it calls. The call of a body does neither.
+        if (value.isPartOfConstruction) {
+            const ConstructionStart* construction = program.findConstructionReportedAt(program.sourceFunctionOf(function, value).module, value.position);
+            if (construction && construction->isWrittenAsCall)
+                return false;
+        }
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {
             return field.kind == PayloadKind::Origin && value.payloadWordAt(field.firstWord + 1);
         });
@@ -1866,13 +1881,13 @@ struct OutliningScan {
         }
 
         site.calledBuiltin = findCalledBuiltin(site);
-        OutliningNormalForm form(function, site, build.limit(LimitID::MaxOutlinedOperands));
+        OutliningNormalForm form(program, function, site, build.limit(LimitID::MaxOutlinedOperands));
         if (form.hasRequiredDefinitionOutside)
             return false;
         // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
         for (ValueID liveIn : form.liveIns) {
             const Value& value = function.at(liveIn);
-            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn))
+            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn) || program.at(value.type).mayBeUnspecified())
                 return false;
         }
         if (mayEndGuardInUse(site, form.liveIns.span(), namedGuards))
@@ -2324,6 +2339,7 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
     Vector<std::pair<ValueID, ValueID>, 32> valueCopies;
     Vector<std::pair<BlockID, BlockID>, 4> blockCopies;
     BlockID returnBlock;
+    ValueID factOfEntry;
 
     auto copyOf = [](const auto& copies, auto original) {
         size_t index = copies.findIf([&](const auto& entry) {
@@ -2355,8 +2371,19 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
         bool hasCopy = valueCopies.containsIf([&](const auto& entry) {
             return entry.first == id;
         });
-        if (!hasCopy && !isDefinedInSite(source, site, id) && isRematerializable(source.at(id)))
+        if (hasCopy || isDefinedInSite(source, site, id))
+            return;
+        if (isRematerializable(source.at(id)))
             copyValue(id);
+        if (!context.program.typeOf(source, id).isOpaque(OpaqueKind::Fact))
+            return;
+        // The body is entered behind every fact that its operations name.
+        if (!factOfEntry) {
+            Value entered = IRBuilder::make(Opcode::Entered);
+            entered.setFunction(site.function);
+            factOfEntry = builder.append(WTF::move(entered));
+        }
+        valueCopies.append({ id, factOfEntry });
     };
     auto copyValuesAndTerminator = [&](std::span<const ValueID> values, const Terminator& terminator) {
         for (ValueID id : values)

@@ -419,7 +419,7 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
     if ((store.opcode != Opcode::PropSet || store.isFreeName()) && store.opcode != Opcode::PropDefine)
         return std::nullopt;
     const Type& receiver = program.typeOf(function, store.objectOperand());
-    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts(program))
+    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts())
         return std::nullopt;
     std::optional<uint16_t> index;
     for (LayoutID member : membersOf(program, receiver)) {
@@ -536,8 +536,8 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     if (requests.size() > build.limit(LimitID::MaxSiteCaches)) {
         requests = collectRequests(true);
         parallelSort(loops, requests.mutableSpan(), [](const SiteCacheRequest& a, const SiteCacheRequest& b) {
-            if (a.weight != b.weight)
-                return a.weight > b.weight;
+            if (!a.weight.isSamePredictionAs(b.weight))
+                return (a.weight > b.weight).predicted();
             return std::tie(a.function, a.value) < std::tie(b.function, b.value);
         });
     }

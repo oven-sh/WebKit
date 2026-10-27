@@ -86,4 +86,4 @@ function f5 name="observes" kind=Arrow captures=[{type=env L1}] results=[{type=a
 # CHECK: PutModuleVariable {{*}}variable=g1
 # CHECK: Branch
 # CHECK: name="observes"
-# CHECK: = GetModuleVariable variable=g1
+# CHECK: = GetModuleVariable {{*}}variable=g1

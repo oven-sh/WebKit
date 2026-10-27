@@ -93,10 +93,36 @@ static ALWAYS_INLINE size_t findString(const CharacterType* characters, uint32_t
     CharacterType first = other[0];
     auto rest = unsafeMakeSpan(other + 1, otherLength - 1);
     auto starts = unsafeMakeSpan(characters, length - otherLength + 1);
-    for (size_t i = start;; ++i) {
-        i = WTF::find(starts, first, i);
-        if (i == notFound || WTF::equal(characters + i + 1, rest))
-            return i;
+    if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
+        // A place where the text may begin has its first character, and its last one as far behind as the text is long. In ordinary text few places have both.
+        constexpr size_t stride = SIMD::stride<uint8_t>;
+        const uint8_t* firsts = byteCast<uint8_t>(characters);
+        const uint8_t* lasts = firsts + otherLength - 1;
+        auto firstOfText = SIMD::splat<uint8_t>(first);
+        auto lastOfText = SIMD::splat<uint8_t>(other[otherLength - 1]);
+        for (size_t i = start;; ++i) {
+            if (i + stride <= starts.size()) {
+                auto found = SIMD::findFirstNonZeroIndex(SIMD::bitAnd(SIMD::equal(SIMD::load(firsts + i), firstOfText), SIMD::equal(SIMD::load(lasts + i), lastOfText)));
+                if (!found) {
+                    i += stride - 1;
+                    continue;
+                }
+                i += *found;
+            } else {
+                while (i < starts.size() && characters[i] != first)
+                    ++i;
+                if (i >= starts.size())
+                    return notFound;
+            }
+            if (WTF::equal(characters + i + 1, rest))
+                return i;
+        }
+    } else {
+        for (size_t i = start;; ++i) {
+            i = WTF::find(starts, first, i);
+            if (i == notFound || WTF::equal(characters + i + 1, rest))
+                return i;
+        }
     }
 }
 

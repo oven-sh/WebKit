@@ -453,7 +453,7 @@ struct TypedResultExpander final : Emission {
         function.edit(site.call) = WTF::move(*bytesCall);
         Value& call = function.edit(site.call);
         call.type = resultTypeOf(program(), function, call, inputs().types);
-        call.setExpected(ExpectedType(expectedTypeOf(program(), function, call, inputs().types)));
+        call.setExpected(expectedTypeOf(program(), function, call, inputs().types));
         removeCastsOfAwaitedPromise(function, site);
         pass.analyses.didChangeValues();
         builder().setOrigin(originalCall.origin());

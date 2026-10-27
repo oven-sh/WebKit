@@ -13,6 +13,7 @@
 #include "JSType.h"
 #include "PropertyOffset.h"
 #include <optional>
+#include <wtf/Noncopyable.h>
 
 namespace JSC {
 
@@ -23,6 +24,7 @@ class PutPropertySlot;
 namespace AOT {
 
 class Object;
+class PropertyCaches;
 
 enum class PropertyAnswerKind : uint8_t {
     Uncacheable,
@@ -140,6 +142,23 @@ JSValue readThroughAnswer(JSGlobalObject*, JSValue base, const PropertyAnswer&);
 Structure* structureForPrimitive(JSGlobalObject*, JSValue primitive);
 constexpr bool isProxyType(JSType type) { return type == ProxyObjectType || type == GlobalProxyType; }
 bool isNeverCachedName(VM&, UniquedStringImpl*);
+// See PropertyCaches::prepareHoldersBeforeLookupsUnder().
+bool isPreparedBeforeLookups(VM&, UniquedStringImpl*);
+// Calls what the library has registered for the name, if anything, on the compiled object. May throw.
+void prepareForLookup(JSGlobalObject*, JSObject* compiledObject, UniquedStringImpl*);
+// The same for each field of the object, before its values are handed out one after the other.
+void prepareForWalk(JSGlobalObject*, JSObject*);
+// An operation of compiled code that names the property. Only the text of the library names one by such a symbol, and it finds there what the library keeps there: while one of these lives, the object is not asked.
+class LookByName {
+    WTF_MAKE_NONCOPYABLE(LookByName);
+public:
+    LookByName(VM&, JSValue holder, UniquedStringImpl*);
+    ~LookByName();
+
+private:
+    PropertyCaches* m_caches { nullptr };
+    JSCell* m_previous { nullptr };
+};
 std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, ChainWalkMode, unsigned& attributes);
 bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);

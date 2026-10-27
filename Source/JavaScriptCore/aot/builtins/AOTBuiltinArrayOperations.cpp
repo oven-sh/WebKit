@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -96,8 +97,15 @@ static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination,
     const SourceCharacterType* source = characters.data();
     size_t length = characters.size();
     if (length <= maxLengthCopiedInPlace) {
-        for (size_t i = 0; i < length; ++i)
-            destination[i] = source[i];
+        if constexpr (sizeof(CharacterType) == 1 && sizeof(SourceCharacterType) == 1) {
+            if (length >= sizeof(uint16_t))
+                WTF::copySmallMemory<sizeof(uint16_t), maxLengthCopiedInPlace>(byteCast<uint8_t>(destination), byteCast<uint8_t>(source), length);
+            else if (length)
+                *destination = *source;
+        } else {
+            for (size_t i = 0; i < length; ++i)
+                destination[i] = source[i];
+        }
     } else
         StringImpl::copyCharacters(std::span { destination, length }, characters);
     return destination + length;

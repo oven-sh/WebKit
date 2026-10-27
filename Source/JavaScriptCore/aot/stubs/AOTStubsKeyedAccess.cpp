@@ -11,10 +11,12 @@
 #include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStubRegisters.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsField.h"
 #include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
+#include "AOTStubsPropertyProbes.h"
 #include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
 #include "JSObject.h"
@@ -557,6 +559,7 @@ void generateGetSuperByVal(StubAssembler& jit)
     const GPRReg receiver = jit.operand(2);
     const GPRReg start = jit.allocateScratch(StubRegister::T9);
     const GPRReg getterSetter = registers.uid;
+    static_assert(areDistinctOnEveryISA(firstStubOperandRegister, keyCellRegister, storedValueByValRegister, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T14, slotHeaderRegister, slotPayloadRegister));
     RELEASE_ASSERT(noOverlap(base, key, receiver, start, registers.uid, registers.structureID, registers.entry, registers.header, registers.payload));
     JumpList nothingIsFiled;
     JumpList whatIsFiledDoesNotAnswer;
@@ -677,7 +680,17 @@ void generateInByValCached(StubAssembler& jit)
     JumpList needsOperation;
 
     Jump keyIsCell = jit.branchIfCell(key);
-    returnTrueForOwnElement(jit, registers, needsOperation);
+    if (asksIn && jit.options().callsTrapsOfProxies.predicted()) {
+        JumpList isNoOwnElement;
+        returnTrueForOwnElement(jit, registers, isNoOwnElement);
+
+        isNoOwnElement.link(&jit);
+        checkStubOperands(throughProxy(TrapOfProxy::Has), { base, registers.payload, header });
+        loadTextOfIndexForTrap(jit, base, key, registers.structureID, registers.uid, registers.payload, needsOperation);
+        jit.move(TrustedImm32(0), header);
+        jit.jumpToStub(throughProxy(TrapOfProxy::Has));
+    } else
+        returnTrueForOwnElement(jit, registers, needsOperation);
 
     keyIsCell.link(&jit);
     needsOperation.append(jit.branchIfNotCell(base));
@@ -721,7 +734,7 @@ void generateInByValCached(StubAssembler& jit)
     kindDoesNotSay.link(&jit);
     loadSlotKind(jit, slot, registers.uid);
     jit.branch32(CCallHelpers::Equal, registers.uid, TrustedImm32(static_cast<int32_t>(Slot::Kind::FieldGetter))).linkTo(readsSlot, &jit);
-    if (asksIn && jit.options().callsTrapsOfProxies) {
+    if (asksIn && jit.options().callsTrapsOfProxies.predicted()) {
         RELEASE_ASSERT(base == gprOf(firstStubOperandRegister) && registers.payload == gprOf(slotPayloadRegister));
         miss.append(jit.branch32(CCallHelpers::NotEqual, registers.uid, TrustedImm32(static_cast<int32_t>(Slot::Kind::Uncacheable))));
         jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, registers.payload), throughProxy(TrapOfProxy::Has));
@@ -1015,7 +1028,7 @@ static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegist
     jit.load8(Address(base, JSCell::indexingTypeAndMiscOffset()), shape);
     jit.and32(TrustedImm32(IsArray | IndexingShapeMask | CopyOnWrite), shape);
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(ArrayWithContiguous));
-    miss.append(jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithInt32)));
+    Jump isNoArrayOfInt32 = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(ArrayWithInt32));
     miss.append(jit.branchIfNotInt32(value));
     isContiguous.link(&jit);
     Label loadStorage = jit.label();
@@ -1033,6 +1046,11 @@ static void defineOwnElementAndReturn(StubAssembler& jit, const KeyedProbeRegist
     miss.append(jit.branch32(CCallHelpers::NotEqual, index, Address(storage, Butterfly::offsetOfPublicLength())));
     growFullVector(jit, { base, storage, index, registers.payload, registers.entry, registers.structureID }, miss);
     jit.jump().linkTo(loadStorage, &jit);
+
+    isNoArrayOfInt32.link(&jit);
+    miss.append(jit.branchIfNotType(base, CompiledObjectType));
+    checkStubOperands(storeElementOfCompiledObject(PutMode::Define), { base, registers.key, value });
+    jit.jumpToStub(storeElementOfCompiledObject(PutMode::Define));
 }
 
 void generateDefineByValCached(StubAssembler& jit)

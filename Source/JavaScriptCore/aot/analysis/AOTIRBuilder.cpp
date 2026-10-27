@@ -77,7 +77,7 @@ static ValueID appendEdgeResult(IRBuilder& builder, Edge edge, uint32_t proof)
     parameter.setOrigin(builder.origin());
     parameter.type = typeOnEdge(program, function, position, builder.types());
     if (keepsExpectedTypes(program))
-        parameter.setExpected(ExpectedType(expectedTypeOnEdge(program, function, position, parameter.type, builder.types())));
+        parameter.setExpected(expectedTypeOnEdge(program, function, position, parameter.type, builder.types()));
     function.add(WTF::move(parameter));
     ValueID id(function.values.size() - 1);
     function.edit(target.block, BlockEdit::Parameters).parameters.append(id);
@@ -289,7 +289,7 @@ void IRBuilder::prepare(Value& value)
     TypingMemo* memo = m_analyses ? m_analyses->typingMemo() : nullptr;
     value.type = resultTypeOf(m_context.program, m_function, value, m_types, memo);
     if (keepsExpectedTypes(m_context.program) && !value.expected().predicted())
-        value.setExpected(ExpectedType(expectedTypeOf(m_context.program, m_function, value, m_types, memo)));
+        value.setExpected(expectedTypeOf(m_context.program, m_function, value, m_types, memo));
 }
 
 ValueID IRBuilder::addDetached(Value&& value)

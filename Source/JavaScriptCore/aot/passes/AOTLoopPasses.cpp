@@ -383,6 +383,24 @@ static bool readsWhatMayChangeBehindHeader(FunctionPassContext& context, const N
     });
 }
 
+// The read goes ahead of the fact that it names, so the word it finds may be anything. The cast that stays names the fact.
+static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder& builder, BlockValues& remaining, ValueID id)
+{
+    Function& function = context.function;
+    Value ahead = function.at(id);
+    ValueID fact = ahead.factOperand();
+    ahead.setFactOperand({ });
+    ahead.setMayPrecedeItsStore(true);
+    builder.setOrigin(ahead.origin());
+    ValueID read = builder.addDetached(WTF::move(ahead));
+
+    Value& value = function.edit(id, ValueEdit::Definition);
+    value.becomeAssumeType(read, Proven::behindFact(value.type));
+    value.setFactOperand(fact);
+    remaining.append(id);
+    return read;
+}
+
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
 static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
@@ -430,6 +448,9 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         });
         return result;
     };
+    auto canGoAheadOfItsFact = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
+    };
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
@@ -468,7 +489,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         if (stability == LocationStability::Unknown && clobbers.writes.overlaps(program, access.location))
             return false;
-        return hasInvariantOperands(value);
+        return hasInvariantOperands(value) || canGoAheadOfItsFact(value);
     };
 
     unsigned numberOfHoistedReads = 0;
@@ -501,12 +522,17 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 entriesFromBranches.append(*entry);
                 return 0;
             }
+            ++numberOfHoistedReads;
+            if (!hasInvariantOperands(function.at(id))) {
+                function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));
+                appendKeptReadForValidation(builder, remaining, id);
+                continue;
+            }
             function.edit(preheader).values.append(id);
             definingBlock[id.index()] = preheader;
-            ++numberOfHoistedReads;
             appendKeptReadForValidation(builder, remaining, id);
             if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
-                function.edit(id).setMayPrecedeItsStore(true);
+                function.edit(id).setIsValidatedWhereLookedAt(true);
         }
         if (blockID == header)
             addEffects(context.analyses.effectsOfTerminator(header), clobbersSinceEntry);

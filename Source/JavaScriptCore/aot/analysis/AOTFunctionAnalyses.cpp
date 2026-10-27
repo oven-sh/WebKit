@@ -482,6 +482,12 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
 }
 
+void FunctionAnalyses::reportQuestionBeforeRepair() const
+{
+    if (m_context.build.options().verifiesProgram)
+        m_context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::QuestionBeforeRepair, .function = m_context.id, .pass = currentWork().pass.load(std::memory_order_relaxed) });
+}
+
 Subject FunctionAnalyses::subject(ValueID value) const
 {
     if (!m_context.id)

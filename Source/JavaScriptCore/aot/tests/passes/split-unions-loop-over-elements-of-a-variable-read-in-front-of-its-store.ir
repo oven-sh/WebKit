@@ -14,14 +14,16 @@ function f0 name="mayStillBeEmpty" parameters=[{type=boolean}] results=[{type=an
     LoopHint
     Branch v0 -> taken b2(), notTaken b4()
   b2():
-    v7 = PropGet v3 key="length"
-    v8 = Less v5, v7
-    Branch v8 -> taken b3(), notTaken b4()
+    v7 = Entered function=f1
+    v8 = AssumeType v3, v7 provenType=Array<number>|Uint8Array
+    v9 = PropGet v8 key="length"
+    v10 = Less v5, v9
+    Branch v10 -> taken b3(), notTaken b4()
   b3():
-    v9 = ElemGet v3, v5
-    v10 = Add v4, v9
-    v11 = Increment v5
-    Jump -> next b1(v10, v11)
+    v11 = ElemGet v8, v5
+    v12 = Add v4, v11
+    v13 = Increment v5
+    Jump -> next b1(v12, v13)
   b4():
     Return v4
 }

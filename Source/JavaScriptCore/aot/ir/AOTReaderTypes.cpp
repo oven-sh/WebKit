@@ -777,30 +777,26 @@ bool Reader::readsAsAnything(std::span<const LayoutID> named) const
     });
 }
 
-void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named, bool hasMembersWithoutLayout) const
+void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named) const
 {
-    if (result.type.anyObject || (named.empty() && !hasMembersWithoutLayout))
+    if (result.type.anyObject || named.empty())
         return;
     if (m_form != IRForm::AsRead) {
-        result.layoutsToIntern = LayoutSet::complete(Vector<LayoutID>(named), hasMembersWithoutLayout);
+        result.layoutsToIntern = LayoutSet::complete(Vector<LayoutID>(named));
         return;
     }
 
     if (named.size() == 1) {
-        LayoutSetID family = m_declaredMembers[named[0].index()];
-        if (!hasMembersWithoutLayout || m_program.at(family).mayHoldObjectsWithoutLayout()) {
-            result.type.layouts = family;
-            return;
-        }
+        result.type.layouts = m_declaredMembers[named[0].index()];
+        return;
     }
 
     Vector<LayoutID> members;
     for (LayoutID layout : named) {
         const LayoutSet& family = m_program.at(m_declaredMembers[layout.index()]);
         members.append(family.completeMembers().value());
-        hasMembersWithoutLayout |= family.mayHoldObjectsWithoutLayout();
     }
-    LayoutSet families = LayoutSet::complete(WTF::move(members), hasMembersWithoutLayout);
+    LayoutSet families = LayoutSet::complete(WTF::move(members));
     canonicalize(families);
     result.layoutsToIntern = WTF::move(families);
 }
@@ -1021,7 +1017,7 @@ Failure Reader::readType(uint32_t index, TypeAsRead& result) const
     }
     if (m_form == IRForm::AsRead && std::ranges::any_of(layouts, [&](LayoutID layout) { return m_viewsWithoutLayouts.get(layout.index()); }))
         type.anyObject = true;
-    addLayouts(result, layouts.span(), flags.contains(TypeFlags::HasMembersWithoutLayout));
+    addLayouts(result, layouts.span());
     addFunctions(type, functions.span());
     if (result.layoutsToIntern) {
         canonicalize(*result.layoutsToIntern);

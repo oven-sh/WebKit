@@ -315,6 +315,7 @@ public:
         recorded.admittedCode = static_cast<uint8_t>(m_wire.admittedCode);
 
         options.action = m_wire.action;
+        options.widensFlow = m_wire.flowOverride == FlowOverride::Widened;
         options.reports = m_wire.reports;
         options.excludedCode = m_wire.excludedCode;
         recorded.omitsFunctionSource = hasFlag(options.excludedCode, ExcludedCode::FunctionSource);
@@ -443,7 +444,6 @@ private:
         options.checksClaimsToBackEnd = hasFlag(checks, CheckSet::ClaimsToBackEnd);
         options.checksMovedLoads = hasFlag(checks, CheckSet::MovedLoads);
         options.checksFlowFixpoint = hasFlag(checks, CheckSet::FlowFixpoint);
-        options.checksThatFunctionsGetPastEntry = hasFlag(checks, CheckSet::FunctionsGetPastEntry);
         options.checksThatUsedValuesAreListed = ASSERT_ENABLED || hasFlag(checks, CheckSet::UsedValuesAreListed) || hasFlag(static_cast<TestingSwitch>(options.recorded.testing), TestingSwitch::CheckProofsAtRunTime);
         options.validatesReferenceGuards = hasFlag(checks, CheckSet::ValidateReferenceGuards);
         options.validatesReferences = options.validatesReferenceGuards || hasFlag(checks, CheckSet::ValidateReferences);

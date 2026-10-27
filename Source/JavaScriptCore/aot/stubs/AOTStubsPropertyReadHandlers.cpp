@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTCompiledStructure.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubRegisters.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
@@ -369,7 +370,7 @@ void generateReadSlot(StubAssembler& jit)
             jit.returnToCaller();
             return;
         case Slot::Kind::Uncacheable:
-            if (jit.options().callsTrapsOfProxies && slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
+            if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
                 jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get));
             uncached.append(jit.jump());
             return;
@@ -412,6 +413,7 @@ void generateThroughProxy(StubAssembler& jit)
     const GPRReg target = jit.allocateScratch(StubRegister::T11);
     const GPRReg scratch = isStore ? jit.clobberOperand(3) : jit.allocateScratch(StubRegister::T14);
     const GPRReg name = jit.clobberRegister(slotNameRegister);
+    static_assert(areDistinctOnEveryISA(firstStubOperandRegister, slotPayloadRegister, slotHeaderRegister, valueStoredThroughProxyRegister, StubRegister::T11, StubRegister::T14, slotNameRegister));
     RELEASE_ASSERT(noOverlap(R0, key, handler, target, scratch, name) && (isStore || jit.result() == R0));
     struct Operations {
         unsigned numberOfArguments;

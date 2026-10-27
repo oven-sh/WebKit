@@ -294,7 +294,7 @@ static bool mayConvertStoredValues(const Program& program, LayoutID id)
 
 static bool mayConvertStoredValues(const Program& program, const Type& operand)
 {
-    if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+    if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
         return true;
 
     bool hasConvertingInstance = std::ranges::any_of(operand.classes, [&](const ClassPart& part) {
@@ -307,7 +307,7 @@ static bool mayConvertStoredValues(const Program& program, const Type& operand)
 
 static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& operand)
 {
-    if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+    if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty())
         return false;
     return std::ranges::none_of(membersOf(program, operand), [&](LayoutID member) {
         return mayConvertStoredValues(program, member);

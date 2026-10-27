@@ -215,7 +215,7 @@ static bool canLookUpField(const TypingContext& context, const Type& receiver)
 {
     switch (context.level) {
     case TypeLevel::Proven:
-        return receiver.hasOnlyLayouts(context.program);
+        return receiver.hasOnlyLayouts();
     case TypeLevel::Expected:
         return !!receiver.layouts;
     }
@@ -341,25 +341,20 @@ static bool hasProofs(const ClassPart& part)
 static TypeID testablePartOf(const TypingContext& context, TypeID target)
 {
     const Type& type = context.types.at(target);
-    bool hasMembersWithoutLayout = type.layouts && context.types.at(type.layouts).mayHoldObjectsWithoutLayout();
-    if (type.classes.isEmpty() && type.builtins.isEmpty() && !hasMembersWithoutLayout)
+    if (type.classes.isEmpty() && type.builtins.isEmpty())
         return target;
 
     const BuiltinTable& builtins = context.program.builtins();
     auto isUntestableBuiltin = [&](BuiltinID builtin) {
         return !isTestableBuiltin(builtins, builtin);
     };
-    bool namesOnlyWhatTestsFind = !hasMembersWithoutLayout && type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
+    bool namesOnlyWhatTestsFind = type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
         return hasInstanceTest(builtins, part) && !hasProofs(part);
     });
     if (namesOnlyWhatTestsFind)
         return target;
 
     Type testable = type;
-    if (hasMembersWithoutLayout) {
-        const Vector<LayoutID>& members = context.types.at(type.layouts).written();
-        testable.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet::complete(Vector<LayoutID>(members)));
-    }
     testable.classes.removeAllMatching([&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part);
     });
@@ -484,6 +479,8 @@ Type ResultRules::allocation(const Value&, BuiltinLayoutID layout)
 Type ResultRules::declared(const Value& value, VariableID variable)
 {
     Type declared = context.typeOf(context.program.at(variable).declared);
+    if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+        return declared.withPrimitives(Primitive::Unspecified);
     if (value.opcode != Opcode::GetEncodedModuleVariable || !(declared.primitives & Primitive::Undefined))
         return declared;
     return declared.withoutPrimitives(Primitive::Undefined).withPrimitives(Primitive::Absent);
@@ -826,6 +823,8 @@ struct ResultRulesWithoutType {
     TypeID declared(const Value& value, VariableID variable)
     {
         TypeID declared = context.typeIDOf(context.program.at(variable).declared);
+        if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+            return { };
         if (value.opcode != Opcode::GetEncodedModuleVariable || !(context.types.at(declared).primitives & Primitive::Undefined))
             return idInArena(declared);
         return { };
@@ -1099,7 +1098,7 @@ TypeID resultTypeOf(const Program& program, const Function& function, const Valu
     return computeResultTypeID({ program, function, arena, TypeLevel::Proven, memo }, value);
 }
 
-TypeID expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
+ExpectedType expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
 {
     TypeID expected = computeResultTypeID({ program, function, arena, TypeLevel::Expected, memo }, value);
     if (expected == value.type)
@@ -1108,7 +1107,7 @@ TypeID expectedTypeOf(const Program& program, const Function& function, const Va
     Type met = type.intersectWith(arena.at(expected), arena);
     if (met.isNever() || met == type || !met.isSubsetOf(type, program))
         return { };
-    return arena.intern(met);
+    return ExpectedType(arena.intern(met));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -54,7 +54,7 @@ struct FieldInputs {
     const SlotRowUse& use;
     bool isCreatedByStore;
     bool isInObjectBornWithoutValues;
-    bool isNamedSomewhere;
+    Expected<bool> isNamedSomewhere;
     MemberFacts members;
 };
 
@@ -182,7 +182,7 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
     if (field.declaration.form.contains(FieldForm::IsAccessor))
         return !isRemovedField(context.program, field.reference);
 
-    if (!field.isNamedSomewhere && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isParsedByType)
+    if (!field.isNamedSomewhere.predicted() && field.declaration.flags.contains(FieldFlags::IsNeverWritten) && field.members.hasExtraPropertiesWord && !field.members.isParsedByType)
         return false;
 
     bool isNeverWritten = isNeverStored(context.program, field.reference) && !field.use.initializingSites && !field.use.storesIntoNewObjects;
@@ -336,9 +336,9 @@ static bool isBornWithoutValues(const SlotPlanContext& context, const SlotUses& 
     return true;
 }
 
-static bool isNamedSomewhere(const Program& program, const SlotUses& uses, const Field& declaration, const SlotRowUse& use)
+static Expected<bool> isNamedSomewhere(const Program& program, const SlotUses& uses, const Field& declaration, const SlotRowUse& use)
 {
-    if (use.accessWeight || use.isStoredSomewhere() || use.environmentUses || use.storesWithoutAllocation || use.storesIntoFilledSlots || use.storesIntoNewObjects || use.privateDefinitionsByName)
+    if (use.accessSites || use.isStoredSomewhere().predicted() || use.environmentUses || use.storesWithoutAllocation || use.storesIntoFilledSlots || use.storesIntoNewObjects || use.privateDefinitionsByName)
         return true;
     if (!declaration.key || uses.keysNamed.at(declaration.key.index()))
         return true;
@@ -569,7 +569,7 @@ private:
             else if (reached && reachesOnlyChangedForms)
                 weightSpent = saturatedSum(weightSpent, access.weight);
         }
-        return weightSaved >= weightSpent;
+        return (weightSaved >= weightSpent).predicted();
     }
 
     bool hasSpareBytesFor(const ClaimUnit& unit, SlotRepresentation representation) const

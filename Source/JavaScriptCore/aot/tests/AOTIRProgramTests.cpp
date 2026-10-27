@@ -194,9 +194,9 @@ static void expectedTypeOfValueWinsOverItsType()
     Function function;
     ValueID value = addValue(function, addBlock(function), Opcode::Undefined);
     function.edit(value).type = TypeTable::number;
-    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::number));
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value).predicted() == &test.program.at(TypeTable::number));
     function.edit(value).setExpected(ExpectedType(TypeTable::int32));
-    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::int32));
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value).predicted() == &test.program.at(TypeTable::int32));
 }
 
 static void propertyKeysAreUnique()
@@ -281,7 +281,6 @@ static void equalLayoutSetsGetOneID()
     AOT_TEST_CHECK(types.numberOfLayoutSets() == 1 && hasElements(types.at(set).written(), { LayoutID(0u), LayoutID(1u), LayoutID(2u) }));
     AOT_TEST_CHECK(types.intern(LayoutSet::open({ LayoutID(0u), LayoutID(1u), LayoutID(2u) })) != set);
     AOT_TEST_CHECK(types.intern(LayoutSet::complete({ LayoutID(0u), LayoutID(1u) })) != set && types.numberOfLayoutSets() == 3);
-    AOT_TEST_CHECK(types.intern(LayoutSet::complete({ LayoutID(0u), LayoutID(1u), LayoutID(2u) }, true)) != set && types.numberOfLayoutSets() == 4);
 
     TypeArena arena(types);
     AOT_TEST_CHECK(arena.completeLayoutSet(std::array<LayoutID, 3> { LayoutID(1u), LayoutID(0u), LayoutID(2u) }) == set);
@@ -297,14 +296,10 @@ static void onlyCompleteLayoutSetsListAllLayouts()
 
     LayoutSet complete = LayoutSet::complete({ LayoutID(0u), LayoutID(1u) });
     AOT_TEST_CHECK(complete.all() && std::ranges::equal(*complete.all(), complete.written()) && std::ranges::equal(complete.completeMembers(), complete.written()));
-    AOT_TEST_CHECK(complete.listsEveryLayout() && !complete.mayHoldObjectsWithoutLayout());
-
-    LayoutSet besideObjectsWithoutLayout = LayoutSet::complete({ LayoutID(0u), LayoutID(1u) }, true);
-    AOT_TEST_CHECK(!besideObjectsWithoutLayout.all() && std::ranges::equal(besideObjectsWithoutLayout.completeMembers(), complete.written()));
-    AOT_TEST_CHECK(besideObjectsWithoutLayout.listsEveryLayout() && besideObjectsWithoutLayout.mayHoldObjectsWithoutLayout());
+    AOT_TEST_CHECK(complete.listsEveryLayout());
 
     LayoutSet open = LayoutSet::open({ LayoutID(0u), LayoutID(1u) });
-    AOT_TEST_CHECK(!open.all() && !open.listsEveryLayout() && open.mayHoldObjectsWithoutLayout());
+    AOT_TEST_CHECK(!open.all() && !open.listsEveryLayout());
     AOT_TEST_CHECK(std::ranges::equal(open.seen().predicted(), complete.written()));
     AOT_TEST_CHECK(isSubsetOf(complete, open) && !isSubsetOf(open, complete) && overlaps(open, LayoutSet::complete({ LayoutID(7u) })));
 }

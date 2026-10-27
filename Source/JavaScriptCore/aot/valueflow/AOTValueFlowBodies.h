@@ -640,7 +640,7 @@ constexpr ValueFlowNotedOperations notedOperationsOf(Opcode opcode)
     note(ValueFlowNotedOperation::ClassDefinition, opcode == Opcode::NewClass || opcode == Opcode::DefineMethod);
     note(ValueFlowNotedOperation::StoreToLocation, opcode == Opcode::PutModuleVariable || opcode == Opcode::PutEnvironmentField);
     note(ValueFlowNotedOperation::Builtin, opcode == Opcode::Builtin);
-    note(ValueFlowNotedOperation::ModuleOperation, opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule || opcode == Opcode::RequireModule || opcode == Opcode::EvaluateModule || opcode == Opcode::ImportDynamic || opcode == Opcode::RequireDynamic || opcode == Opcode::RequireBuiltinModule);
+    note(ValueFlowNotedOperation::ModuleOperation, PayloadWord::module(opcode).has_value() || opcode == Opcode::ImportDynamic || opcode == Opcode::RequireDynamic || opcode == Opcode::RequireBuiltinModule);
     return bits;
 }
 

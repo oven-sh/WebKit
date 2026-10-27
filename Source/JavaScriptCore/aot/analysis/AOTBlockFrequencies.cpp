@@ -306,14 +306,18 @@ static FrequencyFacts collectFacts(const FrequencyInputs& inputs)
         const Block& block = function.at(id);
         FrequencyFacts::BlockFacts& blockFacts = facts.blocks[id.index()];
         blockFacts.recorded = recordedFrequencyOf(function, id);
+        blockFacts.isPartOfEdge = blockFacts.recorded != block.frequency.predicted();
         blockFacts.applied = appliedFrequencyOf(inputs, facts.blocks.span(), id);
         blockFacts.isInherentlyRare = isInherentlyRare(function, block);
         blockFacts.isNormalExit = isNormalExit(block.terminator);
     }
     for (BlockID id : cfg.reversePostOrder()) {
-        const Block& block = function.at(id);
-        if (facts.blocks[id.index()].recorded != block.frequency.predicted() && facts.blocks[block.terminator.targets[0].block.index()].applied == BlockFrequency::Normal)
+        if (facts.blocks[id.index()].isPartOfEdge && facts.blocks[function.at(id).terminator.targets[0].block.index()].applied == BlockFrequency::Normal)
             facts.blocks[id.index()].applied = BlockFrequency::Normal;
+    }
+    if (inputs.seedOfShuffledHeat) [[unlikely]] {
+        for (uint32_t index = 1; index < facts.blocks.size(); ++index)
+            facts.blocks[index].applied = drawFrequency(*inputs.seedOfShuffledHeat, function.blocks.size(), index);
     }
     for (unsigned index = 0; index < cfg.numNodes(); ++index) {
         BlockID id(index);
@@ -323,10 +327,6 @@ static FrequencyFacts collectFacts(const FrequencyInputs& inputs)
         forEachDecidedPredecessor(inputs, id, [&](BlockID predecessor, uint32_t successorIndex) {
             facts.decidedPredecessors.append(FrequencyFacts::DecidedPredecessor { id, predecessor, successorIndex });
         });
-    }
-    if (inputs.seedOfShuffledHeat) [[unlikely]] {
-        for (uint32_t index = 1; index < facts.blocks.size(); ++index)
-            facts.blocks[index].applied = drawFrequency(*inputs.seedOfShuffledHeat, function.blocks.size(), index);
     }
     return facts;
 }
@@ -401,7 +401,7 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
             edges[firstSuccessor[block.index()] + 1] = rarerOf(edges[firstSuccessor[block.index()] + 1], BlockFrequency::Unlikely).predicted();
             break;
         }
-        if (facts[block.index()].recorded != function.at(block).frequency.predicted())
+        if (facts[block.index()].isPartOfEdge)
             edges[firstSuccessor[block.index()]] = BlockFrequency::Normal;
         if (hasHandlers && cfg.hasHandler(block))
             edges[firstSuccessor[block.index() + 1] - 1] = BlockFrequency::Rare;
@@ -489,7 +489,7 @@ bool BlockFrequencies::describes(const AnalysisContext& context, const Function&
     for (BlockID id : m_cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         const FrequencyFacts::BlockFacts& known = m_facts.blocks[id.index()];
-        if (recordedFrequencyOf(function, id) != known.recorded || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
+        if (recordedFrequencyOf(function, id) != known.recorded || (known.recorded != block.frequency.predicted()) != known.isPartOfEdge || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
             return false;
     }
 

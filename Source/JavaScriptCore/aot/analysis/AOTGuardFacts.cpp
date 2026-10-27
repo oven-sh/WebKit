@@ -294,7 +294,7 @@ static bool isFilledArrayOfHoles(const Function& function, const Value& allocati
     return allocation.opcode == Opcode::TruncateNewArray && function.at(allocation.arrayOperand()).opcode == Opcode::NewContiguousArray;
 }
 
-static ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& function, const Value& allocation)
+ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& function, const Value& allocation)
 {
     ArrayStorage named = program.at(allocation.type).singleBuiltinClass()->arrayStorage;
     if (named != ArrayStorage::Other)
@@ -304,7 +304,7 @@ static ArrayStorage arrayStorageOfNewArray(const Program& program, const Functio
     return allocation.opcode == Opcode::NewArray ? arrayStorageOfLiteral(program, allocation) : named;
 }
 
-static bool allocatesWritableStorage(const Function& function, const Value& allocation)
+bool allocatesWritableStorage(const Function& function, const Value& allocation)
 {
     return allocation.opcode == Opcode::NewArray || isFilledArrayOfHoles(function, allocation);
 }
@@ -510,7 +510,7 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     if (type.isNever())
         return true;
     if (proof == Proof::Shape)
-        return type.hasOnlyLayouts(program) && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts);
+        return type.hasOnlyLayouts() && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts);
     if (proof == Proof::NotThenable)
         return !protocolMayFindMember(program, type, Protocol::Thenable);
     if (proof != Proof::Pristine && proof != Proof::ArrayStorage)

@@ -1524,7 +1524,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         if (!mayFindSlotEmpty)
             read.setHoldsDeclaredType(previous.opcode == Opcode::GetSlot && previous.holdsDeclaredType());
         setResultType(id, read, previous.type);
-        read.setExpected(ExpectedType(expectedTypeOf(program, function, read, types)));
+        read.setExpected(expectedTypeOf(program, function, read, types));
     };
 
     auto hoist = [&](auto& self, ValueID id) -> void {

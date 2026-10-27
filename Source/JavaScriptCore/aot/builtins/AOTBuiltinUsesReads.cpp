@@ -120,7 +120,7 @@ bool mayFindProvenAccess(const BuiltinUseInputs& inputs, const Value& access)
     }
     if (!builtinMemberNameOf(program, access.key()))
         return false;
-    return mayBeKnownReceiver(receiverType) || receiverType.hasOnlyLayouts(program);
+    return mayBeKnownReceiver(receiverType) || receiverType.hasOnlyLayouts();
 }
 
 static const Type& receiverTypeAt(const BuiltinUseInputs& inputs, const MemberSite& site)
@@ -589,7 +589,7 @@ static BuiltinUsePlan planInheritedMember(const BuiltinUseInputs& inputs, ValueI
     const BuiltinTable& table = program.builtins();
     const Value& access = inputs.function.at(use);
     const Type& receiverType = program.typeOf(inputs.function, access.objectOperand());
-    if (!receiverType.hasOnlyLayouts(program) || hasOnlyNeverAllocatedLayouts(program, receiverType))
+    if (!receiverType.hasOnlyLayouts() || hasOnlyNeverAllocatedLayouts(program, receiverType))
         return { };
 
     Access lookup = mode == BuiltinCallMode::Get ? Access::Read : Access::Store;

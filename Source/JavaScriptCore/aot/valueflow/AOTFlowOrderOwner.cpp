@@ -921,14 +921,15 @@ private:
 static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function, ModuleID completed)
 {
     ModuleID module = index.program().at(function).module;
-    return module && index.moduleOrder.completesBefore(completed, module);
+    return module && !index.functionsEnteredWithoutMention.quickGet(function.index()) && index.moduleOrder.completesBefore(completed, module);
 }
 
-static bool canObserveUnfinishedModule(const Program& program, const FlowModuleValueRead& read)
+static bool canObserveUnfinishedModule(const FlowScopeIndex& index, const FlowModuleValueRead& read)
 {
+    const Program& program = index.program();
     Opcode opcode = program.at(read.function).at(read.value).opcode;
     if (opcode == Opcode::ImportModule)
-        return false;
+        return index.moduleOrder.modulesThatJobsMayInterrupt.get(read.subject.index());
     if (opcode == Opcode::RequireModule)
         return program.at(read.subject).requireResult != RequireResult::ModuleExports;
     return true;
@@ -946,7 +947,7 @@ static BitVector findVariablesReadEarly(const FlowScopeIndex& index)
     };
 
     for (const FlowModuleValueRead& read : index.moduleValueReads) {
-        if (canObserveUnfinishedModule(program, read) && !runsAfterCompletion(index, read.function, read.subject))
+        if (canObserveUnfinishedModule(index, read) && !runsAfterCompletion(index, read.function, read.subject))
             visit(read.subject);
     }
     for (size_t module : index.inputs.modulesLoadedByHost)

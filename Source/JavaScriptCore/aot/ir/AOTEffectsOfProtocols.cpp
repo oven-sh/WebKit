@@ -65,24 +65,19 @@ enum class FoundValue : uint8_t { IsOnlyRead, IsConverted, IsCalled };
 
 } // anonymous namespace
 
-static bool mayBeMemberWithoutLayout(const Program& program, const Type& type)
+static bool hasOnlyLayoutObjects(const Type& type)
 {
-    return type.layouts && program.at(type.layouts).mayHoldObjectsWithoutLayout();
-}
-
-static bool hasOnlyLayoutObjects(const Program& program, const Type& type)
-{
-    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty() && !mayBeMemberWithoutLayout(program, type);
+    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty();
 }
 
 static bool mayBeCallable(const Program& program, const Type& type)
 {
-    return type.mayBeFunction() || mayBeMemberWithoutLayout(program, type) || mayContainAnyCallable(program.builtins(), type);
+    return type.mayBeFunction() || mayContainAnyCallable(program.builtins(), type);
 }
 
 static bool mayReadFromField(const Program& program, const Type& operand, PropertyKeyID key, NOESCAPE const Invocable<bool(const Type&)> auto& predicate)
 {
-    if (!hasOnlyLayoutObjects(program, operand))
+    if (!hasOnlyLayoutObjects(operand))
         return true;
     return std::ranges::any_of(membersOf(program, operand), [&](LayoutID member) {
         std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);

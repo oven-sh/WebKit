@@ -295,6 +295,23 @@ static void checkFind()
             }
         }
     }
+    // Many places have the first and the last character of the text and not what lies between. The text itself lies at every distance from both ends.
+    for (ASCIILiteral wanted : { "a"_s, "ab"_s, "axb"_s, "a0123456789012345b"_s }) {
+        Text<CharacterType> needle = textOf<CharacterType>(wanted);
+        for (uint32_t length = 0; length <= 70; ++length) {
+            for (uint32_t place = 0; place <= length; ++place) {
+                Text<CharacterType> text;
+                for (uint32_t i = 0; i < length; ++i)
+                    text.append(static_cast<CharacterType>("ayb"[i % 3]));
+                if (place + needle.size() <= length) {
+                    for (uint32_t i = 0; i < needle.size(); ++i)
+                        text[place + i] = needle[i];
+                }
+                for (uint32_t start : { 0u, place ? place - 1 : 0u, place, std::min(place + 1, length), length })
+                    AOT_TEST_CHECK(find(text, needle, start) == naiveFind(text, needle, start));
+            }
+        }
+    }
     Text<CharacterType> subject = textOf<CharacterType>("aaaaab"_s);
     AOT_TEST_CHECK(find(subject, textOf<CharacterType>("aaab"_s), 0) == 2);
     AOT_TEST_CHECK(find(subject, textOf<CharacterType>("aaab"_s), 3) == notFound);

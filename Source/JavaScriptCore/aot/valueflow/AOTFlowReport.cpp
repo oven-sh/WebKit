@@ -14,14 +14,11 @@
 #include "AOTCFG.h"
 #include "AOTCheckCause.h"
 #include "AOTFlowReportInternal.h"
-#include "AOTRemoveUnreachableFunctions.h"
-#include "AOTResultRules.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestReport.h"
 #include "IntlObject.h"
-#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -132,71 +129,6 @@ Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program& program
         return a.id == b.id;
     });
     return checks;
-}
-
-static BlockID findEndOfStraightEntry(const Function& function)
-{
-    BlockID block = entryBlock;
-    for (size_t steps = 0; steps < function.blocks.size(); ++steps) {
-        const Terminator& terminator = function.at(block).terminator;
-        if (terminator.kind == TerminatorKind::Unreachable)
-            return block;
-        if (terminator.kind != TerminatorKind::Jump)
-            return { };
-        block = terminator.next().block;
-    }
-    return { };
-}
-
-Vector<InternalError> findFunctionsThatEndInFirstBlock(const Program& program, const BitVector& isReachable, BuildContext& build)
-{
-    return collectInParallel<InternalError>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<InternalError>& found) {
-        const Function& function = program.functions[index];
-        if (!function.hasBody() || function.role == FunctionRole::Model || !isReachable.get(index))
-            return;
-        BlockID block = findEndOfStraightEntry(function);
-        if (!block)
-            return;
-        InternalError error { .kind = InternalErrorKind::FunctionEndsInFirstBlock, .function = FunctionID(index) };
-        const Block& contents = function.at(block);
-        if (contents.values.isEmpty())
-            error.detail = "it ends at once"_s;
-        else {
-            const Value& last = function.at(contents.values.last());
-            if (std::optional<Type> natural = tryWidestNaturalTypeOf(last); natural && natural->isNever())
-                return;
-            error.location = function.locationOf(contents.values.last());
-            error.detail = makeString("it ends behind "_s, nameOf(last.opcode));
-        }
-        found.append(WTF::move(error));
-    });
-}
-
-void reportFunctionsThatEndInFirstBlock(const Program& program, Vector<InternalError>&& found, BuildContext& build)
-{
-    if (found.isEmpty())
-        return;
-
-    BitVector isInlined(program.functions.size());
-    for (const Function& function : program.functions) {
-        if (!function.hasBody() || function.inlineFrames.size() < 2)
-            continue;
-        auto note = [&](Origin origin) {
-            if (origin.inlineFrame)
-                isInlined.set(function.inlineFrames[origin.inlineFrame].callee.index());
-        };
-        for (const Block& block : function.blocks) {
-            for (ValueID id : block.values)
-                note(function.at(id).origin());
-            note(block.terminator.origin());
-        }
-    }
-    BitVector hasNoCode = findBodiesWithoutCode(program, build);
-    for (InternalError& error : found) {
-        uint32_t index = error.function.index();
-        if ((program.at(error.function).hasBody() && !hasNoCode.get(index)) || isInlined.get(index))
-            build.diagnostics().add(WTF::move(error));
-    }
 }
 
 static StatisticID statisticOf(KnowledgeLevel level)

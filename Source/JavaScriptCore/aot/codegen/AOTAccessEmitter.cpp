@@ -13,6 +13,7 @@
 #include "AOTFieldTable.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTNameClass.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
@@ -27,6 +28,9 @@
 #include "B3StackmapGenerationParams.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
+#include "PropertyName.h"
+#include <limits>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -441,7 +445,16 @@ void AccessEmitter::generatePropSet(const ValueContext& value)
 
 void AccessEmitter::generatePropDefine(const ValueContext& value)
 {
-    putNamedProperty(value, boxCell(in<CellPointer>(value->objectOperand())), PutMode::Define);
+    Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
+    // `{ 2: value }` defines an element.
+    if (m_program.nameClassOf(value->key()) == NameClass::Index) {
+        std::optional<uint32_t> index = parseIndex(byteCast<Latin1Character>(m_program.strings[m_program.at(value->key()).text]));
+        if (index && *index <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
+            putByVal(value, object, Boxed(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index))))), in<Boxed>(value->valueOperand()), PutMode::Define);
+            return;
+        }
+    }
+    putNamedProperty(value, object, PutMode::Define);
 }
 
 void AccessEmitter::generatePropHas(const ValueContext& value)

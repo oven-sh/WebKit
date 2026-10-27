@@ -75,7 +75,7 @@ bool BarrierEmitter::isOnlyInFrames(ValueID owner) const
     const Type& type = typeOf(owner);
     if (type.environment)
         return frameAllocation.isOnlyInFrames(type.environment);
-    return type.hasOnlyLayouts(m_program) && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(m_program, type), [&](LayoutID layout) {
         return frameAllocation.isOnlyInFrames(layout);
     });
 }

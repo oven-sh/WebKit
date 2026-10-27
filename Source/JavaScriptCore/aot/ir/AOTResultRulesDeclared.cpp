@@ -30,11 +30,15 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
     return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
 }
 
+static TypeID typeIDOfField(const TypingContext& context, const Field& field)
+{
+    TypeID narrowed = context.level == TypeLevel::Proven ? narrowedSlotTypeOf(field) : TypeID();
+    return narrowed ? narrowed : context.typeIDOf(field.declared);
+}
+
 static const Type& typeOfField(const TypingContext& context, const Field& field)
 {
-    if (context.level == TypeLevel::Proven && field.slotType && !field.declared.isExpected())
-        return context.types.at(field.slotType);
-    return context.typeOf(field.declared);
+    return context.types.at(typeIDOfField(context, field));
 }
 
 static bool hasProvenType(const FieldFlow& flow)
@@ -292,9 +296,9 @@ std::optional<Type> tryTypeOfContentsRead(const TypingContext& context, const Ty
     const BuiltinTable& builtins = context.program.builtins();
     Type result = Type::never();
     for (const ClassPart& part : container.classes) {
-        BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(part.builtinClass);
-        if (slot == ContentsSlot::Element && typedArrayClass) {
-            result = result.unionWith(elementTypeOf(builtins.at(typedArrayClass).typedArrayType), context.types);
+        TypedArrayType typedArrayType = builtins.typedArrayTypeOf(part.builtinClass);
+        if (slot == ContentsSlot::Element && typedArrayType != NotTypedArray) {
+            result = result.unionWith(elementTypeOf(typedArrayType), context.types);
             continue;
         }
         if (context.level == TypeLevel::Proven && !part.contentsAreProven)
@@ -405,9 +409,7 @@ static TypeID requiredTypeOfField(const TypingContext& positions, LayoutID layou
     const Vector<Field>& fields = positions.program.at(layout).fields;
     if (field >= fields.size())
         return { };
-    if (positions.level == TypeLevel::Proven && fields[field].slotType && !fields[field].declared.isExpected())
-        return fields[field].slotType;
-    return positions.typeIDOf(fields[field].declared);
+    return typeIDOfField(positions, fields[field]);
 }
 
 static TypeID requiredTypeOfPrivateDefinition(const TypingContext& positions, LayoutID layout, uint32_t field)

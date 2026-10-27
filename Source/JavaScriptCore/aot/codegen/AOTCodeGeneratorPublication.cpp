@@ -58,12 +58,12 @@ static bool returnsUnspecifiedOperand(const Function& function, const Value& val
     return returnsUnspecified;
 }
 
-static BitVector collectUnspecifiedValues(const Function& function, const CFG& cfg)
+static BitVector collectUnspecifiedValues(const Function& function, const CFG& cfg, bool (*isSource)(const Function&, const Value&))
 {
     BitVector unspecifiedValues;
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
-            if (isUnspecifiedAtDefinition(function, function.at(id)))
+            if (isSource(function, function.at(id)))
                 unspecifiedValues.set(id.index());
         }
     }
@@ -93,9 +93,20 @@ static BitVector collectUnspecifiedValues(const Function& function, const CFG& c
 
 bool CodeGenerator::mayBeUnspecified(ValueID id)
 {
+    if (typeOf(id).mayBeUnspecified())
+        return true;
     if (!m_unspecifiedValues)
-        m_unspecifiedValues = collectUnspecifiedValues(function(), analyses().cfg());
+        m_unspecifiedValues = collectUnspecifiedValues(function(), analyses().cfg(), isUnspecifiedAtDefinition);
     return m_unspecifiedValues->get(id.index());
+}
+
+bool CodeGenerator::isValidatedWhereLookedAt(ValueID id)
+{
+    if (typeOf(id).mayBeUnspecified())
+        return true;
+    if (!m_valuesValidatedWhereLookedAt)
+        m_valuesValidatedWhereLookedAt = collectUnspecifiedValues(function(), analyses().cfg(), Typed::isValidatedWhereLookedAt);
+    return m_valuesValidatedWhereLookedAt->get(id.index());
 }
 
 // Decode declares the effects of creating a string constant, yet the decoded reference of a cell is plain arithmetic.
@@ -237,7 +248,7 @@ static bool typeHoldsWhereverComputed(CodeGenerator& generator, std::span<const 
 
     bool holdsForOperands = true;
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        holdsForOperands &= value.operandKind(operandIndex) != OperandKind::Guard
+        holdsForOperands &= value.operandKind(operandIndex) != OperandKind::Guard && value.operandKind(operandIndex) != OperandKind::Fact
             && hasUnconditionalType(generator, loweredValues, valueBeforeConversions(function, operand), PublishedValue::DerivedFromIt);
     });
     return holdsForOperands;
@@ -291,7 +302,7 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
         return sizeof(JSString);
-    if (!type.hasOnlyLayouts(program))
+    if (!type.hasOnlyLayouts())
         return headerSize;
 
     std::optional<unsigned> least;

@@ -63,15 +63,25 @@ enum class ReceiverProof : uint8_t { Unknown, Guard, Type };
 struct ReceiverCandidates {
     ReceiverProof proof { ReceiverProof::Unknown };
     KnowledgeLevel level { KnowledgeLevel::Unknown };
+    // Every layout of the receiver, where isProven().
     LayoutList proven;
-    LayoutList predicted;
-    LayoutList ofExpectedType;
+    // What the expected type and the stamp of flow name. A test makes it true.
+    Expected<LayoutList> expected;
+    Expected<LayoutList> ofExpectedType;
     bool hasOtherParts { false };
     bool mayBeNullish { false };
 
     static ReceiverCandidates underGuard(std::span<const LayoutID> testedLayouts);
 
     bool isProven() const { return proof != ReceiverProof::Unknown; }
+
+    // A test for them has failed.
+    void stopExpecting(const LayoutList& layouts)
+    {
+        LayoutList rest = expected.predicted();
+        rest.subtract(layouts);
+        expected = WTF::move(rest);
+    }
 
     void dump(PrintStream&) const;
 };

@@ -61,6 +61,21 @@ private:
     T m_value { };
 };
 
+// The same of something that lives elsewhere: the record of a type, a set.
+template<typename T>
+class Expected<const T&> {
+public:
+    constexpr Expected(const T& value LIFETIME_BOUND)
+        : m_value(&value)
+    {
+    }
+
+    constexpr const T& predicted() const { return *m_value; }
+
+private:
+    const T* m_value;
+};
+
 template<typename T> inline constexpr bool isExpectedKind = false;
 template<typename T> inline constexpr bool isExpectedKind<Expected<T>> = true;
 

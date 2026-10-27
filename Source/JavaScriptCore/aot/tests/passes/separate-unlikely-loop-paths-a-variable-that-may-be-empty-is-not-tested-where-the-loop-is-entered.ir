@@ -15,28 +15,29 @@ function f0 name="aTurnMayPassTheReadBy" parameters=[{type=anything}, {type=anyt
     v4 = IsClosureOf v0 function=f1
     Branch v4 -> taken b2(), notTaken b5()
   b2():
-    v5 = GetModuleVariable variable=g0
-    v6 = GetStringLength v2
-    v7 = Less v5, v6
-    Branch v7 -> taken b3(), notTaken b7()
+    v5 = Entered function=f1
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = GetStringLength v2
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b7()
   b3():
-    v8 = TypeTest v5 testedType=i32
-    Branch v8 -> taken b4(| 0), notTaken b5()
-  b4(v9):
-    v10 = BitOr v9, v9
+    v9 = TypeTest v6 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = BitOr v10, v10
     Jump -> next b6()
   b5() frequency=Unlikely:
-    v11 = Call v1, -
+    v12 = Call v1, -
     Jump -> next b1()
   b6():
-    v12 = Increment v5
-    PutModuleVariable v12 variable=g0
+    v13 = Increment v6
+    PutModuleVariable v13 variable=g0
     Jump -> next b1()
   b7():
-    Return v5
+    Return v6
 }
 # CHECK-LABEL: name="aTurnMayPassTheReadBy"
-# CHECK: [[entering]]: number = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK: [[entering]]: number|unspecified{{*}} = GetModuleVariable variable=g0 [mayPrecedeItsStore]
 # CHECK-NOT: = TypeTest [[entering]]
 
 function f1 name="callee" results=[{type=undefined}] {

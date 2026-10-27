@@ -1034,7 +1034,7 @@ struct JSONTextWriter final : Emission {
                 MemberSupport support = memberSupportOf(layout, field);
                 if (support != MemberSupport::Slot)
                     return support != MemberSupport::ByName;
-                return !!(program().at(fields[field].slotType ? fields[field].slotType : TypeID(program().provenTypeOf(fields[field].declared))).primitives & Primitive::Undefined);
+                return !!(program().at(slotTypeOf(program(), fields[field])).primitives & Primitive::Undefined);
             });
         };
 

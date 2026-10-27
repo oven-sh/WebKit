@@ -23,7 +23,6 @@ static constexpr unsigned maxTypeNestingInText = 32;
 static constexpr uint32_t hasIntegersFlag = static_cast<uint32_t>(TypeFlags::HasIntegers);
 static constexpr uint32_t anyFunctionFlag = static_cast<uint32_t>(TypeFlags::AnyFunction);
 static constexpr uint32_t anyObjectFlags = static_cast<uint32_t>(TypeFlags::AnyObject) | anyFunctionFlag;
-static constexpr uint32_t hasMembersWithoutLayoutFlag = static_cast<uint32_t>(TypeFlags::HasMembersWithoutLayout);
 
 struct PrimitiveTypeWord {
     ASCIILiteral word;
@@ -44,6 +43,7 @@ static constexpr PrimitiveTypeWord primitiveTypeWords[] = {
     { "symbol"_s, Primitive::Symbol },
     { "bigint"_s, Primitive::BigInt },
     { "absent"_s, Primitive::Absent },
+    { "unspecified"_s, Primitive::Unspecified },
 };
 
 struct TextParser::TypeParts {
@@ -69,7 +69,6 @@ struct TextParser::TypeParts {
     Vector<EngineClassPart> engineClassParts;
     Vector<RegExpLiteralInType> regExpLiterals;
     bool layoutsAreExact { false };
-    bool hasMembersWithoutLayout { false };
     bool hasEngineParts { false };
 };
 
@@ -287,7 +286,7 @@ static bool parsePrimitivePart(TextParser& parser, Wire::Type& wire, uint16_t& n
         if (!parser.acceptWord(entry.word))
             continue;
         wire.primitives |= wirePrimitivesOf(entry.primitives);
-        numberBits |= entry.primitives & Primitive::Number;
+        numberBits |= entry.primitives & (Primitive::Number | Primitive::Unspecified);
         return true;
     }
     if (!parser.acceptWord("anything"_s))
@@ -320,10 +319,6 @@ static bool parseObjectWordPart(TextParser& parser, Wire::Type& wire)
 {
     if (parser.acceptWord("object"_s)) {
         wire.flags |= anyObjectFlags;
-        return true;
-    }
-    if (parser.acceptWord("nolayout"_s)) {
-        wire.flags |= hasMembersWithoutLayoutFlag;
         return true;
     }
     if (parser.atWord("function"_s)) {
@@ -392,8 +387,7 @@ uint32_t TextParser::parseTypeWord()
     if (hasFailed())
         return 0;
 
-    parts->hasMembersWithoutLayout = wire.flags & hasMembersWithoutLayoutFlag;
-    parts->layoutsAreExact = m_layoutsAreExact && (!parts->layouts.isEmpty() || parts->hasMembersWithoutLayout);
+    parts->layoutsAreExact = m_layoutsAreExact && !parts->layouts.isEmpty();
     if (!parts->hasEngineParts && !parts->layoutsAreExact)
         return m_builder.internType(wire);
 
@@ -424,7 +418,7 @@ Wire::Type TextParser::parseTypeValue(TypeParts& parts)
         return { };
     }
 
-    if (parts.numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number)))
+    if ((parts.numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number))) || parts.numberBits & Primitive::Unspecified)
         parts.hasEngineParts = true;
     wire.strings = appendSortedWords(m_builder, parts.strings);
     wire.layouts = appendSortedWords(m_builder, parts.layouts);
@@ -538,7 +532,7 @@ void TextParser::completeType(uint32_t wireIndex, Type& type) const
     type.regExpLiteralSet = SortedSet<RegExpLiteralInType>(parts.regExpLiterals.span());
 
     if (parts.layoutsAreExact) {
-        type.layouts = m_program->types.intern(LayoutSet::complete(parts.layouts.map([](uint32_t word) { return LayoutID(word); }), parts.hasMembersWithoutLayout));
+        type.layouts = m_program->types.intern(LayoutSet::complete(parts.layouts.map([](uint32_t word) { return LayoutID(word); })));
     }
 }
 
@@ -546,7 +540,6 @@ LayoutSetID TextParser::parseLayoutSet()
 {
     Vector<LayoutID> members;
     bool isComplete = true;
-    bool hasMembersWithoutLayout = false;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
         if (!isComplete) {
             fail();
@@ -556,15 +549,11 @@ LayoutSetID TextParser::parseLayoutSet()
             isComplete = false;
             return;
         }
-        if (!hasMembersWithoutLayout && acceptWord("nolayout"_s)) {
-            hasMembersWithoutLayout = true;
-            return;
-        }
         members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
     });
     if (hasFailed())
         return { };
-    return m_program->types.intern(isComplete ? LayoutSet::complete(WTF::move(members), hasMembersWithoutLayout) : LayoutSet::open(WTF::move(members), hasMembersWithoutLayout));
+    return m_program->types.intern(isComplete ? LayoutSet::complete(WTF::move(members)) : LayoutSet::open(WTF::move(members)));
 }
 
 CalleeSetID TextParser::parseCalleeSet()

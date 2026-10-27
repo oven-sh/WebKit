@@ -126,11 +126,6 @@ static const EvalBindingData* findBinding(std::span<const EvalBindingData> bindi
     return nullptr;
 }
 
-static bool isAssignableBinding(EvalBindingKind kind)
-{
-    return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
-}
-
 static bool isNamedBinding(EvalBindingKind kind)
 {
     return isAssignableBinding(kind) || kind == EvalBindingKind::Constant || kind == EvalBindingKind::FunctionName

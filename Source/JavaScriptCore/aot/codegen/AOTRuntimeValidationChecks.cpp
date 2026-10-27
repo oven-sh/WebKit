@@ -53,7 +53,7 @@ static bool everyReceiverHasInlineSlot(const FieldAccess& field)
 
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
-    if (generator().mayBeUnspecified(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
+    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
         return;
     const Type& type = typeOf(id);
     if (type.isNever() || type.opaque)
@@ -107,7 +107,7 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
 {
-    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id))
+    if (generator().isValidatedWhereLookedAt(id) || isDeferredClosure(m_function, id))
         return false;
     Representation representation = representationOf(id);
     return representation != Representation::Void && representation != Representation::LiteralString;
@@ -343,7 +343,7 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
-    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.at(keptOperation.builtinClass()).typedArrayType != NotTypedArray)
+    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.typedArrayTypeOf(keptOperation.builtinClass()) != NotTypedArray)
         return;
     // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
     if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {
@@ -420,7 +420,7 @@ void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
         return typeTestPlanFor(widest, operand.representation, types().intern(type));
     };
     const Type& listed = m_program.at(value->validatedType());
-    if (listed.anyFunction || hasMembersWithoutLayout(m_program, listed))
+    if (listed.anyFunction)
         return;
     Type testable = testableTypeOf(listed);
     bool isWidened = (testable.anyFunction && !listed.anyFunction) || (testable.anyObject && !listed.anyObject);
@@ -475,10 +475,6 @@ void RuntimeValidationEmitter::generateValidateLookup(const ValueContext& value)
 Type RuntimeValidationEmitter::testableTypeOf(const Type& type)
 {
     Type testable = type.withoutClassProofs().withUntestableBuiltinsWidened();
-
-    // Functions, objects of the host and ordinary objects were converted to such a family, and nothing lists them.
-    if (hasMembersWithoutLayout(m_program, type))
-        testable = testable.unionWith(Type::object(), types());
 
     // Placement numbers the cells and keys that shipped code names, and validation adds none.
     bool everyBuiltinHasCell = std::ranges::all_of(testable.builtins, [&](BuiltinID builtin) {

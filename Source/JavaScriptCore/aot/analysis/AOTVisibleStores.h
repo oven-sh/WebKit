@@ -27,6 +27,7 @@ enum class StoredKind : uint8_t {
     NoInt32 = 1 << 4,
 };
 
+// It follows the stores that the expected types of receivers and callees let it see: what it says of a field or a parameter is a guess.
 class VisibleStores {
 public:
     using FunctionFilter = ScopedLambda<bool(FunctionID, unsigned worker)>;
@@ -34,13 +35,13 @@ public:
     VisibleStores() = default;
     VisibleStores(const Program&, const ParallelLoops&, NOESCAPE const FunctionFilter&);
 
-    OptionSet<StoredKind> kindsStoredIn(LayoutID layout, uint32_t field) const { return m_kinds.isEmpty() ? OptionSet<StoredKind> { } : m_kinds[layout.index()][field]; }
-    OptionSet<StoredKind> kindsPassedTo(FunctionID function, unsigned parameter) const { return m_parameterKinds.isEmpty() ? OptionSet<StoredKind> { } : m_parameterKinds[function.index()][parameter]; }
-    bool typesPassedLieInInt32(FunctionID function, unsigned parameter) const { return !m_parametersPassedOtherTypes.isEmpty() && !m_parametersPassedOtherTypes[function.index()].get(parameter); }
-    bool isUsedAsInteger(LayoutID layout, uint32_t field) const { return !m_fieldsUsedAsIntegers.isEmpty() && m_fieldsUsedAsIntegers[layout.index()].get(field); }
+    Expected<OptionSet<StoredKind>> kindsStoredIn(LayoutID layout, uint32_t field) const { return m_kinds.isEmpty() ? OptionSet<StoredKind> { } : m_kinds[layout.index()][field]; }
+    Expected<OptionSet<StoredKind>> kindsPassedTo(FunctionID function, unsigned parameter) const { return m_parameterKinds.isEmpty() ? OptionSet<StoredKind> { } : m_parameterKinds[function.index()][parameter]; }
+    Expected<bool> typesPassedLieInInt32(FunctionID function, unsigned parameter) const { return !m_parametersPassedOtherTypes.isEmpty() && !m_parametersPassedOtherTypes[function.index()].get(parameter); }
+    Expected<bool> isUsedAsInteger(LayoutID layout, uint32_t field) const { return !m_fieldsUsedAsIntegers.isEmpty() && m_fieldsUsedAsIntegers[layout.index()].get(field); }
     // What the field holds goes into a sum or a difference that is stored back into it.
-    bool isAddedTo(LayoutID layout, uint32_t field) const { return !m_fieldsAddedTo.isEmpty() && m_fieldsAddedTo[layout.index()].get(field); }
-    bool typesOfInitialValuesFitInt32Slot(LayoutID layout, uint32_t field) const { return m_fieldsStartedWithOtherTypes.isEmpty() || !m_fieldsStartedWithOtherTypes[layout.index()].get(field); }
+    Expected<bool> isAddedTo(LayoutID layout, uint32_t field) const { return !m_fieldsAddedTo.isEmpty() && m_fieldsAddedTo[layout.index()].get(field); }
+    Expected<bool> typesOfInitialValuesFitInt32Slot(LayoutID layout, uint32_t field) const { return m_fieldsStartedWithOtherTypes.isEmpty() || !m_fieldsStartedWithOtherTypes[layout.index()].get(field); }
 
 private:
     Vector<Vector<OptionSet<StoredKind>>> m_kinds;

@@ -526,7 +526,7 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
-        if (jit.options().callsTrapsOfProxies && slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal)) {
+        if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal)) {
             static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
             uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
             jit.move(value, T10);

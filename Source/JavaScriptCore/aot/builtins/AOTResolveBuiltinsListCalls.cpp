@@ -180,7 +180,7 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
     becomeBuiltinCall(call, plan.call.overload, BuiltinCallForm::List, plan.operands, plan.stamps);
     call.setNeedsPristineReceiver(!isPristineByType);
     call.type = resultTypeOf(program, function, call, context.types);
-    call.setExpected(ExpectedType(expectedTypeOf(program, function, call, context.types)));
+    call.setExpected(expectedTypeOf(program, function, call, context.types));
     checkRewrite(context, listCall.site, replaced);
 }
 

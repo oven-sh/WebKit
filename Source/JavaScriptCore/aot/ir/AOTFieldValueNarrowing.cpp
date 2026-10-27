@@ -30,9 +30,9 @@ static LayoutSetID allocatedMembersExcluding(const TypingContext& context, Layou
     Vector<LayoutID> remaining;
     remaining.grow(allocatedMembers.size());
     remaining.shrink(std::ranges::set_difference(allocatedMembers, excludedMembers, remaining.begin()).out - remaining.begin());
-    if (remaining.isEmpty() && !familySet.mayHoldObjectsWithoutLayout())
+    if (remaining.isEmpty())
         return { };
-    return context.types.intern(LayoutSet::complete(WTF::move(remaining), familySet.mayHoldObjectsWithoutLayout()));
+    return context.types.intern(LayoutSet::complete(WTF::move(remaining)));
 }
 
 static LayoutSetID membersThatCanHold(const TypingContext& context, LayoutSetID family, PropertyKeyID key, const Type& read)

@@ -818,7 +818,7 @@ static void emitReturnOfBodyCall(IRBuilder& builder, FunctionID body, ValueID ca
 }
 
 // A read in the wrapper may throw, or run a getter or a trap. A stack that is captured there shows the function: the wrapper is hidden, so all it does but the call of the body lies in a frame of the body.
-static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
+static void showOperationsInFrameOfBody(const Program& program, TypeArena& types, Function& wrapper, FunctionID body)
 {
     auto isCallOfBody = [&](ValueID id) {
         const Value& value = wrapper.at(id);
@@ -851,6 +851,24 @@ static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
         if (block.terminator.kind != TerminatorKind::ReturnCall || !isCallOfBody(block.terminator.callOperand()))
             ++block.terminator.inlineFrame;
     }
+
+    ValueID entered;
+    for (const Block& block : wrapper.blocks) {
+        for (ValueID id : block.values) {
+            if (!takesFactOfEntry(program, wrapper.at(id)))
+                continue;
+            if (!entered) {
+                Value fact = IRBuilder::make(Opcode::Entered);
+                fact.setFunction(body);
+                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
+                fact.setOrigin(wrapper.at(id).origin());
+                entered = wrapper.add(WTF::move(fact));
+            }
+            wrapper.edit(id).setFactOperand(entered);
+        }
+    }
+    if (entered)
+        wrapper.edit(entryBlock, BlockEdit::Values).values.insert(0, entered);
 }
 
 static void convertToWrapper(const AnalysisContext& context, TypeArena& types, Promotion& promotion, FunctionID body)
@@ -890,7 +908,7 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
     wrapper.capabilities = capabilitiesInPlaceOf(wrapper, wrapper.capabilities);
     compactFunction(wrapper);
     moveToExactBuffer(wrapper.storageOfBlocks());
-    showOperationsInFrameOfBody(wrapper, body);
+    showOperationsInFrameOfBody(context.program, types, wrapper, body);
 }
 
 static void replaceWithWrappers(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, Vector<Promotion>& promotions)

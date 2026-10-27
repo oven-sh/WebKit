@@ -66,6 +66,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
     }
     if (Options::aotCountsPath()) [[unlikely]]
         instance->state->propertyCaches->countMiss("read without caches"_s, false, value, identifierAt(instance, name).impl());
+    LookByName look(vm, value, identifierAt(instance, name).impl());
     OPERATION_RETURN(scope, JSValue::encode(getWithoutCaches(instance, value, identifierAt(instance, name))));
 }
 
@@ -122,6 +123,7 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
     if (tryReplaceGlobalProperty(instance, vm, base, identifier.impl(), value))
         return;
     scope.release();
+    LookByName look(vm, base, identifier.impl());
     base.put(globalObject, identifier, value, slot);
 }
 

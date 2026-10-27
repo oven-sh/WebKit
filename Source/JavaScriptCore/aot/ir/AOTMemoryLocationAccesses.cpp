@@ -196,6 +196,16 @@ static LocationStability stabilityOfObjectField(const Program& program, const Va
     return stability;
 }
 
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow& flow)
+{
+    return flow.initialization == InitializationState::StoredBeforeEveryRead && !flow.isUnchangedDuringActivation;
+}
+
+bool holdsDeclaredTypeOnlyBehindEntry(const Program& program, const Value& read)
+{
+    return read.opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(program.at(read.variable()).flow);
+}
+
 LocationStability stabilityOf(const Program& program, const Value& access, const MemoryAccess& memoryAccess)
 {
     const MemoryLocation& location = memoryAccess.location;

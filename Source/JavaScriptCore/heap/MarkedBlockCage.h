@@ -140,6 +140,7 @@ private:
     bool m_allocationsAreInfallible { false };
     void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
+    size_t m_numberOfBlocksTaken { 0 };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };

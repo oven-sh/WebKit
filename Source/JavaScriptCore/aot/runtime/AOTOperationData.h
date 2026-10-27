@@ -207,6 +207,11 @@ struct TemplateObjectRequest {
 };
 static_assert(sizeof(TemplateObjectRequest) == 4);
 
+constexpr bool isAssignableBinding(EvalBindingKind kind)
+{
+    return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
+}
+
 struct EvalBindingData {
     static constexpr uint32_t noOperand = UINT32_MAX;
 
@@ -252,9 +257,7 @@ struct PropertyDescriptorBits {
     uint32_t isConfigurable : 1;
     uint32_t hasGet : 1;
     uint32_t hasSet : 1;
-    // The descriptor literal has no prototype: a member that it does not list is absent, whatever Object.prototype holds.
-    uint32_t inheritsNothing : 1;
-    uint32_t unused : 22;
+    uint32_t unused : 23;
 };
 static_assert(sizeof(PropertyDescriptorBits) == 4);
 

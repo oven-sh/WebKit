@@ -11,7 +11,9 @@
 #include "AOTGrouping.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
+#include <algorithm>
 #include <utility>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -40,12 +42,6 @@ static bool completesBeforeRequester(const Module& requester, const ModuleReques
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A require() of an ES module runs the jobs of the loader before it returns, and with them the modules that an import() loads.
-static bool runsJobsOfLoader(const Module& required)
-{
-    return required.kind == ModuleKind::SourceText;
-}
-
 bool FlowModuleOrder::completesBefore(ModuleID first, ModuleID second) const
 {
     if (first == second || first.index() >= componentOf.size() || second.index() >= componentOf.size() || modulesInCycles.get(second.index()))
@@ -55,16 +51,17 @@ bool FlowModuleOrder::completesBefore(ModuleID first, ModuleID second) const
     return firstComponent != secondComponent && componentsCompletedBefore[secondComponent].get(firstComponent);
 }
 
+// An edge says: while the first is unfinished the second may begin.
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
 {
     const Program& program = inputs.program;
     uint32_t numberOfModules = program.modules.size();
-    uint32_t anyModule = numberOfModules;
-    uint32_t anyImportedModule = anyModule + 1;
-    uint32_t firstFunction = anyImportedModule + 1;
+    uint32_t anyTime = numberOfModules;
+    uint32_t whereJobsRun = anyTime + 1;
+    uint32_t firstFunction = whereJobsRun + 1;
     unsigned numberOfNodes = firstFunction + program.functions.size();
     auto nodeOf = [&](FunctionID function) {
-        return function == inputs.host() ? anyModule : firstFunction + function.index();
+        return function == inputs.host() ? anyTime : firstFunction + function.index();
     };
 
     Vector<ModuleID> moduleWithBody(program.functions.size());
@@ -84,49 +81,124 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         }
     }
 
+    BitVector somebodySaysWhenItBegins(numberOfModules);
+    bool somebodyRunsJobs = false;
     Vector<uint32_t> firstSuccessor;
     Vector<uint32_t> successors;
     groupByIndex(numberOfNodes, firstSuccessor, successors, [&](const auto& addEdge) {
-        for (size_t module : modulesVisitedByLoader) {
-            for (const ModuleRequest& request : program.modules[module].requests)
-                addEdge(static_cast<uint32_t>(module), request.target.index());
-        }
-        auto load = inputs.moduleLoads.begin();
-        for (uint32_t index = 0; index < program.functions.size(); ++index) {
-            ModuleID file = program.functions[index].module;
-            ModuleID evaluatedModule = moduleWithBody[index];
-            if (evaluatedModule)
-                addEdge(evaluatedModule.index(), nodeOf(FunctionID(index)));
-            bool canSuspendEvaluation = file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait);
-            for (; load != inputs.moduleLoads.end() && load->function.index() == index; ++load) {
-                if (!load->isSynchronous)
-                    addEdge(anyImportedModule, load->target.index());
-                if (!load->isSynchronous && !canSuspendEvaluation)
-                    continue;
-                if (file)
-                    addEdge(file.index(), load->target.index());
-                if (evaluatedModule && evaluatedModule != file)
-                    addEdge(evaluatedModule.index(), load->target.index());
-                if (!load->isSynchronous)
-                    continue;
-                addEdge(nodeOf(FunctionID(index)), load->target.index());
-                if (runsJobsOfLoader(program.at(load->target)))
-                    addEdge(nodeOf(FunctionID(index)), anyImportedModule);
+        auto begins = [&](uint32_t unfinished, ModuleID file) {
+            somebodySaysWhenItBegins.set(file.index());
+            addEdge(unfinished, file.index());
+        };
+        auto runsJobs = [&](uint32_t unfinished) {
+            somebodyRunsJobs = true;
+            addEdge(unfinished, whereJobsRun);
+        };
+        auto forEachRequest = [&](const Invocable<void(ModuleID, const ModuleRequest&)> auto& functor) {
+            for (size_t module : modulesVisitedByLoader) {
+                for (const ModuleRequest& request : program.modules[module].requests)
+                    functor(ModuleID(static_cast<uint32_t>(module)), request);
+            }
+        };
+        auto forEachLoad = [&](FlowWayIntoFile way, const Invocable<void(const FlowModuleLoad&, ModuleID, ModuleID)> auto& functor) {
+            for (const FlowModuleLoad& load : inputs.moduleLoads) {
+                if (load.way == way)
+                    functor(load, program.at(load.function).module, moduleWithBody[load.function.index()]);
+            }
+        };
+        auto beginsInsideFilesOf = [&](const FlowModuleLoad& load, ModuleID file, ModuleID evaluatedModule) {
+            if (file)
+                begins(file.index(), load.target);
+            if (evaluatedModule && evaluatedModule != file)
+                begins(evaluatedModule.index(), load.target);
+        };
+
+        for (FlowWayIntoFile way : allWaysIntoFile) {
+            switch (way) {
+            case FlowWayIntoFile::EntryPoint:
+                // First in its realm: nothing is unfinished.
+                for (const Entry& entry : program.entries)
+                    somebodySaysWhenItBegins.set(entry.module.index());
+                break;
+            case FlowWayIntoFile::StaticImport:
+                forEachRequest([&](ModuleID requester, const ModuleRequest& request) {
+                    if (request.kind == ModuleRequestKind::Import)
+                        begins(requester.index(), request.target);
+                });
+                break;
+            case FlowWayIntoFile::DeferredImport:
+                // At the first look at its namespace. The loader refuses the look while a file that the deferred one needs is unfinished.
+                forEachLoad(way, [&](const FlowModuleLoad& load, ModuleID, ModuleID) {
+                    somebodySaysWhenItBegins.set(load.target.index());
+                });
+                break;
+            case FlowWayIntoFile::Require:
+                forEachRequest([&](ModuleID requester, const ModuleRequest& request) {
+                    if (request.kind == ModuleRequestKind::Require)
+                        begins(requester.index(), request.target);
+                });
+                forEachLoad(way, [&](const FlowModuleLoad& load, ModuleID file, ModuleID evaluatedModule) {
+                    beginsInsideFilesOf(load, file, evaluatedModule);
+                    begins(nodeOf(load.function), load.target);
+                });
+                break;
+            case FlowWayIntoFile::ImportCall:
+                forEachLoad(way, [&](const FlowModuleLoad& load, ModuleID file, ModuleID evaluatedModule) {
+                    begins(whereJobsRun, load.target);
+                    if (file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait))
+                        beginsInsideFilesOf(load, file, evaluatedModule);
+                });
+                break;
+            case FlowWayIntoFile::NameMadeAtRunTime:
+                for (size_t module : inputs.modulesLoadedByName)
+                    begins(anyTime, ModuleID(static_cast<uint32_t>(module)));
+                for (size_t module : inputs.modulesNamedByOperationsNobodyKnows)
+                    begins(anyTime, ModuleID(static_cast<uint32_t>(module)));
+                break;
+            case FlowWayIntoFile::Host:
+                for (size_t module : inputs.modulesLoadedByHost)
+                    begins(anyTime, ModuleID(static_cast<uint32_t>(module)));
+                break;
             }
         }
-        for (size_t module : inputs.modulesLoadedByHost)
-            addEdge(anyModule, static_cast<uint32_t>(module));
+        for (size_t module : inputs.evaluatedModules) {
+            if (!somebodySaysWhenItBegins.get(module))
+                addEdge(anyTime, static_cast<uint32_t>(module));
+        }
+
+        for (FlowRunnerOfJobs runner : allRunnersOfJobs) {
+            switch (runner) {
+            case FlowRunnerOfJobs::EndOfTurn:
+                // Only a file that awaits is unfinished then. Whoever imports it waits for its end, but what an import() written in that file loads.
+                break;
+            case FlowRunnerOfJobs::RequireOfESModule:
+                forEachLoad(FlowWayIntoFile::Require, [&](const FlowModuleLoad& load, ModuleID, ModuleID) {
+                    if (program.at(load.target).kind == ModuleKind::SourceText)
+                        runsJobs(nodeOf(load.function));
+                });
+                break;
+            case FlowRunnerOfJobs::NameMadeAtRunTime:
+                if (!inputs.modulesLoadedByName.isEmpty() || !inputs.modulesNamedByOperationsNobodyKnows.isEmpty())
+                    runsJobs(anyTime);
+                break;
+            case FlowRunnerOfJobs::Builtin:
+                if (inputs.hostRunsWaitingJobs)
+                    runsJobs(anyTime);
+                break;
+            }
+        }
+
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            if (ModuleID evaluatedModule = moduleWithBody[index])
+                addEdge(evaluatedModule.index(), nodeOf(FunctionID(index)));
+        }
         for (const FlowCall& call : inputs.calls) {
             bool isEvaluationByLoader = call.caller == inputs.host() && moduleWithBody[call.callee.index()];
             if (!isEvaluationByLoader)
                 addEdge(nodeOf(call.caller), nodeOf(call.callee));
         }
-        for (size_t module : inputs.modulesLoadedByName)
-            addEdge(anyModule, static_cast<uint32_t>(module));
-        if (inputs.hostRunsWaitingJobs || !inputs.modulesLoadedByName.isEmpty())
-            addEdge(anyModule, anyImportedModule);
         for (size_t module : inputs.evaluatedModules)
-            addEdge(static_cast<uint32_t>(module), anyModule);
+            addEdge(static_cast<uint32_t>(module), anyTime);
     });
     StronglyConnectedComponents components = computeStronglyConnectedComponents(numberOfNodes, [&](unsigned node) {
         return entriesOfGroup(firstSuccessor, successors, node);
@@ -164,6 +236,24 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                 continue;
             completed.set(target);
             completed.merge(order.componentsCompletedBefore[target]);
+        }
+    }
+
+    if (somebodyRunsJobs) {
+        BitVector leadsToJobs(components.numberOfComponents);
+        leadsToJobs.set(components.componentOf[whereJobsRun]);
+        for (uint32_t component = components.componentOf[whereJobsRun] + 1; component < components.numberOfComponents; ++component) {
+            bool leads = std::ranges::any_of(components.membersOf(component), [&](uint32_t member) {
+                return std::ranges::any_of(entriesOfGroup(firstSuccessor, successors, member), [&](uint32_t successor) {
+                    return leadsToJobs.get(components.componentOf[successor]);
+                });
+            });
+            if (leads)
+                leadsToJobs.set(component);
+        }
+        for (uint32_t module = 0; module < numberOfModules; ++module) {
+            if (leadsToJobs.get(components.componentOf[module]))
+                order.modulesThatJobsMayInterrupt.set(module);
         }
     }
     return order;

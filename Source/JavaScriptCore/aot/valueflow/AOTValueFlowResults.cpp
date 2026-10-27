@@ -11,6 +11,8 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowRecords.h"
+#include "AOTLedgerOfClassesAndClosures.h"
+#include "AOTLedgerVariables.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTValueFlowPositions.h"
@@ -352,15 +354,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
     std::unique_ptr<ValueFlowNodesAskedFor> nodesAskedFor;
-    ValueFlowPrototypes prototypes;
+    std::unique_ptr<LedgerOfClassesAndClosures> classesAndClosures;
 
     Vector<ValueFlowWriteUnderNewName> writesUnderNewNames;
     ValueFlowStampedCalls calls;
     BitVector symbolsCreatedOnce;
     std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> usesOfHeap;
-    std::unique_ptr<ValueFlowAccessesThroughObjects, ValueFlowAccessesThroughObjectsDeleter> accessesThroughObjects;
-    std::unique_ptr<ValueFlowOperationsOnLocations, ValueFlowOperationsOnLocationsDeleter> operationsOnLocations;
-    ValueFlowVariablesOnObjects variablesOnObjects;
+    Ledger ledger(inputs);
+    std::unique_ptr<LedgerOfVariables> ledgerOfVariables = makeUnique<LedgerOfVariables>(program);
+    inputs.ledger = &ledger;
+    inputs.ledgerOfVariables = ledgerOfVariables.get();
     std::unique_ptr<ValueFlowNumbersOfValues> numbersOfValues;
     ValueFlowConstructions constructions;
     ValueFlowFieldContents fieldContents;
@@ -392,8 +395,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         tables = createUnknownResultTables(program, build);
         tables.sites.accessSiteLosses.grow(tables.application->accessSites.numberOfSites());
     });
-    auto classesOfResults = add("classes of what built-ins answer"_s, { }, [&](PhaseTimes&) {
-        classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs);
+    auto classesOfResults = add("classes of what built-ins answer"_s, { indexOfHeap }, [&](PhaseTimes&) {
+        classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs, *heapIndex);
     });
     auto layoutsPicked = add("layouts that allocations pick"_s, { }, [&](PhaseTimes&) {
         layoutsOfSites = findLayoutsOfSites(inputs);
@@ -403,24 +406,24 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         inputs.nodesAskedFor = nodesAskedFor.get();
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
         inputs.layoutsOfSites = &layoutsOfSites;
-        inputs.prototypes = &prototypes;
     });
-    auto prototypesFound = add("prototypes"_s, { firstResults }, [&](PhaseTimes&) {
-        prototypes = findPrototypes(inputs);
+    auto ledgerOfClosures = add("ledger: classes and closures"_s, { firstResults }, [&](PhaseTimes&) {
+        classesAndClosures = makeUnique<LedgerOfClassesAndClosures>(inputs);
+        inputs.classesAndClosures = classesAndClosures.get();
+        ledger.install(LedgerPartKind::ClassesAndClosures, *classesAndClosures);
     });
-    if (build.options().verifiesProgram) {
-        add("operations without a value"_s, { firstResults }, [&](PhaseTimes&) {
-            reportOperationsWithoutValue(inputs);
-        });
-    }
+    add("operations without a value"_s, { firstResults }, [&](PhaseTimes&) {
+        reportOperationsWithoutValue(inputs);
+    });
     auto stampedCalls = add("calls"_s, { firstResults }, [&](PhaseTimes&) {
         calls = computeCallResults(inputs, types, tables);
     });
     auto usesOfTheHeap = add("uses of the heap"_s, { stampedCalls }, [&](PhaseTimes&) {
         usesOfHeap = computeUsesOfHeap(inputs);
     });
-    auto executions = add("executions"_s, { stampedCalls, prototypesFound }, [&](PhaseTimes& timesOfStep) {
+    auto executions = add("executions"_s, { stampedCalls, ledgerOfClosures }, [&](PhaseTimes& timesOfStep) {
         computeFunctionResults(inputs, calls, tables);
+        inputs.functionsNamedByUnsolvedCode = &calls.functionsNamedByUnsolvedCode;
         computeSinkOperandResults(inputs, calls, tables);
         timesOfStep.didFinish("functions"_s);
         computeExecutionResults(inputs, calls, tables);
@@ -433,19 +436,16 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         }
     });
     auto accessesCollected = add("variables on objects: accesses"_s, { executions }, [&](PhaseTimes&) {
-        accessesThroughObjects = collectAccessesThroughObjects(inputs, calls);
+        collectAccessesThroughHolders(inputs, *ledgerOfVariables);
     });
     auto operationsNoted = add("locations: operations"_s, { executions }, [&](PhaseTimes&) {
-        operationsOnLocations = noteOperationsOnLocations(inputs, tables);
+        reportOperationsOnVariables(inputs, tables, *ledgerOfVariables);
     });
     auto variables = add("variables on objects"_s, { accessesCollected, usesOfTheHeap }, [&](PhaseTimes&) {
-        variablesOnObjects = computeVariablesOnObjects(inputs, *accessesThroughObjects, *usesOfHeap);
-        accessesThroughObjects = nullptr;
-        inputs.variablesOnObjects = &variablesOnObjects;
+        reportAccessesThroughHolders(inputs, *usesOfHeap, *ledgerOfVariables);
     });
     auto locations = add("locations"_s, { variables, operationsNoted }, [&](PhaseTimes&) {
-        computeLocationResults(inputs, *operationsOnLocations, tables);
-        operationsOnLocations = nullptr;
+        computeLocationResults(inputs, ledger, *ledgerOfVariables, tables);
     });
     auto numbersPrepared = add("numbers: prepared"_s, { executions }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
@@ -482,6 +482,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
         findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
+        ledger.install(LedgerPartKind::Fields, ledgerOfFieldsIn(*usesOfHeap));
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
             return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;
         });
@@ -525,6 +526,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     build.destroyLater(WTF::move(heapIndex));
     inputs.nodesAskedFor = nullptr;
     build.destroyLater(WTF::move(nodesAskedFor));
+    inputs.classesAndClosures = nullptr;
+    build.destroyLater(WTF::move(classesAndClosures));
     times.didFinish("the results behind the rounds"_s);
     recordLockedWritesUnderNewNames(program, types, writesUnderNewNames.span(), tables);
 
@@ -533,7 +536,9 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     build.destroyLater(WTF::move(containers));
     build.destroyLater(WTF::move(fieldContents));
     build.destroyLater(WTF::move(constructions));
-    build.destroyLater(WTF::move(variablesOnObjects));
+    inputs.ledger = nullptr;
+    inputs.ledgerOfVariables = nullptr;
+    build.destroyLater(WTF::move(ledgerOfVariables));
     build.destroyLater(WTF::move(solution));
     return FlowResults(WTF::move(tables));
 }

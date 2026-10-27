@@ -32,6 +32,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineHeads.h"
 #include "AOTKnownValue.h"
+#include "AOTMemoryLocation.h"
 #include "AOTOperatorForms.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
@@ -98,6 +99,7 @@ static constexpr OpcodeSet opcodesWithoutCode = castsThatProveNothing | OpcodeSe
     Opcode::AssumeType,
     Opcode::FinishObject,
     Opcode::AllGuards,
+    Opcode::Entered,
     Opcode::LogicalNot,
     Opcode::ValidateType,
     Opcode::ValidateCallee,
@@ -162,6 +164,10 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
         return CodeSize::typeCheck;
     if (opcode == Opcode::ToBoolean)
         return program.typeOf(function, value.valueOperand()).isBoolean() ? 0 : CodeSize::simpleOperation;
+
+    // What takes the caught value calls a stub without operands.
+    if (opcode == Opcode::CatchValue || opcode == Opcode::CatchException)
+        return estimatedDirectCallBytes(0);
 
     unsigned operandBytes = CodeSize::perOperand * value.numberOfOperands();
 
@@ -1116,10 +1122,30 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     return builder.append(WTF::move(cast));
 }
 
+bool takesFactOfEntry(const Program& program, const Value& value)
+{
+    return holdsDeclaredTypeOnlyBehindEntry(program, value) && !value.factOperand() && !value.mayPrecedeItsStore();
+}
+
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
 {
+    const Program& program = builder.context().program;
+    const Function& source = cloner.source();
+    bool needsFact = std::ranges::any_of(region, [&](BlockID block) {
+        return std::ranges::any_of(source.at(block).values, [&](ValueID id) {
+            return takesFactOfEntry(program, source.at(id));
+        });
+    });
+    ValueID entered;
+    if (needsFact) {
+        Value fact = IRBuilder::make(Opcode::Entered);
+        fact.setFunction(builder.function().inlineFrames[firstFrame].callee);
+        entered = builder.append(WTF::move(fact));
+    }
     cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
         clone.inlineFrame += firstFrame;
+        if (entered && takesFactOfEntry(program, clone))
+            clone.setFactOperand(entered);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
@@ -2027,7 +2053,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
             uint64_t bytesOfAllocation = isCold(heat).predicted() ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());
-            });
+            }).predicted();
             if (allocations)
                 addBenefit(InlineBenefit::SunkAllocation, allocations * bytesOfAllocation);
         }

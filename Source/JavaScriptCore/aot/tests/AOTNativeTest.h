@@ -42,6 +42,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(effectSummariesTests) \
     v(heatGraphTests) \
     v(irProgramTests) \
+    v(ledgerTests) \
     v(resultNodeDeclineTests) \
     v(resultNodeTests) \
     v(typeArenaTests) \

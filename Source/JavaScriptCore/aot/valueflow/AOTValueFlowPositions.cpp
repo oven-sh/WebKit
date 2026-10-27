@@ -380,9 +380,12 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
             return { };
         }
         break;
+    case ValueFlowObjectKind::ResultOfBuiltin:
+        if (BuiltinClassID builtinClass = m_inputs.classOf(member); builtinClass && !builtins.at(builtinClass).hasClosureInstances)
+            return builtinClass;
+        break;
     case ValueFlowObjectKind::UnknownObject:
     case ValueFlowObjectKind::Prototype:
-    case ValueFlowObjectKind::ResultOfBuiltin:
         break;
     }
     type.anyObject = type.anyFunction = true;
@@ -738,18 +741,13 @@ void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlow
     update.replacesExpectation = true;
 }
 
-std::optional<LayoutSet> ValueFlowPositions::receiversAt(const Type& family, ValueSetID set)
+std::optional<LayoutSet> ValueFlowPositions::receiversAt(ValueSetID set)
 {
     const Program& program = m_inputs.program;
-    if (ValueSets::isComplement(set) || holds(set, ValueFlowUniverse::unknownObject()))
-        return std::nullopt;
-    bool holdsUntrackedObject = holds(set, ValueFlowUniverse::untrackedObject());
-    if (holdsUntrackedObject && !m_inputs.universe().namesProgramObjectsAlone(program, family))
+    if (ValueSets::isComplement(set) || m_inputs.sets().meet(set, m_inputs.universe().placeholdersAlone()))
         return std::nullopt;
 
     Type held = typeOf(set);
-    if (holdsUntrackedObject)
-        held = held.unionWith(family.withOnlyObjects(), m_types);
     if (held.anyObject || held.anyFunction || !held.classes.isEmpty() || !held.functions.isEmpty() || !held.builtins.isEmpty())
         return std::nullopt;
     LayoutSet receivers = LayoutSet::complete(Vector<LayoutID>(membersOf(program, held)));
@@ -769,22 +767,15 @@ ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
     return set;
 }
 
-std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction)
+std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction)
 {
     if (ValueSets::isComplement(possible) || ValueSets::isComplement(seen))
         return std::nullopt;
 
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
-    auto withFamilyInPlaceOfUntrackedObject = [&](ValueSetID set) {
-        if (!holds(set, ValueFlowUniverse::untrackedObject()) || !universe.namesProgramObjectsAlone(program, family))
-            return set;
-        return maker().unite(maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone())), universe.familyObjectsOf(maker(), program, family));
-    };
-    ValueSetID arriving = withFamilyInPlaceOfUntrackedObject(possible);
-    bool mayBeAnyCallee = m_inputs.sets().meet(arriving, universe.placeholdersAlone());
-    if (mayBeAnyCallee)
-        arriving = withFamilyInPlaceOfUntrackedObject(seen);
+    bool mayBeAnyCallee = m_inputs.sets().meet(possible, universe.placeholdersAlone());
+    ValueSetID arriving = mayBeAnyCallee ? seen : possible;
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
     bool isConstruction = !!calleeOfConstruction;
     if (isConstruction && listed != arriving) {

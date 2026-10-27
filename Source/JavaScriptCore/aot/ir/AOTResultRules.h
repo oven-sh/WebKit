@@ -120,7 +120,7 @@ std::optional<Type> tryWidestNaturalTypeOf(const Value&);
 const OpcodeSet& opcodesTypedFromNarrowedRecords();
 
 TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
-TypeID expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
+ExpectedType expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
 
 inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     OpcodeSet opcodes;

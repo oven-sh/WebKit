@@ -574,7 +574,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
 // Fast path: every target slot is still empty, so copy each field and set the order word that the first run produced.
 static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
 {
-    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord());
+    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord() && plan.readsFrom(source.structureID(), source.orderWord(), source.extraProperties()));
     Extension* targetExtension = nullptr;
     if (plan.granuleBitsFilled) {
         target.ensureExtensionGranules(vm, plan.granuleBitsFilled);

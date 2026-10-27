@@ -153,7 +153,7 @@ Emission::TestedObject Emission::emitShapeTest(ValueID value, std::span<const La
     LayoutSetID tested = layoutSetOf(layouts);
     ValueID object = emitTypeTest(value, TypeTable::object, notTaken);
     const Type& type = typeOf(object);
-    if (type.hasOnlyLayouts(program()) && isSubsetOf(program().at(type.layouts), program().at(tested)))
+    if (type.hasOnlyLayouts() && isSubsetOf(program().at(type.layouts), program().at(tested)))
         return { object, { } };
     return { object, emitProvenBranch(m_builder.append(make<&Value::setLayouts>(Opcode::ShapeTest, { object }, tested)), notTaken, whenTaken) };
 }

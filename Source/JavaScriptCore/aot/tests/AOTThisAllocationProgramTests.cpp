@@ -47,34 +47,41 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = FinishClass v4 layout=L0
     PutModuleVariable v9 variable=g0
     v11 = Integer integer=1
-    v12 = Integer integer=2
-    v13 = Call v0, -, v11
-    v14 = Call v0, -, v12
-    v15 = Builtin builtin=GlobalThis
-    v16 = PropGet v15 key="id" [isFreeName]
-    v17 = Call v16, -, v9
-    v18 = PropGet v15 key="print" [isFreeName]
-    v19 = Construct v13
-    v20 = Construct v14
-    v21 = Construct v9
-    v22 = PropGet v19 key="getP"
-    v23 = Call v22, v19 calleeKey="getP"
-    v24 = PropGet v20 key="getP"
-    v25 = Call v24, v20 calleeKey="getP"
-    v26 = PropGet v21 key="getP"
-    v27 = Call v26, v21 calleeKey="getP"
-    v28 = PropGet v19 key="tag"
-    v29 = PropGet v20 key="tag"
-    v30 = PropGet v9 key="has"
-    v31 = Call v30, v9, v19 calleeKey="has"
-    v32 = Call v30, v9, v20 calleeKey="has"
-    v33 = Call v30, v9, v15 calleeKey="has"
-    v34 = PropGet v15 key="Object" [isFreeName]
-    v35 = PropGet v34 key="keys"
-    v36 = Call v35, v34, v19 calleeKey="keys"
-    v37 = PropGet v36 key="join"
-    v38 = Call v37, v36 calleeKey="join"
-    v39 = Call v18, -, v23, v25, v27, v28, v29, v31, v32, v33, v38
+    v12 = Undefined
+    Jump -> next b1(v11, v12)
+  b1(v13, v14):
+    LoopHint
+    v16 = Call v0, -, v13
+    v17 = Increment v13
+    v18 = Integer integer=3
+    v19 = Less v17, v18
+    Branch v19 -> taken b1(v17, v16), notTaken b2(v14, v16)
+  b2(v20, v21):
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="id" [isFreeName]
+    v24 = Call v23, -, v9
+    v25 = PropGet v22 key="print" [isFreeName]
+    v26 = Construct v20
+    v27 = Construct v21
+    v28 = Construct v9
+    v29 = PropGet v26 key="getP"
+    v30 = Call v29, v26 calleeKey="getP"
+    v31 = PropGet v27 key="getP"
+    v32 = Call v31, v27 calleeKey="getP"
+    v33 = PropGet v28 key="getP"
+    v34 = Call v33, v28 calleeKey="getP"
+    v35 = PropGet v26 key="tag"
+    v36 = PropGet v27 key="tag"
+    v37 = PropGet v9 key="has"
+    v38 = Call v37, v9, v26 calleeKey="has"
+    v39 = Call v37, v9, v27 calleeKey="has"
+    v40 = Call v37, v9, v22 calleeKey="has"
+    v41 = PropGet v22 key="Object" [isFreeName]
+    v42 = PropGet v41 key="keys"
+    v43 = Call v42, v41, v26 calleeKey="keys"
+    v44 = PropGet v43 key="join"
+    v45 = Call v44, v43 calleeKey="join"
+    v46 = Call v25, -, v30, v32, v34, v35, v36, v38, v39, v40, v45
     Return
 }
 function f1 name="make" length=1 parameters=[{type=anything}] results=[{type=anything}] {
@@ -1239,93 +1246,100 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v13 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
     PutModuleVariable v13 variable=g0
     v15 = Integer integer=2
-    v16 = Call v1, -, v15 calleeName="make"
-    v17 = Convert v16 declared={type=undefined|null|function|f5 flags=[IsExpected]}
-    v18 = Integer integer=3
-    v19 = Call v1, -, v18 calleeName="make"
-    v20 = Convert v19 declared={type=undefined|null|function|f5 flags=[IsExpected]}
-    v21 = NewArray v13, v17, v20 contents=undefined|null|function|f2|f5
-    v22 = Convert v21 declared={type=undefined|null|Array<undefined|null|function|f2|f5> flags=[IsExpected]}
-    v23 = Integer
-    v24 = Convert v23 declared={type=number flags=[IsExpected]}
-    v25 = Integer
-    v26 = Convert v25 declared={type=number flags=[IsExpected]}
-    v27 = Integer
-    v28 = Convert v27 declared={type=number flags=[IsExpected]}
-    v29 = Integer
-    v30 = Convert v29 declared={type=number flags=[IsExpected]}
-    v31 = Integer
-    v32 = Convert v31 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v24, v26, v28, v30, v32)
-  b2(v33, v34, v35, v36, v37):
+    v16 = Undefined
+    Jump -> next b2(v15, v16)
+  b2(v17, v18):
     LoopHint
-    v39 = Integer integer=6000
-    v40 = Less v37, v39
-    Branch v40 -> taken b3(| 0), notTaken b14(| 0)
-  b3(v41):
-    Jump -> next b4()
-  b4():
-    v42 = Integer integer=3
-    v43 = Mod v41, v42
-    v44 = ElemGet v22, v43
-    v45 = Convert v44 declared={type=undefined|null|function|f2|f5 flags=[IsExpected]}
-    v46 = Construct v45
-    v47 = Convert v46 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
-    v48 = PropGet v47 key="read"
-    v49 = Convert v48 declared={type=undefined|null|function|f4 flags=[IsExpected]}
-    v50 = Call v49, v47 calleeKey="read" calleeName="made.read"
-    v51 = Convert v50 declared={type=number flags=[IsExpected]}
-    v52 = Add v33, v51
-    v53 = Convert v52 declared={type=number flags=[IsExpected]}
-    v54 = InstanceOf v47, v17 writtenExpression="made instanceof First"
-    v55 = ToBoolean v54
-    Branch v55 -> taken b5(| 0), notTaken b7(| 0)
-  b5(v56):
+    v20 = Call v1, -, v17 calleeName="make"
+    v21 = Increment v17
+    v22 = Integer integer=4
+    v23 = Less v21, v22
+    Branch v23 -> taken b2(v21, v20), notTaken b3(v18, v20)
+  b3(v24, v25):
+    v26 = Convert v24 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v27 = Convert v25 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v28 = NewArray v13, v26, v27 contents=undefined|null|function|f2|f5
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|function|f2|f5> flags=[IsExpected]}
+    v30 = Integer
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Integer
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Integer
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Integer
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Integer
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v31, v33, v35, v37, v39)
+  b4(v40, v41, v42, v43, v44):
+    LoopHint
+    v46 = Integer integer=6000
+    v47 = Less v44, v46
+    Branch v47 -> taken b5(| 0), notTaken b16(| 0)
+  b5(v48):
     Jump -> next b6()
   b6():
-    v57 = Increment v35
+    v49 = Integer integer=3
+    v50 = Mod v48, v49
+    v51 = ElemGet v29, v50
+    v52 = Convert v51 declared={type=undefined|null|function|f2|f5 flags=[IsExpected]}
+    v53 = Construct v52
+    v54 = Convert v53 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v55 = PropGet v54 key="read"
+    v56 = Convert v55 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v57 = Call v56, v54 calleeKey="read" calleeName="made.read"
     v58 = Convert v57 declared={type=number flags=[IsExpected]}
-    v59 = Convert v47 declared={type=undefined|null|L1 flags=[IsExpected]}
-    v60 = PropGet v59 key="get"
-    v61 = Convert v60 declared={type=undefined|null|function|f6 flags=[IsExpected]}
-    v62 = Call v61, v59 calleeKey="get" calleeName="made.get"
-    v63 = Add v34, v62
-    v64 = Convert v63 declared={type=number flags=[IsExpected]}
-    Jump -> next b8(v59, v64, v58)
-  b7(v65):
-    Jump -> next b8(v47, v34, v35)
-  b8(v66, v67, v68):
-    v69 = InstanceOf v66, v20 writtenExpression="made instanceof Second"
-    v70 = ToBoolean v69
-    Branch v70 -> taken b9(| 0), notTaken b11(| 0)
-  b9(v71):
-    Jump -> next b10()
-  b10():
-    v72 = Increment v36
-    v73 = Convert v72 declared={type=number flags=[IsExpected]}
-    v74 = Convert v66 declared={type=undefined|null|L1 flags=[IsExpected]}
-    v75 = PropGet v74 key="get"
-    v76 = Convert v75 declared={type=undefined|null|function|f6 flags=[IsExpected]}
-    v77 = Call v76, v74 calleeKey="get" calleeName="made.get"
-    v78 = Add v67, v77
-    v79 = Convert v78 declared={type=number flags=[IsExpected]}
-    Jump -> next b12(v79, v73)
-  b11(v80):
-    Jump -> next b12(v67, v36)
-  b12(v81, v82):
-    Jump -> next b13()
-  b13():
-    v83 = Increment v41
-    v84 = Convert v83 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v53, v81, v68, v82, v84)
-  b14(v85):
+    v59 = Add v40, v58
+    v60 = Convert v59 declared={type=number flags=[IsExpected]}
+    v61 = InstanceOf v54, v26 writtenExpression="made instanceof First"
+    v62 = ToBoolean v61
+    Branch v62 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v63):
+    Jump -> next b8()
+  b8():
+    v64 = Increment v42
+    v65 = Convert v64 declared={type=number flags=[IsExpected]}
+    v66 = Convert v54 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v67 = PropGet v66 key="get"
+    v68 = Convert v67 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v69 = Call v68, v66 calleeKey="get" calleeName="made.get"
+    v70 = Add v41, v69
+    v71 = Convert v70 declared={type=number flags=[IsExpected]}
+    Jump -> next b10(v66, v71, v65)
+  b9(v72):
+    Jump -> next b10(v54, v41, v42)
+  b10(v73, v74, v75):
+    v76 = InstanceOf v73, v27 writtenExpression="made instanceof Second"
+    v77 = ToBoolean v76
+    Branch v77 -> taken b11(| 0), notTaken b13(| 0)
+  b11(v78):
+    Jump -> next b12()
+  b12():
+    v79 = Increment v43
+    v80 = Convert v79 declared={type=number flags=[IsExpected]}
+    v81 = Convert v73 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v82 = PropGet v81 key="get"
+    v83 = Convert v82 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v84 = Call v83, v81 calleeKey="get" calleeName="made.get"
+    v85 = Add v74, v84
+    v86 = Convert v85 declared={type=number flags=[IsExpected]}
+    Jump -> next b14(v86, v80)
+  b13(v87):
+    Jump -> next b14(v74, v43)
+  b14(v88, v89):
     Jump -> next b15()
   b15():
-    v86 = Builtin builtin=GlobalThis
-    v87 = PropGet v86 key="print" [isFreeName]
-    v88 = Call v87, -, v33, v34, v35, v36 calleeName="print"
-    v89 = Undefined
-    Return v89
+    v90 = Increment v48
+    v91 = Convert v90 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v60, v88, v75, v89, v91)
+  b16(v92):
+    Jump -> next b17()
+  b17():
+    v93 = Builtin builtin=GlobalThis
+    v94 = PropGet v93 key="print" [isFreeName]
+    v95 = Call v94, -, v40, v41, v42, v43 calleeName="print"
+    v96 = Undefined
+    Return v96
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f5 flags=[IsExpected]}] {
   b0(v0: anything):

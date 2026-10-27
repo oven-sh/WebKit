@@ -3070,15 +3070,24 @@ bool ValueFlowSolver::merge()
     Vector<ValueFlowNodeSet> seeds;
     Vector<KeyToMake> constantsToMake;
     HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holding;
+    Vector<ValueFlowNodeID> nodesGivenMore;
     for (uint32_t body : m_bodiesReachedInRound) {
         const ValueFlowBodyRange& range = m_input.ranges[body];
         const ValueFlowBodyRange& end = m_input.ranges[body + 1];
+        if (m_input.seedOfWidening) [[unlikely]] {
+            for (uint32_t node = m_input.nodes->firstNodeOf(FunctionID(body)); node < m_input.nodes->endOfNodesOf(FunctionID(body)); ++node) {
+                if (whatIsGivenTo(ValueFlowNodeID(node)) != GivenToNode::Nothing)
+                    nodesGivenMore.append(ValueFlowNodeID(node));
+            }
+        }
         m_edgesOfRound.append(m_input.edgesOnceReached.subspan(range.edgeOnceReached, end.edgeOnceReached - range.edgeOnceReached));
         for (const ValueFlowNodeSet& seed : m_input.seedsOnceReached.subspan(range.seedOnceReached, end.seedOnceReached - range.seedOnceReached)) {
             ValueSetID set = seed.set;
             if (!m_input.unknownSourcesLeftOut.isEmpty() && m_input.placeholders.unknown)
                 set = m_makers[0]->intersect(set, ValueSets::complement(m_makers[0]->of(m_input.placeholders.unknown)));
             if (set == ValueSets::nothing)
+                continue;
+            if (m_input.seedOfWidening && m_input.build->isSabotaged(Sabotage::WhatIsGivenTakesThePlaceOfWhatComes) && whatIsGivenTo(seed.node) != GivenToNode::Nothing) [[unlikely]]
                 continue;
             seeds.append(ValueFlowNodeSet { seed.node, set });
             auto added = holding.add(set.index(), ValueFlowNodeID());
@@ -3102,6 +3111,18 @@ bool ValueFlowSolver::merge()
         holding.set(made.key.set.index(), m_madeNodes[made.madeNodes].first);
     for (const ValueFlowNodeSet& seed : seeds)
         m_edgesOfRound.append(ValueFlowEdge { holding.get(seed.set.index()), seed.node });
+    for (ValueFlowNodeID node : nodesGivenMore) {
+        GivenToNode what = whatIsGivenTo(node);
+        if (what == GivenToNode::WhatAnotherNodeOfBodyHolds) {
+            m_edgesOfRound.append(ValueFlowEdge { nodeWhoseValueIsGivenTo(node), node });
+            continue;
+        }
+        ValueSetID given = m_input.universe->unknownObjectAlone();
+        if (what == GivenToNode::ValueNobodyKnows)
+            given = m_makers[0]->unite(given, m_input.universe->anyPrimitive());
+        m_edgesOfRound.append(ValueFlowEdge { ensureNodes(ValueFlowNodeKey::constant(given, ValueFlowUnknownSource::DataFromOutside)), node });
+    }
+    m_numberOfNodesGivenMore += nodesGivenMore.size();
     ValueFlowNodeID holdingWhatRunTimeThrows;
     for (const std::unique_ptr<Thread>& thread : m_threads) {
         if (thread->thrownOfStatementsThatWait.isEmpty())
@@ -3356,6 +3377,83 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             });
         }
     }
+    // Whether a rule has read a member of a receiver hangs on which came first, the rule or the escape of the receiver. So a read under a name off a receiver nobody knows sees the objects that are written under that name, and so does whatever the function of the read hands its result on to.
+    // The code of the program sees what the program makes, a module of the run time what the run time makes.
+    if (m_input.program && m_input.escaped && !m_coverings.isEmpty()) {
+        ValueSetMaker& maker = *m_makers[0];
+        ValueSetID followed = maker.intersect(maker.intersect(ValueSets::complement(m_coverings[0].allButCovered), m_objectsOfProgram), ValueSets::complement(constructedByLibrary));
+        auto isOfLibrary = [&](FunctionID function) {
+            return function && isLibraryCode(*m_input.program, m_input.program->at(function));
+        };
+        Vector<ValueFlowObjectID> madeByLibrary;
+        m_sets.forEachMember(followed, [&](ValueFlowObjectID object) {
+            if (isOfLibrary(m_input.universe->functionOf(object)))
+                madeByLibrary.append(object);
+        });
+        std::array<ValueSetID, 2> followedOnSide { followed, maker.of(madeByLibrary.span()) };
+        followedOnSide[0] = maker.intersect(followed, ValueSets::complement(followedOnSide[1]));
+        HashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> resultsOfReadsUnderKey;
+        for (const ValueFlowStatement& statement : m_input.statements) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet || !statement.result || !isReached(statement.function))
+                continue;
+            ValueFlowNodeID object = operandsOf(statement)[0].node;
+            if (!object || !m_sets.contains(m_graph.valueOf(object), m_input.placeholders.unknown))
+                continue;
+            if (PropertyKeyID key = m_input.program->at(statement.function).at(statement.site).key())
+                resultsOfReadsUnderKey.ensure(key.index() * 2 + isOfLibrary(statement.function), [] { return Vector<uint32_t>(); }).iterator->value.append(statement.result.index());
+        }
+        Vector<uint32_t> toVisit;
+        auto arriveAt = [&](ValueFlowNodeID to, ValueSetID come) {
+            if (!m_sets.contains(m_graph.valueOf(to), m_input.placeholders.unknown))
+                return;
+            ValueSetID& seen = m_writtenUnderNamesOfReads.ensure(to.index(), [] { return ValueSets::nothing; }).iterator->value;
+            ValueSetID after = maker.unite(seen, maker.intersect(come, m_graph.maskOf(to)));
+            if (after == seen)
+                return;
+            seen = after;
+            toVisit.append(to.index());
+        };
+        HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> writtenUnderKey;
+        for (uint32_t index = firstNodeOfHost; index < numberOfNodes; ++index) {
+            const ValueFlowNodeKey* key = keyOfMadeNode(ValueFlowNodeID(index));
+            if (!key || key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Property)
+                continue;
+            for (uint32_t side = 0; side < 2; ++side) {
+                uint32_t keyOnSide = key->name().payload * 2 + side;
+                if (!resultsOfReadsUnderKey.contains(keyOnSide))
+                    continue;
+                ValueSetID written = maker.intersect(m_graph.valueOf(ValueFlowNodeID(index)), followedOnSide[side]);
+                if (written == ValueSets::nothing)
+                    continue;
+                ValueSetID& all = writtenUnderKey.ensure(keyOnSide, [] { return ValueSets::nothing; }).iterator->value;
+                all = maker.unite(all, written);
+            }
+        }
+        // A name under which many kinds of objects are written tells nothing about what a read answers.
+        AOT_THRESHOLD(size_t, mostKindsToldByName, 4);
+        for (auto& [key, written] : writtenUnderKey) {
+            Vector<uint32_t, mostKindsToldByName + 1> kinds;
+            m_sets.forEachMember(written, [&](ValueFlowObjectID object) {
+                LayoutID layout = m_input.universe->layoutOf(object);
+                uint32_t kind = layout ? layout.index() : UINT32_MAX - object.index();
+                if (kinds.size() <= mostKindsToldByName && !kinds.contains(kind))
+                    kinds.append(kind);
+            });
+            if (kinds.size() > mostKindsToldByName)
+                continue;
+            for (uint32_t result : resultsOfReadsUnderKey.get(key))
+                arriveAt(ValueFlowNodeID(result), written);
+        }
+        while (!toVisit.isEmpty()) {
+            ValueFlowNodeID from(toVisit.takeLast());
+            ValueSetID come = m_writtenUnderNamesOfReads.get(from.index());
+            FunctionID function = m_input.nodes->functionOf(from);
+            m_graph.forEachSuccessor(from, [&](ValueFlowNodeID to) {
+                if (to.index() < firstNodeOfHost && to != m_input.escaped && to != m_input.lost && m_input.nodes->functionOf(to) == function)
+                    arriveAt(to, come);
+            });
+        }
+    }
     auto withoutWhatRetiredNodesHandedOn = [&](ValueFlowNodeID node, ValueSetID listed, ValueSetID left, ValueSetMaker& maker) {
         if (node.index() >= firstNodeOfHost || constructedByLibrary == ValueSets::nothing || !m_sets.meet(listed, constructedByLibrary))
             return listed;
@@ -3372,6 +3470,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             ValueSetID value = m_graph.valueOf(node);
             if (value == ValueSets::nothing || !isReadByResults(node))
                 continue;
+            if (index < firstNodeOfHost)
+                value = maker.unite(value, writtenUnderNameOfReadSeenAt(node));
             ValueSetID left = maker.unite(withoutWhatOtherMembersCover(value, maker), maker.intersect(value, m_takenByRetiredNodes));
             if (left == value)
                 continue;
@@ -3402,6 +3502,58 @@ ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueSetID value, Value
             value = maker.intersect(value, covering.allButKeys);
     }
     return value;
+}
+
+ValueSetID ValueFlowSolver::withWhatMembersCover(ValueSetID value, ValueSetMaker& maker) const
+{
+    for (const Covering& covering : m_coverings) {
+        if (!m_sets.contains(value, covering.placeholder))
+            continue;
+        value = maker.unite(value, ValueSets::complement(covering.allButCovered));
+        // Once the untracked object has escaped, so has all that it covers.
+        if (covering.placeholder == m_input.placeholders.unknown && m_input.placeholders.untracked && m_sets.contains(m_graph.valueOf(covering.covered), m_input.placeholders.untracked))
+            value = maker.unite(value, m_untrackedObjectAlone);
+    }
+    for (const KindThatCoversKeys& covering : m_kindsThatCoverKeys) {
+        if (m_sets.contains(value, covering.kind))
+            value = maker.unite(value, ValueSets::complement(covering.allButKeys));
+    }
+    return value;
+}
+
+// By the function and the place in it, so that what is drawn in one function does not hang on the rest of the program.
+static uint32_t drawForWidening(uint32_t seed, FunctionID function, uint32_t numberInFunction, uint32_t question)
+{
+    uint64_t hash = (seed * 0x9E3779B97F4A7C15ull) ^ ((static_cast<uint64_t>(function.index()) << 32 | numberInFunction) * 0xC2B2AE3D27D4EB4Full) ^ (question * 0x165667B19E3779F9ull);
+    hash ^= hash >> 29;
+    hash *= 0xBF58476D1CE4E5B9ull;
+    hash ^= hash >> 32;
+    hash *= 0x94D049BB133111EBull;
+    return static_cast<uint32_t>(hash >> 32);
+}
+
+// The seed says how many nodes are drawn, one in 4, 16, 128 or 2048, and whether among all bodies or only among those written in the program. Where many nodes are given more, most of the program escapes;
+// a rule that goes wrong beside one value nobody knows shows where few are. A node that is drawn gets the unknown object, a value nobody knows, or what another node of its body holds.
+ValueFlowSolver::GivenToNode ValueFlowSolver::whatIsGivenTo(ValueFlowNodeID node) const
+{
+    if (!m_input.seedOfWidening || !m_input.nodes || !m_input.universe || !m_input.program)
+        return GivenToNode::Nothing;
+    uint32_t seed = *m_input.seedOfWidening;
+    constexpr std::array<uint8_t, 4> bitsThatMustBeZero { 2, 4, 7, 11 };
+    FunctionID function = m_input.nodes->functionOf(node);
+    if (!function || function.index() >= m_input.program->functions.size() || ((seed & 1) && !isWrittenInProgram(m_input.program->at(function))))
+        return GivenToNode::Nothing;
+    uint32_t drawn = drawForWidening(seed, function, node.index() - m_input.nodes->firstNodeOf(function), 0);
+    if (drawn >> 2 & ((1u << bitsThatMustBeZero[seed >> 1 & 3]) - 1))
+        return GivenToNode::Nothing;
+    return drawn & 2 ? GivenToNode::WhatAnotherNodeOfBodyHolds : drawn & 1 ? GivenToNode::ValueNobodyKnows : GivenToNode::UnknownObject;
+}
+
+ValueFlowNodeID ValueFlowSolver::nodeWhoseValueIsGivenTo(ValueFlowNodeID node) const
+{
+    FunctionID function = m_input.nodes->functionOf(node);
+    uint32_t first = m_input.nodes->firstNodeOf(function);
+    return ValueFlowNodeID(first + drawForWidening(*m_input.seedOfWidening, function, node.index() - first, 1) % (m_input.nodes->endOfNodesOf(function) - first));
 }
 
 ValueSetID ValueFlowSolver::valueForReadersOf(ValueFlowNodeID node, ValueSetMaker& maker) const

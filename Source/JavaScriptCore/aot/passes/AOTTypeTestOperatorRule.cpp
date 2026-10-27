@@ -183,7 +183,7 @@ static constexpr uint32_t collectionOperandIndex = 0;
 static constexpr uint32_t positionOperandIndex = 1;
 static constexpr size_t maxNamesOfCounter = 16;
 
-static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
+static Expected<bool> findsElementOfView(TestSiteReporter& reporter, const Use& use)
 {
     const Value& user = reporter.function().at(use.user);
     if (use.operandIndex != positionOperandIndex)
@@ -192,7 +192,7 @@ static bool findsElementOfView(TestSiteReporter& reporter, const Use& use)
         return true;
     if (!operationsOnElements.contains(user.opcode))
         return false;
-    const Type& collection = reporter.program().expectedOrTypeOf(reporter.function(), user.operand(collectionOperandIndex));
+    const Type& collection = reporter.program().expectedOrTypeOf(reporter.function(), user.operand(collectionOperandIndex)).predicted();
     return typedArrayTypeOf(BuiltinTable::singleton(), collection.withoutPrimitives(Primitive::UndefinedOrNull)) != NotTypedArray;
 }
 
@@ -223,7 +223,7 @@ static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const Natur
                         return false;
                     continue;
                 }
-                if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use))
+                if (opcode == Opcode::TypeTest || numericOperators.contains(opcode) || findsElementOfView(reporter, use).predicted())
                     continue;
                 if (opcode == Opcode::Add && reporter.typeOf(use.user).isNumber())
                     continue;

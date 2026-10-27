@@ -279,14 +279,14 @@ static bool asksOnlyForLayouts(FunctionPassContext& context, const TestSites& si
 }
 
 // In a checked function of the program the type of a variable, a parameter or a field is the checker's, and so is that of an element read out of it. The library is handed what its callers have.
-static bool isDescribedByChecker(FunctionPassContext& context, ValueID value)
+static Expected<bool> isDescribedByChecker(FunctionPassContext& context, ValueID value)
 {
     if (!context.function.has(FunctionFlags::IsChecked) || isLibraryCode(context.program, context.function))
         return false;
     // It ends: a list is defined in front of the read of its element.
     for (;;) {
         ValueID identity = context.analyses.identityOf(value);
-        if (context.program.expectedOrTypeOf(context.function, identity).anyObject)
+        if (context.program.expectedOrTypeOf(context.function, identity).predicted().anyObject)
             return false;
         const Value& definition = context.function.at(identity);
         if (definition.opcode != Opcode::GetArrayElement && definition.opcode != Opcode::ElemGet)
@@ -306,7 +306,7 @@ static ValueID findReceiverWithGuessedLayout(FunctionPassContext& context, const
     if (!testsType)
         return { };
     ValueID receiver = use.operand(*receiverOf(use.opcode));
-    if (context.program.typeOf(context.function, receiver).layouts || isDescribedByChecker(context, receiver))
+    if (context.program.typeOf(context.function, receiver).layouts || isDescribedByChecker(context, receiver).predicted())
         return { };
     return context.analyses.identityOf(receiver);
 }
@@ -345,13 +345,13 @@ static bool holdsMemberUnderSymbolOfProgram(const Program& program, std::span<co
 }
 
 // One of the objects that may arrive finds such a member under the name that is read.
-static bool readsMemberUnderSymbolOfProgram(FunctionPassContext& context, const Value& use)
+static Expected<bool> readsMemberUnderSymbolOfProgram(FunctionPassContext& context, const Value& use)
 {
     if (use.opcode != Opcode::PropGet || !isSymbolOfProgram(context.program.at(use.key()).kind))
         return false;
     const Program& program = context.program;
-    ReceiverCandidates candidates = receiverCandidates(program, context.function, use.objectOperand(), use.receivers());
-    for (const LayoutList* layouts : { &candidates.proven, &candidates.predicted }) {
+    const ReceiverCandidates candidates = receiverCandidates(program, context.function, use.objectOperand(), use.receivers());
+    for (const LayoutList* layouts : { &candidates.proven, &candidates.expected.predicted() }) {
         for (LayoutID layout : *layouts) {
             if (findMemberOfClass(program, layout, ClassSide::Prototype, use.key()))
                 return true;
@@ -390,7 +390,7 @@ static TestSites collectTestSites(FunctionPassContext& context)
         if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
             return true;
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
-        if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use))
+        if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use).predicted())
             return true;
         Expected<HeatClass> heatClass = heatClassOf(context, site.point.block);
         // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
@@ -753,7 +753,7 @@ struct WayBackPlanner {
                     break;
                 }
             }
-            if (!inFront || mayBeVariableReadEarly(context.analyses, inFront) || !canReplaceOperand(context, test, operandIndex, inFront, isNarrowedByEarlierTest.get(operandIndex)))
+            if (!inFront || context.program.typeOf(context.function, inFront).mayBeUnspecified() || !canReplaceOperand(context, test, operandIndex, inFront, isNarrowedByEarlierTest.get(operandIndex)))
                 return std::nullopt;
             operands.append(inFront);
         }
@@ -967,7 +967,7 @@ static bool expectedTypeTellsResultOf(FunctionPassContext& context, const TestSi
     const Value& use = context.function.at(site.use);
     if (!use.type || use.expected().predicted())
         return true;
-    TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types, &context.typingMemo);
+    TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types, &context.typingMemo).predicted();
     return !expectedNow || expectedNow == use.type;
 }
 
@@ -1327,13 +1327,13 @@ struct NamedUse {
 };
 
 struct LayoutsToTest {
-    LayoutList layouts;
+    Expected<LayoutList> layouts;
     bool leavesOutDeclarations { false };
 };
 
 enum class CountedUses : uint8_t { OnEveryPath, All };
 
-using ExpectedValues = Vector<std::pair<ValueID, TypeID>>;
+using ExpectedValues = Vector<std::pair<ValueID, ExpectedType>>;
 using NameList = SortedSet<PropertyKeyID, 8>;
 using BuiltinClassList = SortedSet<BuiltinClassID, 4>;
 
@@ -1611,13 +1611,13 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
 }
 
 // A stamp that is not complete lists what flow saw arrive beside what it did not see. It joins what the names say and does not stand for it.
-static bool isExpectedToFindMember(const Program& program, const Function& function, const NamedUse& use)
+static Expected<bool> isExpectedToFindMember(const Program& program, const Function& function, const NamedUse& use)
 {
     LayoutSetID stamp = use.stamp && program.at(use.stamp).listsEveryLayout() ? use.stamp : LayoutSetID();
     if (!function.at(use.receiver).expected().predicted() && !stamp)
         return false;
     std::span<const LayoutID> holders = program.layoutsWithName(use.key);
-    return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).predicted, [&](LayoutID layout) { return std::ranges::binary_search(holders, layout); });
+    return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).expected.predicted(), [&](LayoutID layout) { return std::ranges::binary_search(holders, layout); });
 }
 
 static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyID name)
@@ -1630,8 +1630,10 @@ static LayoutID declarerOf(const Program& program, LayoutID layout, PropertyKeyI
 }
 
 // A class and the layouts below it have an inherited field in one slot, and a test for all of them is one test.
-static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, const LayoutList& layouts, std::span<const NamedUse> uses, size_t maxDeclarations, const LayoutList& layoutsMetElsewhere)
+static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, const Expected<LayoutList>& guessed, std::span<const NamedUse> uses, size_t maxDeclarations, const Expected<LayoutList>& metElsewhere)
 {
+    const LayoutList& layouts = guessed.predicted();
+    const LayoutList& layoutsMetElsewhere = metElsewhere.predicted();
     if (layouts.size() <= maxDeclarations)
         return { layouts, false };
 
@@ -1680,7 +1682,7 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
 }
 
 // The object is expected to have every name that the uses that count ask it for.
-static LayoutList layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, size_t maxLayouts)
+static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, size_t maxLayouts)
 {
     // A name that this many layouts have tells none of them from the others.
     auto isCommon = [&](PropertyKeyID name) { return program.layoutsWithName(name).size() > maxLayouts; };
@@ -1697,7 +1699,7 @@ static LayoutList layoutsExpectedFrom(const Program& program, std::span<const Na
         if (names.isEmpty())
             break;
         if (std::ranges::all_of(names, isCommon))
-            return { };
+            return LayoutList();
         LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
         if (!layouts.isEmpty())
             return layouts;
@@ -1717,7 +1719,7 @@ static LayoutList layoutsExpectedFrom(const Program& program, std::span<const Na
     return layoutsWithAnyName;
 }
 
-static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
+static Expected<bool> resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)
 {
     return std::ranges::any_of(uses, [&](const NamedUse& use) {
         const Value& access = context.function.at(use.access);
@@ -1727,7 +1729,7 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
         query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
         query->isOnlyCalled = access.opcode == Opcode::PropGet && isOnlyCalled(context.analyses, use.access);
         query->receivers.level = KnowledgeLevel::Expected;
-        query->receivers.predicted = layouts;
+        query->receivers.expected = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
         // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there, as `"then" in value` and `Object.hasOwn(value, "then")` do. `target.get.apply(..)` does not ask.
         bool asksWhetherMethodIsThere = plan.form == AccessForm::Method && !query->isOnlyCalled && use.demand != NameDemand::Required;
@@ -1741,14 +1743,14 @@ static bool isAllocatedHere(FunctionPassContext& context, ValueID value)
     return !proofsOfAllocation(context.program, context.function, context.function.at(context.analyses.identityOf(value))).isEmpty();
 }
 
-static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layouts)
+static Expected<LayoutList> withoutLayoutsOfOtherKind(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)
 {
     const Program& program = context.program;
     auto holdsOnlyFunctions = [&](const FieldReference& field) {
         const Type& slotType = program.at(slotTypeOf(program, fieldAt(program, field)));
         return !slotType.isUndefinedOrNull() && !(slotType.primitives & ~Primitive::UndefinedOrNull) && slotType.withOnlyObjects().isSubsetOf(Type::function(), program);
     };
-    LayoutList kept = layouts;
+    LayoutList kept = layouts.predicted();
     for (const NamedUse& use : uses) {
         bool asksForMethod = use.demand == NameDemand::Required && isCalledInPlace(context, use.access);
         if (use.demand == NameDemand::Required && !asksForMethod)
@@ -1766,29 +1768,29 @@ static LayoutList withoutLayoutsOfOtherKind(FunctionPassContext& context, std::s
 }
 
 // The names asked on every path leave the layouts in that a name asked on one path would take out. Where they leave more layouts than a test is made for, every name counts.
-static LayoutsToTest findLayoutsToTestFor(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxDeclarations, size_t maxLayouts, const LayoutList& layoutsMetElsewhere)
+static LayoutsToTest findLayoutsToTestFor(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxDeclarations, size_t maxLayouts, const Expected<LayoutList>& layoutsMetElsewhere)
 {
     auto choose = [&](CountedUses countedUses) -> LayoutsToTest {
-        LayoutList layoutsWithNames = layoutsExpectedFrom(context.program, uses, countedUses, maxLayouts);
-        if (layoutsWithNames.isEmpty() || layoutsWithNames.size() > maxLayouts)
+        Expected<LayoutList> layoutsWithNames = layoutsExpectedFrom(context.program, uses, countedUses, maxLayouts);
+        if (layoutsWithNames.predicted().isEmpty() || layoutsWithNames.predicted().size() > maxLayouts)
             return { };
         LayoutsToTest chosen = keepLikeliestDeclarations(context, withoutLayoutsOfOtherKind(context, uses, layoutsWithNames), uses, maxDeclarations, layoutsMetElsewhere);
-        if (chosen.layouts.isEmpty() || !resolvesSomeUse(context, uses, chosen.layouts))
+        if (chosen.layouts.predicted().isEmpty() || !resolvesSomeUse(context, uses, chosen.layouts).predicted())
             return { };
         return chosen;
     };
-    auto takesEveryLayout = [](const LayoutsToTest& chosen) { return !chosen.layouts.isEmpty() && !chosen.leavesOutDeclarations; };
+    auto takesEveryLayout = [](const LayoutsToTest& chosen) { return !chosen.layouts.predicted().isEmpty() && !chosen.leavesOutDeclarations; };
 
     LayoutsToTest fromEveryPath = choose(CountedUses::OnEveryPath);
     if (takesEveryLayout(fromEveryPath) || std::ranges::all_of(uses, &NamedUse::isOnEveryPath))
         return fromEveryPath;
     LayoutsToTest fromEveryName = choose(CountedUses::All);
-    if (fromEveryPath.layouts.isEmpty() || takesEveryLayout(fromEveryName))
+    if (fromEveryPath.layouts.predicted().isEmpty() || takesEveryLayout(fromEveryName))
         return fromEveryName;
     return fromEveryPath;
 }
 
-static void expectOfReceivers(std::span<const NamedUse> uses, TypeID expected, ExpectedValues& expectedValues)
+static void expectOfReceivers(std::span<const NamedUse> uses, ExpectedType expected, ExpectedValues& expectedValues)
 {
     for (const NamedUse& use : uses) {
         if (!expectedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
@@ -1853,12 +1855,12 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
     }
     if (!receivers)
         return false;
-    expectOfReceivers(uses, context.types.intern(*receivers), expectedValues);
+    expectOfReceivers(uses, ExpectedType(context.types.intern(*receivers)), expectedValues);
     return true;
 }
 
 // `twin.index`, and nothing else is asked of the twin.
-static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsMet)
+static Expected<LayoutList> layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layoutsMet)
 {
     bool isExpectedToBeSomeObject = std::ranges::any_of(uses, [&](const NamedUse& use) {
         TypeID expected = context.function.at(use.receiver).expected().predicted();
@@ -1867,7 +1869,7 @@ static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<c
     LayoutList layouts;
     if (isExpectedToBeSomeObject)
         return layouts;
-    for (LayoutID layout : layoutsMet) {
+    for (LayoutID layout : layoutsMet.predicted()) {
         if (std::ranges::all_of(uses, [&](const NamedUse& use) { return std::ranges::binary_search(context.program.layoutsWithName(use.key), layout); }))
             layouts.add(layout);
     }
@@ -1875,12 +1877,12 @@ static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<c
 }
 
 // `this.response.status`: the layouts that the program stores under `response` and that answer `status`.
-static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxLayouts)
+static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxLayouts)
 {
     const Program& program = context.program;
     auto read = propertyReadBy(program, context.function.at(context.analyses.identityOf(uses[0].receiver)));
     if (!read || !read->second || context.function.at(uses[0].receiver).expected().predicted())
-        return { };
+        return LayoutList();
     LayoutList layouts;
     for (LayoutID layout : program.layoutsWithName(uses[0].key)) {
         if (!context.inputs.heat.isStoredUnder(layout, read->second).predicted())
@@ -1889,19 +1891,24 @@ static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& conte
             continue;
         layouts.add(layout);
         if (layouts.size() > maxLayouts)
-            return { };
+            return LayoutList();
     }
     return layouts;
 }
 
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, LayoutList& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
 {
     Function& function = context.function;
-    auto expectLayouts = [&](std::span<const NamedUse> uses, const LayoutList& layouts) {
-        expectOfReceivers(uses, context.types.intern(Type::forLayouts(layouts.span(), context.types)), expectedValues);
+    auto expectLayouts = [&](std::span<const NamedUse> uses, const Expected<LayoutList>& layouts) {
+        expectOfReceivers(uses, ExpectedType(context.types.intern(Type::forLayouts(layouts.predicted().span(), context.types))), expectedValues);
     };
-    bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use); });
+    auto noteMet = [&](const Expected<LayoutList>& layouts) {
+        LayoutList met = layoutsMet.predicted();
+        met.unite(layouts.predicted());
+        layoutsMet = WTF::move(met);
+    };
+    bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use).predicted(); });
     // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
         TypeID expected = function.at(use.receiver).expected().predicted();
@@ -1919,38 +1926,39 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return true;
         if (waitsForOtherSubjects)
             return false;
-        LayoutList layouts = findLayoutsStoredUnderNameOfSubject(context, uses, context.limit(LimitID::MaxDeclarationsPredictedFromNames));
-        if (layouts.isEmpty())
+        Expected<LayoutList> layouts = findLayoutsStoredUnderNameOfSubject(context, uses, context.limit(LimitID::MaxDeclarationsPredictedFromNames));
+        if (layouts.predicted().isEmpty())
             layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
-        if (!layouts.isEmpty())
+        if (!layouts.predicted().isEmpty())
             expectLayouts(uses, layouts);
         return true;
     }
 
     size_t maxDeclarations = context.limit(LimitID::MaxDeclarationsPredictedFromNames);
-    LayoutList layoutsStoredUnderName = findLayoutsStoredUnderNameOfSubject(context, uses, maxDeclarations);
-    if (!layoutsStoredUnderName.isEmpty() && resolvesSomeUse(context, uses, layoutsStoredUnderName)) {
-        layoutsMet.unite(layoutsStoredUnderName);
+    Expected<LayoutList> layoutsStoredUnderName = findLayoutsStoredUnderNameOfSubject(context, uses, maxDeclarations);
+    if (!layoutsStoredUnderName.predicted().isEmpty() && resolvesSomeUse(context, uses, layoutsStoredUnderName).predicted()) {
+        noteMet(layoutsStoredUnderName);
         expectLayouts(uses, layoutsStoredUnderName);
         return true;
     }
     LayoutsToTest chosen = findLayoutsToTestFor(context, uses, maxDeclarations, context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
-    if (chosen.layouts.isEmpty())
+    if (chosen.layouts.predicted().isEmpty())
         return true;
     if (chosen.leavesOutDeclarations) {
         if (waitsForOtherSubjects)
             return false;
         context.gaveUp(LimitID::MaxDeclarationsPredictedFromNames, uses[0].access);
-    } else if (chosen.layouts.size() <= maxDeclarations)
-        layoutsMet.unite(chosen.layouts);
+    } else if (chosen.layouts.predicted().size() <= maxDeclarations)
+        noteMet(chosen.layouts);
 
     expectLayouts(uses, chosen.layouts);
     return true;
 }
 
 // The layouts of the receivers that the function knows or expects already. A receiver that may be one of many tells nothing.
-static void addLayoutsOfKnownReceivers(FunctionPassContext& context, LayoutList& met)
+static void addLayoutsOfKnownReceivers(FunctionPassContext& context, Expected<LayoutList>& layoutsMet)
 {
+    LayoutList met = layoutsMet.predicted();
     const Function& function = context.function;
     size_t maxLayoutsOfReceiver = context.limit(LimitID::MaxDeclarationsPredictedFromNames);
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
@@ -1959,13 +1967,14 @@ static void addLayoutsOfKnownReceivers(FunctionPassContext& context, LayoutList&
             std::optional<uint32_t> receiver = receiverOf(access.opcode);
             if (!receiver || !access.operand(*receiver))
                 continue;
-            ReceiverCandidates candidates = receiverCandidates(context.program, function, access.operand(*receiver));
-            for (const LayoutList* layouts : { &candidates.proven, &candidates.predicted }) {
+            const ReceiverCandidates candidates = receiverCandidates(context.program, function, access.operand(*receiver));
+            for (const LayoutList* layouts : { &candidates.proven, &candidates.expected.predicted() }) {
                 if (layouts->size() <= maxLayoutsOfReceiver)
                     met.unite(*layouts);
             }
         }
     }
+    layoutsMet = WTF::move(met);
 }
 
 // The type of a checked position is what every value that is passed to it was tested for, so it stays.
@@ -1984,9 +1993,9 @@ static DeclaredType* findUncheckedEntryParameter(Function& function, ValueID val
 static bool expectValues(FunctionPassContext& context, const ExpectedValues& expectedValues, ExpectedTypesByUse& expectations)
 {
     Function& function = context.function;
-    auto narrowedTypeOf = [&](ValueID id, TypeID expected) {
+    auto narrowedTypeOf = [&](ValueID id, ExpectedType expected) {
         const Value& value = function.at(id);
-        TypeID narrowed = context.types.intersectionOf(value.type, expected);
+        TypeID narrowed = context.types.intersectionOf(value.type, expected.predicted());
         TypeID expectedAlready = value.expected().predicted() ? context.types.intersectionOf(narrowed, value.expected().predicted()) : TypeTable::never;
         if (expectedAlready != TypeTable::never)
             narrowed = expectedAlready;
@@ -2085,7 +2094,7 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
     };
 
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, use);
-    if (!query || query->receivers.isProven() || query->receivers.predicted.size() < 2)
+    if (!query || query->receivers.isProven() || query->receivers.expected.predicted().size() < 2)
         return refuse();
     query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
     PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
@@ -2104,7 +2113,7 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
     if (isRefusedByArms)
         return refuse();
     RELEASE_ASSERT(!isKnownToBeRefused);
-    return Type::forLayouts(query->receivers.predicted.span(), context.types);
+    return Type::forLayouts(query->receivers.expected.predicted().span(), context.types);
 }
 
 void reportUnionReceiverTests(TestSiteReporter& reporter)
@@ -2176,7 +2185,7 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
-    LayoutList layoutsMet;
+    Expected<LayoutList> layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
         if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))

@@ -348,7 +348,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         ValueID site = receiver.statement.site;
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
-        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.family, receiver.held)) {
+        if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.held)) {
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
             return;
         }
@@ -392,7 +392,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
     auto stampCall = [&](const StampedOperand& callee) {
-        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.family, callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
+        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);
         if (!callees || !callees->listsEveryCallee()) {
             tables.sites.accessSiteLosses[site.index()] = lossOfStampedOperand(callee, [&](FlowSiteLoss& loss) {

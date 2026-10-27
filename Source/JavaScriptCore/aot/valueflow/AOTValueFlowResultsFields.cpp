@@ -875,9 +875,22 @@ struct FieldResults {
         return above;
     }
 
+    // Who has not accounted for the names on those of the objects that the program makes. For its own objects the table answers name by name.
+    OptionSet<Actor> actorsOpenOnNamesOfObjectsOfProgramAmong(ValueSetMaker& maker, ValueSetID objects) const
+    {
+        ValueSetID objectsOfProgram = maker.intersect(objects, ValueSets::complement(inputs.universe().builtinObjects()));
+        OptionSet<Actor> open = actorsOpenOn(inputs, objectsOfProgram);
+        // No row lists every name that its built-in puts on what it is handed.
+        if (sets.anyMember(objectsOfProgram, [&](ValueFlowObjectID object) { return markedMutationsOf(inputs, object).contains(ObjectMutation::ReachNativeCode); }))
+            open.add(Actor::NativeCode);
+        return open & actorsThatCanWrite(PlaceKind::Property);
+    }
+
     bool inheritsNothingUnder(ValueSetMaker& maker, LayoutID id, ValueSetID& above, PropertyKeyID key) const
     {
         if (program.isIndexLike(key) || stores.hasObjectOfCodeWithoutSolve(id) || stores.getsCopiedProperties(id) || mayFindNameIn(maker, objectsAbove(maker, id, above), key))
+            return false;
+        if (!actorsOpenOnNamesOfObjectsOfProgramAmong(maker, above).isEmpty())
             return false;
         RELEASE_ASSERT(tables.builtins.areFilled);
         bool mayGainName = false;
@@ -906,11 +919,15 @@ struct FieldResults {
         return open;
     }
 
-    using WritesSeen = Vector<Write, 3>;
-    static WritesSeen writesSeen(ValueSetID stored, bool isStoredAfterCreation, OptionSet<ObjectMutation> possible)
+    using WritesSeen = Vector<Write, 4>;
+    static WritesSeen writesSeen(OptionSet<Actor> writers, ValueSetID stored, bool isStoredAfterCreation, OptionSet<ObjectMutation> possible)
     {
         WritesSeen writes;
-        writes.append(Write { isStoredAfterCreation ? Actor::Statements : Actor::Creation, isStoredAfterCreation ? WriteForm::Store : WriteForm::AtCreation, { }, stored });
+        for (Actor writer : writers)
+            writes.append(Write { writer, isStoredAfterCreation && writer != Actor::Creation ? WriteForm::Store : WriteForm::AtCreation, { }, stored });
+        // A store that the index lists and whose writer it does not: what a constructor stores by name, what a birth with copies holds.
+        if (isStoredAfterCreation && !isWrittenAs(writes.span(), { WriteForm::Store }))
+            writes.append(Write { Actor::Statements, WriteForm::Store, { }, stored });
         if (possible.contains(ObjectMutation::DeleteField))
             writes.append(Write { Actor::Statements, WriteForm::Delete, { }, ValueSets::nothing });
         if (possible.contains(ObjectMutation::RedefineProperty))
@@ -966,6 +983,7 @@ struct FieldResults {
         struct HeldField : FactsOfField {
             OptionSet<ObjectMutation> possibleMutations;
             OptionSet<Actor> open;
+            OptionSet<Actor> writers;
             FieldReference declaration;
             FlowAccessorField accessor;
             ValueSetID stored { ValueSets::nothing };
@@ -1036,6 +1054,7 @@ struct FieldResults {
                         held.accessor = stores.accessorDefinedUnder(maker, id, field.key);
                     }
                     held.stored = stores.storedUnder(maker, id, field.key);
+                    held.writers = stores.writersSeenUnder(id, field.key);
                     held.storedNumbers = stores.numbersStoredUnder(id, field.key);
                 }
                 fieldsHeldByObjectsWith[index].append(WTF::move(held));
@@ -1050,7 +1069,7 @@ struct FieldResults {
                 if (held.facts.contains(FieldFact::IsAskedForAccessor))
                     uniteAccessors(application.layouts[layout].fields[field].accessor, WTF::move(held.accessor), !all.facts.contains(FieldFact::IsAskedForAccessor));
                 all.facts.add(held.facts);
-                ledger.sign(held.declaration, held.open, writesSeen(held.stored, held.facts.contains(FieldFact::IsStoredAfterCreation), held.possibleMutations).span());
+                ledger.sign(held.declaration, held.open, writesSeen(held.writers, held.stored, held.facts.contains(FieldFact::IsStoredAfterCreation), held.possibleMutations).span());
                 contents.stored[layout][field] = makers.of(0).unite(contents.stored[layout][field], held.stored);
                 contents.storedNumbers[layout][field].unite(held.storedNumbers);
             }
@@ -1308,6 +1327,35 @@ struct FieldResults {
             if (LayoutID base = program.layouts[index].has(LayoutFlags::IsOfCreatedObject) ? application.layouts[index].classFlow.prototypeBase : LayoutID())
                 layoutsHandedToObjectCreate.quickSet(base.index());
         }
+        // A store under a name into what a read under a name has answered names a field of the layouts that are written under the name of the read, where that name tells a few layouts from all others.
+        AOT_THRESHOLD(size_t, mostLayoutsToldByName, 4);
+        KeysByLayout keysNamedBehindReads(numberOfLayouts);
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            if (!inputs.isReached(FunctionID(index)))
+                continue;
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropSet)
+                    continue;
+                ValueFlowNodeID receiver = inputs.bodies().operandsOf(statement)[0].node;
+                ValueSetID seen = receiver ? inputs.solver().writtenUnderNameOfReadSeenAt(receiver) : ValueSets::nothing;
+                PropertyKeyID key = program.functions[index].at(statement.site).key();
+                if (!key || seen == ValueSets::nothing)
+                    continue;
+                Vector<LayoutID, mostLayoutsToldByName + 1> layouts;
+                sets.forEachMember(seen, [&](ValueFlowObjectID object) {
+                    if (LayoutID layout = inputs.universe().layoutOf(object); layout && layouts.size() <= mostLayoutsToldByName && !layouts.contains(layout))
+                        layouts.append(layout);
+                });
+                if (layouts.size() > mostLayoutsToldByName)
+                    continue;
+                for (LayoutID layout : layouts)
+                    keysNamedBehindReads[layout.index()].append(key);
+            }
+        }
+        for (Vector<PropertyKeyID>& keys : keysNamedBehindReads) {
+            AOT::sort(keys);
+            keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
+        }
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
             forEachOnProvenChain(application, LayoutID(index), [&](LayoutID current) {
                 fieldCountsAsAnalyzed[index] += program.at(current).fields.size();
@@ -1318,6 +1366,9 @@ struct FieldResults {
             if (accessors.isEmpty() && program.layouts[index].has(LayoutFlags::IsOfCreatedObject) && application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
                 return;
             keysByLayout[index] = stores.keysNamedByStoresIntoKnownObjects(LayoutID(index));
+            // A literal says what it has. What a constructor makes is filled on by others.
+            if (program.layouts[index].kind == LayoutKind::Instance)
+                uniteSortedKeys(keysByLayout[index], keysNamedBehindReads[index]);
             uniteSortedKeys(keysByLayout[index], accessors);
             keysStoredByMembersAbove[index] = keysStoredIntoThisByMembersAbove(layoutsHandedToObjectCreate, LayoutID(index));
             uniteSortedKeys(keysByLayout[index], keysStoredByMembersAbove[index]);
@@ -1416,6 +1467,7 @@ struct FieldResults {
                 field.key = key;
                 OptionSet<ObjectMutation> possible;
                 OptionSet<Actor> open;
+                OptionSet<Actor> writers;
                 ValueSetID stored = ValueSets::nothing;
                 ValueFlowNumbers storedNumbers;
                 bool isStoredBeforeObjectsLeak = true;
@@ -1429,11 +1481,12 @@ struct FieldResults {
                     possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : possibleMutationsOf(below));
                     open.add(actorsOpenOnObjectsWith(below));
                     stored = maker.unite(stored, stores.storedUnder(maker, below, key));
+                    writers.add(stores.writersSeenUnder(below, key));
                     storedNumbers.unite(stores.numbersStoredUnder(below, key));
                     isStoredBeforeObjectsLeak &= holdsSinceBirth(below, key) || (constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { }));
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
-                WritesSeen writes = writesSeen(stored, true, possible);
+                WritesSeen writes = writesSeen(writers, stored, true, possible);
                 ClaimsOfFieldsEnabled enabled = claimsEnabledFor(index);
                 enabled.storeCounts &= !sets.isEmpty(stored);
                 claimWhatNeverHappens(field.flow, Writers(writes.span(), open), isStoredBeforeObjectsLeak, enabled);

@@ -36,6 +36,7 @@ struct FrequencyFacts {
 
         BlockFrequency recorded { BlockFrequency::Normal };
         BlockFrequency applied { BlockFrequency::Normal };
+        bool isPartOfEdge { false };
         bool isInherentlyRare { false };
         bool isNormalExit { false };
         BranchSide unlikelySide { BranchSide::Unknown };

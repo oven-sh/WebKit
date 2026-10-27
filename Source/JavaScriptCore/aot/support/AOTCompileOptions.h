@@ -33,6 +33,7 @@ using Wire::AdmittedCode;
 using Wire::CheckSet;
 using Wire::CompileAction;
 using Wire::ExcludedCode;
+using Wire::FlowOverride;
 using Wire::FlowResultKind;
 using Wire::HeatOverride;
 using Wire::ImageForm;
@@ -167,8 +168,9 @@ struct CompileOptions {
     bool checksMovedLoads { false };
     // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
     bool checksFlowFixpoint { false };
-    // A function that is reached and cannot get past its first block but by a throw of its own is dead code that nobody has called dead, or a value there has lost a source: an error.
-    bool checksThatFunctionsGetPastEntry { false };
+    // More to begin with never proves more. The flow analysis is solved twice: as it is, and with more given to nodes that the layout seed draws. Whatever the first solve holds and the second lacks is an error.
+    // The build goes on from the second.
+    bool widensFlow { false };
     bool checksThatUsedValuesAreListed { false };
     bool validatesReferenceGuards { false };
     ReportSet reports { };

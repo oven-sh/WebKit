@@ -271,7 +271,7 @@ bool TestSiteReporter::hasFailedTest(std::span<const Value> tests) const
 
 AOT_THRESHOLD(size_t, minFieldsOfBagOfOptions, 24);
 
-static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const Value& test)
+static Expected<bool> asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const Value& test)
 {
     if (test.opcode != Opcode::TypeTest)
         return false;
@@ -280,7 +280,7 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     if (!tested.layouts)
         return false;
     // `handle.flags`, `handle.end()`, where the handle is an object of the host or a record that stands in for one: no test of layouts lets the object of the host pass, and it is as expected as the record.
-    if (tested.classes.isEmpty() && !program.expectedOrTypeOf(reporter.function(), test.operand(testedOperandIndex)).classes.isEmpty())
+    if (tested.classes.isEmpty() && !program.expectedOrTypeOf(reporter.function(), test.operand(testedOperandIndex)).predicted().classes.isEmpty())
         return true;
     // `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
     return std::ranges::all_of(program.at(tested.layouts).completeMembers(), [&](LayoutID id) {
@@ -328,7 +328,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
         RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
-    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test) || !canPassWithOtherTests(*this, tests, test); }))
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test).predicted() || !canPassWithOtherTests(*this, tests, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.

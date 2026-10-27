@@ -24,20 +24,22 @@ function f0 name="firstStateMayStillBeEmpty" parameters=[{type=string}, {type=nu
     Jump -> next b5(v12)
   b4():
     Jump -> next b5(v5)
-  b5(v13):
-    v14 = String string="<li class="
-    v15 = String string=">"
-    v16 = Strcat v6, v14, v13, v15
-    v17 = Integer integer=1
-    v18 = Add v7, v17
-    Jump -> next b1(v16, v18)
+  b5(v13: string|unspecified):
+    v14 = Entered function=f1
+    v15 = AssumeType v13, v14 provenType=string
+    v16 = String string="<li class="
+    v17 = String string=">"
+    v18 = Strcat v6, v16, v15, v17
+    v19 = Integer integer=1
+    v20 = Add v7, v19
+    Jump -> next b1(v18, v20)
   b6():
     Return v6
 }
 # CHECK-LABEL: name="firstStateMayStillBeEmpty"
 # CHECK: b4():
 # CHECK-NEXT: Jump -> next b5(v5)
-# CHECK: b5(v13: string):
+# CHECK: b5(v13: string|unspecified):
 
 function f1 name="firstStateIsThere" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
     v3 = String string=""

@@ -95,6 +95,8 @@ struct Proven {
     // What the whole program lets arrive.
     static ProvenType byFlow(TypeID type, ProofScope scope) { return { type, scope }; }
     static ProvenInEveryVersion byFlowOfPosition(TypeID type) { return ProvenInEveryVersion(type); }
+    // The cast names a fact, and the position holds its type wherever the fact is defined.
+    static ProvenInEveryVersion behindFact(TypeID type) { return ProvenInEveryVersion(type); }
     // The claim is moved or copied as it stands.
     static ProvenType asClaimedBy(const Value& assumeType);
     // Flow has followed all that is stored into the collections of a type. It holds of a value as far as the type does.
@@ -105,6 +107,20 @@ struct Proven {
     template<typename T> static ProvenValue<T> byClosedSet(T members) { return ProvenValue<T>(std::move(members)); }
     // Flow lists at an operation every function that it has followed there. A function that arrives unlisted has callers that nobody claims to know.
     template<typename T> static ProvenValue<T> byFlowOfCallees(T followed) { return ProvenValue<T>(std::move(followed)); }
+
+    // The ways from a prediction to a fact. No other reason takes what a prediction says.
+    // The target of a conversion: what the type of the value does not prove of it becomes a test.
+    static ProvenInEveryVersion byConversion(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
+    // From now on every store into the position is tested for the type.
+    static ProvenInEveryVersion byTestsAtStores(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
+    // Whatever arrives has the type, as long as the positions that are proven together with this one hold theirs.
+    static ProvenInEveryVersion byEveryArrival(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
+    // Whoever writes it down asks right behind that whether every arrival has the type, and takes it back where one has not.
+    static ProvenInEveryVersion asCandidate(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
+    // Flow has followed all that arrives at the check, and it lies inside.
+    static ProvenInEveryVersion byFlowAtCheck(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
+    // TestingSwitch::ProveEverything.
+    static ProvenInEveryVersion byTestingSwitch(ExpectedType expected) { return ProvenInEveryVersion(expected.predicted()); }
 };
 
 } } } // namespace JSC::AOT::Typed

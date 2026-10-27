@@ -68,7 +68,7 @@ private:
 
 CalleeCandidates calleeCandidates(const Program&, const Function&, ValueID callee);
 // A value of the type may be a function that the type does not list.
-bool admitsUnlistedFunctions(const Program&, const Type&);
+bool admitsUnlistedFunctions(const Type&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -45,6 +45,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         ClimbingSet holders = withSourcesOfCopies(m_context, known(sources));
         add(m_context.nodes().ofHost(sourcesOfCopies), holders);
         connect(m_context.readWhatWasWritten(holders, everyValue), stored);
+        connect(enumerablePropertiesNobodyWrote(m_context, holders, MetBy::Program), stored);
         connect(storedThroughUnknownObjectInto(holders, everyValue), stored);
         connect(storedThroughUntrackedObjectInto(holders, everyValue), stored);
         if (keepsAccessors) {

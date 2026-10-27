@@ -82,10 +82,10 @@ Value makeValidateCallee(ValueID callee, TypeID validatedType)
 }
 
 // Which checks stand in front of it is known when every answered check is gone: applyScopesOfAnsweredChecks().
-static void assumeInPlaceOfChecking(Value& check, TypeID held)
+static void assumeInPlaceOfChecking(Value& check, ProvenInEveryVersion held)
 {
     RELEASE_ASSERT(check.opcode == Opcode::Check);
-    check.becomeAssumeType(check.valueOperand(), Proven::byFlow(held, ProofScope::EveryVersion));
+    check.becomeAssumeType(check.valueOperand(), held);
 }
 
 static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update, Vector<ValueID, 8>& answeredChecks)
@@ -95,7 +95,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         for (Value& value : body.function.editAllValues()) {
             if (value.opcode != Opcode::Check)
                 continue;
-            value.becomeAssumeType(value.valueOperand(), Proven::byFlow(value.expectedType().predicted(), ProofScope::EveryVersion));
+            value.becomeAssumeType(value.valueOperand(), Proven::byTestingSwitch(value.expectedType()));
             ++numberOfRemovedChecks;
         }
         return numberOfRemovedChecks;
@@ -105,7 +105,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
     for (const FlowClaimUpdate& entry : update.claims) {
         Value& check = body.function.edit(entry.claim);
         if (entry.isRedundant) {
-            assumeInPlaceOfChecking(check, check.expectedType().predicted());
+            assumeInPlaceOfChecking(check, Proven::byFlowAtCheck(check.expectedType()));
             if (!entry.holdsInEveryVersion)
                 answeredChecks.append(entry.claim);
             ++numberOfRemovedChecks;
@@ -117,7 +117,7 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         }
         // Nothing that arrives passes. What does arrive goes on, and the type that was declared says nothing of what is made from it.
         RELEASE_ASSERT(entry.arriving);
-        assumeInPlaceOfChecking(check, entry.arriving);
+        assumeInPlaceOfChecking(check, *Proven::byFlow(entry.arriving, ProofScope::EveryVersion).inEveryVersion());
         if (!entry.holdsInEveryVersion)
             answeredChecks.append(entry.claim);
         refutedChecks.append(entry.claim);
@@ -495,21 +495,19 @@ static bool isNarrowerInLayouts(const Program& program, const Type& current, con
 {
     if (!narrowed.layouts)
         return false;
-    if (!current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size())
-        return true;
-    return hasMembersWithoutLayout(program, current) && !hasMembersWithoutLayout(program, narrowed);
+    return !current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size();
 }
 
-static bool hasUnknownCallees(const Program& program, const Type& type)
+static bool hasUnknownCallees(const Type& type)
 {
-    return type.anyFunction || type.anyObject || hasMembersWithoutLayout(program, type);
+    return type.anyFunction || type.anyObject;
 }
 
-static bool isNarrowerInCallees(const Program& program, const Type& current, const Type& narrowed)
+static bool isNarrowerInCallees(const Type& current, const Type& narrowed)
 {
-    if (!narrowed.mayBeFunction() || hasUnknownCallees(program, narrowed))
+    if (!narrowed.mayBeFunction() || hasUnknownCallees(narrowed))
         return false;
-    return hasUnknownCallees(program, current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
+    return hasUnknownCallees(current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
 }
 
 static bool isNarrowerInClasses(const Type& current, const Type& narrowed)
@@ -527,7 +525,7 @@ bool isWorthNarrowing(const Program& program, const Type& current, const Type& n
     return (narrowed.isNever() && !current.isNever())
         || defaultSlotRepresentationOf(current) != defaultSlotRepresentationOf(narrowed)
         || isNarrowerInLayouts(program, current, narrowed)
-        || isNarrowerInCallees(program, current, narrowed)
+        || isNarrowerInCallees(current, narrowed)
         || isNarrowerInClasses(current, narrowed);
 }
 

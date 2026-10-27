@@ -183,6 +183,11 @@ static BuiltinClassID classOfCandidate(const ValueFlowResultInputs& inputs, Valu
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
+    // What native code makes where it calls a constructor of the table. Of a typed array nothing but its class and what is done to the object is asked.
+    if (universe.kindOf(object) == ValueFlowObjectKind::ResultOfBuiltin) {
+        BuiltinClassID builtinClass = inputs.classOf(object);
+        return builtinClass && program.builtins().typedArrayClassOf(builtinClass) ? builtinClass : BuiltinClassID();
+    }
     FunctionID function = universe.functionOf(object);
     if (!function || !inputs.isReached(function))
         return { };

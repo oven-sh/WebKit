@@ -336,6 +336,7 @@ void StoresByLayout::followCopiedProperties()
                 stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
                 stored.isGivenValueByOperation = true;
                 stored.isGivenValueByDefinition = true;
+                stored.writers.add(Actor::KeysNobodyKnows);
             }
         }
     }
@@ -353,6 +354,7 @@ void StoresByLayout::noteKeyBroughtByCopies(LayoutID target, PropertyKeyID key, 
     stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
     stored.isGivenValueByOperation = true;
     stored.isGivenValueByDefinition = true;
+    stored.writers.add(Actor::KeysNobodyKnows);
 }
 
 void StoresByLayout::findReceiversBehindChecks()
@@ -371,7 +373,7 @@ void StoresByLayout::findReceiversBehindChecks()
             if (hasTypedReceiver || accessOf(value.opcode) == Access::Read)
                 continue;
             if (std::optional<uint8_t> receiver = receiverOf(value.opcode); receiver && value.operand(*receiver))
-                hasTypedReceiver = program.typeOf(function, value.operand(*receiver)).hasOnlyLayouts(program);
+                hasTypedReceiver = program.typeOf(function, value.operand(*receiver)).hasOnlyLayouts();
             if (receiverOf(value.opcode) || value.opcode == Opcode::NewObject) {
                 value.forEachOperand([&](ValueID operand, uint32_t) {
                     hasTypedReceiver |= !program.typeOf(function, operand).integers.isEmpty();
@@ -397,7 +399,7 @@ LayoutSetID StoresByLayout::familyOfReceiverOf(const ValueFlowStatement& stateme
     const Function& function = program.at(statement.function);
     ValueID object = function.at(statement.site).operand(*receiver);
     const Type& type = program.typeOf(function, object);
-    if (!type.hasOnlyLayouts(program) || m_valuesBehindChecks[statement.function.index()].get(object.index()))
+    if (!type.hasOnlyLayouts() || m_valuesBehindChecks[statement.function.index()].get(object.index()))
         return { };
     return type.layouts;
 }
@@ -792,12 +794,12 @@ uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const
     const Program& program = m_inputs.program;
     const Function& function = program.at(writer.statement.function);
     const Type& type = program.typeOf(function, function.at(writer.statement.site).operand(*receiver));
-    if (type.hasOnlyLayouts(program))
+    if (type.hasOnlyLayouts())
         return type.layouts.index();
     if (!storesIntoThisOfConstructor(program, writer))
         return UINT32_MAX;
     const Type& typeOfThis = program.at(function.thisType.expected().predicted());
-    return typeOfThis.hasOnlyLayouts(program) ? typeOfThis.layouts.index() : UINT32_MAX;
+    return typeOfThis.hasOnlyLayouts() ? typeOfThis.layouts.index() : UINT32_MAX;
 }
 
 std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker& maker, const ValueFlowStatement& statement) const
@@ -901,6 +903,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .leavesOutComputedKey = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
         .copyLeavingOutKeys = leavesOutKeys ? static_cast<uint64_t>(statement.function.index()) << 32 | statement.site.index() : noCopyLeavingOutKeys,
         .accessorForms = store.accessorForms,
+        .writers = actorOf(m_inputs, statement, key.set, name),
         .value = value,
         .numbers = numbers,
     };
@@ -922,6 +925,7 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.definesValue |= write.definesValue;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
+        merged.writers.add(write.writers);
         merged.numbers.unite(write.numbers);
     };
     struct GroupsOfWorker {
@@ -978,6 +982,27 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
     return ParallelArray<WritesThroughSet>::concatenationOf(loops, WTF::move(groupsOfShares));
 }
 
+void StoresByLayout::noteWriters(StoresIntoObjects& stores, const WritesThroughSet& writes)
+{
+    ValueFlowName name = writes.name();
+    switch (shapeOf(name.kind).sort) {
+    case ValueFlowNameSort::Value:
+    case ValueFlowNameSort::Getter:
+    case ValueFlowNameSort::Setter:
+    case ValueFlowNameSort::Copy:
+        break;
+    case ValueFlowNameSort::Deletion:
+    case ValueFlowNameSort::Redefinition:
+    case ValueFlowNameSort::PrototypeLink:
+    case ValueFlowNameSort::Other:
+        return;
+    }
+    if (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter)
+        stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.writers.add(writes.writers);
+    else if (name.kind != ValueFlowNameKind::Elements)
+        stores.writersUnderNamesNobodyLists.add(writes.writers);
+}
+
 void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& stores, LayoutID layout, const WritesThroughSet& writes)
 {
     ValueFlowName name = writes.name();
@@ -989,6 +1014,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         std::optional<FieldReference> field = name.kind == ValueFlowNameKind::Property ? findField(m_inputs.program, layout, PropertyKeyID(name.payload), BaseChain::Predicted) : std::nullopt;
         bool isFilledByAllocation = field && fieldAt(m_inputs.program, *field).flags.contains(FieldFlags::IsRequired);
         note(maker, stores, name, writes.value, isFilledByAllocation, false);
+        noteWriters(stores, writes);
         noteNumbers(stores, name, writes.numbers);
         if (name.kind == ValueFlowNameKind::Property) {
             StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
@@ -1000,6 +1026,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
     if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).completeMembers(), layout))
         return;
     note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
+    noteWriters(stores, writes);
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
     if (name.kind == ValueFlowNameKind::CopiedFrom) {
         std::span<const PropertyKeyID> leftOut;
@@ -1335,6 +1362,7 @@ void StoresByLayout::noteWrites()
                     if (write.fillsTypedResult || write.familyOfReceiver != UINT32_MAX)
                         continue;
                     note(maker, placeholders[index].stores, write.name(), write.value, false, write.isNamedByOperation);
+                    noteWriters(placeholders[index].stores, write);
                     noteNumbers(placeholders[index].stores, write.name(), write.numbers);
                 }
             }
@@ -1345,6 +1373,7 @@ void StoresByLayout::noteWrites()
             for (uint32_t position : list.notedOnce) {
                 const WritesThroughSet& write = writes[position];
                 note(maker, list.stores, write.name(), write.value, !write.isStoredAfterCreation, false);
+                noteWriters(list.stores, write);
                 noteNumbers(list.stores, write.name(), write.numbers);
             }
             return;
@@ -1462,6 +1491,7 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
         stored.isStoredAfterCreation = true;
         stored.isNamedByOperation = true;
         stored.isStoredByConstructor |= name.isStoredByConstructor;
+        stored.writers.add(Actor::ReceiversNobodyKnows);
     };
 
     BitVector keysWithTooManyReceivers(program.types.numberOfPropertyKeys());
@@ -1482,7 +1512,7 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
                 if (!receiver)
                     continue;
                 const Type& type = program.typeOf(function, value.operand(*receiver));
-                if (type.hasOnlyLayouts(program))
+                if (type.hasOnlyLayouts())
                     found.append({ value.key(), type.layouts });
             }
         });
@@ -1594,6 +1624,17 @@ bool StoresByLayout::isStoredAfterCreation(LayoutID layout, PropertyKeyID key) c
         isStored |= (found != stores.underKey.end() && found->value.isStoredAfterCreation) || stores.underUnknownKey != ValueSets::nothing || stores.getsAccessorUnderUnknownKey || stores.getsCopiedProperties;
     });
     return isStored;
+}
+
+OptionSet<Actor> StoresByLayout::writersSeenUnder(LayoutID layout, PropertyKeyID key) const
+{
+    OptionSet<Actor> writers;
+    forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {
+        if (auto found = stores.underKey.find(key.index()); found != stores.underKey.end())
+            writers.add(found->value.writers);
+        writers.add(stores.writersUnderNamesNobodyLists);
+    });
+    return writers;
 }
 
 bool StoresByLayout::getsCopiedProperties(LayoutID layout, ObjectsOfLayout objects) const

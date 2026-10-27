@@ -40,7 +40,7 @@ enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 
 using PropertyWalk::isCompiledObject;
 
-// What the slot of one field may hold: a value of the field's type, or undefined or null where the slot has a marker for it.
+// What RuntimeLayoutTable::slotAdmits() lets into the slot of one field.
 class AcceptedValue {
 public:
     static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }

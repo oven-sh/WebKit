@@ -164,8 +164,8 @@ struct FamilyTables::Cache {
 
     struct Candidates {
         const Family* receiverFamily { nullptr };
-        LayoutList predicted;
-        LayoutList ofExpectedType;
+        Expected<LayoutList> expected;
+        Expected<LayoutList> ofExpectedType;
     };
 
     Cache(uint64_t phase, uint64_t generation)
@@ -245,7 +245,7 @@ std::span<const LayoutID> FamilyTables::allocatedMembersOf(LayoutSetID set) cons
 
 ReceiverState FamilyTables::stateOf(LayoutSetID set) const
 {
-    if (set && m_program.at(set).mayHoldObjectsWithoutLayout())
+    if (set && !m_program.at(set).listsEveryLayout())
         return { };
     std::span<const LayoutID> members = membersListedIn(m_program, set);
     if (members.size() < minCachedSetSize)
@@ -295,7 +295,7 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
 {
     if (expected == receiver)
         expected = { };
-    auto predictedMembers = [&](const LayoutList& proven, const LayoutList& expectedMembers) {
+    auto predictedMembers = [&](const LayoutList& proven, const LayoutList& expectedMembers) -> Expected<LayoutList> {
         const LayoutSet* stamped = stamp ? &m_program.at(stamp) : nullptr;
         LayoutList predicted;
         if (!receiver) {
@@ -315,14 +315,14 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
             predicted.clear();
         return predicted;
     };
-    auto membersOfExpectedType = [&](const LayoutList& expectedMembers) {
+    auto membersOfExpectedType = [&](const LayoutList& expectedMembers) -> Expected<LayoutList> {
         return receiver || !expected ? LayoutList() : expectedMembers;
     };
 
     if (std::max({ membersListedIn(m_program, receiver).size(), membersListedIn(m_program, expected).size(), membersListedIn(m_program, stamp).size() }) < minCachedSetSize) {
         LayoutList proven = computeAllocatedMembers(m_program, membersListedIn(m_program, receiver));
         LayoutList expectedMembers = computeAllocatedMembers(m_program, membersListedIn(m_program, expected));
-        LayoutList predicted = predictedMembers(proven, expectedMembers);
+        Expected<LayoutList> predicted = predictedMembers(proven, expectedMembers);
         return { WTF::move(proven), WTF::move(predicted), membersOfExpectedType(expectedMembers) };
     }
 
@@ -332,7 +332,7 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
         const LayoutList& expectedMembers = cache.familyOf(m_program, expected).allocatedMembers;
         return Cache::Candidates { &receiverFamily, predictedMembers(receiverFamily.allocatedMembers, expectedMembers), membersOfExpectedType(expectedMembers) };
     });
-    return { known.receiverFamily->allocatedMembers, known.predicted, known.ofExpectedType };
+    return { known.receiverFamily->allocatedMembers, known.expected, known.ofExpectedType };
 }
 
 bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const

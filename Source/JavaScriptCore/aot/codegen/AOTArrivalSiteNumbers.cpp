@@ -280,7 +280,7 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     bool isProven = candidates.proof == ReceiverProof::Type;
     if (isProven)
         description.level = KnowledgeLevel::Proven;
-    description.expected = WTF::move(isProven ? candidates.proven : candidates.predicted);
+    description.expected = isProven ? candidates.proven : candidates.expected.predicted();
     return description;
 }
 

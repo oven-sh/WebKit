@@ -513,7 +513,9 @@ private:
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;
-    BitVector m_modulesLoadedWithGraphs;
+    // A bit for each module, from the first walk on.
+    Vector<uint64_t> m_modulesLoadedWithGraphs;
+    bool isKnownToBeLoadedWithGraph(ModuleID module) const { return !m_modulesLoadedWithGraphs.isEmpty() && (m_modulesLoadedWithGraphs[module.index() / 64] >> (module.index() % 64) & 1); }
     // Their evaluation has begun, and nobody has asked since what lies below them.
     Vector<ModuleID, 4> m_rootsOfLoadedGraphs;
     bool m_firstEntryPointIsLoaded { false };

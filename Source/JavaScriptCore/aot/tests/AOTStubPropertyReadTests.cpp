@@ -1488,13 +1488,14 @@ static void testCallsOfClosuresNotCreated()
         AOT_TEST_CHECK(call.thisValue == object.address() && static_cast<uint32_t>(call.count) == 1 && call.firstArgument == argument);
         AOT_TEST_CHECK(slot == uncreatedDeferredClosure && numberOfCallsWithoutClosure == numberOfCallsBefore + 1);
     };
-    auto checkCallAfterRead = [&] {
+    // The read of a closure that is not made yet asks for nothing but the closure.
+    auto checkCallAfterRead = [&](Entry operationOfRead) {
         const uint64_t numberOfCallsBefore = numberOfCallsWithoutClosure;
         const uint32_t slotBefore = slot;
-        runner.recordCallsOf(Entry::operationAOTGetByIdAndCache);
+        runner.recordCallsOf(operationOfRead);
         runner.setResultOfRecordedOperation(closureMadeByRead.address());
         StubRun run = callMethod();
-        runner.countCallsOf(Entry::operationAOTGetByIdAndCache);
+        runner.countCallsOf(operationOfRead);
         Call call = callee.takeCall();
         AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == object.address() && static_cast<uint32_t>(run.recordedArguments[1]) == PropertyReads::name);
         AOT_TEST_CHECK(run.result == CalleeThatReadsItsClosure::result && call.numberOfCalls == 1 && call.callee == closureMadeByRead.address() && call.capture == untouched);
@@ -1511,24 +1512,24 @@ static void testCallsOfClosuresNotCreated()
     checkCallWithoutClosure(environment.address());
 
     slotOfEnvironment = absentCell32;
-    checkCallAfterRead();
+    checkCallAfterRead(Entry::operationAOTMaterializeDeferredClosure);
     slotOfEnvironment = encodedEnvironment;
 
     slot = absentDeferredClosure;
-    checkCallAfterRead();
+    checkCallAfterRead(Entry::operationAOTGetByIdAndCache);
     slot = uncreatedDeferredClosure;
 
     layout.kind().isSlim = 0;
-    checkCallAfterRead();
+    checkCallAfterRead(Entry::operationAOTMaterializeDeferredClosure);
     layout.kind().isSlim = 1;
 
     // Zero in the slot of any other reference says that the slot is empty.
     layout.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::Cell32);
-    checkCallAfterRead();
+    checkCallAfterRead(Entry::operationAOTGetByIdAndCache);
     layout.field().slot = SlotData::create(FakeTypedObject::offsetOfField, SlotRepresentation::DeferredClosure);
 
     const uint64_t closureWord = std::exchange(layout.closureWord(), 0);
-    checkCallAfterRead();
+    checkCallAfterRead(Entry::operationAOTMaterializeDeferredClosure);
     layout.closureWord() = closureWord;
 
     checkCallWithoutClosure(environment.address());

@@ -18,29 +18,32 @@ function f0 name="aTurnBeginsWithTwoTests" parameters=[{type=anything}, {type=bo
     v3 = TypeTest v0 testedType=f1
     Branch v3 -> taken b2(| 0), notTaken b6()
   b2(v4):
-    v5 = GetModuleVariable variable=g0
-    v6 = TypeTest v5 testedType=L0
-    Branch v6 -> taken b3(| 0), notTaken b6()
-  b3(v7):
+    v5 = Entered function=f1
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = TypeTest v6 testedType=L0
+    Branch v7 -> taken b3(| 0), notTaken b6()
+  b3(v8):
     Branch v1 -> taken b4(), notTaken b5()
   b4():
     Jump -> next b1()
   b5():
-    Return v7
-  b6() frequency=Unlikely:
-    v8 = Undefined
     Return v8
+  b6() frequency=Unlikely:
+    v9 = Undefined
+    Return v9
 }
 # CHECK-LABEL: name="aTurnBeginsWithTwoTests"
 # CHECK: b0(
-# CHECK-NEXT: [[first0]]: L0|L1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: [[first0]]: unspecified|L0|L1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next [[tests0]]([[first0]])
-# CHECK: [[tests0]]([[entering0]]: L0|L1):
+# CHECK: [[tests0]]([[entering0]]: unspecified|L0|L1):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: [[isCallee0]]: boolean = TypeTest v0 testedType=f1
 # CHECK-NEXT: Branch [[isCallee0]] -> taken [[behind0]](| 0), notTaken b6()
 # CHECK-NEXT: [[behind0]]({{*}}: f1):
-# CHECK-NEXT: = TypeTest [[entering0]] testedType=L0
+# CHECK-NEXT: [[entered0]]: fact = Entered function=f1
+# CHECK-NEXT: [[current0]]: L0|L1 = AssumeType [[entering0]], [[entered0]] provenType=L0|L1
+# CHECK-NEXT: = TypeTest [[current0]] testedType=L0
 
 function f1 name="callee" results=[{type=undefined}] {
     v0 = Undefined
@@ -56,22 +59,23 @@ function f2 name="aTurnOfTheCopyMayPassTheReadBy" parameters=[{type=anything}, {
     v4 = IsClosureOf v0 function=f1
     Branch v4 -> taken b2(), notTaken b5()
   b2():
-    v5 = GetModuleVariable variable=g0
+    v5 = Entered function=f1
+    v6 = GetModuleVariable fact=v5 variable=g0
     Branch v2 -> taken b3(), notTaken b6()
   b3():
-    v6 = TypeTest v5 testedType=L0
-    Branch v6 -> taken b4(| 0), notTaken b5()
-  b4(v7):
+    v7 = TypeTest v6 testedType=L0
+    Branch v7 -> taken b4(| 0), notTaken b5()
+  b4(v8):
     Jump -> next b1()
   b5() frequency=Unlikely:
-    v8 = Call v1, -
+    v9 = Call v1, -
     Jump -> next b1()
   b6():
-    Return v5
+    Return v6
 }
 # CHECK-LABEL: name="aTurnOfTheCopyMayPassTheReadBy"
-# CHECK: b1([[carried2]]: L0|L1):
+# CHECK: b1([[carried2]]: unspecified|L0|L1{{*}}):
 # CHECK: = IsClosureOf v0 function=f1
 # CHECK: = TypeTest {{*}} testedType=L0
-# CHECK: [[entering2]]: L0|L1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK: [[entering2]]: unspecified|L0|L1{{*}} = GetModuleVariable variable=g0 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b1([[entering2]])

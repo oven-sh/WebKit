@@ -1470,9 +1470,7 @@ private:
 
         ClimbingSet objects = m_context.restrict(holders, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.builtinObjects())));
         forEachNodeReadThrough(objects, everyPropertyName, functor);
-        // A definition makes enumerable what an object holds since it was made.
-        if (ClimbingSet redefined = m_context.markedAmong(known(withSourcesOfCopies(objects)), ObjectMutation::RedefineProperty); holdsAnything(redefined))
-            functor(m_context.lookup(redefined, everyOwnPropertyNobodyWroteName));
+        functor(enumerablePropertiesNobodyWrote(m_context, withSourcesOfCopies(objects), MetBy::Program));
         if (mayBeUnknownObject(objects))
             constant = m_context.maker().unite(constant, unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
         forEachNodeReadThrough(objects, everySetter, [&](ValueFlowNodeID node) {
@@ -3240,6 +3238,7 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     ClimbingSet objects = withWhatUntrackedObjectCovers(context, context.restrict(receivers, universe.objects()));
     if (behavior.isTransitive) {
         context.connect(context.readWhatWasWritten(objects, everyPropertyName), hub);
+        context.connect(enumerablePropertiesNobodyWrote(context, objects, MetBy::NativeCode), hub);
         context.connect(context.readWhatWasWritten(objects, copiedFromName), hub);
         context.connect(context.lookup(context.restrict(objects, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()))), elementsName), hub);
     }

@@ -12,6 +12,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
 #include "AOTHeldOperands.h"
+#include "AOTMemoryLocation.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
@@ -225,18 +226,40 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         }
     }
 
+    if (holdsDeclaredTypeOnlyBehindEntry(m_program, value) && value.inlineFrame && !value.factOperand() && !value.mayPrecedeItsStore()) {
+        fail(InternalErrorKind::InvalidGuard, block, id);
+        return;
+    }
+    if (value.opcode == Opcode::AssumeType && typeOf(value.valueOperand()).mayBeUnspecified() && !typeOf(id).mayBeUnspecified() && !value.factOperand()) {
+        fail(InternalErrorKind::InvalidGuard, block, id);
+        return;
+    }
+
     LayoutID layout = Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!hasFailed())
-            verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
+        if (hasFailed())
+            return;
+        // A cast hands the word on. Everything else would look at it, or put it where somebody may. The variable that it came from may get it back, and a validating build compares words.
+        bool goesBackIntoVariable = value.opcode == Opcode::PutModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program.at(value.variable()).flow);
+        bool handsWordOn = value.operandUses(operandIndex) == OperandUses { OperandUse::Returns } || goesBackIntoVariable || value.opcode == Opcode::ValidateSameValue;
+        if (typeOf(operand).mayBeUnspecified() && !handsWordOn) {
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
+            return;
+        }
+        verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
     });
 }
 
 void FunctionVerifier::verifyOperands(BlockID block, const Terminator& terminator)
 {
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!hasFailed())
-            verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
+        if (hasFailed())
+            return;
+        if (typeOf(operand).mayBeUnspecified()) {
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, { }, operand.index());
+            return;
+        }
+        verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
     });
 }
 
@@ -287,6 +310,7 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
         case OperandKind::StringBuilder:
         case OperandKind::Cursor:
         case OperandKind::KeyOrder:
+        case OperandKind::Fact:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
         case OperandKind::JSONHolders:
@@ -318,7 +342,12 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         const Value& definition = m_function.at(operand);
         if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
             return;
-        if (TypeID required = requiredTypeOfOperand(context, value, operandIndex))
+        TypeID required = requiredTypeOfOperand(context, value, operandIndex);
+        if (!required)
+            return;
+        if (value.opcode == Opcode::PutModuleVariable && typeOf(operand).mayBeUnspecified())
+            need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required).withPrimitives(Primitive::Unspecified));
+        else
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));
     });
 }

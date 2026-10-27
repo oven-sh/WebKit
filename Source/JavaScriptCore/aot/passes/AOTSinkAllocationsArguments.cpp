@@ -830,7 +830,7 @@ static void retypeProducer(const Program& program, IRBuilder& builder, ValueID p
     Function& function = builder.function();
     Value& value = function.edit(producer);
     value.type = resultTypeOf(program, function, value, builder.types());
-    value.setExpected(ExpectedType(expectedTypeOf(program, function, value, builder.types())));
+    value.setExpected(expectedTypeOf(program, function, value, builder.types()));
 }
 
 static ValueID emitResult(IRBuilder& builder, ValueID producer, uint32_t resultIndex)

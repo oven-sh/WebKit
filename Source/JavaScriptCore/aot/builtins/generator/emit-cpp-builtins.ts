@@ -216,7 +216,6 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
     ["constructor", formatId("BuiltinID", builtinClass.constructor)],
     ["prototype", formatId("BuiltinID", builtinClass.prototype)],
     ["type", formatUnlessDefault("JSType", builtinClass.jsType, "CellType")],
-    ["typedArrayType", formatUnlessDefault("TypedArrayType", builtinClass.typedArrayType, "NotTypedArray")],
     ["instanceTest", formatUnlessDefault("BuiltinInstanceTest", builtinClass.instanceTest, "None")],
     ["sharingMode", formatUnlessDefault("ArrayBufferSharingMode", builtinClass.sharingMode ?? "Default", "Default")],
     ["isPrimitiveWrapper", formatUnlessFalse(builtinClass.isPrimitiveWrapper)],

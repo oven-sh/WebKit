@@ -329,8 +329,6 @@ static bool hasIncomparableParts(const Type& a, const Type& b, const TypeTable& 
 {
     if (a.anyObject || b.anyObject)
         return false;
-    if (hasMembersWithoutLayout(types, a) || hasMembersWithoutLayout(types, b))
-        return true;
     if (mayContainPartsOf(a, b, types) || mayContainPartsOf(b, a, types))
         return true;
     return std::ranges::any_of(a.classes, [&](const ClassPart& part) {
@@ -580,21 +578,6 @@ static bool namesBuiltinsAsCastType(const TypeTable& types, const Type& cast, co
     });
 }
 
-// A family does not say which objects its members without a layout are. The cast says of an object that only the source lists what the family says, so it names less than the intersection.
-static bool holdsValuesOfIntersection(const Type& cast, const Type& intersection, const Program& program)
-{
-    if (intersection.isSubsetOf(cast, program))
-        return true;
-    Type namedByFamily = intersection;
-    namedByFamily.anyFunction = false;
-    namedByFamily.functions.clear();
-    namedByFamily.builtins.clear();
-    namedByFamily.classes.clear();
-    namedByFamily.regExpLiteralSet.clear();
-    namedByFamily.canonicalize();
-    return hasMembersWithoutLayout(program, cast) && namedByFamily.isSubsetOf(cast, program);
-}
-
 static void checkCastLaws(LawChecker& laws, const Program& program, std::span<const Type> types, const PairTable<Type>& casts, TypeArena& arena)
 {
     unsigned size = types.size();
@@ -603,11 +586,7 @@ static void checkCastLaws(LawChecker& laws, const Program& program, std::span<co
             const Type& a = types[i];
             const Type& b = types[j];
             const Type& cast = casts(i, j);
-            if (hasMembersWithoutLayout(program, b)) {
-                laws.check(cast.isSubsetOf(b, program), "inside-cast-type"_s, i, j);
-                laws.check(holdsValuesOfIntersection(cast, a.intersectWith(b, arena), program), "holds-values-of-intersection"_s, i, j);
-            } else
-                laws.check(hasSameValues(cast, a.intersectWith(b, arena), program), "same-values"_s, i, j);
+            laws.check(hasSameValues(cast, a.intersectWith(b, arena), program), "same-values"_s, i, j);
             laws.check(namesClassesAsCastType(program.types, cast, b), "names-classes-as-cast-type"_s, i, j);
             laws.check(namesBuiltinsAsCastType(program.types, cast, b), "names-builtins-as-cast-type"_s, i, j);
             laws.check(isCanonical(cast), "canonical"_s, i, j);
@@ -646,7 +625,6 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
 {
     Type raw;
     Vector<LayoutID> layouts;
-    bool namesObjectsWithoutLayout = false;
     bool hasUnrestrictedRegExp = false;
     for (const Type& type : types | std::views::reverse) {
         raw.primitives |= type.primitives;
@@ -660,7 +638,6 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
         raw.regExpLiteralSet.unite(type.regExpLiteralSet);
         raw.classes.appendVector(type.classes);
         layouts.append(membersOf(arena.table(), type));
-        namesObjectsWithoutLayout |= hasMembersWithoutLayout(arena.table(), type);
         hasUnrestrictedRegExp |= type.regExpLiteralSet.isEmpty() && type.findClassPart(BuiltinClasses::RegExp);
         if (type.environment)
             raw.environment = type.environment;
@@ -669,8 +646,8 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
     }
     if (hasUnrestrictedRegExp)
         raw.regExpLiteralSet.clear();
-    if (!layouts.isEmpty() || namesObjectsWithoutLayout)
-        raw.layouts = arena.intern(LayoutSet::complete(WTF::move(layouts), namesObjectsWithoutLayout));
+    if (!layouts.isEmpty())
+        raw.layouts = arena.intern(LayoutSet::complete(WTF::move(layouts)));
     return raw;
 }
 
@@ -776,7 +753,7 @@ static void runMembers(TestCommandContext& context)
     }
     for (unsigned i = 0; i < types->size(); ++i) {
         const Type& type = types->at(i);
-        out.println('t', i, ": members "_s, LayoutSetText { program, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts(program)));
+        out.println('t', i, ": members "_s, LayoutSetText { program, type.layouts }, " only-layouts: "_s, yesOrNo(type.hasOnlyLayouts()));
     }
 }
 

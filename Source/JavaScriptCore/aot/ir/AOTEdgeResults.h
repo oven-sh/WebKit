@@ -48,7 +48,7 @@ ValueID operandNarrowedOnEdge(const Function&, EdgeResultPosition);
 
 Type computeTypeOnEdge(const TypingContext&, EdgeResultPosition);
 TypeID typeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeArena&);
-TypeID expectedTypeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeID provenType, TypeArena&);
+ExpectedType expectedTypeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeID provenType, TypeArena&);
 
 Type narrowOperandByTest(const TypingContext&, const Value& test, uint32_t operandIndex, EdgeSide);
 Type narrowSubjectByCase(const TypingContext&, const Terminator&, uint32_t caseIndex);
