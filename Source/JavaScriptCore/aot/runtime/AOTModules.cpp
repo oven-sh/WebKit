@@ -1070,6 +1070,8 @@ void Modules::handCountedImportsToLoader()
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Every counted import reaches the loader. A termination requested meanwhile is thrown at the caller's exception check.
     DeferTerminationForAWhile deferTermination(vm);
+    // The calls came ahead of any require() that is under way, so their steps are jobs, not steps of its load.
+    SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     size_t numberOfJobsOfOthers = queue.size();
     noteOrderAndModulesOfOnlyCountedImport();

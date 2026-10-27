@@ -697,25 +697,43 @@ private:
         return findBlocksInFrontOfRareEdges(loops, loop).size() != findBlocksThatCanRun(loops, loop, RareEdges::AreFollowed).size();
     }
 
+    // A loop that seldom ends by the test of its counter and often by another test ends after who knows how few turns: asking in front of it would cost more than its polls.
+    static bool endsMostlyElsewhere(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan, BasicBlock* test)
+    {
+        bool testEndsLoopOften = false;
+        bool anotherTestEndsLoopOften = false;
+        for (BasicBlock* block : plan.blocks) {
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (loops.belongsTo(successor.block(), loop) || successor.frequency() != FrequencyClass::Normal)
+                    continue;
+                if (block == test)
+                    testEndsLoopOften = true;
+                else
+                    anotherTestEndsLoopOften = true;
+            }
+        }
+        return !testEndsLoopOften && anotherTestEndsLoopOften;
+    }
+
     // A loop that is not written out has one turn to copy. The loop goes without its poll where few enough turns lie in front of it, and a copy that polls takes the others.
+    // Both hold what lies behind the rare edges too: whoever takes such an edge comes back into the loop that he left.
     void considerLeavingPollToCopy(NaturalLoops& loops, const NaturalLoop& loop)
     {
-        m_pollsOfLoopCanMove = !hasBlocksBehindRareEdges(loops, loop);
-        if (!m_pollsOfLoopCanMove || !isInnermostLoop(loops, loop))
+        m_pollsOfLoopCanMove = true;
+        if (!isInnermostLoop(loops, loop))
             return;
         Plan plan;
         plan.header = loop.header();
         plan.preHeader = findPreHeader(loops, loop);
         if (!plan.preHeader)
             return;
-        // An edge that is merely called unlikely may be taken every other turn.
-        IndexSet<BasicBlock*> likelyBlocks = findBlocksInFrontOfRareEdges(loops, loop);
-        if (!hasLikelyBackEdge(loop, likelyBlocks))
+        IndexSet<BasicBlock*> blocksThatCanRun = findBlocksThatCanRun(loops, loop, RareEdges::AreFollowed);
+        if (!hasLikelyBackEdge(loop, findBlocksInFrontOfRareEdges(loops, loop)))
             return;
         unsigned numberOfValues = 0;
         for (unsigned i = loop.size(); i--;) {
             BasicBlock* block = loop.at(i);
-            if (!likelyBlocks.contains(block))
+            if (!blocksThatCanRun.contains(block))
                 continue;
             if (block->last()->type() != Void)
                 return;
@@ -731,15 +749,16 @@ private:
         if (!plan.poll)
             return;
         PhiChildren& phiChildren = prepareToReadCounters();
-        // The smaller the turn, the more of it is the poll and the less there is to copy.
-        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop && numberOfValues > Limits::maxValuesPerTurnCopiedWhereLoopRunsRarely)
+        // The smaller the turn, the more of it is the poll and the less there is to copy. Every branch in front of a loop halves what is estimated for it.
+        bool runsRarely = plan.header->frequency() * Limits::frequencyLostToBranchesInFrontOfLoop < m_proc.policy().loops.minFrequencyOfUnrolledLoop;
+        if (runsRarely && numberOfValues > Limits::maxValuesPerTurnCopiedWhereLoopRunsRarely)
             return;
         Dominators& dominators = m_proc.dominators();
         for (BasicBlock* block : plan.blocks) {
             bool runsEveryTurn = true;
             for (BasicBlock* predecessor : plan.header->predecessors())
-                runsEveryTurn &= !likelyBlocks.contains(predecessor) || dominators.dominates(block, predecessor);
-            if (!runsEveryTurn || (!readTest(loops, loop, likelyBlocks, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, likelyBlocks, block, phiChildren, plan)))
+                runsEveryTurn &= !blocksThatCanRun.contains(predecessor) || dominators.dominates(block, predecessor);
+            if (!runsEveryTurn || endsMostlyElsewhere(loops, loop, plan, block) || (!readTest(loops, loop, blocksThatCanRun, block, phiChildren, plan, TurnsAre::Counted) && !readTestOfCountersThatMeet(loops, loop, blocksThatCanRun, block, phiChildren, plan)))
                 continue;
             m_plansOfCopiesThatPoll.append(WTF::move(plan));
             return;

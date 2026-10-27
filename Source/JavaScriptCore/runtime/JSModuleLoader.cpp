@@ -776,7 +776,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
 #if ENABLE(AOT)
     // See loadModuleSync().
-    bool takesOwnLoadSteps = m_rootThatTakesOwnLoadSteps == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
+    bool takesOwnLoadSteps = m_rootThatTakesOwnLoadSteps && m_rootThatTakesOwnLoadSteps == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
     if (takesOwnLoadSteps)
         m_rootThatTakesOwnLoadSteps = nullptr;
 #endif

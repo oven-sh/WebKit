@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CountedLoops.h"
 #include "B3DominatingConditions.h"
