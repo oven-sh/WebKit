@@ -70,6 +70,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTCallSiteTable.h
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
+    aot/image/AOTFaultHandler.h
     aot/image/AOTFaultTable.h
     aot/image/AOTImage.h
     aot/image/AOTImageFormat.h

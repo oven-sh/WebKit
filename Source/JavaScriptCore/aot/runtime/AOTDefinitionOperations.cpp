@@ -209,9 +209,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-static bool tryDefineAbsentPropertyOfCompiledObject(VM& vm, Object& object, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+static bool tryDefineAbsentPropertyOfCompiledObject(VM& vm, Object& object, const FieldData* field, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
 {
-    const FieldData* field = object.fieldNamed(object.state(), name);
     if (!field)
         return object.tryDefineAbsentExtraProperty(vm, name, valueOrAccessor, attributes);
     if (field->isPrivate() || object.isNotExtensible() || object.getDirectFromNativeCode(vm, name, nullptr))
@@ -277,11 +276,15 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
         attributes |= PropertyAttribute::Accessor;
     else if (!bits.isWritable)
         attributes |= PropertyAttribute::ReadOnly;
+    const FieldData* field = compiled ? compiled->fieldNamed(compiled->state(), name) : nullptr;
+    // The layout has a field for a getter that the build saw defined, with the attributes it saw.
+    if (field && field->isAccessor() && bits.hasGet && !bits.hasSet && valueOrGetter.isObject() && compiled->tryDefineAbsentGetterInSlot(vm, globalObject, *field, name.uid(), asObject(valueOrGetter), attributes))
+        return true;
     JSValue stored = bits.hasValue ? valueOrGetter : jsUndefined();
     if (isAccessor)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
-        return tryDefineAbsentPropertyOfCompiledObject(vm, *compiled, name, stored, attributes);
+        return tryDefineAbsentPropertyOfCompiledObject(vm, *compiled, field, name, stored, attributes);
     if (object->tryPutDirectByExistingTransition(vm, name, stored, attributes))
         return true;
     if (isValidOffset(structure->get(vm, name)))

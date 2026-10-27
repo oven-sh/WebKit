@@ -17,7 +17,9 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The operations that resolveAccesses() looks at. A deletion by a constant key becomes a deletion by name.
-inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | OpcodeSet { Opcode::ElemDelete };
+// What an access through a proxy is written out as.
+inline constexpr OpcodeSet readsBehindProxies { Opcode::SuperGet, Opcode::GetInternalField };
+inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsBehindProxies | OpcodeSet { Opcode::ElemDelete };
 
 struct AccessOperands {
     ValueID receiver;

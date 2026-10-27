@@ -300,17 +300,22 @@ bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, u
 
 bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
 {
+    const FieldData* field = state().objects->layouts.field(vm, layout(), name);
+    return field && tryDefineAbsentGetterInSlot(vm, globalObject, *field, name, getter, attributes);
+}
+
+bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, const FieldData& field, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
+{
     State& state = this->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
-    const FieldData* field = layouts.field(vm, layout(), name);
-    if (!field || !field->isAccessor() || isNotExtensible() || attributes != attributesOf(*field))
+    if (!field.isAccessor() || isNotExtensible() || attributes != attributesOf(field))
         return false;
-    if (isInSlot(*field) || livesInExtraProperties(vm, *this, *field) || !layouts.objectHasType(layouts.typeOf(*field), getter))
+    if (isInSlot(field) || livesInExtraProperties(vm, *this, field) || !layouts.objectHasType(layouts.typeOf(field), getter))
         return false;
-    if (!store(vm, *field, GetterSetter::create(vm, globalObject, getter, nullptr)))
+    if (!store(vm, field, GetterSetter::create(vm, globalObject, getter, nullptr)))
         return false;
-    didCreateField(state, *field, true);
-    if (field->isFilledAtBirth)
+    didCreateField(state, field, true);
+    if (field.isFilledAtBirth)
         tryFinishBirth();
     if (structure()->mayBePrototype()) [[unlikely]]
         didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name);

@@ -28,8 +28,8 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
-    void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(in<CellPointer>(value->targetOperand()), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
-    void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(in<CellPointer>(value->targetOperand()), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
+    void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
+    void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
     void generateValidateAnswerOfGetTrap(const ValueContext&);
     void generateValidateDenialOfHasTrap(const ValueContext&);
     void generateFinishStoreByTrap(const ValueContext&);
@@ -70,7 +70,7 @@ public:
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
 
 private:
-    Condition mayBindAnswersOfTraps(CellPointer target, uint32_t bitsOfStructureThatMayBind);
+    Condition mayBindAnswersOfTraps(ValueID target, uint32_t bitsOfStructureThatMayBind);
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {

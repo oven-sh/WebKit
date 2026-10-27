@@ -372,9 +372,11 @@ enum class ValueFlowHostNode : uint8_t {
     LoadersAndEvaluatorsThatEvaluatedTextNames,
     LoadersAndEvaluatorsThatProgramNames,
     PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed,
+    HandlersOfProxies,
+    TargetsOfProxies,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 60;
+inline constexpr unsigned numberOfValueFlowHostNodes = 62;
 
 class ValueFlowProgramNodes {
 public:

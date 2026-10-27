@@ -973,6 +973,8 @@ private:
         if (!m_call.result)
             return;
         connectOperands(BuiltinOperand::argument(1), escaped());
+        connectOperands(BuiltinOperand::argument(1), m_context.nodes().ofHost(ValueFlowHostNode::HandlersOfProxies));
+        connectOperands(BuiltinOperand::argument(0), m_context.nodes().ofHost(ValueFlowHostNode::TargetsOfProxies));
         // Proxy.revocable answers an object that holds the proxy.
         bool answersProxy = m_builtins.canonicalID(m_builtin) == Builtins::Proxy;
         ValueFlowNodeID proxy = answersProxy ? m_call.result : m_context.written(only(m_context, m_resultObject), unknownKeyName);

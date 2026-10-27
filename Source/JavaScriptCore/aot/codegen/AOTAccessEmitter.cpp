@@ -258,20 +258,36 @@ Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Ki
 
 // A site that has no answer for the Structure of the object has the name looked up, so the first object of a Structure is answered like those behind it.
 // Only a target that is not extensible or has a property that is not configurable binds what a trap may answer. The Structure of a compiled object says yes for all of them: what was done to one object stands in the object, and what its fields are born with in the layout.
-Condition AccessEmitter::mayBindAnswersOfTraps(CellPointer target, uint32_t bitsOfStructureThatMayBind)
+Condition AccessEmitter::mayBindAnswersOfTraps(ValueID id, uint32_t bitsOfStructureThatMayBind)
 {
-    Pointer structure = loadStructure(target);
-    return either<Condition>(hasBits(loadField<Word32>(structure, m_heaps.Structure_bitField), bitsOfStructureThatMayBind), [&] {
-        return either<Condition>(hasCellType(target, CompiledObjectType), [&] {
-            Condition isBornFree = hasBits(loadByte(structure, m_heaps.AOTCompiledStructure_flags), static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable));
-            Condition isAsBorn = hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(target), ~orderAndCountMask);
-            return logicalNot(logicalAnd(isBornFree, isAsBorn));
+    CellPointer target = in<CellPointer>(id);
+    auto isNoLongerAsBorn = [&] {
+        return hasBits(emitter<ShapeTestEmitter>().orderWordOf(target), ~orderAndCountMask);
+    };
+    auto askStructure = [&] {
+        Pointer structure = loadStructure(target);
+        return either<Condition>(hasBits(loadField<Word32>(structure, m_heaps.Structure_bitField), bitsOfStructureThatMayBind), [&] {
+            return either<Condition>(hasCellType(target, CompiledObjectType), [&] {
+                Condition isBornFree = hasBits(loadByte(structure, m_heaps.AOTCompiledStructure_flags), static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable));
+                return logicalNot(logicalAnd(isBornFree, logicalNot(isNoLongerAsBorn())));
+            }, [&] {
+                return boolean(true);
+            });
         }, [&] {
-            return boolean(true);
+            return boolean(false);
         });
-    }, [&] {
-        return boolean(false);
+    };
+    // What a layout that has all its fields itself says of them is known here.
+    const Type& type = typeOf(id);
+    bool isBornFree = type.hasOnlyLayouts() && std::ranges::none_of(membersOf(m_program, type), [&](LayoutID id) {
+        const Layout& layout = m_program.at(id);
+        return expectedBaseOf(layout) || layout.flow.baseState != BaseState::None || std::ranges::any_of(layout.fields, [](const Field& field) {
+            return field.form.contains(FieldForm::IsNotConfigurable);
+        });
     });
+    if (!isBornFree)
+        return askStructure();
+    return either<Condition>(hasCellType(target, CompiledObjectType), isNoLongerAsBorn, askStructure);
 }
 
 void AccessEmitter::generateValidateAnswerOfGetTrap(const ValueContext& value)

@@ -279,6 +279,13 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
         application.layouts[universe.layoutOf(record).index()].flow.observedUses.add(ObservedUse::ReachesTypedParse);
     });
+    // Whoever reads the handler or the target out of a proxy expects one of these. Other code may make proxies of other objects.
+    for (auto [node, use] : { std::pair { ValueFlowHostNode::HandlersOfProxies, ObservedUse::IsHandlerOfProxy }, std::pair { ValueFlowHostNode::TargetsOfProxies, ObservedUse::IsTargetOfProxy } }) {
+        inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(node)), [&](ValueFlowObjectID object) {
+            if (LayoutID layout = universe.isObject(object) ? universe.layoutOf(object) : LayoutID())
+                application.layouts[layout.index()].flow.observedUses.add(use);
+        });
+    }
 
     auto parsesTypedResult = [&](const ValueFlowStatement& statement) {
         return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call && universe.siteObject(statement, ValueFlowTypedResult::firstOrdinal);

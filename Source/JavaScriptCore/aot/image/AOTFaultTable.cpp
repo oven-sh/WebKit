@@ -403,14 +403,14 @@ static void* findStub(const Image& image, StubKey key)
     return const_cast<void*>(image.stubAddress(key));
 }
 
-static SignalAction handleNullCheck(const Fault& fault, PlatformRegisters& registers)
+static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
 {
     // A null 32-bit reference decodes to the base of the cell cage.
     if (fault.address >= FaultSite::reach && fault.address - registerOf(registers, cellCageBaseGPR) >= FaultSite::reach)
-        return SignalAction::NotHandled;
+        return false;
     void* target = findStub(fault.image, throwAtSite(ThrowSiteSource::FaultSite, fault.callerFrame));
     if (!target)
-        return SignalAction::NotHandled;
+        return false;
 
     // The call-site table and ThrowAtSite treat the faulting instruction as a near call, whatever its length.
     uintptr_t returnAddress = fault.pc + sizeOfNearCall;
@@ -425,19 +425,19 @@ static SignalAction handleNullCheck(const Fault& fault, PlatformRegisters& regis
     registerOf(registers, registerWrittenAtFaults) = returnAddress;
 #endif
     MachineContext::setInstructionPointer(registers, target);
-    return SignalAction::Handled;
+    return true;
 }
 
 #if CPU(X86_64) && OS(LINUX)
-static SignalAction handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
+static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
     static_assert(hasFaultingLoopPolls);
     bool isFrameless = fault.callerFrame == CallerFrame::Frameless;
     if (fault.address != registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + (isFrameless ? offsetOfLeafPollInLoopPollPage : 0))
-        return SignalAction::NotHandled;
+        return false;
     void* target = findStub(fault.image, pollAtLoop(fault.callerFrame));
     if (!target)
-        return SignalAction::NotHandled;
+        return false;
 
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);
@@ -449,16 +449,16 @@ static SignalAction handleLoopPoll(const Fault& fault, PlatformRegisters& regist
     *--top = fault.pc + sizeOfLoopPoll;
     stackPointer = top;
     MachineContext::setInstructionPointer(registers, target);
-    return SignalAction::Handled;
+    return true;
 }
 #endif
 
-static SignalAction handleDivertedReturn(PlatformRegisters& registers)
+static bool handleDivertedReturn(PlatformRegisters& registers)
 {
     auto* instance = std::bit_cast<Instance*>(registerOf(registers, instanceGPR));
     void* target = findStub(*instance->vm->aotState().image, handleException(false));
     if (!target)
-        return SignalAction::NotHandled;
+        return false;
     uintptr_t returnAddress = std::bit_cast<uintptr_t>(instance->runtime.exceptions.stackPointerOfHandler);
 #if CPU(ARM64)
     registerOf(registers, ARM64Registers::lr) = returnAddress;
@@ -469,46 +469,51 @@ static SignalAction handleDivertedReturn(PlatformRegisters& registers)
     stackPointer = top;
 #endif
     MachineContext::setInstructionPointer(registers, target);
-    return SignalAction::Handled;
+    return true;
+}
+
+bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
+{
+    auto instructionPointer = MachineContext::instructionPointer(registers);
+    if (!instructionPointer)
+        return false;
+    if (!Image::isRegistered())
+        return false;
+    // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
+    void* pc = instructionPointer->untaggedPtr();
+    if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
+        return handleDivertedReturn(registers);
+    const Image* image = Image::findByCodeAddress(pc);
+    if (!image)
+        return false;
+    std::optional<FaultSite> site = image->faultSiteAt(pc);
+    if (!site)
+        return false;
+
+    Fault fault {
+        .image = *image,
+        .pc = std::bit_cast<uintptr_t>(pc),
+        .address = std::bit_cast<uintptr_t>(faultingAddress),
+        .callerFrame = site->hasFrame ? CallerFrame::HasFrame : CallerFrame::Frameless,
+    };
+    switch (site->kind) {
+    case FaultSiteKind::NullCheck:
+        return handleNullCheck(fault, registers);
+    case FaultSiteKind::LoopPoll:
+#if CPU(X86_64) && OS(LINUX)
+        return handleLoopPoll(fault, registers);
+#else
+        static_assert(!hasFaultingLoopPolls);
+        return false;
+#endif
+    }
+    return false;
 }
 
 void installFaultHandler()
 {
     addSignalHandler(Signal::AccessFault, [](Signal, SigInfo& info, PlatformRegisters& registers) {
-        auto instructionPointer = MachineContext::instructionPointer(registers);
-        if (!instructionPointer)
-            return SignalAction::NotHandled;
-        if (!Image::isRegistered())
-            return SignalAction::NotHandled;
-        // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
-        void* pc = instructionPointer->untaggedPtr();
-        if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
-            return handleDivertedReturn(registers);
-        const Image* image = Image::findByCodeAddress(pc);
-        if (!image)
-            return SignalAction::NotHandled;
-        std::optional<FaultSite> site = image->faultSiteAt(pc);
-        if (!site)
-            return SignalAction::NotHandled;
-
-        Fault fault {
-            .image = *image,
-            .pc = std::bit_cast<uintptr_t>(pc),
-            .address = std::bit_cast<uintptr_t>(info.faultingAddress),
-            .callerFrame = site->hasFrame ? CallerFrame::HasFrame : CallerFrame::Frameless,
-        };
-        switch (site->kind) {
-        case FaultSiteKind::NullCheck:
-            return handleNullCheck(fault, registers);
-        case FaultSiteKind::LoopPoll:
-#if CPU(X86_64) && OS(LINUX)
-            return handleLoopPoll(fault, registers);
-#else
-            static_assert(!hasFaultingLoopPolls);
-            return SignalAction::NotHandled;
-#endif
-        }
-        return SignalAction::NotHandled;
+        return !info.isSentByProcess && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
     });
 }
 

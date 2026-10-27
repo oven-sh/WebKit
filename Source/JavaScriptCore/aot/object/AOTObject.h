@@ -210,6 +210,7 @@ public:
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
+    bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
     bool tryDefineAccessorsOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);

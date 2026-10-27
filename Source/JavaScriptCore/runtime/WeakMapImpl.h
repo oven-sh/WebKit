@@ -475,7 +475,7 @@ private:
         ASSERT(!(capacity & (capacity - 1)));
 
         if (m_buffer == emptyBuffer())
-            m_shouldReportBufferAtGCEnd = false;
+            m_capacityCountedByHeap = 0;
         if (capacity == initialCapacity) {
             ASSERT(m_buffer != inlineBuffer());
             WeakMapBufferType* buffer = inlineBuffer();
@@ -503,8 +503,8 @@ private:
     uint32_t m_capacity { emptyCapacity };
     uint32_t m_keyCount { 0 };
     uint32_t m_deleteCount { 0 };
-    // The first visit of a collection sets it: the buffer counts as extra memory once the dead keys are gone. JIT-inlined allocation leaves it uninitialized: the first buffer sets it.
-    bool m_shouldReportBufferAtGCEnd { false };
+    // The capacity of the buffer outside the cell that the heap's count of extra memory holds. JIT-inlined allocation leaves it uninitialized: the first buffer sets it.
+    uint32_t m_capacityCountedByHeap { 0 };
     // Left uninitialized: JIT-inlined allocation does not run the constructor, and the storage is
     // only read once makeAndSetNewBuffer() has cleared it and pointed m_buffer at it.
     alignas(WeakMapBucketType) std::byte m_inlineStorage[initialCapacity * sizeof(WeakMapBucketType)];
