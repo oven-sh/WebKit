@@ -972,7 +972,7 @@ struct MovableCode {
     const InitializerScanContext& context;
     TaskArenas& arenas;
     const Program& program { context.program };
-    MapByIndex<Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1>> answers { };
+    MapByIndex<Vector<std::pair<CallContext, InitializerCalleeAnswer>, 0>> answers { };
     Vector<std::pair<uint32_t, CallContext>, 8> beingAnswered { };
     unsigned numberOfAnswers { 0 };
     // What a call has made and what never changes decide the answer. The version comes from the types alone.
@@ -1417,7 +1417,7 @@ struct MovableCode {
         answer.variablesTakenToBeSet.append(variablesTakenToBeSet.subspan(numberTakenBefore));
         AOT::sort(answer.variablesTakenToBeSet);
         removeRepeatedElements(answer.variablesTakenToBeSet);
-        answers.add(id.index(), Vector<std::pair<CallContext, InitializerCalleeAnswer>, 1> { }).iterator->value.append({ handed, answer });
+        answers.add(id.index(), Vector<std::pair<CallContext, InitializerCalleeAnswer>, 0> { }).iterator->value.append({ handed, answer });
         return answer;
     }
 

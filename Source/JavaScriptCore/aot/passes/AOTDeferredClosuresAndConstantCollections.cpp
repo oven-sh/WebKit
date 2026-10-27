@@ -1267,7 +1267,10 @@ struct DeferralAnalysis {
             for (ValueReference reference : accesses[kind]) {
                 const Value& access = valueAt(reference);
                 // A read that gives any value looks among the extra properties where it finds the slot empty and the object says that a field lies outside its slot.
-                bool looksOutsideSlot = access.opcode == Opcode::GetSlot || (access.opcode == Opcode::GetSlotOrUndefined && access.type == TypeTable::anything);
+                bool testsSlot = access.opcode == Opcode::GetSlot && !holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
+                    return staysFilled(program, field);
+                });
+                bool looksOutsideSlot = testsSlot || (access.opcode == Opcode::GetSlotOrUndefined && access.type == TypeTable::anything);
                 bool isToFreshObject = kind == SlotStore && isStoreToFreshObject(reference);
                 if (looksOutsideSlot || isToFreshObject || !reachesCandidate(reference, true))
                     continue;
