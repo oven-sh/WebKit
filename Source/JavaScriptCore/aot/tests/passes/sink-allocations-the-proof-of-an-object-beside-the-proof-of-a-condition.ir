@@ -1,0 +1,61 @@
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="V" constructor=f0 fields=[{key="x" declared={type=anything}}]
+function f0 name="V" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="never-built" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="x"}]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2: guard):
+    v3 = NewObject layout=L0
+    v4 = HasLayoutPrototype v3
+    Branch v4 -> taken b2(| 0), notTaken b4(v3)
+  b2(v5: guard):
+    v6 = AllGuards v5, v2
+    PutSlot v3, v6, v0 key="x" receivers=[L0] level=Expected
+    Return v0
+  b3() frequency=Unlikely:
+    Return v0
+  b4(v8: L0) frequency=Unlikely:
+    PropSet v8, v0 key="x"
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: PutSlot
+}
+
+function f2 name="built-on-one-way" parameters=[{type=i32}, {type=boolean}] results=[{type=anything}] {
+    v2 = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="x"}]
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3: guard):
+    v4 = NewObject layout=L0
+    v5 = HasLayoutPrototype v4
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6: guard):
+    v7 = AllGuards v6, v3
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    PutModuleVariable v4 variable=g0
+    PutSlot v4, v7, v0 key="x" receivers=[L0] level=Expected
+    Return v0
+  b4():
+    PutSlot v4, v7, v0 key="x" receivers=[L0] level=Expected
+    Return v0
+  b5() frequency=Unlikely:
+    Return v0
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: b3():
+# CHECK-NEXT: [[cell]]: L0 = NewObject layout=L0
+# CHECK-NEXT: [[own]]: guard = AllGuards [[cell]]
+# CHECK-NEXT: PutModuleVariable [[cell]] variable=g0
+# CHECK-NEXT: [[both]]: guard = AllGuards [[own]], v3
+# CHECK-NEXT: PutSlot [[cell]], [[both]], v0 key="x"
+# CHECK: b4():
+# CHECK-NEXT: Return v0
+}

@@ -30,6 +30,7 @@
 #include "SystemHeap.h"
 #include "VMAllocate.h"
 #include <algorithm>
+#include <utility>
 #include <atomic>
 
 #if BOS(LINUX)
@@ -165,50 +166,123 @@ static constexpr size_t sizeOfBallastPiece = 1024 * 1024;
 static constexpr size_t maxNumberOfBallastPieces = 64;
 static Mutex s_ballastLock;
 static void* s_ballastPieces[maxNumberOfBallastPieces];
-static size_t s_numberOfBallastPieces;
+static std::atomic<size_t> s_numberOfBallastPieces { 0 };
+static std::atomic<size_t> s_numberOfBallastPiecesWanted { 0 };
 #endif
-static std::atomic<bool> s_hasWholeBallast { false };
+static std::atomic<bool> s_lacksPiecesOfBallast { false };
 static std::atomic<AddressSpaceBallastHandler> s_ballastHandler { nullptr };
+static std::atomic<AddressSpaceBallastKeeper> s_ballastKeeper { nullptr };
+static thread_local unsigned t_numberOfRequestsWithBallast;
+static thread_local bool t_hasUsedBallast;
+static thread_local bool t_hasUsedWholeBallast;
+static thread_local bool t_isExemptFromBallast;
 
 void setAddressSpaceBallastHandler(AddressSpaceBallastHandler handler)
 {
     s_ballastHandler.store(handler, std::memory_order_relaxed);
 }
 
-void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft)
+void setAddressSpaceBallastKeeper(AddressSpaceBallastKeeper keeper)
 {
-#if BOS(LINUX)
-    size_t wanted = std::min(size / sizeOfBallastPiece, maxNumberOfBallastPieces);
-    LockHolder locker(s_ballastLock);
-    while (s_numberOfBallastPieces < wanted) {
-        if (addressSpaceLeft < size + sizeOfBallastPiece)
-            break;
-        void* piece = mmap(nullptr, sizeOfBallastPiece, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-        if (piece == MAP_FAILED)
-            break;
-        addressSpaceLeft -= sizeOfBallastPiece;
-        s_ballastPieces[s_numberOfBallastPieces++] = piece;
-    }
-    s_hasWholeBallast.store(s_numberOfBallastPieces >= wanted, std::memory_order_relaxed);
-#else
-    BUNUSED(size);
-    BUNUSED(addressSpaceLeft);
-#endif
+    s_ballastKeeper.store(keeper, std::memory_order_relaxed);
+}
+
+void exemptThisThreadFromAddressSpaceBallast()
+{
+    t_isExemptFromBallast = true;
 }
 
 bool hasWholeAddressSpaceBallast()
 {
-    return s_hasWholeBallast.load(std::memory_order_relaxed);
+    return !s_lacksPiecesOfBallast.load(std::memory_order_relaxed);
 }
 
-bool tryReleasePieceOfAddressSpaceBallast()
+size_t sizeOfAddressSpaceBallastKept()
 {
 #if BOS(LINUX)
+    return s_numberOfBallastPieces.load(std::memory_order_relaxed) * sizeOfBallastPiece;
+#else
+    return 0;
+#endif
+}
+
+static void beginRequestWithBallast()
+{
+    ++t_numberOfRequestsWithBallast;
+}
+
+static void endRequestWithBallast()
+{
+    if (--t_numberOfRequestsWithBallast || !t_hasUsedBallast)
+        return;
+    t_hasUsedBallast = false;
+    bool wasWhole = std::exchange(t_hasUsedWholeBallast, false);
+    if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
+        handler(wasWhole);
+}
+
+RequestWithBallast::RequestWithBallast()
+{
+    beginRequestWithBallast();
+}
+
+RequestWithBallast::~RequestWithBallast()
+{
+    endRequestWithBallast();
+}
+
+#if BUSE(EXTERNAL_MIMALLOC) && BOS(LINUX)
+static bool tryReleasePieceOfAddressSpaceBallast()
+{
     LockHolder locker(s_ballastLock);
-    if (!s_numberOfBallastPieces)
+    size_t numberOfPieces = s_numberOfBallastPieces.load(std::memory_order_relaxed);
+    if (!numberOfPieces)
         return false;
-    munmap(s_ballastPieces[--s_numberOfBallastPieces], sizeOfBallastPiece);
-    s_hasWholeBallast.store(false, std::memory_order_relaxed);
+    if (!s_lacksPiecesOfBallast.exchange(true, std::memory_order_relaxed))
+        t_hasUsedWholeBallast = true;
+    s_numberOfBallastPieces.store(--numberOfPieces, std::memory_order_relaxed);
+    munmap(s_ballastPieces[numberOfPieces], sizeOfBallastPiece);
+    return true;
+}
+
+static bool makeRoomWithBallast(size_t size, size_t attempt)
+{
+    if (!t_numberOfRequestsWithBallast)
+        return false;
+    // Nothing is let go of for a request that all the pieces together could not hold.
+    if (size > (attempt + s_numberOfBallastPieces.load(std::memory_order_relaxed)) * sizeOfBallastPiece)
+        return false;
+    // Some of what the last piece left may still be free, and was refused to a request that did not say that it may not fail.
+    if (!attempt && s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
+        return true;
+    if (!tryReleasePieceOfAddressSpaceBallast())
+        return false;
+    t_hasUsedBallast = true;
+    return true;
+}
+
+static bool mayTakeAddressSpace(size_t size)
+{
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed) || t_numberOfRequestsWithBallast || t_isExemptFromBallast)
+        return true;
+    AddressSpaceBallastKeeper keeper = s_ballastKeeper.load(std::memory_order_relaxed);
+    if (!keeper)
+        return false;
+    size_t addressSpaceLeft = keeper();
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
+        return true;
+    size_t wanted = s_numberOfBallastPiecesWanted.load(std::memory_order_relaxed);
+    size_t kept = s_numberOfBallastPieces.load(std::memory_order_relaxed);
+    return wanted <= kept || (addressSpaceLeft >= size && addressSpaceLeft - size >= (wanted - kept) * sizeOfBallastPiece);
+}
+#endif
+
+bool RequestWithBallast::tryMakeRoom()
+{
+#if BUSE(EXTERNAL_MIMALLOC) && BOS(LINUX)
+    if (!tryReleasePieceOfAddressSpaceBallast())
+        return false;
+    t_hasUsedBallast = true;
     return true;
 #else
     return false;
@@ -216,7 +290,7 @@ bool tryReleasePieceOfAddressSpaceBallast()
 }
 
 #if BUSE(EXTERNAL_MIMALLOC)
-// patches/mimalloc/remember-the-request-that-found-no-memory.patch in oven-sh/bun. The vendored mimalloc does not have it, so it is declared here and not in mimalloc.h.
+// patches/mimalloc/remember-the-request-that-found-no-memory.patch, ask-who-may-take-address-space.patch and new-uses-address-space-kept-aside.patch in oven-sh/bun. The vendored mimalloc does not have them, so they are declared here and not in mimalloc.h.
 #if !defined(MI_REMEMBERS_FAILED_REQUEST)
 extern "C" {
 typedef struct mi_failed_request_s {
@@ -227,7 +301,53 @@ typedef struct mi_failed_request_s {
 bool mi_last_failed_request(mi_failed_request_t*) noexcept;
 }
 #endif
+#if !defined(MI_ASKS_ADDRESS_SPACE_KEEPER)
+extern "C" {
+typedef struct mi_address_space_keeper_s {
+    bool (*may_take)(size_t size);
+    bool (*make_room)(size_t size, size_t attempt);
+    void (*begin_request_that_cannot_fail)(void);
+    void (*end_request_that_cannot_fail)(void);
+} mi_address_space_keeper_t;
+void mi_register_address_space_keeper(const mi_address_space_keeper_t*) noexcept;
+}
 #endif
+#endif
+
+void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addressSpaceToLeaveFree)
+{
+#if BOS(LINUX)
+    size_t wanted = std::min(size / sizeOfBallastPiece, maxNumberOfBallastPieces);
+    LockHolder locker(s_ballastLock);
+#if BUSE(EXTERNAL_MIMALLOC)
+    static bool hasRegistered;
+    if (!hasRegistered) {
+        static constexpr mi_address_space_keeper_t keeper { mayTakeAddressSpace, makeRoomWithBallast, beginRequestWithBallast, endRequestWithBallast };
+        mi_register_address_space_keeper(&keeper);
+        hasRegistered = true;
+    }
+#endif
+    s_numberOfBallastPiecesWanted.store(wanted, std::memory_order_relaxed);
+    size_t numberOfPieces = s_numberOfBallastPieces.load(std::memory_order_relaxed);
+    while (numberOfPieces < wanted) {
+        if (addressSpaceLeft < addressSpaceToLeaveFree + sizeOfBallastPiece)
+            break;
+        void* piece = mmap(nullptr, sizeOfBallastPiece, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (piece == MAP_FAILED)
+            break;
+        addressSpaceLeft -= sizeOfBallastPiece;
+        s_ballastPieces[numberOfPieces++] = piece;
+    }
+    s_numberOfBallastPieces.store(numberOfPieces, std::memory_order_relaxed);
+    // A piece that could never be kept is not missing: nothing has used it.
+    if (numberOfPieces >= wanted)
+        s_lacksPiecesOfBallast.store(false, std::memory_order_relaxed);
+#else
+    BUNUSED(size);
+    BUNUSED(addressSpaceLeft);
+    BUNUSED(addressSpaceToLeaveFree);
+#endif
+}
 
 template<typename Function>
 static void* askAgainWithBallast(const Function& tryAllocate)
@@ -236,17 +356,8 @@ static void* askAgainWithBallast(const Function& tryAllocate)
     mi_failed_request_t request;
     if (!mi_last_failed_request(&request))
         return nullptr;
-    void* memory = nullptr;
-    bool didRelease = false;
-    while (!memory && tryReleasePieceOfAddressSpaceBallast()) {
-        didRelease = true;
-        memory = tryAllocate(request);
-    }
-    if (didRelease) {
-        if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
-            handler();
-    }
-    return memory;
+    RequestWithBallast requestWithBallast;
+    return tryAllocate(request);
 #else
     BUNUSED(tryAllocate);
     return nullptr;

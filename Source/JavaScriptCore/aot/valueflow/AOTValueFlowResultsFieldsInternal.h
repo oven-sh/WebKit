@@ -624,7 +624,7 @@ private:
         ValueSetID objects;
         Vector<LayoutID, 4> layouts;
     };
-    std::optional<CopiedObjects> objectsCopiedOnto(LayoutID);
+    std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
     void followCopiedProperties();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 

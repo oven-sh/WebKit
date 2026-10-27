@@ -1621,21 +1621,25 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
 }
 
 // One value carries a field for every variant of a join. What is read from a literal array is cast to what its variants hold.
-static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family)
+static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family, bool followsUndefinedAndNullInFields)
 {
     std::span<const VirtualObjectDescription> descriptions = family.descriptions();
     if (descriptions.size() < 2 || std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Array; }))
         return false;
 
     for (uint32_t field = 0; field < family.numberOfFields(); ++field) {
+        const VirtualField& virtualField = family.fieldAt(field);
         TypeID commonType;
+        bool commonlyHoldsUndefinedAndNullToo = false;
         for (const VirtualObjectDescription& description : descriptions) {
-            TypeID type = typeOfField(context, description, family.fieldAt(field));
+            TypeID type = typeOfField(context, description, virtualField);
             if (type == TypeTable::never)
                 continue;
-            if (commonType && commonType != type)
+            bool holdsUndefinedAndNull = followsUndefinedAndNullInFields && holdsUndefinedAndNullToo(context, description, virtualField);
+            if (commonType && (commonType != type || commonlyHoldsUndefinedAndNullToo != holdsUndefinedAndNull))
                 return true;
             commonType = type;
+            commonlyHoldsUndefinedAndNullToo = holdsUndefinedAndNull;
         }
     }
     return false;
@@ -2033,7 +2037,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         VirtualFamilyID family = m_candidates[index].family;
         if (m_families[family.index()].numberOfFields() > maxFields)
             familiesWithTooManyFields.set(family.index());
-        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()]))
+        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()], m_policy.followsUndefinedAndNullInFields))
             familiesWithoutJoins.set(family.index());
     }
     for (uint32_t index = 0; index < numberOfCandidates; ++index) {

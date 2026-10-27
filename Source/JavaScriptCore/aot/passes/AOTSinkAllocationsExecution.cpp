@@ -323,15 +323,27 @@ void ObjectInterpreter::executeCast(ValueID id)
 void ObjectInterpreter::executeGuards(ValueID id)
 {
     VirtualObjectID guarded;
+    Vector<ValueID, 2> guardsOfNoObject;
     for (ValueID guard : function().at(id).guardsOperands()) {
         VirtualObjectID object = guardedObjectOf(guard);
-        if (!object || (guarded && guarded != object))
+        if (!object) {
+            guardsOfNoObject.append(guard);
+            continue;
+        }
+        if (guarded && guarded != object)
             return executeOther(id);
         guarded = object;
+        guardsOfNoObject.append(m_sinking.guardsOfNoObjectIn(guard));
     }
     if (!guarded || m_sinking.decisions().holdsCells(id))
         return executeOther(id);
+    bool isOnlyOperand = std::ranges::all_of(m_sinking.analyses().useLists().usesOf(id), [](const Use& use) {
+        return use.kind == Use::Kind::Operand;
+    });
+    if (!guardsOfNoObject.isEmpty() && !isOnlyOperand)
+        return executeOther(id);
 
+    m_sinking.setGuardsOfNoObjectIn(id, WTF::move(guardsOfNoObject));
     bind(id, guarded, AliasKind::Guard);
 }
 
@@ -2928,7 +2940,15 @@ ValueID ObjectInterpreter::resolveGuard(ValueID guard)
     RELEASE_ASSERT(stateOf(object)->isCell());
     ValueID cellGuard = values().find(object)->guard;
     RELEASE_ASSERT(cellGuard);
-    return cellGuard;
+    std::span<const ValueID> guardsOfNoObject = m_sinking.guardsOfNoObjectIn(guard);
+    if (guardsOfNoObject.empty())
+        return cellGuard;
+
+    Vector<ValueID, 4> guards { cellGuard };
+    guards.append(guardsOfNoObject);
+    Value all(Opcode::AllGuards);
+    all.setGuardsOperands(guards.span());
+    return cursor().emit(WTF::move(all));
 }
 
 } } } // namespace JSC::AOT::Typed

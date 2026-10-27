@@ -275,7 +275,7 @@ bool GenericCopy::hasValueAtHead(BlockID block, const BitVector& values, Answers
     auto isAmongValues = [&](ValueID value) {
         return values.get(value.index());
     };
-    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || std::ranges::any_of(m_analyses.liveness().liveAtHead(block), isAmongValues);
+    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || m_analyses.liveness().isAnyLiveAtHead(block, values, answers.aboutLiveValues);
     answers.isKnown.set(block.index());
     answers.answer.set(block.index(), answer);
     return answer;

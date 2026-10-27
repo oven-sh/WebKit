@@ -262,7 +262,7 @@ bool FunctionCodeGenerator::generateB3()
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
-        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells, !traits.savesFrameOnSuspend);
+        checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
     if (options.checksMovedLoads) {

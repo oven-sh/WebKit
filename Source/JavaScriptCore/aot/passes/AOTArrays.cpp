@@ -39,6 +39,8 @@
 #include "JSCJSValueInlines.h"
 #include <algorithm>
 #include <cmath>
+#include <ranges>
+#include <span>
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -1262,9 +1264,20 @@ struct ArrayUses {
             for (auto [length, block] : creations)
                 relations->assumeRange(length, Range::uint32(), block);
         }
-        return relations->isAtLeast(position, 0, at) == IntegerRelations::Answer::Proven && std::ranges::any_of(lengths->value, [&](ValueID length) {
+        if (relations->isAtLeast(position, 0, at) != IntegerRelations::Answer::Proven)
+            return false;
+
+        // A position is compared with a length that was read shortly before: the reads are asked about from the last one in front of the access to the first, and then those behind it.
+        const CFG& cfg = analyses.cfg();
+        const UseLists& useLists = analyses.useLists();
+        auto isAbovePosition = [&](ValueID length) {
             return relations->isAtMost(position, length, -1, at) == IntegerRelations::Answer::Proven;
-        });
+        };
+        std::span<const ValueID> reads = lengths->value.span();
+        size_t numberInFront = std::ranges::partition_point(reads, [&](ValueID length) {
+            return cfg.reversePostOrderIndex(useLists.blockOf(length)) <= cfg.reversePostOrderIndex(at);
+        }) - reads.begin();
+        return std::ranges::any_of(reads.first(numberInFront) | std::views::reverse, isAbovePosition) || std::ranges::any_of(reads.subspan(numberInFront), isAbovePosition);
     }
 };
 

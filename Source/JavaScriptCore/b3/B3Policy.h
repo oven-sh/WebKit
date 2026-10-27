@@ -117,8 +117,8 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
-    // A loop that cannot outrun such a limit needs no poll.
-    bool limitsOfRangeChecksAreLengthsOfData { false };
+    // The fast version of a loop whose counter stays below the length of an array, a view or a string does not poll.
+    bool omitsPollsFromLoopsThatEndWithinData { false };
     bool unrolls { false };
     double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };

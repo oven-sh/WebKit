@@ -462,11 +462,15 @@ void Instance::captureCellHeaders()
 #if USE(MIMALLOC)
 // The VM whose compiled code this thread runs.
 static thread_local VM* t_vmOfThread;
+static VM* s_vmOfFirstThread;
 
-static void didUseAddressSpaceBallastOnThisThread()
+static void didUseAddressSpaceBallastOnThisThread(bool wasWhole)
 {
     static thread_local bool isTellingVM;
     if (!t_vmOfThread || isTellingVM)
+        return;
+    // An error in the first thread ends the program. An error in a Worker ends the Worker, which gives back what it held. Where another thread was the first to find no room, the first thread is not told.
+    if (!wasWhole && t_vmOfThread == s_vmOfFirstThread)
         return;
     SetForScope scope { isTellingVM, true };
     MarkedBlockCage::didUseAddressSpaceBallast(*t_vmOfThread);
@@ -497,6 +501,7 @@ Instance* Instance::create(JSGlobalObject* realm)
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
+    instance->state->caches->addClearedEachCollection("last array looked at in vain"_s, asMutableByteSpan(instance->arrays.lastArrayLookedAtInVain));
     instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
@@ -521,7 +526,15 @@ Instance* Instance::create(JSGlobalObject* realm)
     keepAddressSpaceBallast();
 #if USE(MIMALLOC)
     t_vmOfThread = &vm;
+    if (!s_vmOfFirstThread) {
+        s_vmOfFirstThread = &vm;
+        bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
+    }
     bmalloc::api::setAddressSpaceBallastHandler(didUseAddressSpaceBallastOnThisThread);
+    bmalloc::api::setAddressSpaceBallastKeeper([] {
+        keepAddressSpaceBallast();
+        return addressSpaceLeft();
+    });
 #endif
     return instance;
 }
@@ -1221,6 +1234,13 @@ void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 {
     void* pages = tryReserveGuardedPages(bytes, usage);
+#if USE(MIMALLOC)
+    if (!pages) [[unlikely]] {
+        bmalloc::api::RequestWithBallast request;
+        while (!pages && request.tryMakeRoom())
+            pages = tryReserveGuardedPages(bytes, usage);
+    }
+#endif
     RELEASE_ASSERT(pages, bytes);
     return pages;
 }

@@ -2944,18 +2944,16 @@ void Heap::collectForExhaustedCage()
 #endif
 }
 
-bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
+bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator, RequestInExhaustedCage& request)
 {
     if (!MarkedBlockCage::isRequired())
         return false;
 #if USE(MIMALLOC)
     // Storage comes from malloc.
-    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get()) {
-        if (!bmalloc::api::tryReleasePieceOfAddressSpaceBallast())
-            return false;
-        MarkedBlockCage::didUseAddressSpaceBallast(vm());
-        return true;
-    }
+    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
+        return !std::exchange(request.m_hasAskedWithBallast, true);
+#else
+    UNUSED_PARAM(request);
 #endif
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())

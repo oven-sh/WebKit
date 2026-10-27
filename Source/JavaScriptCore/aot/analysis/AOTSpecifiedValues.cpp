@@ -15,12 +15,13 @@
 #include "AOTLayout.h"
 #include "AOTMemoryLocation.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTUseLists.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <wtf/HashMap.h>
+#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -77,7 +78,10 @@ public:
         widenTypes();
         Origin origin = m_builder.origin();
         for (BlockID block : m_analyses.cfg().reversePostOrder())
-            castOperandsIn(block);
+            collectOperandsToCastIn(block);
+        chooseBlocksOfCasts();
+        for (const OperandToCast& use : m_operandsToCast)
+            castOperand(use);
         m_builder.applyInsertions();
         m_builder.setOrigin(origin);
         return m_didChange;
@@ -129,22 +133,57 @@ private:
     }
 
     // A fact lasts for ever: what has been filled where one use stands has been filled wherever that use has been passed. A block that has a handler may be left in front of the cast.
+    // So a block in which an operand is used makes a cast of it unless a block without a handler that dominates it makes one. Of the blocks that make one and have no handler none dominates another.
+    void chooseBlocksOfCasts()
+    {
+        for (const OperandToCast& use : m_operandsToCast) {
+            if (m_casts.isEmpty() || m_casts.last().operand != use.operand || m_casts.last().block != use.block)
+                m_casts.append({ use.operand, use.block, 0, ValueID() });
+        }
+        AOT::sort(m_casts, { }, &Cast::key);
+        removeRepeatedElements(m_casts, [](const Cast& a, const Cast& b) { return a.key() == b.key(); });
+
+        Vector<uint32_t, 16> inOrderOfTree;
+        for (uint32_t first = 0, end; first < m_casts.size(); first = end) {
+            for (end = first + 1; end < m_casts.size() && m_casts[end].operand == m_casts[first].operand; ++end) { }
+            m_casts[first].maker = first;
+            if (end - first == 1)
+                continue;
+
+            const Dominators& dominators = m_analyses.dominators();
+            inOrderOfTree.shrink(0);
+            for (uint32_t index = first; index < end; ++index)
+                inOrderOfTree.append(index);
+            AOT::sort(inOrderOfTree, { }, [&](uint32_t index) { return dominators.numberOf(m_casts[index].block); });
+            std::optional<uint32_t> makerAbove;
+            for (uint32_t index : inOrderOfTree) {
+                BlockID block = m_casts[index].block;
+                if (makerAbove && dominators.numberOf(block) <= dominators.lastNumberBelow(m_casts[*makerAbove].block)) {
+                    m_casts[index].maker = *makerAbove;
+                    continue;
+                }
+                m_casts[index].maker = index;
+                makerAbove = m_function.at(block).handler ? std::nullopt : std::optional { index };
+            }
+        }
+    }
+
     ValueID castAt(ProgramPoint point, Origin origin, ValueID operand)
     {
-        Vector<Cast, 1>& casts = m_casts.ensure(operand.index(), [] { return Vector<Cast, 1>(); }).iterator->value;
-        for (const Cast& cast : casts) {
-            if (cast.block == point.block || (!m_function.at(cast.block).handler && m_analyses.dominators().dominates(cast.block, point.block)))
-                return cast.result;
-        }
+        auto castOfBlock = std::ranges::lower_bound(m_casts, Cast { operand, point.block, 0, ValueID() }.key(), { }, &Cast::key);
+        RELEASE_ASSERT(castOfBlock != m_casts.end() && castOfBlock->operand == operand && castOfBlock->block == point.block);
+        Cast& made = m_casts[castOfBlock->maker];
+        if (made.result)
+            return made.result;
+        RELEASE_ASSERT(made.block == point.block);
         m_builder.setOrigin(origin);
         if (!m_factInBlock)
             m_factInBlock = m_builder.insertBefore(point, IRBuilder::make(Opcode::Specified));
         // A fact that some way has not made is no word to look at: that it has been made where the use stands is what the new fact says.
         bool isFact = m_types.at(m_function.at(operand).type).withoutPrimitives(Primitive::Unspecified).isOpaque(OpaqueKind::Fact);
-        ValueID cast = isFact ? m_factInBlock : m_builder.insertBefore(point, makeCastBehindFact(m_function, m_types, operand, m_factInBlock));
-        casts.append({ point.block, cast });
+        made.result = isFact ? m_factInBlock : m_builder.insertBefore(point, makeCastBehindFact(m_function, m_types, operand, m_factInBlock));
         m_didChange = true;
-        return cast;
+        return made.result;
     }
 
     // A result that is declared without `unspecified` is filled by every Return: what a Return hands over for it is a part of the variant that it returns.
@@ -160,9 +199,8 @@ private:
         return isReturned && !TypingContext { m_program, m_function, m_types }.typeOf(m_function.results[operandIndex]).mayBeUnspecified();
     }
 
-    void castOperandsIn(BlockID id)
+    void collectOperandsToCastIn(BlockID id)
     {
-        m_factInBlock = { };
         uint32_t numberOfValues = m_function.at(id).values.size();
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID user = m_function.at(id).values[index];
@@ -170,8 +208,7 @@ private:
                 ValueID operand = m_function.at(user).operand(operandIndex);
                 if (!operand || !mayBeUnspecified(operand) || (handsOperandOn(m_program, m_function.at(user), operandIndex) && !fillsResultDeclaredFilled(user, operandIndex)))
                     continue;
-                ValueID cast = castAt({ id, index }, m_function.at(user).origin(), operand);
-                m_function.edit(user).setOperand(operandIndex, cast);
+                m_operandsToCast.append({ id, index, user, operandIndex, operand });
             }
         }
 
@@ -179,16 +216,42 @@ private:
         if (terminator.kind == TerminatorKind::Return && m_function.results.size() == 1 && TypingContext { m_program, m_function, m_types }.typeOf(m_function.result()).mayBeUnspecified())
             return;
         for (uint32_t operandIndex = 0; operandIndex < terminator.numberOfOperands(); ++operandIndex) {
-            ValueID operand = m_function.at(id).terminator.operand(operandIndex);
+            ValueID operand = terminator.operand(operandIndex);
             if (!operand || !mayBeUnspecified(operand))
                 continue;
-            ValueID cast = castAt({ id, numberOfValues }, m_function.at(id).terminator.origin(), operand);
-            m_function.edit(id, BlockEdit::Terminator).terminator.setOperand(operandIndex, cast);
+            m_operandsToCast.append({ id, numberOfValues, ValueID(), operandIndex, operand });
         }
     }
 
-    struct Cast {
+    struct OperandToCast {
         BlockID block;
+        uint32_t index;
+        ValueID user;
+        uint32_t operandIndex;
+        ValueID operand;
+    };
+
+    void castOperand(const OperandToCast& use)
+    {
+        if (m_blockOfFact != use.block) {
+            m_blockOfFact = use.block;
+            m_factInBlock = { };
+        }
+        if (use.user) {
+            ValueID cast = castAt({ use.block, use.index }, m_function.at(use.user).origin(), use.operand);
+            m_function.edit(use.user).setOperand(use.operandIndex, cast);
+            return;
+        }
+        ValueID cast = castAt({ use.block, use.index }, m_function.at(use.block).terminator.origin(), use.operand);
+        m_function.edit(use.block, BlockEdit::Terminator).terminator.setOperand(use.operandIndex, cast);
+    }
+
+    struct Cast {
+        uint64_t key() const { return static_cast<uint64_t>(operand.index()) << 32 | block.index(); }
+
+        ValueID operand;
+        BlockID block;
+        uint32_t maker;
         ValueID result;
     };
 
@@ -197,8 +260,10 @@ private:
     const Program& m_program;
     Function& m_function;
     TypeArena& m_types;
+    BlockID m_blockOfFact;
     ValueID m_factInBlock;
-    HashMap<uint32_t, Vector<Cast, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_casts;
+    Vector<OperandToCast> m_operandsToCast;
+    Vector<Cast> m_casts;
     bool m_didChange { false };
 };
 

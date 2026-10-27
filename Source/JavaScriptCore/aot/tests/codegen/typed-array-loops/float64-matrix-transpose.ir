@@ -156,5 +156,5 @@ function f1 name="turn" module=m0 position=108 flags=[IsChecked, HasExplicitName
 # STORES-NOT: = Store(b@{{*}}Writes:TypedArrayElements
 # STORES-LABEL: end of loop
 # The rare instructions are one copy of what lies behind the rare edges and of the rest of the turn. Behind it the turns that are written out are entered again.
-# X64: instructions: 40, patchpoints: 9, rare instructions: 17
-# ARM64: instructions: 26, patchpoints: 9, rare instructions: 17
+# X64: instructions: 40, patchpoints: 8, rare instructions: 17
+# ARM64: instructions: 26, patchpoints: 8, rare instructions: 17

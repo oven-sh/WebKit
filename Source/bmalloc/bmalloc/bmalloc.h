@@ -106,14 +106,32 @@ BINLINE bool isMTEEnabled()
 #if BUSE(MIMALLOC)
 // Address space that nothing uses, kept where there is a limit on it. Requests that may fail get null when the rest has been taken.
 // A request that may not fail lets go of the ballast piece by piece and asks again.
-// Keeps as many pieces as make up the size, as far as as much again stays free.
-BEXPORT void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft);
+// What the missing pieces have left counts as taken: a large request that may fail, on whatever thread, takes address space from the system only as far as that much stays free.
+// Keeps as many pieces as make up the size, as far as that much stays free.
+BEXPORT void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addressSpaceToLeaveFree);
+BEXPORT size_t sizeOfAddressSpaceBallastKept();
+// No piece that a request has used is missing.
 BEXPORT bool hasWholeAddressSpaceBallast();
-// False when no piece is left.
-BEXPORT bool tryReleasePieceOfAddressSpaceBallast();
-// Called on the thread whose request let go of a piece, behind the request.
-using AddressSpaceBallastHandler = void (*)();
+// Called on the thread whose request let go of a piece, behind the request, and told whether the ballast was whole until then.
+using AddressSpaceBallastHandler = void (*)(bool wasWhole);
 BEXPORT void setAddressSpaceBallastHandler(AddressSpaceBallastHandler);
+// Called where a large request that may fail asks while pieces are missing. It keeps them again if there is room by now, and returns the address space that is left.
+using AddressSpaceBallastKeeper = size_t (*)();
+BEXPORT void setAddressSpaceBallastKeeper(AddressSpaceBallastKeeper);
+
+// No request of this thread is refused because pieces are missing.
+BEXPORT void exemptThisThreadFromAddressSpaceBallast();
+
+// A request that may not fail and has found no memory. While one lives, all that its thread asks of malloc may use the ballast.
+class RequestWithBallast {
+public:
+    BEXPORT RequestWithBallast();
+    RequestWithBallast(const RequestWithBallast&) = delete;
+    BEXPORT ~RequestWithBallast();
+    // For a request that takes its address space from the system itself. True when a piece has been let go of: ask again.
+    BEXPORT bool tryMakeRoom();
+};
+
 // They ask again for what the thread's last request asked for, which the allocator remembers: no caller keeps its arguments for them.
 BEXPORT void* mallocAgainWithBallast();
 BEXPORT void* zeroedMallocAgainWithBallast();

@@ -1,4 +1,4 @@
-# An innermost loop that counts up to the length of a string or an array, and on its likely paths runs nothing that may not complete, ends within the data it walks, as indexOf does: it has no poll.
+# An innermost loop that counts up to the length of a string or an array that it reads, and on its likely paths runs nothing that may not complete, ends within the data it walks, as indexOf does: it has no poll.
 # A loop around such a loop, a loop that calls a function with a loop of its own, and a loop that counts up to any other number keep theirs.
 # FORM: AsRead
 # f6, f7 and f8 are the typed bodies of f1, f2 and f3.
@@ -11,7 +11,7 @@
 # X64: f4: size={{*}} polls=2
 # X64: f6: size={{*}} polls=0
 # X64: f7: size={{*}} polls=1
-# X64: f8: size={{*}} polls=2
+# X64: f8: size={{*}} polls=1
 # ARM64-LABEL: f4: size=
 # ARM64: operation operationAOTPollSlow x2
 # ARM64-LABEL: f6: size=
@@ -19,7 +19,7 @@
 # ARM64-LABEL: f7: size=
 # ARM64: operation operationAOTPollSlow x1
 # ARM64-LABEL: f8: size=
-# ARM64: operation operationAOTPollSlow x2
+# ARM64: operation operationAOTPollSlow x1
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -46,9 +46,12 @@ function f1 name="walksAString" module=m0 position=5 flags=[IsChecked] length=1 
     v6 = Less v2, v5
     Branch v6 -> taken b2(), notTaken b3()
   b2():
-    v7 = BitXor v3, v2
-    v8 = Increment v2
-    Jump -> next b1(v8, v7)
+    v7 = ElemGet v0, v2
+    v8 = String string=","
+    v9 = StrictEq v7, v8
+    v10 = BitXor v3, v9
+    v11 = Increment v2
+    Jump -> next b1(v11, v10)
   b3():
     Return v3
 }
@@ -68,12 +71,15 @@ function f2 name="walksAStringManyTimes" module=m0 position=15 flags=[IsChecked]
     v11 = Less v7, v10
     Branch v11 -> taken b4(), notTaken b5()
   b4():
-    v12 = BitXor v8, v7
-    v13 = Increment v7
-    Jump -> next b3(v13, v12)
+    v12 = ElemGet v0, v7
+    v13 = String string=","
+    v14 = StrictEq v12, v13
+    v15 = BitXor v8, v14
+    v16 = Increment v7
+    Jump -> next b3(v16, v15)
   b5():
-    v14 = Increment v2
-    Jump -> next b1(v14, v8)
+    v17 = Increment v2
+    Jump -> next b1(v17, v8)
   b6():
     Return v3
 }

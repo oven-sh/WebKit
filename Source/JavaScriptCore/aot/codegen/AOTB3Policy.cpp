@@ -155,7 +155,7 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
-    loops.limitsOfRangeChecksAreLengthsOfData = true;
+    loops.omitsPollsFromLoopsThatEndWithinData = true;
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;

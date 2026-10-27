@@ -872,12 +872,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
-            Exception* exception = scope.exception();
-            if (!exception && (m_fileWhoseJobsWaitForLoader || hasDeferredLoads())) {
-                m_rootWhoseFilesRanAhead = root;
-                return true;
-            }
-            if (exception) [[unlikely]] {
+            if (Exception* exception = scope.exception()) [[unlikely]] {
                 if (vm.isTerminationException(exception))
                     return true;
                 TRY_CLEAR_EXCEPTION(scope, true);
@@ -894,14 +889,18 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     throwException(m_instance.globalObject, scope, exception);
                     return true;
                 }
+                if (!queue.isEmpty())
+                    holdJobsBehind(0, *failedFile);
                 // As in the loop below.
                 if (!wasImportedWhileItRan(m_table.fileBehindFace(*failedFile).value_or(*failedFile))) {
-                    if (!queue.isEmpty())
-                        holdJobsBehind(0, *failedFile);
                     m_rootWhoseFilesRanAhead = root;
                     return true;
                 }
                 dropErrorOfFile(*failedFile);
+            }
+            if (m_fileWhoseJobsWaitForLoader || hasDeferredLoads()) {
+                m_rootWhoseFilesRanAhead = root;
+                return true;
             }
         }
     }
@@ -946,28 +945,28 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 hasDeferredLoads = false;
             }
         }
-        if (!exception) [[likely]] {
-            bool didQueueJobs = numberOfJobsThatWouldWait(jobs) != numberOfJobs;
-            if (!didQueueJobs && !hasDeferredLoads) [[likely]]
-                continue;
-            if (didQueueJobs)
-                holdJobsBehind(numberOfJobs, imported, jobs);
-            m_rootWhoseFilesRanAhead = root;
-            return didRunFile;
-        }
-        // A graph that the file required has imported the file back and bound what it had exported by then. The loader has the file from then on, and nobody waits for its end.
-        if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(imported).value_or(imported))) {
-            // `bun run` loads the rest of the graph, and with it runs the other files, before it reports the error. The loader goes through the graph and finds the error where it comes to the file.
-            if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
-                TRY_CLEAR_EXCEPTION(scope, didRunFile);
-                if (numberOfJobsThatWouldWait(jobs) != numberOfJobs)
-                    holdJobsBehind(numberOfJobs, imported, jobs);
-                m_rootWhoseFilesRanAhead = root;
+        if (exception) [[unlikely]] {
+            // A graph that the file required has imported the file back and bound what it had exported by then. The loader has the file from then on, and nobody waits for its end.
+            if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(imported).value_or(imported))) {
+                // `bun run` loads the rest of the graph, and with it runs the other files, before it reports the error. The loader goes through the graph and finds the error where it comes to the file.
+                if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
+                    TRY_CLEAR_EXCEPTION(scope, didRunFile);
+                    if (numberOfJobsThatWouldWait(jobs) != numberOfJobs)
+                        holdJobsBehind(numberOfJobs, imported, jobs);
+                    m_rootWhoseFilesRanAhead = root;
+                }
+                return didRunFile;
             }
-            return didRunFile;
+            TRY_CLEAR_EXCEPTION(scope, didRunFile);
+            dropErrorOfFile(imported);
         }
-        TRY_CLEAR_EXCEPTION(scope, didRunFile);
-        dropErrorOfFile(imported);
+        bool didQueueJobs = numberOfJobsThatWouldWait(jobs) != numberOfJobs;
+        if (!didQueueJobs && !hasDeferredLoads) [[likely]]
+            continue;
+        if (didQueueJobs)
+            holdJobsBehind(numberOfJobs, imported, jobs);
+        m_rootWhoseFilesRanAhead = root;
+        return didRunFile;
     }
     if (didRunFile)
         m_rootsLoadedWithoutLoader.append(root);

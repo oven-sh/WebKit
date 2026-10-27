@@ -1021,7 +1021,8 @@ static Vector<ValueID> collectSubjectsKnownBeyondTheirTypes(FunctionPassContext&
     return subjects;
 }
 
-static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, BlockID block, uint32_t firstIndex, const BitVector& isKnownBetter, NOESCAPE const Invocable<const Liveness&()> auto& livenessOfValuesKnownBetter)
+// `isLive` is empty before and behind.
+static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, BlockID block, uint32_t firstIndex, const BitVector& isKnownBetter, NOESCAPE const Invocable<const Liveness&()> auto& livenessOfValuesKnownBetter, BitVector& isLive)
 {
     const Block& contents = function.at(block);
     const BlockValues& values = contents.values;
@@ -1033,10 +1034,13 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
     }
 
     const Liveness& liveness = livenessOfValuesKnownBetter();
-    Vector<ValueID, 8> live;
+    size_t numberOfLiveValues = 0;
+    Vector<ValueID, 8> valuesThatWereLive;
     auto use = [&](ValueID value) {
-        if (value && isKnownBetter.get(value.index()))
-            live.appendIfNotContains(value);
+        if (!value || !isKnownBetter.get(value.index()) || isLive.set(value.index()))
+            return;
+        ++numberOfLiveValues;
+        valuesThatWereLive.append(value);
     };
     contents.forEachChildOutsideValues(use);
     contents.forEachTarget([&](const Target& target) {
@@ -1044,11 +1048,14 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
             use(value);
     });
     for (uint32_t index = values.size(); index-- > std::max(firstIndex, 1u);) {
-        live.removeFirst(values[index]);
+        if (isLive.clear(values[index].index()))
+            --numberOfLiveValues;
         function.at(values[index]).forEachOperand([&](ValueID operand, uint32_t) { use(operand); });
-        if (live.isEmpty())
+        if (!numberOfLiveValues)
             points.quickSet(index);
     }
+    for (ValueID value : valuesThatWereLive)
+        isLive.clear(value.index());
     return points;
 }
 
@@ -1126,6 +1133,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         return *ownLiveness;
     };
 
+    BitVector isLive;
     for (size_t first = 0, next = 0; first < ranges.size(); first = next) {
         BlockID block = ranges[first].block;
         uint32_t numberOfValues = function.at(block).values.size();
@@ -1136,7 +1144,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         }
         if (firstEnd == numberOfValues)
             continue;
-        BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter);
+        BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
             for (uint32_t index = range.end; range.isCloned && index < numberOfValues; ++index) {
                 if (!points.quickGet(index) || !mayRejoinAt({ block, index }))
@@ -1713,6 +1721,26 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     return { LayoutList(kept.span()), kept.size() < layouts.size() };
 }
 
+// Whoever gets hold of an object may store to it. Where flow knows every writer of a field, no object with that field has reached code that flow does not see, and none comes out of it.
+static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
+{
+    LayoutList layoutsSeenToArrive;
+    for (const NamedUse& use : uses) {
+        if (use.stamp)
+            layoutsSeenToArrive.unite(LayoutList(program.at(use.stamp).seen().predicted()));
+    }
+    LayoutList kept;
+    for (LayoutID layout : layouts) {
+        bool staysInSight = std::ranges::any_of(uses, [&](const NamedUse& use) {
+            std::optional<FieldReference> field = findField(program, layout, use.key, BaseChain::Predicted);
+            return field && fieldAt(program, *field).flow.location.writers == WriterState::AllKnown;
+        });
+        if (!staysInSight || layoutsSeenToArrive.contains(layout))
+            kept.add(layout);
+    }
+    return kept;
+}
+
 // The object is expected to have every name that the uses that count ask it for.
 static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, size_t maxLayouts)
 {
@@ -1733,6 +1761,8 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
         if (std::ranges::all_of(names, isCommon))
             return LayoutList();
         LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
+        if (layouts.size() <= maxLayouts)
+            layouts = withoutLayoutsThatStayInSight(program, uses, layouts);
         if (!layouts.isEmpty())
             return layouts;
     }
@@ -1748,7 +1778,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
                 layoutsWithAnyName.add(layout);
         }
     }
-    return layoutsWithAnyName;
+    return withoutLayoutsThatStayInSight(program, uses, layoutsWithAnyName);
 }
 
 static Expected<bool> resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)
@@ -1941,10 +1971,12 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
         layoutsMet = WTF::move(met);
     };
     bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use).predicted(); });
-    // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
+    // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts that something makes the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
         TypeID expected = function.at(use.receiver).expected().predicted();
-        return expected && context.types.at(expected).layouts;
+        return expected && std::ranges::any_of(membersOf(context.program, context.types.at(expected)), [&](LayoutID layout) {
+            return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
+        });
     });
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;

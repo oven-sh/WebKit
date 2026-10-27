@@ -346,7 +346,8 @@ static KnownBoolean hasLayoutIn(const Program& program, const VirtualObjectDescr
 
 FieldContents contentsOf(const ShapeContext& context, const VirtualObjectDescription& description, uint32_t field)
 {
-    return { typeOfField(context.objects, description, context.family.fieldAt(field)), context.family.mayHoldUndefinedOrNull(field) };
+    const VirtualField& virtualField = context.family.fieldAt(field);
+    return { typeOfField(context.objects, description, virtualField), context.family.mayHoldUndefinedOrNull(field) && holdsUndefinedAndNullToo(context.objects, description, virtualField) };
 }
 
 bool isWithin(const Program& program, FieldContents contents, TypeID bound)

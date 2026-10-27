@@ -443,6 +443,8 @@ public:
     }
 
     JS_EXPORT_PRIVATE HeapRange rangeOf(const AbstractHeap&) const;
+    // Whether a word read out of there says how many elements a view or the characters of a string hold, or how many an array has room for.
+    JS_EXPORT_PRIVATE bool holdsLengthOfData(HeapRange) const;
 
 protected:
     struct GrownHeap {

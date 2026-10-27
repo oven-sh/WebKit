@@ -67,8 +67,8 @@ static constexpr size_t sizeOfAddressSpaceBallast = 8 * MB;
 inline void keepAddressSpaceBallast()
 {
 #if USE(MIMALLOC)
-    if (hasAddressSpaceLimit() && !bmalloc::api::hasWholeAddressSpaceBallast())
-        bmalloc::api::keepAddressSpaceBallast(sizeOfAddressSpaceBallast, addressSpaceLeft());
+    if (hasAddressSpaceLimit() && bmalloc::api::sizeOfAddressSpaceBallastKept() != sizeOfAddressSpaceBallast)
+        bmalloc::api::keepAddressSpaceBallast(sizeOfAddressSpaceBallast, addressSpaceLeft(), sizeOfAddressSpaceBallast);
 #endif
 }
 

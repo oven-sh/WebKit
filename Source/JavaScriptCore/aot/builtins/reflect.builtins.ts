@@ -191,6 +191,7 @@ export default b.declarations(
               }),
               // The receiver may be the target itself, or a proxy of it.
               b.definesName(key, b.operand("value")),
+              b.storedByKey(key, b.operand("value")),
               ...b.ownPropertyTraps,
               b.runs("PrototypeChain"),
             ],

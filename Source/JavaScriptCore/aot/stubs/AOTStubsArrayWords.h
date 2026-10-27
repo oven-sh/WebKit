@@ -22,12 +22,13 @@ struct ArrayWords {
     static constexpr uint32_t numberOfCounts = 64;
 
     uint64_t distanceFromProfileToLastArray;
+    const void* lastArrayLookedAtInVain;
     uint32_t elementsLookedAtInVain;
     uint32_t placeThatConverts;
     uint8_t shortYoungArraysConverted[numberOfCounts];
 };
 
-static_assert(sizeof(ArrayWords) == 16 + ArrayWords::numberOfCounts);
+static_assert(sizeof(ArrayWords) == 24 + ArrayWords::numberOfCounts);
 static_assert(std::is_trivially_default_constructible_v<ArrayWords> && std::is_standard_layout_v<ArrayWords>);
 
 } } // namespace JSC::AOT

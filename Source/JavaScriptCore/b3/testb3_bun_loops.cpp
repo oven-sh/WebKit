@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3EliminateRedundantPhiCycles.h"
+#include "B3LoopUtilities.h"
 #include "B3RotateLoops.h"
 #include "B3SimplifyTerminals.h"
 #include "B3SwitchValue.h"
@@ -268,6 +269,50 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(5)), 5);
         CHECK_EQ(state.numberOfPolls, hasUnlikelyBackEdge ? 6 : 5);
+    }
+}
+
+// A rare edge leaves the loop and leads back in front of its top. Where that cycle has no poll of its own, its turns poll in the test that stays in front of the rotated loop.
+static void testRotateLoopsKeepsPollInFrontOfLoopOnCycleWithoutPoll()
+{
+    for (bool cycleHasPoll : { false, true }) {
+        Procedure proc(remarkPolicy());
+        Graph graph { proc };
+        PollState state;
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* entry = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* latch = proc.addBlock();
+        BasicBlock* wayBack = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.jump(root, entry);
+        if (cycleHasPoll)
+            appendPoll(graph, entry, state);
+        graph.jump(entry, header);
+        appendPoll(graph, header, state);
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
+        graph.increase(body, index, 1);
+        graph.branch(body, graph.make(body, BitAnd, graph.get(body, index), graph.int64(body, 1)), rarely(wayBack), FrequentedBlock(latch));
+        graph.jump(latch, header);
+        graph.jump(wayBack, entry);
+        graph.ret(exit, graph.get(exit, index));
+        proc.resetReachability();
+        fixSSA(proc);
+
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+        unsigned numberOfPollsInFrontOfLoop = 0;
+        for (Value* value : *header)
+            numberOfPollsInFrontOfLoop += isLoopPoll(value);
+        CHECK_EQ(numberOfPollsInFrontOfLoop, cycleHasPoll ? 0u : 1u);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+        CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(6)), 6);
+        CHECK_EQ(state.numberOfPolls, 7);
     }
 }
 
@@ -567,6 +612,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());
+    RUN(testRotateLoopsKeepsPollInFrontOfLoopOnCycleWithoutPoll());
     RUN(testRotateLoopsWritesRemark());
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());

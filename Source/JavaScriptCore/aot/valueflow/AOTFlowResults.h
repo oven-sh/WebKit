@@ -176,6 +176,14 @@ struct WrittenPositionOfSite {
     uint32_t position { 0 };
 };
 
+// Proxies that the program makes are seen to arrive as the receiver of the access, and little else. The layouts are those seen to arrive as the handler and as the target where those proxies are made.
+// A list is empty where nothing with a layout is seen and where more kinds are seen than a place can tell apart. A prediction: other proxies may arrive, and other objects.
+struct FlowProxiesSeenAtSite {
+    AccessSiteID site;
+    Vector<LayoutID, 4> handlers;
+    Vector<LayoutID, 4> targets;
+};
+
 struct FlowSiteTables {
     Vector<AccessSite> accessSites;
     // Sorted by site. The location of a site is where an error is reported; only a site that the source text has elsewhere is listed.
@@ -184,6 +192,8 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     // Empty where no array has such a kind.
     Vector<bool> receiversThatMayHaveDecidedStorage;
+    // Sorted by site.
+    Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
     Vector<AllocationSite> allocationSites;
@@ -262,12 +272,6 @@ struct ConstantLists {
     Vector<Entry> entries;
 };
 
-// The layouts of what arrives at `new Proxy`, where they are few. A list is empty where nothing with a layout arrives and where more kinds arrive than a place can tell apart.
-struct LayoutsExpectedInProxies {
-    Vector<LayoutID, 4> handlers;
-    Vector<LayoutID, 4> targets;
-};
-
 class FlowResults {
     WTF_MAKE_TZONE_ALLOCATED(FlowResults);
     WTF_MAKE_NONCOPYABLE(FlowResults);
@@ -306,8 +310,7 @@ public:
     void setFrameArrayParameters(FrameArrayParameters&& table) { m_frameArrayParameters = WTF::move(table); }
     bool isSiteOfWholeLiterals(AllocationSiteID site) const { return site && m_sitesOfWholeLiterals.get(site.index()); }
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
-    const LayoutsExpectedInProxies& layoutsExpectedInProxies() const { return m_layoutsExpectedInProxies; }
-    void setLayoutsExpectedInProxies(LayoutsExpectedInProxies&& layouts) { m_layoutsExpectedInProxies = WTF::move(layouts); }
+    const FlowProxiesSeenAtSite* findProxiesSeenAt(AccessSiteID) const LIFETIME_BOUND;
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
@@ -414,7 +417,6 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
-    LayoutsExpectedInProxies m_layoutsExpectedInProxies;
     Vector<FieldReference> m_fieldsTakenBack;
     bool m_mayListKeysOfEveryHolder { false };
     bool m_unseenCodeCanRun { true };

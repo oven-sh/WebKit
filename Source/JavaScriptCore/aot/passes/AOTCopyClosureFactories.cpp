@@ -21,6 +21,7 @@
 #include "AOTVector.h"
 #include <ranges>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -87,20 +88,51 @@ static void forEachValueOf(const Function& function, NOESCAPE const Invocable<vo
     }
 }
 
-// What fills the fields of a class is a function of its own that the constructor, or whoever evaluates the class, calls.
-static bool callsInitializer(const Program& program, const Value& value)
+// Field initializers and static blocks are functions that are called directly, with their captures as arguments.
+static bool referencesNestedFunction(const Program& program, const Value& value)
 {
-    return value.opcode == Opcode::CallDirect && program.at(value.function()).kind == FunctionKind::Initializer;
+    return value.opcode == Opcode::NewClosure || (value.opcode == Opcode::CallDirect && isCodeOfProgram(program.at(value.function())));
 }
 
-static unsigned numberOfValuesWithClosures(const Program& program, const Function& function)
+namespace {
+
+// A function and every function nested in it.
+struct NestedFunctions {
+    bool contains(FunctionID id) const { return indices.contains(id.index() + 1); }
+
+    Vector<FunctionID, 8> functions;
+    UncheckedKeyHashSet<uint32_t> indices;
+    unsigned numberOfValues { 0 };
+    bool isRecursive { false };
+};
+
+} // anonymous namespace
+
+static void addNestedFunctions(const Program& program, FunctionID id, NestedFunctions& nested, UncheckedKeyHashSet<uint32_t>& ancestors)
 {
-    unsigned result = function.values.size();
+    if (ancestors.contains(id.index() + 1)) {
+        nested.isRecursive = true;
+        return;
+    }
+    if (!nested.indices.add(id.index() + 1).isNewEntry)
+        return;
+    const Function& function = program.at(id);
+    nested.functions.append(id);
+    nested.numberOfValues += function.values.size();
+    ancestors.add(id.index() + 1);
     forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
-        if (value.opcode == Opcode::NewClosure || callsInitializer(program, value))
-            result += numberOfValuesWithClosures(program, program.at(value.function()));
+        if (referencesNestedFunction(program, value))
+            addNestedFunctions(program, value.function(), nested, ancestors);
     });
-    return result;
+    ancestors.remove(id.index() + 1);
+}
+
+static NestedFunctions nestedFunctionsOf(const Program& program, FunctionID id)
+{
+    NestedFunctions nested;
+    UncheckedKeyHashSet<uint32_t> ancestors;
+    addNestedFunctions(program, id, nested, ancestors);
+    return nested;
 }
 
 // `Base => class extends Base { .. }`
@@ -299,6 +331,8 @@ struct CopiedClass {
     LayoutID copy;
 };
 
+using ClassReference = std::pair<LayoutID, FunctionID>;
+
 struct Size {
     unsigned numberOfValuesWithClosures { 0 };
     bool definesWhatStandsAtOnePlace { false };
@@ -324,10 +358,13 @@ struct Copier {
     BitVector modulesWithConstantsEntered;
     UncheckedKeyHashMap<uint32_t, Size> sizes;
     std::optional<BitVector> functionsNamedByClosedTypes;
+    // Sorted. Each class with each function that has an operation on the class, on one of its private names or on one of its static fields.
+    std::optional<Vector<ClassReference>> classReferences;
     BitVector copies;
     UncheckedKeyHashMap<uint32_t, FunctionID> originalsOfCopies;
     // The layouts of the environments of the copies that are being made, each with its original.
     Vector<std::pair<LayoutID, LayoutID>, 4> copiedEnvironments;
+    Vector<std::pair<FunctionID, FunctionID>, 8> copiedNestedFunctions;
     // While a function that evaluates classes is copied: the classes, and what belongs to them.
     Vector<CopiedClass, 2> copiedClasses;
     Vector<std::pair<VariableID, VariableID>, 2> copiedStaticFields;
@@ -462,36 +499,75 @@ struct Copier {
 
     // A class, a function that constructs objects of a layout, the array of a tagged template and the scope of an eval stand at one place of the program.
     // The closure of the copy that is called is held by nothing but the call, so no type speaks of it.
-    bool definesWhatStandsAtOnePlace(FunctionID id, bool isHeldByCallAlone = true, LayoutID classThatIsCopied = { })
+    bool definesWhatStandsAtOnePlace(FunctionID root, const NestedFunctions& nested, bool isHeldByCallAlone = true, LayoutID classThatIsCopied = { })
     {
-        const Function& function = program.at(id);
-        if ((function.constructedClass && function.constructedClass != classThatIsCopied) || (!isHeldByCallAlone && isNamedByClosedType(id)))
+        if (nested.isRecursive)
             return true;
-        bool result = false;
-        forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
-            if (value.opcode == Opcode::NewClosure || (classThatIsCopied && callsInitializer(program, value)))
-                result |= definesWhatStandsAtOnePlace(value.function(), false, classThatIsCopied);
-            else if (value.opcode == Opcode::NewClass || value.opcode == Opcode::NewClassToken)
-                result |= !isHeldByCallAlone || value.layout() != classThatIsCopied;
-            else
-                result |= value.opcode == Opcode::NewTemplateObject || value.opcode == Opcode::DirectEval;
+        return std::ranges::any_of(nested.functions, [&](FunctionID id) {
+            bool isHeldByOthers = id != root || !isHeldByCallAlone;
+            const Function& function = program.at(id);
+            bool result = (function.constructedClass && function.constructedClass != classThatIsCopied) || (isHeldByOthers && isNamedByClosedType(id));
+            forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
+                if (value.opcode == Opcode::NewClass || value.opcode == Opcode::NewClassToken)
+                    result |= isHeldByOthers || value.layout() != classThatIsCopied;
+                else
+                    result |= value.opcode == Opcode::NewTemplateObject || value.opcode == Opcode::DirectEval;
+            });
+            return result;
         });
-        return result;
+    }
+
+    struct ClassReferenceFinder {
+        void operator()(const LayoutID& id) const
+        {
+            ClassReference reference { id, function };
+            if (id && program.at(id).kind == LayoutKind::Instance && (found.isEmpty() || found.last() != reference))
+                found.append(reference);
+        }
+        void operator()(const VariableID& id) const { (*this)(id ? program.at(id).owner : LayoutID()); }
+        void operator()(const PropertyKeyID& id) const { (*this)(id ? program.at(id).owner : LayoutID()); }
+        template<typename Tag> void operator()(const ID<Tag>&) const { }
+
+        const Program& program;
+        FunctionID function;
+        Vector<ClassReference>& found;
+    };
+
+    void findClassReferences()
+    {
+        classReferences = collectInParallel<ClassReference>(build.parallelLoops(), program.numberOfFunctionsAsRead(), [&](unsigned index, Vector<ClassReference>& found) {
+            ClassReferenceFinder finder { program, FunctionID(index), found };
+            for (const Value& value : program.functions[index].values)
+                forEachReference(value, finder);
+        });
+        std::ranges::sort(*classReferences);
+        classReferences->shrink(std::ranges::unique(*classReferences).begin() - classReferences->begin());
+    }
+
+    // The entries of a WeakMap or WeakSet that holds private state are a hidden field of the class. Every function that sees the collection accesses the field, with a token that is created where the collection is.
+    bool isReferencedOutside(LayoutID classLayout, const NestedFunctions& nested)
+    {
+        if (!classReferences)
+            findClassReferences();
+        return std::ranges::any_of(std::ranges::equal_range(*classReferences, classLayout, { }, &ClassReference::first), [&](const ClassReference& reference) {
+            return !nested.contains(reference.second);
+        });
     }
 
     // A copy of the function evaluates a copy of the class: a class of its own, with its own private names and static fields, as each evaluation of the class has anyway.
-    bool isClassFactory(FunctionID id)
+    bool isClassFactory(FunctionID id, const NestedFunctions& nested)
     {
         LayoutID returned = classReturnedBy(program.at(id));
         if (!returned || program.at(returned).kind != LayoutKind::Instance || program.at(returned).computedKeyCount)
             return false;
-        return !definesWhatStandsAtOnePlace(id, true, returned);
+        return !definesWhatStandsAtOnePlace(id, nested, true, returned) && !isReferencedOutside(returned, nested);
     }
 
     Size sizeOf(FunctionID id)
     {
         return sizes.ensure(id.index() + 1, [&] {
-            return Size { numberOfValuesWithClosures(program, program.at(id)), definesWhatStandsAtOnePlace(id) && !isClassFactory(id) };
+            NestedFunctions nested = nestedFunctionsOf(program, id);
+            return Size { nested.numberOfValues, definesWhatStandsAtOnePlace(id, nested) && !isClassFactory(id, nested) };
         }).iterator->value;
     }
 
@@ -677,6 +753,15 @@ struct Copier {
     // The closures that the copy creates are closures of copies too, and so on below them.
     FunctionID copyWithItsClosures(FunctionID original, unsigned& numberOfValuesInCopies)
     {
+        FunctionID result = copyNestedFunction(original, numberOfValuesInCopies);
+        copiedNestedFunctions.shrink(0);
+        return result;
+    }
+
+    FunctionID copyNestedFunction(FunctionID original, unsigned& numberOfValuesInCopies)
+    {
+        if (FunctionID existing = copyIn(copiedNestedFunctions, original); existing != original)
+            return existing;
         Function copy = program.at(original);
         size_t numberOfEnvironmentsAround = copiedEnvironments.size();
         bool isOutermostWithClasses = copiedClasses.isEmpty();
@@ -684,17 +769,18 @@ struct Copier {
         copyClassesOf(copy);
         Vector<std::pair<ValueID, FunctionID>> closures;
         forEachValueOf(copy, [&](ProgramPoint, ValueID id, const Value& value) {
-            if (value.opcode == Opcode::NewClosure || (!copiedClasses.isEmpty() && callsInitializer(program, value)))
+            if (referencesNestedFunction(program, value))
                 closures.append({ id, value.function() });
         });
         for (auto [id, function] : closures)
-            copy.edit(id).setFunction(copyWithItsClosures(function, numberOfValuesInCopies));
+            copy.edit(id).setFunction(copyNestedFunction(function, numberOfValuesInCopies));
         copiedEnvironments.shrink(numberOfEnvironmentsAround);
         numberOfValuesInCopies += copy.values.size();
         LayoutID returned = copiedClasses.isEmpty() ? LayoutID() : copyOfClass(classReturnedBy(copy));
         FunctionID result = editor.addFunctionLike(original, WTF::move(copy));
         copies.set(result.index());
         originalsOfCopies.add(result.index() + 1, original);
+        copiedNestedFunctions.append({ original, result });
         if (copiedClasses.isEmpty())
             return result;
         copiedFunctionsOfClasses.append({ original, result });
@@ -1577,9 +1663,10 @@ struct Copier {
                 ++numberOfValues;
                 if (value.opcode != Opcode::NewClosure)
                     continue;
-                if (definesWhatStandsAtOnePlace(value.function(), false))
+                NestedFunctions nested = nestedFunctionsOf(program, value.function());
+                if (definesWhatStandsAtOnePlace(value.function(), nested, false))
                     return std::nullopt;
-                numberOfValues += numberOfValuesWithClosures(program, program.at(value.function()));
+                numberOfValues += nested.numberOfValues;
                 found.closures.append(id);
             }
         }

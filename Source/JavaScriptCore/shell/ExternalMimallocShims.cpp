@@ -46,6 +46,11 @@ extern "C" bool mi_last_failed_request(struct mi_failed_request_s*) noexcept
     return false;
 }
 
+// The consumer's mimalloc asks before it takes address space from the system. The vendored one does not.
+extern "C" void mi_register_address_space_keeper(const struct mi_address_space_keeper_s*) noexcept
+{
+}
+
 // A value above 1 skips the teardown at process exit, like the consumer's MI_NO_PROCESS_DETACH.
 __attribute__((constructor)) static void skipProcessTeardown()
 {

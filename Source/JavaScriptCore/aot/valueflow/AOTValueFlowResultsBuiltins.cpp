@@ -387,7 +387,7 @@ struct BuiltinLocationClaim {
 
 } // anonymous namespace
 
-static constexpr BuiltinLocationClaim unknown(UnprovenCause cause) { return { BuiltinLocationState::Unknown, cause }; }
+static constexpr BuiltinLocationClaim unknownLocation(UnprovenCause cause) { return { BuiltinLocationState::Unknown, cause }; }
 
 static UnprovenCause causeOf(const Write& write)
 {
@@ -412,9 +412,9 @@ static BuiltinLocationClaim stateOfLocation(const Writers& writers)
 {
     auto all = writers.all();
     if (!all)
-        return unknown(causeOf(writers.open()));
+        return unknownLocation(causeOf(writers.open()));
     if (!all->value().empty())
-        return unknown(causeOf(all->value().front()));
+        return unknownLocation(causeOf(all->value().front()));
     return { BuiltinLocationState::Constant, UnprovenCause::Unknown };
 }
 
@@ -733,7 +733,7 @@ static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlo
         Writers withoutLocks = holders.writersOfMemberWithoutLocks(member);
         if (isEnabled && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
             tables.membersLockedAtStartUp.quickSet(index);
-        BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknown(UnprovenCause::ResultDisabled);
+        BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknownLocation(UnprovenCause::ResultDisabled);
         tables.constantMembers.quickSet(index, claim.state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member));
         if (!uses.isEmpty())
             tables.locations.append(BuiltinLocationFlow { entry.holder, program.keyOf(entry.name), claim.state, noWitness });

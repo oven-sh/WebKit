@@ -59,7 +59,7 @@ private:
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
         std::optional<InductionRecord> induction;
-        bool keepsBackEdgeToGuard { false };
+        bool guardIsOnCycle { false };
     };
 
     bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
@@ -133,10 +133,13 @@ private:
             if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header()))
                 rotation.latches.append(predecessor);
             else if (loops.belongsTo(predecessor, loop))
-                rotation.keepsBackEdgeToGuard = true;
+                rotation.guardIsOnCycle = true;
         }
         if (rotation.latches.isEmpty())
             return;
+        // The turns of a loop around this one come through the guard. Where that loop has no poll of its own, they poll there.
+        if (const NaturalLoop* outer = loops.innerMostOuterLoop(loop))
+            rotation.guardIsOnCycle |= !pollsOnEveryTurn(loops, *outer);
         if (m_allowedHeaders) {
             for (BasicBlock* latch : rotation.latches) {
                 if (isBottomTested(loops, loop, latch))
@@ -201,7 +204,7 @@ private:
             transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
-        if (!rotation.keepsBackEdgeToGuard)
+        if (!rotation.guardIsOnCycle)
             removePolls(rotation.testBlocks.span());
 
         BasicBlock* preHeader = m_proc.addBlock();
@@ -210,6 +213,27 @@ private:
         rotation.testBlocks.last()->replaceSuccessor(rotation.body, preHeader);
 
         m_proc.addRemark({ RemarkKind::LoopRotated, GaveUpReason::None, rotation.testBlocks[0]->at(0)->origin(), std::nullopt });
+    }
+
+    static bool hasPoll(BasicBlock* block)
+    {
+        for (Value* value : *block) {
+            if (isLoopPoll(value))
+                return true;
+        }
+        return false;
+    }
+
+    // At the top, or, once the loop is rotated, in front of every edge back to the top.
+    static bool pollsOnEveryTurn(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        if (hasPoll(loop.header()))
+            return true;
+        for (BasicBlock* predecessor : loop.header()->predecessors()) {
+            if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
+                return false;
+        }
+        return true;
     }
 
     static void removePolls(std::span<BasicBlock* const> blocks)

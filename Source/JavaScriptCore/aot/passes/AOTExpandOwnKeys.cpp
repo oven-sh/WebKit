@@ -344,6 +344,12 @@ static std::optional<OwnKeyWalkSite> findSiteAt(const Program& program, const Fu
         return std::nullopt;
 
     OwnKeyWalkSite site { .walk = *walk, .block = point.block, .index = point.index, .value = id };
+    for (ValueID later : function.at(point.block).values.span().subspan(point.index + 1)) {
+        if (function.at(later).opcode == Opcode::AssumeType && function.at(later).operand(0) == id) {
+            site.provenTypeOfList = function.at(later).type;
+            break;
+        }
+    }
     if (*walk == OwnKeyWalk::Spread) {
         site.source = value.sourceOperand();
         site.target = value.targetOperand();
@@ -895,7 +901,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     case OwnKeyWalk::Keys:
         return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendName).span());
     case OwnKeyWalk::Values:
-        return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendRead).span());
+        return appendArray(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendRead).span());
     case OwnKeyWalk::Entries: {
         TypeID entryType = elementTypeOf(original.type);
         TypeID entryContents = elementTypeOf(entryType);

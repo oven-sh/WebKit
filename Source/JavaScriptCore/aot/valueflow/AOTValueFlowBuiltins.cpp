@@ -973,8 +973,6 @@ private:
         if (!m_call.result)
             return;
         connectOperands(BuiltinOperand::argument(1), escaped());
-        connectOperands(BuiltinOperand::argument(1), m_context.nodes().ofHost(ValueFlowHostNode::HandlersOfProxies));
-        connectOperands(BuiltinOperand::argument(0), m_context.nodes().ofHost(ValueFlowHostNode::TargetsOfProxies));
         // Proxy.revocable answers an object that holds the proxy.
         bool answersProxy = m_builtins.canonicalID(m_builtin) == Builtins::Proxy;
         ValueFlowNodeID proxy = answersProxy ? m_call.result : m_context.written(only(m_context, m_resultObject), unknownKeyName);
@@ -994,6 +992,10 @@ private:
         }
         m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         m_context.add(proxy, undescribedObject());
+        // The object of the call goes beside it, for whoever predicts where a proxy of the program arrives. It has no layout and no class, so every rule takes it for an object of which nothing is known.
+        ValueFlowObjectID made = answersProxy ? m_resultObject : m_call.contentsObject ? m_call.contentsObject : m_universe.resultOf(m_builtin, 1);
+        noteAllocationAs({ }, made);
+        m_context.add(proxy, only(m_context, made));
         if (!answersProxy) {
             ClimbingSet pair = only(m_context, m_resultObject);
             m_context.add(m_context.written(pair, prototypeLinkName), only(m_context, m_universe.objectOf(Builtins::ObjectPrototype)));

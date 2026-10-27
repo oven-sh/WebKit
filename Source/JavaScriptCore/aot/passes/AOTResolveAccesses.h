@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlowResults.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRefusedContents.h"
@@ -21,8 +20,6 @@ namespace JSC { namespace AOT { namespace Typed {
 // They name another receiver than the object at which the lookup starts.
 inline constexpr OpcodeSet readsForAnotherReceiver { Opcode::SuperGet, Opcode::GetByValWithThis };
 inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsForAnotherReceiver | OpcodeSet { Opcode::ElemDelete, Opcode::GetInternalField };
-
-LayoutsExpectedInProxies collectLayoutsExpectedInProxies(const Program&);
 
 struct AccessOperands {
     ValueID receiver;

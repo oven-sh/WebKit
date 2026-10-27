@@ -15,6 +15,7 @@
 #include "AOTPredictedValues.h"
 #include "AOTResultRulesInternal.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -1140,9 +1141,22 @@ void TypePropagation::typePendingValues(PendingTyping& pending)
         willRestartValues();
     std::ranges::reverse(m_worklist);
 
-    while (true) {
+    // To type a value costs a look at each of its operands. One with many operands waits until nothing else is left to type, and is then typed once for all of its operands that have changed.
+    AOT_THRESHOLD(uint32_t, fewestOperandsOfValueThatWaits, 32);
+    Vector<ValueID, 8> valuesThatWait;
+    size_t nextValueThatWaits = 0;
+    auto takeNextValue = [&] {
         while (!m_worklist.isEmpty()) {
             ValueID id = m_worklist.takeLast();
+            if (function.at(id).numberOfOperands() < fewestOperandsOfValueThatWaits)
+                return id;
+            valuesThatWait.append(id);
+        }
+        return nextValueThatWaits < valuesThatWait.size() ? valuesThatWait[nextValueThatWaits++] : ValueID();
+    };
+
+    while (true) {
+        while (ValueID id = takeNextValue()) {
             m_marks[id.index()].isQueued = false;
             ValueLocation location;
             if (m_uses) {

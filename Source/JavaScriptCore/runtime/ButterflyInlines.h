@@ -188,9 +188,15 @@ inline Butterfly* Butterfly::createOrGrowArrayRight(
             vm, intendedOwner, 0, propertyCapacity, true, IndexingHeader(),
             newIndexingPayloadSizeInBytes);
     }
-    return oldButterfly->growArrayRight(
-        vm, intendedOwner, oldStructure, propertyCapacity, hadIndexingHeader,
-        oldIndexingPayloadSizeInBytes, newIndexingPayloadSizeInBytes);
+    ASSERT_UNUSED(oldStructure, !oldButterfly->preCapacity(oldStructure));
+    ASSERT(hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
+    Butterfly* result = createUninitialized(vm, intendedOwner, 0, propertyCapacity, true, newIndexingPayloadSizeInBytes);
+    // Use memcpy since this butterfly is not tied to any object yet.
+    memcpy(
+        static_cast<JSValue*>(result->base(0, propertyCapacity)),
+        static_cast<JSValue*>(oldButterfly->base(0, propertyCapacity)),
+        totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes));
+    return result;
 }
 
 inline Butterfly* Butterfly::growArrayRight(

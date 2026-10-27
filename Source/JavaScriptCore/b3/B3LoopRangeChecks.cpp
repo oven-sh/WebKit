@@ -126,6 +126,30 @@ static bool isStoredInLoop(const NaturalLoop& loop, Value* limit)
     return false;
 }
 
+static void noteWhatBoundsTurns(const Procedure& proc, Value* limit, RangeCheckPlan& plan)
+{
+    if (plan.endsWithinData && !plan.lengthThatArrayMustHold)
+        return;
+    auto endsWithoutGuard = [&] {
+        plan.endsWithinData = true;
+        plan.lengthThatArrayMustHold = nullptr;
+    };
+    if (intervalFor(proc, limit, Signedness::Unsigned).max <= Limits::maxTurnsWithoutPoll)
+        return endsWithoutGuard();
+    while (limit->opcode() == ZExt32 || limit->opcode() == SExt32)
+        limit = limit->child(0);
+    auto* load = limit->as<MemoryValue>();
+    if (!load || !load->isLoad())
+        return;
+    const AbstractHeapRepository& heaps = proc.heaps();
+    if (heaps.holdsLengthOfData(load->range()))
+        return endsWithoutGuard();
+    if (!plan.endsWithinData && load->type() == Int32 && heaps.Butterfly_publicLength.hasRange() && heaps.rangeOf(heaps.Butterfly_publicLength) == load->range()) {
+        plan.endsWithinData = true;
+        plan.lengthThatArrayMustHold = load;
+    }
+}
+
 static std::optional<int64_t> offsetFromCounter(const RangeCheckInputs& inputs, Value* index)
 {
     const CountedLoop& loop = inputs.loop;
@@ -184,6 +208,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
                 }
                 found = plan.bounds.size();
                 plan.bounds.append(RangeCheckBound { limit, *offset, *offset });
+                noteWhatBoundsTurns(proc, limit, plan);
             }
             plan.bounds[found].minOffset = std::min(plan.bounds[found].minOffset, *offset);
             plan.bounds[found].maxOffset = std::max(plan.bounds[found].maxOffset, *offset);
@@ -197,6 +222,13 @@ RangeCheckPlan planRangeChecks(const RangeCheckInputs& inputs)
     RangeCheckPlan plan;
     decideComparisonsWithBound(inputs, plan);
     findRangeChecks(inputs, plan);
+    const CountedLoop& loop = inputs.loop;
+    if (inputs.canClampBound && loop.increases() && loop.cannotWrap() && (loop.isUnsigned() || intervalFor(inputs.proc, loop.start, Signedness::Signed).min >= 0)) {
+        // What the fast version compares its counter with is what the bound was in front of it, whatever an unlikely path stores there later.
+        Value* bound = inputs.invariance.canonicalValue(loop.bound);
+        if (inputs.invariance.isAvailableInPreHeader(bound))
+            noteWhatBoundsTurns(inputs.proc, bound, plan);
+    }
     return plan;
 }
 
@@ -340,8 +372,10 @@ RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs& inp
     }
     if (plan.entryGuards.isEmpty())
         return plan;
-    for (Value* limit : limits)
+    for (Value* limit : limits) {
         plan.entryGuards.insert(0, EntryGuard { BelowEqual, limit, Signedness::Unsigned, nullptr, Signedness::Signed, maxLimitForRangeChecks(counters->rising.type()) });
+        noteWhatBoundsTurns(inputs.proc, limit, plan);
+    }
     plan.entryGuards.append({ counters->isStrict ? LessThan : LessEqual, low, Signedness::Signed, high, Signedness::Signed, 0 });
     return plan;
 }
@@ -362,6 +396,15 @@ void appendEntryGuards(FastPreHeader& front, Origin origin, std::span<const Entr
             right = front.last()->appendNew<Value>(proc, Add, origin, widen(guard.right, guard.rightSignedness), right);
         front.appendGuard(origin, guard.relation, left, right);
     }
+}
+
+void appendGuardThatArrayHoldsLength(FastPreHeader& front, Origin origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
+{
+    Procedure& proc = front.procedure();
+    const AbstractHeapRepository& heaps = proc.heaps();
+    auto offset = static_cast<MemoryValue::OffsetType>(length->offset() + heaps.Butterfly_vectorLength.offset() - heaps.Butterfly_publicLength.offset());
+    Value* room = front.last()->appendNew<MemoryValue>(proc, Load, Int32, origin, valueInPreHeader(length->lastChild()), offset, heaps.rangeOf(heaps.Butterfly_vectorLength));
+    front.appendGuard(origin, BelowEqual, valueInPreHeader(length), room);
 }
 
 static Opcode safeBoundRelation(const CountedLoop& loop)

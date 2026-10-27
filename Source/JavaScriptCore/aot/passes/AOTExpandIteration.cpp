@@ -303,7 +303,7 @@ struct IterationExpansion {
     ValueID appendPair(ValueID first, ValueID second)
     {
         Value pair(Opcode::NewArray);
-        pair.setContents(TypeTable::anything);
+        pair.setContents(builder.types().unionOf(builder.function().at(first).type, builder.function().at(second).type));
         pair.setElementsOperands(std::array { first, second });
         return builder.append(WTF::move(pair));
     }
@@ -380,7 +380,7 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
     const UseLists& useLists = pass.analyses.useLists();
     BlockID blockOfOpen = useLists.blockOf(open);
 
-    Vector<BlockID> region;
+    Vector<BlockID> region { };
     BitVector isLiveAtHead(pass.function.blocks.size());
     Vector<BlockID, 16> worklist;
     for (const Use& use : useLists.usesOf(open))
@@ -389,6 +389,37 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
         BlockID block = worklist.takeLast();
         if (block == blockOfOpen || !cfg.isReachable(block) || isLiveAtHead.quickSet(block.index()))
             continue;
+        region.append(block);
+        worklist.append(cfg.predecessors(block));
+    }
+    AOT::sort(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    return region;
+}
+
+// The live region of an iteration that has no block in common with those asked about before it in this round. The walk ends at the first block that another one has looked at.
+static std::optional<Vector<BlockID>> takeLiveRegion(FunctionPassContext& pass, ValueID open, uint32_t taker, Vector<uint32_t>& takerOfBlock)
+{
+    constexpr uint32_t nobody = 0;
+    RELEASE_ASSERT(taker != nobody);
+    const CFG& cfg = pass.analyses.cfg();
+    const UseLists& useLists = pass.analyses.useLists();
+    BlockID blockOfOpen = useLists.blockOf(open);
+    if (std::exchange(takerOfBlock[blockOfOpen.index()], taker) != nobody)
+        return std::nullopt;
+
+    Vector<BlockID> region { };
+    Vector<BlockID, 16> worklist;
+    for (const Use& use : useLists.usesOf(open))
+        worklist.append(use.block);
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (!cfg.isReachable(block))
+            continue;
+        uint32_t formerTaker = std::exchange(takerOfBlock[block.index()], taker);
+        if (formerTaker == taker)
+            continue;
+        if (formerTaker != nobody)
+            return std::nullopt;
         region.append(block);
         worklist.append(cfg.predecessors(block));
     }
@@ -2026,7 +2057,7 @@ struct ArmDispatcher {
     Function& function { pass.function };
     FunctionAnalyses& analyses { pass.analyses };
     IterationExpansion expansion { &pass, pass.program, pass.function, pass.types, builder, &repair, iteration.origin };
-    Vector<BlockID> region { findLiveRegion(pass, iteration.open) };
+    Vector<BlockID> region { };
     ValueLocation open { analyses.useLists().locationOf(iteration.open) };
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
@@ -2665,14 +2696,14 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     // From the last iteration to the first, so that an iteration is asked after the ones nested in it.
     ArmDispatchers dispatchers;
-    BitVector takenBlocks(pass.function.blocks.size());
+    Vector<uint32_t> takerOfBlock(FillWith { }, pass.function.blocks.size(), 0u);
+    uint32_t taker = 0;
     for (const Iteration& iteration : iterations | std::views::reverse) {
-        auto dispatcher = makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration);
-        bool sharesBlock = takenBlocks.quickSet(dispatcher->head.index());
-        for (BlockID block : dispatcher->region)
-            sharesBlock |= takenBlocks.quickSet(block.index());
-        if (!sharesBlock)
-            dispatchers.append(WTF::move(dispatcher));
+        std::optional<Vector<BlockID>> region = takeLiveRegion(pass, iteration.open, ++taker, takerOfBlock);
+        if (!region)
+            continue;
+        dispatchers.append(makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration));
+        dispatchers.last()->region = WTF::move(*region);
     }
     auto forEachDispatcher = [&](auto step, auto&... arguments) {
         for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)

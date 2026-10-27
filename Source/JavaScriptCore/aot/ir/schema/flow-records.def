@@ -24,7 +24,7 @@ flags ObjectMutation {
     StoreAfterCreation StoreOfOtherType
 }
 flags FieldStability { | engine IsNeverDeleted IsNeverRedefined IsNeverStoredWithOtherType }
-flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType IsHandlerOfProxy IsTargetOfProxy }
+flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType }
 
 record LocationFlow engine {
     writers: WriterState stores: StoreCount storeNaming: StoreNaming initialization: InitializationState reads: ReadState deferral: ClosureDeferral

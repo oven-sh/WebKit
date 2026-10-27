@@ -586,27 +586,26 @@ private:
                 indexOfBlock = numberOfBlocksWithReference++;
         }
 
-        m_mayHaveCollectedSinceEntryOf.fill(BitVector(), m_function.blocks.size());
-        BitVector everyBlock;
-        for (uint32_t index = 0; index < numberOfBlocksWithReference; ++index)
-            everyBlock.set(index);
-
-        for (bool changed = !!numberOfBlocksWithReference; changed;) {
+        // A block that defines a reference dominates its uses. If no collection can lie between a dominator of a block and the block, none can lie between a dominator below that one and the block:
+        // one depth in the dominator tree says it for all dominators of the block.
+        m_depthOfHighestDominatorWithoutCollectionSince.fill(0, m_function.blocks.size());
+        if (!numberOfBlocksWithReference)
+            return;
+        const Dominators& dominators = m_analyses.dominators();
+        for (bool changed = true; changed;) {
             changed = false;
             for (BlockID block : m_cfg.reversePostOrder()) {
-                BitVector atHead = m_mayHaveCollectedSinceEntryOf[block.index()];
+                uint32_t depthOfBlock = dominators.depthOf(block);
+                uint32_t depth = m_depthOfHighestDominatorWithoutCollectionSince[block.index()];
                 for (Edge edge : m_cfg.incomingEdges(block)) {
                     if (edge.isHandlerEdge() || !runsNoCollector(edge.from)) {
-                        atHead = everyBlock;
+                        depth = depthOfBlock;
                         break;
                     }
-                    BitVector atEnd = m_mayHaveCollectedSinceEntryOf[edge.from.index()];
-                    if (std::optional<uint32_t> entered = m_indexOfBlockWithReference[edge.from.index()])
-                        atEnd.clear(*entered);
-                    atHead.merge(atEnd);
+                    depth = std::max(depth, std::min(depthOfBlock, m_depthOfHighestDominatorWithoutCollectionSince[edge.from.index()]));
                 }
-                if (atHead != m_mayHaveCollectedSinceEntryOf[block.index()]) {
-                    m_mayHaveCollectedSinceEntryOf[block.index()] = WTF::move(atHead);
+                if (depth != m_depthOfHighestDominatorWithoutCollectionSince[block.index()]) {
+                    m_depthOfHighestDominatorWithoutCollectionSince[block.index()] = depth;
                     changed = true;
                 }
             }
@@ -615,7 +614,7 @@ private:
 
     bool isReachedBeforeCollectorCanRun(const Use& use, BlockID definingBlock) const
     {
-        if (use.block != definingBlock && m_mayHaveCollectedSinceEntryOf[use.block.index()].get(*m_indexOfBlockWithReference[definingBlock.index()]))
+        if (use.block != definingBlock && m_analyses.dominators().depthOf(definingBlock) < m_depthOfHighestDominatorWithoutCollectionSince[use.block.index()])
             return false;
 
         switch (use.kind) {
@@ -818,7 +817,7 @@ private:
     mutable Vector<uint64_t, 16> m_votesOfBlock;
     Vector<uint32_t> m_firstCollectingValue;
     Vector<std::optional<uint32_t>> m_indexOfBlockWithReference;
-    Vector<BitVector> m_mayHaveCollectedSinceEntryOf;
+    Vector<uint32_t> m_depthOfHighestDominatorWithoutCollectionSince;
     Vector<Web> m_webs;
     // By ascending value.
     Vector<Member> m_members;

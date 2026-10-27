@@ -243,7 +243,7 @@ static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& l
     PRINT_IF_SET(loops, foldsComparisonsWithBounds);
     PRINT_IF_SET(loops, versions);
     PRINT_IF_SET(loops, clampsLoopBounds);
-    PRINT_IF_SET(loops, limitsOfRangeChecksAreLengthsOfData);
+    PRINT_IF_SET(loops, omitsPollsFromLoopsThatEndWithinData);
     PRINT_IF_SET(loops, unrolls);
     PRINT_IF_DIFFERENT(loops, minFrequencyOfUnrolledLoop);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);

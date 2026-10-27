@@ -11,6 +11,7 @@
 #include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTSpecifiedValues.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -24,13 +25,18 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
+// In most functions the frontiers of all blocks together are about as many as the blocks, and one walk up from the predecessors of each join finds them all. In a deep nest of
+// handlers a block has every handler around it in its frontier: there the frontier of a block is found when it is asked for, from the edges that leave what the block dominates.
 class DominanceFrontiers {
 public:
     DominanceFrontiers(const CFG& cfg, const Dominators& dominators)
+        : m_cfg(cfg)
+        , m_dominators(dominators)
     {
+        AOT_THRESHOLD(size_t, mostPairsForEachBlock, 8);
         unsigned numberOfBlocks = cfg.numNodes();
         Vector<std::pair<BlockID, BlockID>> pairs;
-        Vector<uint32_t> lastJoin(FillWith { }, numberOfBlocks, std::numeric_limits<uint32_t>::max());
+        m_lastJoin.fill(noBlock, numberOfBlocks);
         m_first.fill(0, numberOfBlocks + 1);
         for (unsigned index = 0; index < numberOfBlocks; ++index) {
             BlockID join = cfg.node(index);
@@ -39,11 +45,15 @@ public:
             BlockID dominator = dominators.idom(join);
             for (BlockID predecessor : cfg.predecessors(join)) {
                 for (BlockID runner = predecessor; runner && runner != dominator; runner = dominators.idom(runner)) {
-                    if (std::exchange(lastJoin[runner.index()], index) == index)
+                    if (std::exchange(m_lastJoin[runner.index()], index) == index)
                         break;
                     pairs.append({ runner, join });
                     ++m_first[runner.index() + 1];
                 }
+            }
+            if (pairs.size() > mostPairsForEachBlock * numberOfBlocks) {
+                findFrontiersWhenAsked();
+                return;
             }
         }
         for (unsigned index = 0; index < numberOfBlocks; ++index)
@@ -54,15 +64,54 @@ public:
             m_joins[next[runner.index()]++] = join;
     }
 
-    std::span<const BlockID> of(BlockID block) const
+    std::span<const BlockID> of(BlockID block)
     {
+        if (!m_blockWithNumber.isEmpty())
+            return findFrontierOf(block);
         uint32_t begin = m_first[block.index()];
         return m_joins.span().subspan(begin, m_first[block.index() + 1] - begin);
     }
 
 private:
+    static constexpr uint32_t noBlock = std::numeric_limits<uint32_t>::max();
+
+    void findFrontiersWhenAsked()
+    {
+        m_lastJoin.fill(noBlock);
+        m_first.fill(noBlock);
+        m_blockWithNumber.fill(BlockID(), m_cfg.numNodes());
+        for (BlockID block : m_cfg.reversePostOrder())
+            m_blockWithNumber[m_dominators.numberOf(block)] = block;
+    }
+
+    std::span<const BlockID> findFrontierOf(BlockID block)
+    {
+        if (!m_cfg.isReachable(block))
+            return { };
+        if (m_first[block.index()] == noBlock) {
+            m_first[block.index()] = m_ranges.size();
+            uint32_t begin = m_joins.size();
+            for (uint32_t number = m_dominators.numberOf(block); number <= m_dominators.lastNumberBelow(block); ++number) {
+                for (BlockID successor : m_cfg.successors(m_blockWithNumber[number])) {
+                    if (m_dominators.strictlyDominates(block, successor) || m_cfg.predecessors(successor).size() < 2 || std::exchange(m_lastJoin[successor.index()], block.index()) == block.index())
+                        continue;
+                    m_joins.append(successor);
+                }
+            }
+            AOT::sort(m_joins.mutableSpan().subspan(begin));
+            m_ranges.append({ begin, static_cast<uint32_t>(m_joins.size()) });
+        }
+        auto [begin, end] = m_ranges[m_first[block.index()]];
+        return m_joins.span().subspan(begin, end - begin);
+    }
+
+    const CFG& m_cfg;
+    const Dominators& m_dominators;
     Vector<uint32_t> m_first;
     Vector<BlockID> m_joins;
+    Vector<uint32_t> m_lastJoin;
+    Vector<BlockID> m_blockWithNumber;
+    Vector<std::pair<uint32_t, uint32_t>> m_ranges;
 };
 
 // The definition of one variable that reaches a place stands in the nearest block above the place in the dominator tree. The blocks that define and the places asked about

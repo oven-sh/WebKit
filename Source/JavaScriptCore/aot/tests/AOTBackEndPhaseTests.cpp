@@ -620,7 +620,8 @@ static void testPaddingOfFrameCellCountsAsWritten()
     B3::BasicBlock* root = proc.addBlock();
     appendReturn(proc, root);
     SlotsOfCells cells { { proc.addStackSlot(layout.size), &layout }, { proc.addStackSlot(16), nullptr } };
-    AOT_TEST_CHECK(reportReadsOfUnwrittenStackSlots(Typed::FunctionID(0u), cells, true).run->run(proc));
+    proc.addStackSlot(24);
+    AOT_TEST_CHECK(reportReadsOfUnwrittenStackSlots(Typed::FunctionID(0u), cells).run->run(proc));
     B3::validate(proc);
 
     Vector<uint64_t> words;
@@ -630,7 +631,7 @@ static void testPaddingOfFrameCellCountsAsWritten()
     }
     uint64_t unwritten = words[0];
     AOT_TEST_CHECK(unwritten >> 32 == static_cast<uint32_t>(unwritten) && static_cast<uint8_t>(unwritten));
-    AOT_TEST_CHECK(words == Vector<uint64_t>({ unwritten, unwritten, unwritten & 0xffffffffull, unwritten, unwritten & 0xffffffff000000ffull, 0, unwritten, unwritten }));
+    AOT_TEST_CHECK(words == Vector<uint64_t>({ unwritten, unwritten, unwritten & 0xffffffffull, unwritten, unwritten & 0xffffffff000000ffull, 0, unwritten, unwritten, 0, 0, 0 }));
 }
 
 namespace {

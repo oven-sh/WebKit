@@ -18,12 +18,30 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(MIMALLOC)
+#include <bmalloc/bmalloc.h>
+#endif
+
 namespace JSC {
 
 class HeapCell;
 class JSCell;
 class ReservedRangeHeap;
 class VM;
+
+// An allocation that may not fail and has found no room. It lives until the allocation has what it asked for.
+class RequestInExhaustedCage {
+    WTF_MAKE_NONCOPYABLE(RequestInExhaustedCage);
+public:
+    RequestInExhaustedCage() = default;
+
+private:
+    friend class Heap;
+#if USE(MIMALLOC)
+    bmalloc::api::RequestWithBallast m_requestWithBallast;
+    bool m_hasAskedWithBallast { false };
+#endif
+};
 
 class MarkedBlockCage {
     WTF_MAKE_NONCOPYABLE(MarkedBlockCage);

@@ -60,7 +60,6 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
-#include "AOTResolveAccesses.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
@@ -1617,7 +1616,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::SplitBehindEntryChecks);
     if (!m_runner.isStopped()) {
         m_output->flow->setSitesOfWholeLiterals(collectSitesOfWholeLiterals(m_program, flow(), m_build));
-        m_output->flow->setLayoutsExpectedInProxies(collectLayoutsExpectedInProxies(m_program));
         m_output->flow->setConstantLists(collectConstantLists(m_program, flow(), m_build));
     }
     stage.didFinish("collect whole literals and constant lists"_s);

@@ -248,15 +248,14 @@ void StoresByLayout::noteListedWrites()
 
 // The objects that are copied onto those of a layout, with what is copied onto them in turn, where the analysis follows each of them: whatever such an object holds
 // was stored through a set that lists it, whoever else has its layout.
-auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedObjects>
+auto StoresByLayout::objectsCopiedOnto(ValueSetMaker& maker, LayoutID target) const -> std::optional<CopiedObjects>
 {
     const ValueSets& sets = m_inputs.sets();
-    ValueSetMaker& maker = m_heap.maker();
     ValueSetID objectsNotFollowed = maker.unite(m_inputs.universe().placeholdersAlone(), maker.unite(m_heap.escaped(), m_heap.lost()));
     ValueSetID sources = ValueSets::nothing;
     ValueSetID copiedOnto = m_layoutsOfObjects.objectsWith(target);
     while (true) {
-        ValueSetID found = m_heap.writtenUnder(copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
+        ValueSetID found = m_heap.writtenUnder(maker, copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
         if (ValueSets::isComplement(found) || sets.meet(found, objectsNotFollowed))
             return std::nullopt;
         if (sets.isSubset(found, sources))
@@ -287,7 +286,7 @@ auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedO
             return std::nullopt;
     }
     auto isStoredUnder = [&](ValueFlowName name) {
-        return m_heap.writtenUnder(sources, name) != ValueSets::nothing;
+        return m_heap.writtenUnder(maker, sources, name) != ValueSets::nothing;
     };
     constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
     if (std::ranges::any_of(namesNobodyLists, [&](ValueFlowNameKind kind) { return isStoredUnder(ValueFlowName::of(kind)); }))
@@ -308,8 +307,10 @@ void StoresByLayout::followCopiedProperties()
         if (m_storesOfLayout[index].getsCopiedProperties)
             targets.append(LayoutID(index));
     }
-    Vector<std::optional<CopiedObjects>> sourcesOfTargets = WTF::map(targets, [&](LayoutID target) {
-        return objectsCopiedOnto(target);
+    ValueSetMakers makers(m_inputs);
+    Vector<std::optional<CopiedObjects>> sourcesOfTargets(targets.size());
+    forEachIndexInParallel(m_inputs.loops(), targets.size(), [&](unsigned position, unsigned worker) {
+        sourcesOfTargets[position] = objectsCopiedOnto(makers.of(worker), targets[position]);
     });
     for (size_t position = 0; position < targets.size(); ++position) {
         if (!sourcesOfTargets[position])

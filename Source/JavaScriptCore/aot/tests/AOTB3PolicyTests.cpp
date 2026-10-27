@@ -115,7 +115,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
-    AOT_TEST_CHECK(policy.loops.limitsOfRangeChecksAreLengthsOfData);
+    AOT_TEST_CHECK(policy.loops.omitsPollsFromLoopsThatEndWithinData);
     AOT_TEST_CHECK(!policy.loops.unrolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
