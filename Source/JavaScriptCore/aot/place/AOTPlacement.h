@@ -141,6 +141,7 @@ struct KeyOrders {
 enum class StaticsRegion : uint8_t {
     FilledAtInstanceCreation,
     FilledAtProgramEntry,
+    FilledWithFile,
 };
 
 struct PlacedVariable {
@@ -161,8 +162,28 @@ struct ModuleBuiltinCell {
     uint32_t offset { 0 };
 };
 
+struct PlacedStaticsOfFile {
+    ModuleID module;
+    uint32_t firstWord { 0 };
+    uint32_t numberOfWords { 0 };
+    Vector<uint32_t> importedFiles;
+};
+
 struct StaticsPlan {
+    // Its number among filesFilledWhenEntered, if code that enters the file has words to fill.
+    std::optional<uint32_t> fileFilledWhenEntered(ModuleID module) const
+    {
+        return module && module.index() < numberOfFileFilledWhenEntered.size() ? numberOfFileFilledWhenEntered[module.index()] : std::nullopt;
+    }
+
     Vector<PlacedVariable> variables;
+    Vector<PlacedStaticsOfFile> filesFilledWhenEntered;
+    // The code of those files: whoever evaluates one of them enters it here, before anything that the file has written runs.
+    BitVector functionsThatEnterFiles;
+    Vector<std::optional<uint32_t>> numberOfFileFilledWhenEntered;
+    uint32_t firstWordFilledWithFiles { 0 };
+    uint32_t endWordFilledWithFiles { 0 };
+    uint32_t offsetOfFilledFiles { 0 };
     Vector<std::optional<uint32_t>> moduleValueOffsets;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;

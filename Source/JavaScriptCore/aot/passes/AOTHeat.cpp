@@ -13,6 +13,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeShapes.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
@@ -2331,7 +2332,29 @@ static bool isDefinedInSite(const Function& function, const OutliningSite& site,
     });
 }
 
-static void buildOutlinedBody(const AnalysisContext& context, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
+static bool canLeaveByItsLastCall(const AnalysisContext& context, const CallingConventions* conventions, const Function& source, const OutliningSite& site)
+{
+    const Program& program = context.program;
+    std::span<const ValueID> values = entryValuesOf(source, site);
+    const Value& root = source.at(site.root);
+    if (!conventions || site.isRegion() || !site.rootIsUsed || values.back() != site.root || root.opcode != Opcode::CallDirect || !program.at(root.function()).hasBody())
+        return false;
+    bool onlyPreparesArguments = std::ranges::all_of(values.first(values.size() - 1), [&](ValueID id) {
+        const Value& value = source.at(id);
+        return isRematerializable(value) || value.opcode == Opcode::GetCapture || isCastThatProvesNothing(value.opcode);
+    });
+    if (!onlyPreparesArguments)
+        return false;
+    ArgumentLocations own = conventions->locationsOf(program, context.id);
+    ArgumentLocations callee = conventions->locationsOf(program, root.function());
+    if (callee.convention != EntryConvention::Direct || conventions->stackWordsReservedByCallersOf(program, root.function(), callee) || own.numberOfStackWords())
+        return false;
+    return std::ranges::equal(callee.results, own.results, [](const ArgumentLocation& returned, const ArgumentLocation& expected) {
+        return returned.kind != ArgumentLocation::Kind::None && returned.kind == expected.kind && returned.reg == expected.reg && haveSameRegisterRepresentation(returned.representation, expected.representation);
+    });
+}
+
+static void buildOutlinedBody(const AnalysisContext& context, const CallingConventions* conventions, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
 {
     IRBuilder builder(context, body, types);
     RELEASE_ASSERT(!body.hasBody());
@@ -2443,6 +2466,12 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
     if (!site.isRegion()) {
         for (ValueID id : entryValuesOf(source, site))
             copyValue(id);
+        if (canLeaveByItsLastCall(context, conventions, source, site)) {
+            Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { copyOf(valueCopies, site.root) });
+            terminator.setRequirement(TailCallRequirement::Allowed);
+            builder.emitTerminator(WTF::move(terminator));
+            return;
+        }
         builder.emitReturn(site.rootIsUsed ? std::optional(copyOf(valueCopies, site.root)) : std::nullopt);
         return;
     }
@@ -2576,7 +2605,7 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
     // A function that comes early holds the first site of most groups, so the bodies are a loop of their own, over the functions as they are before a site is replaced.
     editFunctionsInParallel(editor, build, bodies.span(), [&](unsigned index, FunctionID id, Function& body, TaskArenas& arenas) {
         const OutliningSite& site = sites[groups[index].first()];
-        buildOutlinedBody(contextOf(id), program.at(site.function), site, body, arenas.types);
+        buildOutlinedBody(contextOf(id), inputs.callingConventions, program.at(site.function), site, body, arenas.types);
         readIfFinal(id, arenas);
     });
     times.didFinish("buildBodiesInParallel"_s);

@@ -1102,10 +1102,20 @@ void StoresByLayout::noteWrites()
         found.append(WTF::move(parts));
     });
 
-    auto isSameForEveryLayout = [](const WritesThroughSet& write) {
+    auto liesUnderKey = [](const WritesThroughSet& write) {
         ValueFlowNameKind kind = write.name().kind;
-        bool liesUnderKey = kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter;
-        return liesUnderKey && write.familyOfReceiver == UINT32_MAX && !write.fillsTypedResult && !write.createsData;
+        return kind == ValueFlowNameKind::Property || kind == ValueFlowNameKind::Getter || kind == ValueFlowNameKind::Setter;
+    };
+    auto asksNothingOfLayout = [](const WritesThroughSet& write) {
+        return write.familyOfReceiver == UINT32_MAX && !write.fillsTypedResult && !write.createsData;
+    };
+    auto isSameForEveryLayout = [&](const WritesThroughSet& write) {
+        return liesUnderKey(write) && asksNothingOfLayout(write);
+    };
+    // noteWritesInto() puts the forms of an accessor down under a key unless the name says that nobody knows the key.
+    auto touchesNoKey = [&](const WritesThroughSet& write) {
+        ValueFlowNameKind kind = write.name().kind;
+        return !liesUnderKey(write) && (!write.accessorForms || kind == ValueFlowNameKind::GetterUnderUnknownKey || kind == ValueFlowNameKind::SetterUnderUnknownKey);
     };
 
     auto isNotedInTables = [](ValueFlowNameKind kind) {
@@ -1301,6 +1311,9 @@ void StoresByLayout::noteWrites()
         const BitVector& classes;
         Vector<uint32_t> notedOnce { };
         Vector<uint32_t> notedForEachClass { };
+        // What the table of each class gets outside keys, which is the same for all of them.
+        Vector<uint32_t> gatheredForEachClass { };
+        StoresIntoObjects gathered { };
     };
     WritesIntoEveryClass writesIntoEveryClass[] {
         { m_storesIntoEveryEscapedClass, &ObjectsOfSet::holdsObjectOfEveryEscapedClass, m_isEscapedClass },
@@ -1311,8 +1324,13 @@ void StoresByLayout::noteWrites()
             if (!(objectsOfSet[position].*list.isHeld))
                 continue;
             for (uint32_t index = firstWriteOfSet[position]; index < firstWriteOfSet[position + 1]; ++index)
-                (isSameForEveryLayout(writes[index]) ? list.notedOnce : list.notedForEachClass).append(index);
+                (isSameForEveryLayout(writes[index]) ? list.notedOnce : asksNothingOfLayout(writes[index]) && touchesNoKey(writes[index]) ? list.gatheredForEachClass : list.notedForEachClass).append(index);
         }
+    }
+    for (WritesIntoEveryClass& list : writesIntoEveryClass) {
+        for (uint32_t position : list.gatheredForEachClass)
+            noteWritesInto(makers.of(0), list.gathered, LayoutID(), writes[position]);
+        RELEASE_ASSERT(list.gathered.underKey.isEmpty());
     }
 
     Vector<Vector<uint32_t>> writesThroughPlaceholdersInto(numberOfLayouts);
@@ -1393,6 +1411,7 @@ void StoresByLayout::noteWrites()
                 continue;
             for (uint32_t position : list.notedForEachClass)
                 noteWritesInto(maker, m_storesOfLayout[layout], LayoutID(layout), writes[position]);
+            m_storesOfLayout[layout].uniteWhatLiesOutsideKeys(maker, list.gathered);
         }
         for (uint32_t position : writesThroughPlaceholdersInto[layout]) {
             note(maker, m_storesOfLayout[layout], writes[position].name(), writes[position].value, false, false);

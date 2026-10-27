@@ -12,6 +12,7 @@
 #include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -44,6 +45,18 @@ static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool ModuleEmitter::hasSingleNamespaceInValueWord(ModuleID id)
+{
+    const Module& module = m_program.at(id);
+    if (module.kind != ModuleKind::SourceText && module.kind != ModuleKind::Data)
+        return false;
+    if (module.exportsVariable || !m_placement.hasModuleValue(id))
+        return false;
+    return std::ranges::none_of(module.requests, [](const ModuleRequest& request) {
+        return request.kind == ModuleRequestKind::Require;
+    });
 }
 
 Word32 ModuleEmitter::moduleIndex(ModuleID module)

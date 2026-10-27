@@ -245,7 +245,7 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
         return properties;
     }
     Structure* sourceStructure = source.object->structure();
-    if (sourceStructure->isDictionary() || source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    if (!flattenOnce(vm, source.object) || source.object->hasNonReifiedStaticProperties() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         return std::nullopt;
     bool hasOnlyDataProperties = true;
     sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {

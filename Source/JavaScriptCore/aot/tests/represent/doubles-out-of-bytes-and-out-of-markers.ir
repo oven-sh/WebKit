@@ -1,5 +1,5 @@
 # A double read out of a float view is kept as ImpureDouble, and so is what arithmetic makes of it and the block parameter that takes it. A store into a float view takes it as it is.
-# What an operator makes of an operand that may be undefined is kept as DoubleWithPayload. What it makes of numbers is a Double.
+# What an operator makes of an operand that may be undefined is kept as DoubleWithPayload, whatever its other operand is. What it makes of numbers is a Double.
 # Where each run of the read is followed by a place that makes the one NaN of what is computed from it, the read makes the one NaN and all of it is kept as Double.
 # FORM: Placed
 # OPTIONS: check=validate-back-end
@@ -160,3 +160,21 @@ function f7 name="sumOfElements" parameters=[{type=Float64Array}, {type=i32}] re
 # CHECK: b1(v4: number @ImpureDouble,
 # CHECK: v9: number @ImpureDouble = GetTypedArrayElement
 # CHECK-NEXT: v10: number @ImpureDouble = Add v4, v9 form=Numbers
+
+function f8 name="elementPlusNumberOrUndefined" parameters=[{type=Float64Array}, {type=i32}, {type=undefined|number}] results=[{type=undefined}] {
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v1, v4 typedArrayType=10 level=Proven [isInsideView]
+    v6 = Add v5, v2 form=Numbers
+    v7 = Mul v6, v5 form=Numbers
+    PutTypedArrayElement v0, v1, v7, v4 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b2()
+  b2():
+    v9 = Undefined
+    Return v9
+}
+# CHECK-LABEL: function f8 name="elementPlusNumberOrUndefined"
+# CHECK: v5: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v6: number @DoubleWithPayload = Add v5, v2 form=Numbers
+# CHECK-NEXT: v7: number @ImpureDouble = Mul v6, v5 form=Numbers

@@ -39,7 +39,7 @@ engine operation Parameter () -> declared ; none ; boundTo = Function ; flow = C
 operation GetModuleVariable (engine fact?: Fact/inspects, variable: Variable) [| engine mayPrecedeItsStore isValidatedWhereLookedAt] -> declared(variable) ; reads(ModuleVariables[variable]) ; flow = Copies ; flowsWithoutRule = true
 engine operation GetEncodedModuleVariable (variable: Variable) -> declared(variable) ; reads(ModuleVariables[variable]) ; Selected..Placed ; replaces = GetModuleVariable, TypeTest
 operation PutModuleVariable (variable: Variable, value: Declared/retains) -> none ; writes(ModuleVariables[variable]) ; flow = Copies ; flowsWithoutRule = true
-operation GetEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field) -> declared(field) ; reads(EnvironmentFields[layout, field]) ; interpreted = Read ; flow = Copies ; flowsWithoutRule = true
+operation GetEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field) [| engine mayPrecedeItsStore leansOnEntryOfBody] -> declared(field) ; reads(EnvironmentFields[layout, field]) ; interpreted = Read ; flow = Copies ; flowsWithoutRule = true
 operation PutEnvironmentField (environment: Layout/inspects, layout: Layout, field: Field, value: Declared/retains(environment)) -> none ; writes(EnvironmentFields[layout, field]) ; interpreted = Store ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowsWithoutRule = true
 operation ScopeHasBinding (scope: Object/inspects, key: PropertyKey) -> natural(boolean) ; unknownCode ; runtime = ScopeHasBinding ; flow = TableProves ; flowRule = Heap
 

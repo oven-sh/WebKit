@@ -27,6 +27,7 @@
 #include "AOTStackTrace.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubsCallAdapters.h"
 #include "AOTThreshold.h"
 #include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
@@ -52,6 +53,8 @@
 #include "VMEntryRecord.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
+#include <algorithm>
+#include <array>
 #include <wtf/StackPointer.h>
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -298,13 +301,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
-// Under validation, for the calls of native functions that would go through the engine's own trampoline: the interpreter compares the call with the entry of the built-in.
-JSC_DEFINE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* argumentValues))
+// For a long list, and under validation for the calls of native functions that would go through the engine's own trampoline: the interpreter compares the call with the entry of the built-in.
+JSC_DEFINE_JIT_OPERATION(operationAOTCallEngineCallee, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* argumentValues))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallNativeFunction);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallEngineCallee);
     ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
     JSValue function = JSValue::decode(callee);
-    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), JSValue::decode(thisValue), arguments)));
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None) {
+        throwNotAFunctionError(globalObject, scope, function);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance* instance, CallFrame* hostCallFrame, uint32_t makesList))
@@ -774,7 +782,15 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
         break;
     }
     ProtoCallFrame protoCallFrame;
-    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
+    if (args.size() <= adapterArgumentCountWithOutOfLineArguments) {
+        protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
+        return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
+    }
+    std::array<EncodedJSValue, adapterArgumentCountWithOutOfLineArguments> frameArguments;
+    std::copy_n(args.data(), numberOfArgumentGPRs, frameArguments.begin());
+    frameArguments[numberOfArgumentGPRs] = std::bit_cast<EncodedJSValue>(args.data());
+    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + frameArguments.size(), frameArguments.data());
+    protoCallFrame.argCountAndCodeOriginValue.highWord() = static_cast<int32_t>(args.size());
     return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 

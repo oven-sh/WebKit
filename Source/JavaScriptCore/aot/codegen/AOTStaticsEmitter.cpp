@@ -84,6 +84,19 @@ uint8_t StaticsEmitter::guardMaskOf(GuardBitID id) const
     return static_cast<uint8_t>(1u << m_placement.guardBit(id).bit % bitsPerByte);
 }
 
+void StaticsEmitter::fillVariablesOfEnteredFile()
+{
+    const StaticsPlan& statics = m_placement.statics();
+    if (!statics.functionsThatEnterFiles.get(m_id.index()))
+        return;
+    uint32_t file = statics.fileFilledWhenEntered(m_function.module).value();
+    Word32 isFilled(m_out.load8ZeroExt32(inStatics(m_heaps.entire(AbstractHeap::ModuleVariables), statics.offsetOfFilledFiles + file)));
+    ifElse(notEqual(isFilled, word32(0)), [] { }, [&] {
+        Operand arguments[] { word32(static_cast<int32_t>(file)) };
+        callWithoutSite(RuntimeOperation::FillVariablesOfFile, arguments, Representation::Void, { .isOnRarePath = true });
+    });
+}
+
 TypedPointer StaticsEmitter::branchCounter(uint32_t number)
 {
     Pointer branchCounts = loadImmutablePointer(AOT_INSTANCE_OFFSET(runtime.counters.branchCounts));

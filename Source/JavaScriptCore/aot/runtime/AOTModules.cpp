@@ -118,11 +118,13 @@ Modules::Modules(State& state)
     , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector) || state.instance.vm->aotState().image->loadsCodeOutsideImage())
     , m_admitsInspector(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
+    , m_buildHasSeenWhoNamesModules(!m_admitsInspector)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());
     m_storedStatuses = unsafeMakeSpan(m_instance.modules.status, m_table.size());
     m_instance.modules.evaluatingMark = static_cast<uint32_t>(StoredModuleStatus::Evaluating);
     m_modulesSettledForLinks.fill(0, m_table.size() / 64 + 1);
+    m_loadedGroups.fill(0, m_table.size() / 64 + 1);
     state.caches->add(CacheKind::StrongRoots, "modules"_s, *this, RootVolatility::GreyedByExecution);
 }
 
@@ -515,6 +517,7 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& moduleData = data(module);
+    m_state.statics->fillVariablesOfModule(module);
 
     if (moduleData.isUncompiledCode()) {
         JSObject* loaderNamespace = uncompiledNamespace(module, phase);
@@ -1405,6 +1408,7 @@ const Identifier& Modules::resolvedKey(ModuleID external)
     ASSERT(data(external).isUncompiledCode());
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     m_runsUncompiledCode = true;
+    m_buildHasSeenWhoNamesModules = false;
     if (!isText(m_table.pathText(external)))
         m_admitsCodeOutsideImage = true;
     LoadedModule& loaded = ensureLoaded(external);
@@ -2470,7 +2474,8 @@ bool ModuleNamespace::isAmbiguousExport(unsigned index) const
 
 void ModuleNamespace::ensureOwnStructure(VM& vm)
 {
-    if (hasOwnStructure())
+    // A Structure with properties may be shared with another namespace object.
+    if (hasOwnStructure() || isValidOffset(structure()->maxOffset()))
         return;
     setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype()));
     m_hasOwnStructure = true;
@@ -2635,8 +2640,21 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
         }
         names.add(name);
     }
-    if (names.includeSymbolProperties() && mode == DontEnumPropertiesMode::Include)
+    if (!names.includeSymbolProperties())
+        return;
+    // The order of JSModuleNamespaceObject::getOwnPropertyNames, where Symbol.toStringTag is the first property of the Structure.
+    unsigned index = 0;
+    std::optional<PropertyNameArrayBuilder> structureNames;
+    if (isValidOffset(thisObject->structure()->maxOffset())) [[unlikely]] {
+        structureNames.emplace(vm, PropertyNameMode::StringsAndSymbols, names.privateSymbolMode());
+        thisObject->structure()->getPropertyNamesFromStructure(vm, *structureNames, mode);
+        for (; index < structureNames->size() && !(*structureNames)[index].isSymbol(); ++index)
+            names.add((*structureNames)[index]);
+    }
+    if (mode == DontEnumPropertiesMode::Include)
         names.add(vm.propertyNames->toStringTagSymbol);
+    for (; structureNames && index < structureNames->size(); ++index)
+        names.add((*structureNames)[index]);
 }
 
 bool ModuleNamespace::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)

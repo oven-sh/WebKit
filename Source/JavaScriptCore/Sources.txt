@@ -234,6 +234,7 @@ b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
 b3/B3ThreadJumps.cpp @no-unify
 b3/B3Type.cpp
+b3/B3UnrollLoops.cpp @no-unify
 b3/B3UpsilonValue.cpp
 b3/B3UseCounts.cpp
 b3/B3Validate.cpp

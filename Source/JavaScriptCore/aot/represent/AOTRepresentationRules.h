@@ -45,7 +45,7 @@ constexpr bool isSameWord(Representation from, Representation to)
 {
     if (from == to)
         return true;
-    if (holdsAnyNaN(to) && (from == Representation::Double || from == Representation::DoubleWithPayload))
+    if (holdsAnyNaN(to) && from == Representation::Double)
         return true;
     return (from == Representation::Cell && to == Representation::JSValue) || (from == Representation::JSValue && to == Representation::Cell);
 }

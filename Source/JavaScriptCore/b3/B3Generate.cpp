@@ -65,6 +65,7 @@
 #include "B3SpecializeSelect.h"
 #include "B3SplitBranchConditions.h"
 #include "B3ThreadJumps.h"
+#include "B3UnrollLoops.h"
 #include "B3Validate.h"
 #include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
@@ -89,6 +90,7 @@ struct PipelineState {
     bool hasLoops { false };
     bool didRotateLoops { false };
     bool didVersionLoops { false };
+    bool didRunStep { false };
 };
 
 enum class NeededEstimate : uint8_t {
@@ -291,6 +293,11 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, PipelineState& state) {
             return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
+    { "unrollLoops"_s,
+        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.unrolls; },
+        [](Procedure& procedure, PipelineState&) {
+            return cleanupsIfChanged(unrollLoops(procedure), { Cleanup::FixSSA, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
+        } },
 #if ENABLE(WEBASSEMBLY)
     { "eliminateWasmGCAllocations"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.usesWasmGCStructAllocations() && procedure.policy().upstream.eliminatesWasmGCAllocations; },
@@ -394,7 +401,7 @@ void runCleanups(std::span<Procedure* const> procedures, std::span<PipelineState
         state.pendingCleanups = { };
 }
 
-void runSteps(std::span<Procedure* const> procedures)
+void runSteps(std::span<Procedure* const> procedures, const StepObserver* observer = nullptr)
 {
     CompilerTimingScope timingScope("Total B3"_s, "generateToAir"_s);
 
@@ -404,7 +411,8 @@ void runSteps(std::span<Procedure* const> procedures)
         for (size_t index = 0; index < procedures.size(); ++index) {
             Procedure& procedure = *procedures[index];
             PipelineState& state = states[index];
-            if (procedure.report().failure || !step.isEnabled(procedure, state))
+            state.didRunStep = !procedure.report().failure && step.isEnabled(procedure, state);
+            if (!state.didRunStep)
                 continue;
             if (step.neededEstimate == NeededEstimate::EdgeClasses)
                 procedure.updateEdgeClasses();
@@ -415,6 +423,12 @@ void runSteps(std::span<Procedure* const> procedures)
         }
         if (hasPendingCleanups)
             runCleanups(procedures, states.mutableSpan());
+        if (!observer)
+            continue;
+        for (size_t index = 0; index < procedures.size(); ++index) {
+            if (states[index].didRunStep)
+                (*observer)(*procedures[index], step.name);
+        }
     }
 }
 
@@ -426,14 +440,14 @@ void prepareForGeneration(Procedure& procedure)
     prepareForGeneration(std::span<Procedure* const>(procedures));
 }
 
-void prepareForGeneration(std::span<Procedure* const> procedures)
+void prepareForGeneration(std::span<Procedure* const> procedures, const StepObserver* observer)
 {
     if (procedures.empty())
         return;
 
     CompilerTimingScope timingScope("Total B3+Air"_s, "prepareForGeneration"_s);
 
-    runSteps(procedures);
+    runSteps(procedures, observer);
 
     Vector<Air::Code*, 16> codes;
     for (Procedure* procedure : procedures) {

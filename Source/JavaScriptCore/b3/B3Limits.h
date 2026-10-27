@@ -35,6 +35,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxRangeCheckBoundsPerLoop, 4, CodeSize, "further range checks stay in the loop"_s) \
     macro(MaxCopiedValuesPerRotatedLoop, 12, CodeSize, "the loop is not rotated"_s) \
     macro(MaxRareBlocksPerRotatedLoop, 8, CompileTime, "the loop is not rotated"_s) \
+    macro(MaxValuesPerUnrolledLoop, 96, CodeSize, "fewer turns of the loop are written out, or none"_s) \
     macro(MaxThreadedTestCopyCost, 8, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxThreadedPathCost, 16, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxBlocksOnThreadedPath, 8, CodeSize, "the threaded path ends at the block"_s) \
@@ -135,6 +136,9 @@ static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() -
 inline constexpr int64_t minPageSize = 4096;
 
 inline constexpr unsigned minHoistedValuesPerLoopVersion = 2;
+inline constexpr unsigned minTurnsPerUnrolledLoop = 4;
+inline constexpr unsigned maxTurnsPerUnrolledLoop = 8;
+inline constexpr unsigned maxBlocksBesideTestOfUnrolledLoop = 4;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
 inline constexpr unsigned blocksPerConstantStretch = 1024;

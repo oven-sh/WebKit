@@ -450,6 +450,12 @@ static void testStoreToPrototypeIsNeverCached(LoadedProgram& program)
     AOT_TEST_CHECK(storedTo->hasInstance(program.realm(), constructEmptyObject(program.realm(), secondPrototype)));
     AOT_TEST_CHECK(!storedTo->hasInstance(program.realm(), constructEmptyObject(program.realm(), storedPrototype)));
 
+    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+    JSObject* givenLabelFirst = createSlimClosure(program, function);
+    PutPropertySlot slotOfFirst(givenLabelFirst, true);
+    AOT_TEST_CHECK(put(program, givenLabelFirst, vm.propertyNames->prototype, constructEmptyObject(program.realm()), slotOfFirst) && givenLabelFirst->structure() == storedTo->structure());
+    AOT_TEST_CHECK(put(program, givenLabelFirst, label, jsNumber(7), slotOfFirst) && !slotOfFirst.isCacheablePut());
+
     PutPropertySlot otherSlot(storedTo, true);
     AOT_TEST_CHECK(put(program, storedTo, label, jsNumber(7), otherSlot));
     AOT_TEST_CHECK(otherSlot.isCacheablePut());

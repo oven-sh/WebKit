@@ -1336,6 +1336,7 @@ bool isInVariable(const Closure& classObject, const FieldData& field)
 {
     ProgramStatics& statics = *classObject.state().statics;
     statics.ensureProgramStaticsInitialized();
+    statics.ensureVariableIsFilled(field.slot.offset);
     return !slotHoldsAbsent(field.slot.representation(), &statics.at<uint8_t>(field.slot.offset));
 }
 

@@ -37,6 +37,7 @@ class Modules;
 class ProgramStatics;
 class ProgramStrings;
 class PropertyCaches;
+class FirstAdditions;
 class SiteCaches;
 struct BuiltinFamilyState;
 struct ObjectModel;
@@ -120,6 +121,8 @@ struct State {
     std::unique_ptr<ChainDependents> chainDependents;
     std::unique_ptr<SiteCaches> siteCaches;
     LazyPropertyCaches propertyCaches;
+    // Created when an object is first given a name that is new to its Structure.
+    std::unique_ptr<FirstAdditions> firstAdditions;
     std::unique_ptr<Modules> modules;
     std::unique_ptr<BuiltinModuleTable> builtinModules;
     std::unique_ptr<ObjectModel> objects;

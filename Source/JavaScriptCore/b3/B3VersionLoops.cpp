@@ -16,6 +16,7 @@
 #include "B3LoopInvariance.h"
 #include "B3LoopRangeChecks.h"
 #include "B3LoopRegions.h"
+#include "B3LoopUtilities.h"
 #include "B3LoopVersionPlan.h"
 #include "B3MovedLoadCheck.h"
 #include "B3NaturalLoops.h"
@@ -205,6 +206,9 @@ private:
                 break;
             }
         }
+        appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
+            return hoistedValueOrSelf(version, value);
+        });
         if (!plan.rewritesLoopTest())
             return;
         version.bounds = appendEntryGuards(*version.front, plan.rangeChecks, *plan.countedLoop, [&](Value* value) {
@@ -255,6 +259,9 @@ private:
     void copyValue(Version& version, Value* value, BasicBlock* copy, RegionCloner::ValueMap& map, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
+        // Every turn moves the counter, and the fast loop is left before the counter gets to the limit of a range check: it ends within the data it walks.
+        if (kind == CopyKind::FastLoop && isLoopPoll(value) && plan.rangeChecks.endsWithinLimit() && m_proc.policy().loops.limitsOfRangeChecksAreLengthsOfData)
+            return;
         if (isReplaced(version, value, kind)) {
             if (value->type() == Void)
                 return;

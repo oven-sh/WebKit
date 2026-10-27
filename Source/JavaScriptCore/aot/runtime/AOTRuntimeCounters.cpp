@@ -158,7 +158,8 @@ static String describeNamesOf(Structure* structure)
         names.append(StringView(properties[index].key()));
     }
     names.append('}');
-    if (structure->isDictionary())
+    // Whoever files an access to a cacheable dictionary that was never flat makes it flat.
+    if (structure->isUncacheableDictionary() || (structure->isDictionary() && structure->hasBeenFlattenedBefore()))
         names.append("dict"_s);
     return names.toString();
 }

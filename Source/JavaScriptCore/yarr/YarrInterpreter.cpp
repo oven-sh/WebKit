@@ -3494,10 +3494,9 @@ static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecod
         YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode, ExecutionMode::IncludeSubpatterns, analysis);
         if (hasError(errorCode))
             return std::nullopt;
-        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns)) {
-            (*program)->setRequiredTexts(bytecode->m_requiredTexts);
+        // It makes an attempt at every place, as the JIT does, which may run out of turns at a place that holds no match.
+        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns))
             bytecode->m_flatProgramThatCountsTurns = WTF::move(*program);
-        }
     }
     FlatProgram* program = bytecode->m_flatProgramThatCountsTurns.get();
     if (!program)
@@ -3515,7 +3514,7 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
     unsigned bytecodeRemainingTurns { 0 };
     Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
-    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns);
+    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns, program.jitCountsTurns);
     validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
     if (flatResult == JSRegExpResult::JITCodeFailure) {
         Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
@@ -3559,12 +3558,6 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
         unsigned remainingTurns { 0 };
         if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
             return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
-        if (program.jitCountsTurns) {
-            // It has handed over early: see FlatMatchPolicy.
-            flatResult = matchFlatProgramWithSurrogates(program, input, start, output, FlatMatchPolicy::RunsToMatchLimit);
-            if (!hasGivenUp(flatResult))
-                return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
-        }
     }
     if (!bytecode->m_body) {
         if (!bytecode->m_bytecodeBehindFlatProgram) {
@@ -3584,7 +3577,7 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
     }
     JSRegExpResult result { JSRegExpResult::NoMatch };
     unsigned remainingTurns { 0 };
-    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns, program.jitCountsTurns);
 }
 
 static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)

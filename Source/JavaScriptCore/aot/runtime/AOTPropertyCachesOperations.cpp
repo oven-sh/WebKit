@@ -284,7 +284,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     bool shouldFile = access.caches().shouldFile(cell->structureID(), uid, accessFor(mode));
     if (access.caches().countsNames()) [[unlikely]]
         access.caches().countMiss(mode == PutMode::Define ? "definition"_s : "store"_s, shouldFile, cell, uid);
-    if (mode != PutMode::Define && cell->isObject() && cell->structure()->isDictionary() && !cell->structure()->isCompiledStructure()) {
+    // An object that is being filled stays a dictionary until a store comes again.
+    if (shouldFile && mode != PutMode::Define && cell->isObject() && cell->structure()->isDictionary() && !cell->structure()->isCompiledStructure()) {
         bool isStored = tryStoreToPermanentDictionary(access, asObject(cell), value, mode, slot);
         RETURN_IF_EXCEPTION(scope, void());
         if (isStored)

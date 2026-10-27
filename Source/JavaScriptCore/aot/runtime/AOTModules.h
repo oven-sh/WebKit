@@ -197,7 +197,7 @@ public:
     // An ES module of the program whose status stands in the table and says that it is linked, at the least.
     bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
-    bool wasLoadedWithGraph(ModuleID);
+    bool wasLoadedWithGraph(ModuleID) const;
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void dropErrorOfFile(ModuleID fileOrFace);
@@ -520,12 +520,12 @@ private:
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;
-    // A bit for each module, from the first walk on.
-    Vector<uint64_t> m_modulesLoadedWithGraphs;
-    bool isKnownToBeLoadedWithGraph(ModuleID module) const { return !m_modulesLoadedWithGraphs.isEmpty() && (m_modulesLoadedWithGraphs[module.index() / 64] >> (module.index() % 64) & 1); }
-    // Their evaluation has begun, and nobody has asked since what lies below them.
-    Vector<ModuleID, 4> m_rootsOfLoadedGraphs;
-    bool m_firstEntryPointIsLoaded { false };
+    void noteModulesLoadedWith(ModuleID root);
+    // A bit for each module, read for the heads of groups.
+    Vector<uint64_t> m_loadedGroups;
+    // The groups are those of a program in which the build has seen whoever names a module. Code from outside the image names what it likes: what is loaded from then on has a bit of its own.
+    bool m_buildHasSeenWhoNamesModules;
+    BitVector m_modulesLoadedBesideGroups;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
@@ -608,9 +608,16 @@ ALWAYS_INLINE bool Modules::isNotLoadedWithoutStatus(ModuleID module, const Modu
         return false;
     if (moduleData.needsLink())
         return true;
-    if (m_firstEntryPointIsLoaded && moduleData.isLoadedWithFirstEntryPoint())
-        return false;
     return !wasLoadedWithGraph(module);
+}
+
+// Of an ES module of the program. A graph is loaded before a module of it begins, and nothing is stored when a module that needs no link is loaded, nor when one with nothing to run is passed over.
+ALWAYS_INLINE bool Modules::wasLoadedWithGraph(ModuleID module) const
+{
+    uint32_t head = m_table.headOfLoadGroup(module).index();
+    if (m_loadedGroups[head / 64] >> (head % 64) & 1)
+        return true;
+    return !m_buildHasSeenWhoNamesModules && m_modulesLoadedBesideGroups.get(module.index());
 }
 
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const

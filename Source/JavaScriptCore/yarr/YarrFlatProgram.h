@@ -224,6 +224,8 @@ public:
     unsigned framesOfRegisters { 0 }; // The registers lie below the frames, in as many frames' room.
     std::optional<unsigned> endAnchoredFixedSize;
     bool triesOnlyOnce { false };
+    // FlatProgramForm::CountsTurns: the op that every attempt but the first begins at. In front of it stand the alternatives that are tried at the first place alone.
+    unsigned laterAttemptsBeginAt { 0 };
     // Of a pattern in unicode mode with a step that can consume a surrogate. There a lead surrogate and the trail surrogate behind it are one character, and that trail surrogate alone is none.
     // A match that meets a surrogate, in a step that tests for a class or goes back, where an attempt begins or where one might, is made again by the full machine.
     bool decodesSurrogatePairs { false };
@@ -285,15 +287,14 @@ enum class FlatProgramForm : bool { Fast, CountsTurns };
 // it fails again: a table of rows by positions says where, and how many turns the failed search began. With the table a match takes time in proportion to ops times positions.
 // A program that counts turns keeps the table from the start: it takes the turns of a search that it leaves out off matchLimit, and so gives up exactly where it would without the table.
 // A fast program of a pattern whose turns the JIT does not count starts over with the table. Any other fast program gives up, since with the table its steps would say nothing about the JIT's turns:
-// HandsOverEarly. RunsToMatchLimit is for where nothing stands behind it that counts turns. RemembersFromStart is for the checking mode.
-enum class FlatMatchPolicy : uint8_t { HandsOverEarly, RunsToMatchLimit, RemembersFromStart };
+// HandsOverEarly. RemembersFromStart is for the checking mode.
+enum class FlatMatchPolicy : uint8_t { HandsOverEarly, RemembersFromStart };
 
 enum class FlatProgramDecline : uint8_t {
     ClassWithStrings,
     Lookbehind,
     DuplicateNamedGroups,
     UnsignedLengthPattern,
-    CopiedGroup,
     NestedTooDeep,
     TooManySetsOrRegisters,
     NoTurnsToCount,

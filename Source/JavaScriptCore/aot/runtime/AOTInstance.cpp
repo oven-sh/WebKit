@@ -90,6 +90,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <utility>
 #include <wtf/Atomics.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
@@ -1237,6 +1238,52 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
         std::ranges::fill(std::span { words + run->firstWord, run->numberOfWords }, run->bits());
 }
 
+uint32_t ProgramStatics::fileWithWord(uint32_t word) const
+{
+    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
+    auto next = std::ranges::upper_bound(files, word, { }, &StaticsOfFile::firstWord);
+    RELEASE_ASSERT(next != files.begin());
+    return static_cast<uint32_t>(next - files.begin()) - 1;
+}
+
+void ProgramStatics::fillVariablesOfListedModule(ModuleID module)
+{
+    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
+    auto found = std::ranges::lower_bound(files, module.index(), { }, &StaticsOfFile::module);
+    if (found != files.end() && found->module == module.index())
+        fillVariablesOfFile(static_cast<uint32_t>(found - files.begin()));
+}
+
+bool ProgramStatics::isFilled(uint32_t offset) const
+{
+    uint32_t word = offset / sizeof(uint64_t);
+    return word - m_firstWordFilledWithFiles >= m_numberOfWordsFilledWithFiles || m_filledFiles[fileWithWord(word)];
+}
+
+void ProgramStatics::fillVariablesOfFile(uint32_t first)
+{
+    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
+    std::span<const uint32_t> importedFiles = m_tables.staticsOfImportedFiles();
+    RELEASE_ASSERT(first + 1 < files.size());
+    if (m_filledFiles[first])
+        return;
+    m_filledFiles[first] = true;
+    Vector<uint32_t, 32> pending { first };
+    while (!pending.isEmpty()) {
+        uint32_t file = pending.takeLast();
+        initializeStatics(files[file].firstWord, files[file].firstWord + files[file].numberOfWords);
+        for (uint32_t imported : importedFiles.subspan(files[file].firstImportedFile, files[file + 1].firstImportedFile - files[file].firstImportedFile)) {
+            if (!std::exchange(m_filledFiles[imported], true))
+                pending.append(imported);
+        }
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillVariablesOfFile, void, (Instance* instance, uint32_t file))
+{
+    instance->state->statics->fillVariablesOfFile(file);
+}
+
 void ProgramStatics::initializeProgramStatics()
 {
     if (m_readOnlyStaticsSize)
@@ -1257,6 +1304,7 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
         return closures.closure(vm, FunctionID(offset));
     ProgramStatics& statics = *state.statics;
     statics.ensureProgramStaticsInitialized();
+    statics.ensureVariableIsFilled(offset);
     if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, statics.m_strings))
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
@@ -1272,7 +1320,7 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closureIfCreated(FunctionID(offset));
     const ProgramStatics& statics = *state.statics;
-    if (!statics.m_programStaticsInitialized && offset < sizeFilledAtProgramEntry(statics.m_tables))
+    if ((!statics.m_programStaticsInitialized && offset < sizeFilledAtProgramEntry(statics.m_tables)) || !statics.isFilled(offset))
         return { };
     const uint8_t* address = instance.statics() + offset;
     if (readCreatesCell(instance, slot.representation(), address))
@@ -1290,6 +1338,7 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
     ProgramStatics& statics = *instance.state->statics;
     statics.ensureProgramStaticsInitialized();
+    statics.ensureVariableIsFilled(slot.offset);
     uint8_t* address = instance.statics() + slot.offset;
     if (!value) {
         RELEASE_ASSERT(traitsOf(representation).hasAbsent);
@@ -1363,7 +1412,14 @@ ProgramStatics::ProgramStatics(State& state)
     m_slots.setCardsAreWrittenWithoutRecord();
     uint8_t* statics = m_instance.statics();
     uint32_t filled = sizeFilledAtProgramEntry(m_tables);
-    initializeStatics(filled / sizeof(uint64_t), std::numeric_limits<uint32_t>::max());
+    uint32_t endOfWordsFilledNow = std::numeric_limits<uint32_t>::max();
+    if (std::span<const StaticsOfFile> files = m_tables.staticsOfFiles(); !files.empty()) {
+        // Nothing behind them starts as anything but zero.
+        endOfWordsFilledNow = m_firstWordFilledWithFiles = files.front().firstWord;
+        m_numberOfWordsFilledWithFiles = files.back().firstWord - files.front().firstWord;
+        m_filledFiles = statics + files.back().numberOfWords;
+    }
+    initializeStatics(filled / sizeof(uint64_t), endOfWordsFilledNow);
     // Compiled code may load from anywhere in the statics ahead of the branch that needs the value, so only stores are caught until the program is entered.
     m_readOnlyStaticsSize = static_cast<uint32_t>(WTF::roundDownToMultipleOf(pageSize(), static_cast<size_t>(filled)));
     if (m_readOnlyStaticsSize)

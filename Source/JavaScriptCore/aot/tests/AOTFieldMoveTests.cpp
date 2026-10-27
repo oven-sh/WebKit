@@ -583,6 +583,8 @@ static void checkAssignmentTestsEachClosure(LoadedProgram& program)
     AOT_TEST_CHECK(accepted != refused && accepted->structure() == refused->structure());
 
     Identifier name = Identifier::fromString(vm, "fn"_s);
+    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+    constructEmptyObject(program.realm())->putDirect(vm, name, accepted);
     JSObject* sourceOfAccepted = constructEmptyObject(program.realm());
     sourceOfAccepted->putDirect(vm, name, accepted);
     JSObject* sourceOfRefused = constructEmptyObject(program.realm());

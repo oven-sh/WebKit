@@ -265,3 +265,24 @@ let otherKeys = ["01", "1.0", "+1", "1e3", "0x1", " 1", ""];
     shouldBe(array.length, 0);
     shouldBe(outcome(() => strictStore(array, "added", 1)), "stored");
 }
+
+// 10. Error.captureStackTrace() throws if `stack` is listed.
+{
+    let absent = $vm.makePropertiesImmutable(make(), ["stack"]);
+    shouldBe(outcome(() => Error.captureStackTrace(absent)), "TypeError");
+    shouldBe(Object.hasOwn(absent, "stack"), false);
+
+    let present = make();
+    present.stack = 5;
+    $vm.makePropertiesImmutable(present, ["stack"]);
+    shouldBe(outcome(() => Error.captureStackTrace(present)), "TypeError");
+    shouldBe(present.stack, 5);
+
+    let everyOtherString = $vm.makePropertiesImmutable(make(), [], false, false, ["free"]);
+    shouldBe(outcome(() => Error.captureStackTrace(everyOtherString)), "TypeError");
+    shouldBe(Object.hasOwn(everyOtherString, "stack"), false);
+
+    let free = $vm.makePropertiesImmutable(make(), ["kept"]);
+    shouldBe(outcome(() => Error.captureStackTrace(free)), "undefined");
+    shouldBe(typeof free.stack, "string");
+}

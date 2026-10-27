@@ -403,6 +403,136 @@ static void testMarkStackThatCannotGrowSaysWhy()
 }
 #endif
 
+#if OS(LINUX) && !ASAN_ENABLED
+// Within a limit on address space every cage of the process takes from one range.
+template<void (*body)()>
+static void runInProcessWithSharedRange()
+{
+    ASCIILiteral name;
+    for (const NativeTest& test : heapCageTests()) {
+        if (test.run == &runInProcessWithSharedRange<body>)
+            name = test.name;
+    }
+    AOT_TEST_CHECK(!name.isNull());
+
+    if (MarkedBlockCage::isEnabled()) {
+        AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
+        body();
+        return;
+    }
+
+    ChildProcessLauncher launcher("/bin/sh"_s, { });
+    Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 1048576 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process under a limit on address space ", result.description());
+        failNativeTest(__FILE__, __LINE__, name.characters());
+    }
+}
+
+static constexpr size_t sizeOfCellLargerThanBlock = 2 * blockSize;
+
+static void takeAllRoom(MarkedBlockCage& cage)
+{
+    for (size_t size = MB; size >= blockSize; size /= 2) {
+        while (cage.tryAllocate(size)) { }
+    }
+    while (cage.tryAllocate(sizeOfCellLargerThanBlock)) { }
+    while (cage.tryAllocateAligned(blockSize, blockSize)) { }
+}
+
+static Vector<void*, 128> takeBlocksOfSharedReserve(MarkedBlockCage& cage)
+{
+    Vector<void*, 128> blocks;
+    AOT_TEST_CHECK(!cage.tryAllocateAligned(blockSize, blockSize) && !cage.tryAllocateAlignedFromSharedReserve(blockSize, blockSize));
+    AOT_TEST_CHECK(cage.releaseLastReserve() && !cage.releaseLastReserve());
+    while (void* block = cage.tryAllocateAlignedFromSharedReserve(blockSize, blockSize)) {
+        AOT_TEST_CHECK(cage.contains(block) && !(std::bit_cast<uintptr_t>(block) % blockSize));
+        blocks.append(block);
+    }
+    return blocks;
+}
+
+// A cage takes every block of the reserve that the cages of a range share, an out-of-memory error is thrown, and the cage goes away. A cage that was there all along finds as many.
+static void checkSharedReserveIsWholeAgainBehindCageThatThrew()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage waiting;
+    AOT_TEST_CHECK(first.base() && waiting.base() == first.base());
+    takeAllRoom(first);
+
+    size_t whole;
+    {
+        MarkedBlockCage cage;
+        auto blocks = takeBlocksOfSharedReserve(cage);
+        whole = blocks.size();
+        AOT_TEST_CHECK(whole == MB / blockSize);
+        cage.didThrowOutOfMemoryError();
+        for (void* block : blocks)
+            cage.free(block);
+    }
+    AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
+}
+
+// The same where the cage stays: it gives a block back for each block that it takes from the range.
+static void checkSharedReserveIsWholeAgainBehindCageThatStays()
+{
+    MarkedBlockCage first;
+    MarkedBlockCage waiting;
+    MarkedBlockCage cage;
+    // Room for what the cage keeps for itself.
+    std::array<void*, 8> spare;
+    for (void*& block : spare)
+        block = first.tryAllocateAligned(blockSize, blockSize);
+    takeAllRoom(first);
+
+    auto blocks = takeBlocksOfSharedReserve(cage);
+    size_t whole = blocks.size();
+    cage.didThrowOutOfMemoryError();
+    for (void* block : blocks)
+        cage.free(block);
+    for (void* block : spare)
+        first.free(block);
+    for (size_t count = 0; count < whole; ++count)
+        cage.keepReserveOnceHalfFull();
+    takeAllRoom(first);
+    AOT_TEST_CHECK(takeBlocksOfSharedReserve(waiting).size() == whole);
+}
+
+// Four cages at once get a cell that is larger than a block, and what they free is there for the next.
+static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
+{
+    MarkedBlockCage first;
+    std::array<MarkedBlockCage, 4> cages;
+    std::array<void*, 4> cells;
+    for (MarkedBlockCage& cage : cages) {
+        cage.keepReserveOnceHalfFull();
+        AOT_TEST_CHECK(cage.reserveSize() == blockSize);
+    }
+    takeAllRoom(first);
+
+    for (unsigned round = 0; round < 3; ++round) {
+        for (unsigned index = 0; index < cages.size(); ++index) {
+            MarkedBlockCage& cage = cages[index];
+            AOT_TEST_CHECK(round || (!cage.tryAllocate(sizeOfCellLargerThanBlock) && cage.releaseLastReserve()));
+            cells[index] = cage.tryAllocate(sizeOfCellLargerThanBlock);
+            AOT_TEST_CHECK(cells[index] && cage.contains(cells[index]));
+            fill(cells[index], sizeOfCellLargerThanBlock, index);
+        }
+        cells[0] = cages[0].tryReallocate(cells[0], 2 * sizeOfCellLargerThanBlock);
+        AOT_TEST_CHECK(cells[0]);
+        for (unsigned index = 0; index < cages.size(); ++index) {
+            AOT_TEST_CHECK(isFilled(cells[index], sizeOfCellLargerThanBlock, index));
+            cages[index].free(cells[index]);
+        }
+    }
+    void* largest = cages[0].tryAllocate(MB);
+    AOT_TEST_CHECK(largest && !cages[1].tryAllocate(sizeOfCellLargerThanBlock));
+    cages[0].free(largest);
+}
+#endif
+
 static bool covers(MarkedBlockCage::Indices indices, uintptr_t base, const void* pointer, size_t size)
 {
     uint32_t first = MarkedBlockCage::encode(base, pointer);
@@ -889,6 +1019,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },
 #if OS(LINUX) && !ASAN_ENABLED
         { markStackTest, testMarkStackThatCannotGrowSaysWhy },
+        { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-threw"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatThrew> },
+        { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
+        { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },

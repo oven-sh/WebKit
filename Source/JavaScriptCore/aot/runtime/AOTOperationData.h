@@ -35,6 +35,18 @@ struct StaticsRun {
 };
 static_assert(sizeof(StaticsRun) == 16 && isImageRecord<StaticsRun>);
 
+// A file that the first entry point does not bring along. Its variables get their first words when code is entered that can name them: its own, or that of a file that imports it.
+// By the number of the module, and the words lie in the same order, one file behind the other. A file that only imports such files has no words.
+// The last record ends the lists. In the place of a number of words it has the offset of one byte for each file, in their order: whether its words are filled.
+struct StaticsOfFile {
+    uint32_t module;
+    uint32_t firstWord;
+    uint32_t numberOfWords;
+    // In ProgramTables::staticsOfImportedFiles(): the files of this table that it imports.
+    uint32_t firstImportedFile;
+};
+static_assert(sizeof(StaticsOfFile) == 16 && isImageRecord<StaticsOfFile>);
+
 struct StaticsRange {
     uint32_t offset;
     uint32_t size;
@@ -349,6 +361,8 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
 #define FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
+    v(staticsOfFiles, StaticsOfFile) \
+    v(staticsOfImportedFiles, uint32_t) \
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \
     v(staticsClearedEachCollection, StaticsRange) \

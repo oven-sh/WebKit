@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include <array>
@@ -25,15 +26,33 @@ void reportWhatIsFoundOnlyFromLessBy(ReporterOfWhatIsFoundOnlyFromLess reporter)
     s_reporter = reporter;
 }
 
-ValueSetID objectsOfProgramThatNoNodeHolds(const ValueFlowSolver& solver, const ValueFlowUniverse& universe, ValueSetMaker& maker)
+ValueSetID objectsThatTheirOwnSitesNoLongerMake(const ValueFlowSolver& solver, const ValueFlowBodies& bodies, ValueSetMaker& maker)
 {
+    AOT_THRESHOLD(uint32_t, mostObjectsOfOneSite, 16);
+    const ValueFlowUniverse& universe = bodies.universe();
     HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
     Vector<ValueSetID> held;
     for (ValueSetID value : solver.graph().values()) {
         if (value && seen.add(value.index()).isNewEntry)
             held.append(value);
     }
-    return maker.intersect(ValueSets::complement(maker.uniteAll(held.span())), maker.intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects())));
+    Vector<ValueFlowObjectID> ofSitesWhoseCalleeMayBeAnything;
+    for (const ValueFlowStatement& statement : bodies.statements()) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.firstSite == UINT32_MAX || !statement.operandCount)
+            continue;
+        bool isCall = statement.opcode == Opcode::Call || statement.opcode == Opcode::CallList;
+        bool isConstruction = statement.opcode == Opcode::Construct || statement.opcode == Opcode::ConstructList;
+        if (!isCall && !isConstruction)
+            continue;
+        const ValueFlowOperand& callee = bodies.operandsOf(statement)[0];
+        if (!callee.node || !bodies.sets().contains(solver.possibleValuesOf(callee.node), ValueFlowUniverse::unknownObject()))
+            continue;
+        for (uint32_t ordinal = 0; ordinal < mostObjectsOfOneSite; ++ordinal) {
+            if (ValueFlowObjectID object = universe.siteObject(statement, ordinal))
+                ofSitesWhoseCalleeMayBeAnything.append(object);
+        }
+    }
+    return maker.intersect(ValueSets::complement(maker.uniteAll(held.span())), maker.of(ofSitesWhoseCalleeMayBeAnything.span()));
 }
 
 void reportWhatIsFoundOnlyFromLess(ValueFlowSolution& solution, std::span<const UnseenCodeRecord> unseenCodeOfProgramAsItIs, BuildContext& build)
@@ -75,7 +94,7 @@ void reportWhatIsFoundOnlyFromLess(ValueFlowSolution& solution, std::span<const 
         if (!isFound)
             note(Records, index);
     }
-    ValueSetID neverMade = objectsOfProgramThatNoNodeHolds(givenMore, universe, maker);
+    ValueSetID neverMade = objectsThatTheirOwnSitesNoLongerMake(givenMore, solution.bodies(), maker);
     ValueSetID outOfSight = maker.unite(neverMade, maker.unite(givenMore.possibleValuesOf(ValueFlowProgramNodes::escaped()), givenMore.possibleValuesOf(ValueFlowProgramNodes::lost())));
     for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
         if (!(asItIs.marksOf(ValueFlowObjectID(index)) - givenMore.marksOf(ValueFlowObjectID(index))).isEmpty() && !sets.contains(outOfSight, ValueFlowObjectID(index)))

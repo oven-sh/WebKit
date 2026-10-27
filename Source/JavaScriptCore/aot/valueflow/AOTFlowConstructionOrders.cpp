@@ -15,6 +15,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
+#include "AOTLedger.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -760,14 +761,20 @@ struct ConstructionGraphBuilder {
         return arePlain;
     }
 
-    bool holdsObjectOfProgramThatStopsStores(ValueSetID holders)
+    ValueSetID objectsOfProgramThatStopStoresAmong(ValueSetID holders)
     {
         AOT_THRESHOLD(uint32_t, fewestHoldersAskedTogether, 8);
         auto stopsStores = [&](ValueFlowObjectID holder) {
             return !universe.builtinOf(holder) && markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
         };
-        if (ValueSets::isComplement(holders) || sets.size(holders) < fewestHoldersAskedTogether)
-            return sets.anyMember(holders, stopsStores);
+        if (sets.size(holders) < fewestHoldersAskedTogether) {
+            Vector<ValueFlowObjectID, 8> stopping;
+            sets.forEachMember(holders, [&](ValueFlowObjectID holder) {
+                if (stopsStores(holder))
+                    stopping.append(holder);
+            });
+            return stopping.isEmpty() ? ValueSets::nothing : maker.of(stopping.span());
+        }
         if (!objectsOfProgramThatStopStores) {
             Vector<ValueFlowObjectID> stopping;
             for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
@@ -776,7 +783,25 @@ struct ConstructionGraphBuilder {
             }
             objectsOfProgramThatStopStores = maker.of(stopping.span());
         }
-        return sets.meet(holders, *objectsOfProgramThatStopStores);
+        return sets.meet(holders, *objectsOfProgramThatStopStores) ? maker.intersect(holders, *objectsOfProgramThatStopStores) : ValueSets::nothing;
+    }
+
+    // A property that cannot be written stops the stores under its own name and no others.
+    bool holdsObjectOfProgramThatStopsStoresUnder(ValueSetID holders, PropertyKeyID key)
+    {
+        if (ValueSets::isComplement(holders))
+            return true;
+        ValueSetID stopping = objectsOfProgramThatStopStoresAmong(holders);
+        if (stopping == ValueSets::nothing)
+            return false;
+        bool mayHoldNamesNobodyLists = holdersOfNamesNobodyLists.ensure(stopping.index(), [&] {
+            return !actorsOpenOnNamesOfObjectsOfProgramAmong(inputs, maker, stopping).isEmpty();
+        }).iterator->value;
+        if (program.isIndexLike(key) || mayHoldNamesNobodyLists)
+            return true;
+        return mayFindNameIn(inputs, heap, maker, stopping, key, [&](ValueSetID members) {
+            return findKindsOfMembersOf(inputs, members);
+        });
     }
 
     bool mayBeStoppedAbove(const ChainOfReceivers& chain, PropertyKeyID key)
@@ -786,7 +811,7 @@ struct ConstructionGraphBuilder {
         const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
         if (accessorsUnder(above, key, true) != ValueSets::nothing || accessorsUnder(above, key, false) != ValueSets::nothing || sets.meet(above, members.holdersOfUndeclaredProperties))
             return true;
-        if (holdsObjectOfProgramThatStopsStores(above))
+        if (holdsObjectOfProgramThatStopsStoresUnder(above, key))
             return true;
         bool mayBeStopped = false;
         sets.forEachMember(maker.intersect(above, members.holders), [&](ValueFlowObjectID holder) {
@@ -1069,6 +1094,7 @@ struct ConstructionGraphBuilder {
     ValueSetMaker& maker { heap.maker() };
     MapByNumber<uint32_t, ChainOfReceivers> chains { };
     std::optional<ValueSetID> objectsOfProgramThatStopStores { };
+    MapByNumber<uint32_t, bool> holdersOfNamesNobodyLists { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
     ConstructionGraph graph { };
 };

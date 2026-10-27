@@ -350,7 +350,7 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
         return produced;
     if (holdsAnyNaN(wanted)) {
         RELEASE_ASSERT(!produced.is<ImpureNumber>());
-        return Operand(wanted, produced.is<NumberWithPayload>() ? produced.value : inRepresentation(context, produced, producedType, Representation::Double).value);
+        return Operand(wanted, inRepresentation(context, produced, producedType, Representation::Double).value);
     }
     if (holdsAnyNaN(produced.representation) && wanted != Representation::JSValue)
         return inRepresentation(context, integerRepresentations.contains(wanted) ? Number(produced.value) : withoutBitsOfAnyNaN(produced), producedType, wanted);

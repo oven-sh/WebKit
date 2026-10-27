@@ -231,10 +231,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         return;
     }
 
-    if (data(root).isFirstEntryPoint())
-        m_firstEntryPointIsLoaded = true;
-    else if ((!m_firstEntryPointIsLoaded || !data(root).isLoadedWithFirstEntryPoint()) && !isKnownToBeLoadedWithGraph(root) && (m_rootsOfLoadedGraphs.isEmpty() || m_rootsOfLoadedGraphs.last() != root))
-        m_rootsOfLoadedGraphs.append(root);
+    noteModulesLoadedWith(root);
 
     EvaluationFrames frames;
     EvaluationInProgress evaluation { frames, m_innermostEvaluation };
@@ -911,38 +908,30 @@ bool Modules::isNotLoaded(ModuleID module)
     return storedStatus(module) == StoredModuleStatus::Unlinked && isNotLoadedWithoutStatus(module, data(module));
 }
 
-// A graph is loaded before a module of it begins, and nothing is stored when a module that needs no link is loaded, nor when one with nothing to run is passed over. What lies below a root whose evaluation has begun was loaded with it.
-bool Modules::wasLoadedWithGraph(ModuleID module)
+// What lies below a root whose evaluation has begun was loaded with it.
+void Modules::noteModulesLoadedWith(ModuleID root)
 {
-    if (m_rootsOfLoadedGraphs.isEmpty())
-        return isKnownToBeLoadedWithGraph(module);
-    if (m_modulesLoadedWithGraphs.isEmpty())
-        m_modulesLoadedWithGraphs.fill(0, m_table.size() / 64 + 1);
-    std::span<uint64_t> marks = m_modulesLoadedWithGraphs.mutableSpan();
-    auto mark = [&](ModuleID each) {
-        uint64_t& word = marks[each.index() / 64];
-        uint64_t bit = 1ull << (each.index() % 64);
-        return std::exchange(word, word | bit) & bit;
-    };
-    Vector<ModuleID, 32> importers;
-    for (ModuleID root : std::exchange(m_rootsOfLoadedGraphs, { })) {
-        if (!mark(root))
-            importers.append(root);
-    }
-    while (!importers.isEmpty()) {
-        for (const ModuleRequestData& request : m_table.requests(importers.takeLast())) {
-            if (request.isRequire || request.isHoisted)
+    if (!data(root).isESModuleOfProgram() || data(root).isFaceOfFile() || wasLoadedWithGraph(root))
+        return;
+    m_buildHasSeenWhoNamesModules &= data(root).mayBeginLoad();
+    Vector<uint32_t, 32> found { m_buildHasSeenWhoNamesModules ? m_table.headOfLoadGroup(root).index() : root.index() };
+    while (!found.isEmpty()) {
+        uint32_t module = found.takeLast();
+        if (m_buildHasSeenWhoNamesModules) [[likely]] {
+            if (std::exchange(m_loadedGroups[module / 64], m_loadedGroups[module / 64] | 1ull << (module % 64)) >> (module % 64) & 1)
                 continue;
-            // Most requests of a large graph lead to what the walk has come to. It looks once at whatever it comes to, and nobody asks about anything but an ES module of the program.
-            ModuleID target = request.targetModule();
-            if (mark(target))
-                continue;
-            const ModuleData& targetData = data(target);
-            if (targetData.kind == ModuleKind::SourceText && !targetData.isOfLibrary() && (!m_firstEntryPointIsLoaded || !targetData.isLoadedWithFirstEntryPoint()))
-                importers.append(target);
+            for (uint32_t head : m_table.groupsLoadedWith(ModuleID(module)))
+                found.append(head);
+            continue;
+        }
+        if (!data(ModuleID(module)).isESModuleOfProgram() || wasLoadedWithGraph(ModuleID(module)))
+            continue;
+        m_modulesLoadedBesideGroups.set(module);
+        for (const ModuleRequestData& request : m_table.requests(ModuleID(module))) {
+            if (!request.isRequire && !request.isHoisted)
+                found.append(request.target());
         }
     }
-    return isKnownToBeLoadedWithGraph(module);
 }
 
 // A module with nothing to link and nothing to run stays as the loader left it when it had loaded it. The loader takes no step for it again.
@@ -1646,9 +1635,10 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         RELEASE_AND_RETURN(scope, record->evaluate(realm, referrerAsyncOrder.value_or(-1), importPromise));
     }
 
-    if (moduleData.hasExportTable() && !moduleData.needsEvaluation())
+    if (moduleData.hasExportTable() && !moduleData.needsEvaluation()) {
+        noteModulesLoadedWith(root);
         setStoredStatus(root, StoredModuleStatus::Evaluated);
-    else if (moduleData.hasExportTable() && status(root) != ModuleStatus::Evaluated) {
+    } else if (moduleData.hasExportTable() && status(root) != ModuleStatus::Evaluated) {
         evaluateWithOwnStack(root);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
@@ -1916,6 +1906,7 @@ JSValue Modules::execute(ModuleID module)
         JSObject* requirer = moduleObject(*moduleData.referrerModule());
         RETURN_IF_EXCEPTION(scope, { });
         setStatus(module, ModuleStatus::Evaluating);
+        m_buildHasSeenWhoNamesModules = false;
         RequestToHostScope requestToHost(*this);
         value = host().requireSpecifier(realm, requirer, pathString(module));
     }
@@ -1933,6 +1924,7 @@ JSValue Modules::require(ModuleID target)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& targetData = data(target);
+    m_state.statics->fillVariablesOfModule(target);
 
     if (targetData.isUncompiledCode())
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));

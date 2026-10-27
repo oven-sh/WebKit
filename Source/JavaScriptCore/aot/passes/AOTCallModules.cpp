@@ -18,6 +18,7 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTModuleGraph.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
@@ -360,63 +361,6 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
             site.kind = SiteKind::Bare;
         found.append(site);
     }
-}
-
-// By node: the node that every way from the root to it passes last. The root has the highest number and is its own answer; a node that the root does not reach has none.
-static Vector<uint32_t> computeImmediateDominators(const Vector<ModuleList>& successors, uint32_t root)
-{
-    constexpr uint32_t none = UINT32_MAX;
-    uint32_t numberOfNodes = successors.size();
-    Vector<uint32_t> postOrder;
-    Vector<uint32_t> numberOf(FillWith { }, numberOfNodes, none);
-    BitVector isVisited(numberOfNodes);
-    isVisited.quickSet(root);
-    Vector<std::pair<uint32_t, uint32_t>, 32> stack { { root, 0 } };
-    while (!stack.isEmpty()) {
-        auto& [node, next] = stack.last();
-        if (next == successors[node].size()) {
-            numberOf[node] = postOrder.size();
-            postOrder.append(node);
-            stack.removeLast();
-            continue;
-        }
-        uint32_t successor = successors[node][next++];
-        if (!isVisited.quickSet(successor))
-            stack.append({ successor, 0 });
-    }
-    Vector<ModuleList> predecessors(numberOfNodes);
-    for (uint32_t node : postOrder) {
-        for (uint32_t successor : successors[node])
-            predecessors[successor].append(node);
-    }
-
-    Vector<uint32_t> dominatorOf(FillWith { }, numberOfNodes, none);
-    dominatorOf[root] = root;
-    bool didChange = true;
-    while (didChange) {
-        didChange = false;
-        for (uint32_t index = postOrder.size() - 1; index--;) {
-            uint32_t node = postOrder[index];
-            uint32_t found = none;
-            for (uint32_t other : predecessors[node]) {
-                if (dominatorOf[other] == none)
-                    continue;
-                if (found == none)
-                    found = other;
-                while (other != found) {
-                    while (numberOf[other] < numberOf[found])
-                        other = dominatorOf[other];
-                    while (numberOf[found] < numberOf[other])
-                        found = dominatorOf[found];
-                }
-            }
-            if (dominatorOf[node] != found) {
-                dominatorOf[node] = found;
-                didChange = true;
-            }
-        }
-    }
-    return dominatorOf;
 }
 
 // Something starts the evaluation of a module: the host, for an entry point; an operation that names the module and is no bare site; the loader, on its way through a module that it evaluates itself.

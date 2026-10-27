@@ -1947,7 +1947,11 @@ struct Machine {
                 ++matchStart;
                 for (unsigned i = 2; i < slots; ++i)
                     output[i] = offsetNoMatch;
-                return beginAttempt() ? Step::Jumped : Step::NoMatch;
+                if (!beginAttempt())
+                    return Step::NoMatch;
+                if constexpr (remembers || isFull)
+                    op = ops + program.laterAttemptsBeginAt;
+                return Step::Jumped;
             }
             if (!--remainingSteps) [[unlikely]]
                 return Step::HitLimit;
@@ -2012,8 +2016,12 @@ static NEVER_INLINE JSRegExpResult matchRemembering(const FlatProgram& program, 
     if constexpr (isFull)
         entries *= program.memoEntrySize();
     Vector<uint32_t> memo;
-    if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries))
+    if (!entries || entries * sizeof(uint32_t) > maxMemoSize || !memo.tryGrow(entries)) {
+        // The machine that keeps no table and is not the full one begins every attempt at the first op.
+        if (program.laterAttemptsBeginAt)
+            return matchForgetting<CharType, true>(program, input, length, start, output, matchLimit);
         return matchForgetting<CharType, isFull>(program, input, length, start, output, matchLimit);
+    }
     zeroSpan(memo.mutableSpan());
     Enclosure<CharType> enclosure { start, length, matchLimit };
     if constexpr (isFull)
@@ -2039,7 +2047,7 @@ static JSRegExpResult matchByPolicy(const FlatProgram& program, std::span<const 
     unsigned stepsPerCharacter = isFull ? program.stepsPerCharacterBeforeStoppingOnFullMachine : program.stepsPerCharacterBeforeStopping;
     if (policy == FlatMatchPolicy::HandsOverEarly && stepsPerCharacter)
         return matchForgetting<CharType, isFull>(program, input.data(), length, start, output, static_cast<unsigned>(std::min<uint64_t>(matchLimit, stepsPerCharacter * (static_cast<uint64_t>(length) + 32))));
-    if (policy != FlatMatchPolicy::RunsToMatchLimit && (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart)) {
+    if (program.countsTurns || policy == FlatMatchPolicy::RemembersFromStart) {
         if (isFull || !program.referencedGroups.isEmpty())
             return matchRemembering<CharType, true>(program, input.data(), length, start, output);
         return matchRemembering(program, input.data(), length, start, output);

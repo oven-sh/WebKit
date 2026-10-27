@@ -495,6 +495,8 @@ Type ResultRules::declared(const Value& value, LayoutID layout, uint32_t field)
     const Vector<Field>& fields = context.program.at(layout).fields;
     if (field >= fields.size())
         return Type::anything();
+    if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+        return context.typeOf(fields[field].declared).withPrimitives(Primitive::Unspecified);
     if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
         return context.typeOf(fields[field].declared);
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), fields[field].key));
@@ -875,6 +877,8 @@ struct ResultRulesWithoutType {
         const Vector<Field>& fields = context.program.at(layout).fields;
         if (field >= fields.size())
             return TypeTable::anything;
+        if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+            return { };
         if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
             return idInArena(context.typeIDOf(fields[field].declared));
         return { };

@@ -42,10 +42,11 @@ struct CallSiteRecord {
 };
 static_assert(sizeof(CallSiteRecord) == 20);
 
-// A method read without a site of its own is the site of the call and, above the bits of a site number, the columns between the two.
+// A first read without a site of its own is the site behind it and, above the bits of a site number, the columns between the two.
 inline constexpr unsigned siteNumberBits = 23;
+inline constexpr unsigned maxFirstReadColumnDelta = (1u << (32 - siteNumberBits)) - 1;
 static_assert(defaultLimitValue(LimitID::SitesPerFunction, hostArchitecture()) < 1u << siteNumberBits);
-inline CallSiteIndex methodReadSite(CallSiteIndex call, unsigned columnDelta) { return CallSiteIndex(call.bits() | columnDelta << siteNumberBits); }
+inline CallSiteIndex firstReadSiteInFrontOf(CallSiteIndex site, unsigned columnDelta) { return CallSiteIndex(site.bits() | columnDelta << siteNumberBits); }
 
 struct InlineFrameRecord : InlineFrameRow {
     CallSiteIndex callSite;

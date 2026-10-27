@@ -251,6 +251,7 @@ export default b.declarations(
     usesFeature: "DataView",
     nativeSymbols: ["callDataView", "constructDataView"],
     prototypeTable: b.staticTable("runtime/JSDataViewPrototype.cpp", "dataViewTable"),
+    static: { BYTES_PER_ELEMENT: b.constant(1) },
     call: requiresNew,
     construct: {
       args: { buffer: anyArrayBuffer, byteOffset: b.index.loose.optional, byteLength: b.index.loose.optional },

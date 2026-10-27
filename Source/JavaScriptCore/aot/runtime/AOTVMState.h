@@ -73,6 +73,8 @@ public:
     const Image* image { nullptr };
     bool hasCompiledCode { false };
     bool validatesRuntime { false };
+    // Some object has become a dictionary for the names that it is being given.
+    bool hasObjectsBeingFilled { false };
     uintptr_t structureIDBase { 0 };
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.

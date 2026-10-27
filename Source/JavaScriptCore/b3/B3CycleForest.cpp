@@ -28,11 +28,16 @@ public:
     BasicBlock* operator()(std::span<BasicBlock* const> members, const Vector<BasicBlock*, 2>& entries, const IsInCycle& isInCycle) const
     {
         ASSERT(entries.size() != 1);
-        if (BasicBlock* header = findPollingHeader(members, entries, isInCycle))
-            return header;
-        if (BasicBlock* entry = findPreferredEntry(entries, isInCycle))
-            return entry;
-        return members[0];
+        BasicBlock* pollingHeader = findPollingHeader(members, entries, isInCycle);
+        if (pollingHeader && m_isLikely[pollingHeader])
+            return pollingHeader;
+        // A loop that ends within the data it walks has no poll. Where only its rare copy polls, what enters the cycle still enters the loop.
+        Entries preferred = findPreferredEntries(entries, isInCycle);
+        if (preferred.likely)
+            return preferred.likely;
+        if (pollingHeader)
+            return pollingHeader;
+        return preferred.any ? preferred.any : members[0];
     }
 
 private:
@@ -81,9 +86,15 @@ private:
         return aboveLeavingTest ? aboveLeavingTest : withoutTest;
     }
 
+    struct Entries {
+        BasicBlock* likely { nullptr };
+        BasicBlock* any { nullptr };
+    };
+
     template<typename IsInCycle>
-    static BasicBlock* findPreferredEntry(const Vector<BasicBlock*, 2>& entries, const IsInCycle& isInCycle)
+    Entries findPreferredEntries(const Vector<BasicBlock*, 2>& entries, const IsInCycle& isInCycle) const
     {
+        findLikelyBlocks();
         BasicBlock* likely = nullptr;
         BasicBlock* any = nullptr;
         for (BasicBlock* entry : entries) {
@@ -91,7 +102,7 @@ private:
                 any = entry;
             bool isLikely = false;
             for (BasicBlock* predecessor : entry->predecessors()) {
-                if (isInCycle(predecessor))
+                if (isInCycle(predecessor) || !m_isLikely[predecessor])
                     continue;
                 for (const FrequentedBlock& successor : predecessor->successors())
                     isLikely |= successor.block() == entry && !successor.isRare();
@@ -99,7 +110,7 @@ private:
             if (isLikely && (!likely || entry->index() < likely->index()))
                 likely = entry;
         }
-        return likely ? likely : any;
+        return { likely, any };
     }
 
     void findLikelyBlocks() const

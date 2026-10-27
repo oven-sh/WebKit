@@ -1,11 +1,12 @@
-# A narrow reference that is read before a call and used behind it has a pointer to its cell beside it over the call. One that is read behind the call has none, and neither has one that an allocation stores: B3 compresses the pointer behind the allocation
+# A narrow reference that is read before a call and used behind it has a pointer to its cell beside it over the call. One that is read behind the call has none, and neither has one that an allocation stores: the pointer is compressed behind the allocation, where it is stored.
+# The one word that is there over a call is the one that is stored as a word behind it (readThenCallThenStore)
 # FORM: AsRead
 # RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
 # RUN(CHOSEN): pipeline ChooseRepresentations
 # OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom
 # OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
 # CHECK: image not empty
-# CHECK: statistic NarrowReferenceGuards 1
+# CHECK: statistic NarrowReferenceGuards 2
 # CHECK-NEXT: statistic NarrowReferencesAcrossSafepoints 1
 # CHOSEN-LABEL: name="readThenCall"
 # CHOSEN: [[word]]: null|L0 @Cell32 = GetSlot
@@ -36,6 +37,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v11 = TypeTest v9 testedType=null
     v12 = TypeTest v10 testedType=null
     v13 = Call v8, -, v11, v12
+    v14 = CallDirect v7, v7, v8 function=f3
     Return v13
 }
 function f1 name="readThenCall" parameters=[{type=L0}, {type=anything}] results=[{type=null|L0}] {
@@ -49,4 +51,11 @@ function f2 name="callThenRead" parameters=[{type=L0}, {type=anything}] results=
     v3 = PropGet v0 key="next"
     v4 = Convert v3 declared={type=null|L0}
     Return v4
+}
+function f3 name="readThenCallThenStore" parameters=[{type=L0}, {type=L0}, {type=anything}] results=[{type=undefined}] {
+    v3 = PropGet v0 key="next"
+    v4 = Convert v3 declared={type=null|L0}
+    v5 = Call v2, -
+    PropSet v1, v4 key="first"
+    Return
 }

@@ -1692,6 +1692,19 @@ private:
                 break;
             }
 
+            // Turn this: Shl(Add(value, constant1), constant2)
+            // Into this: Add(Shl(value, constant2), constant1 << constant2)
+            if (m_proc.policy().loops.unrolls
+                && m_value->child(0)->opcode() == Add
+                && m_value->child(0)->child(1)->hasInt()
+                && m_value->child(1)->hasInt32()) {
+                Value* shifted = m_insertionSet.insert<Value>(m_index, Shl, m_value->origin(), m_value->child(0)->child(0), m_value->child(1));
+                Value* constant = m_value->child(0)->child(1)->shlConstant(m_proc, m_value->child(1));
+                m_insertionSet.insertValue(m_index, constant);
+                replaceWithNew<Value>(Add, m_value->origin(), shifted, constant);
+                break;
+            }
+
             handleShiftAmount();
             break;
 

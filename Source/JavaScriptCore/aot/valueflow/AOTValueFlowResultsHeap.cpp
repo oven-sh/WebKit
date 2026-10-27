@@ -330,7 +330,7 @@ ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID
 // What lies above a set is what lies above its members. Large sets share most of their members, so each member is asked once for all of them.
 ValueSetID ValueFlowHeapView::prototypesOfEachHeir(ValueSetMaker& maker, ValueSetID heirs) const
 {
-    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 8);
+    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 2);
     const ValueSets& sets = m_inputs.sets();
     if (sets.size(heirs) < fewestHeirsAskedOneByOne)
         return prototypesOfHeirs(maker, heirs);

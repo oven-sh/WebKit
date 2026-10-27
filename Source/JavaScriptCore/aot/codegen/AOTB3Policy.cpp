@@ -20,6 +20,7 @@
 #include "GPRInfo.h"
 #include "JSCJSValue.h"
 #include "MinimumReservedZoneSize.h"
+#include <cmath>
 #include <limits>
 #include <optional>
 
@@ -147,13 +148,16 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     return optimization;
 }
 
-static B3::LoopPolicy loopPolicy()
+static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
 {
     B3::LoopPolicy loops;
     loops.rotates = true;
     loops.foldsComparisonsWithBounds = true;
     loops.versions = true;
     loops.clampsLoopBounds = true;
+    loops.limitsOfRangeChecksAreLengthsOfData = true;
+    loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
+    loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
     loops.hoistsImmutableLoadsPastWrites = true;
     return loops;
@@ -271,8 +275,9 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
     policy.optimization = optimizationPolicyFor(traits);
     policy.selection.extendsInstructionSelection = true;
     policy.selection.attributesTrapsToAccesses = true;
-    policy.loops = loopPolicy();
+    policy.loops = loopPolicyFor(traits);
     policy.switchLowering.usesBitTests = true;
+    policy.switchLowering.usesValueTables = true;
     policy.switchLowering.minCasesForJumpTable = minCasesForJumpTableInConstantData;
     policy.knownProperties.trustsKnownRanges = true;
     policy.knownProperties.trustsKnownDereferenceableBytes = true;

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTID.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
 #include "AOTProgramTables.h"
@@ -37,6 +38,19 @@ public:
             initializeProgramStatics();
     }
     void initializeStatics(uint32_t firstWord, uint32_t endWord);
+    // By its number in ProgramTables::staticsOfFiles(): the file and all that it imports.
+    void fillVariablesOfFile(uint32_t file);
+    void fillVariablesOfModule(ModuleID module)
+    {
+        if (m_filledFiles) [[unlikely]]
+            fillVariablesOfListedModule(module);
+    }
+    void ensureVariableIsFilled(uint32_t offset)
+    {
+        if (offset / sizeof(uint64_t) - m_firstWordFilledWithFiles < m_numberOfWordsFilledWithFiles) [[unlikely]]
+            fillVariablesOfFile(fileWithWord(offset / sizeof(uint64_t)));
+    }
+    bool isFilled(uint32_t offset) const;
     void didStoreRootInStatics(uint32_t offset) { m_slots.record(m_instance.statics() + offset); }
     void setCell(uint32_t offset, JSCell* cell) { at<RememberedSlot<JSCell*>>(offset).set(m_slots, cell); }
 
@@ -55,6 +69,8 @@ public:
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     void initializeProgramStatics();
+    uint32_t fileWithWord(uint32_t word) const;
+    void fillVariablesOfListedModule(ModuleID);
 
     Instance& m_instance;
     const ProgramTables& m_tables;
@@ -62,6 +78,9 @@ private:
     RememberedSlotSet m_slots;
     bool m_programStaticsInitialized { false };
     uint32_t m_readOnlyStaticsSize { 0 };
+    uint32_t m_firstWordFilledWithFiles { 0 };
+    uint32_t m_numberOfWordsFilledWithFiles { 0 };
+    uint8_t* m_filledFiles { nullptr };
 };
 
 } } // namespace JSC::AOT

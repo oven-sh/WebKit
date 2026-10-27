@@ -72,7 +72,7 @@ public:
 
     void keepReserveOnceHalfFull();
     bool releaseReserve();
-    // The last of the reserve of this VM. A VM that has none uses the one that is kept for all VMs of its range.
+    // The last of the reserve of this VM. From here on the VM also takes from the reserve that is kept for all VMs of its range.
     bool releaseLastReserve();
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
     void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
@@ -139,6 +139,7 @@ private:
     bool m_sharesRange { false };
     bool m_isInFirstRange { false };
     bool m_usesSharedReserve { false };
+    bool m_owesSharedReserve { false };
     bool m_hasReleasedReserve { false };
     bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };

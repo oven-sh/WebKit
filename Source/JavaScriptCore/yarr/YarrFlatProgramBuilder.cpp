@@ -75,13 +75,16 @@ public:
         auto& alternatives = m_pattern.m_body->m_alternatives;
         unsigned count = alternatives.size();
         if (alternatives[0]->onceThrough()) {
-            count = 0;
-            while (count < alternatives.size() && alternatives[count]->onceThrough())
-                ++count;
-            program->triesOnlyOnce |= count == alternatives.size();
-            // From the second place on the bytecode runs the copies behind these, which lack what begins with ^.
-            if (m_countsTurns && count != alternatives.size())
-                return makeUnexpected(FlatProgramDecline::CopiedGroup);
+            unsigned triedOnce = 0;
+            while (triedOnce < alternatives.size() && alternatives[triedOnce]->onceThrough())
+                ++triedOnce;
+            program->triesOnlyOnce |= triedOnce == alternatives.size();
+            // Behind these stand copies that lack what begins with ^. The bytecode and the JIT try these and then the copies at the first place, and the copies alone from the second place on.
+            // That finds what these alone find at every place, in other turns.
+            if (!m_countsTurns)
+                count = triedOnce;
+            else if (triedOnce < alternatives.size())
+                m_firstRepeatedAlternative = alternatives[triedOnce].get();
         }
 
         if (!emitAlternatives(alternatives.span().first(count), { }))
@@ -910,6 +913,8 @@ private:
         Vector<unsigned, 8> jumpsToEnd;
         for (auto& alternative : alternatives) {
             bool isLast = &alternative == &alternatives.back();
+            if (alternative.get() == m_firstRepeatedAlternative)
+                m_program->laterAttemptsBeginAt = here();
             unsigned choice = isLast ? 0 : emit(Kind::Choice);
             if (alternative->m_minimumSize > context.testedFor)
                 emitNeedsInput(alternative->m_minimumSize + context.neededAfter);
@@ -1641,6 +1646,7 @@ private:
     bool m_decodesSurrogatePairs { false };
     bool m_readsBackward { false };
     unsigned m_nextRegister { 0 };
+    const PatternAlternative* m_firstRepeatedAlternative { nullptr };
     const bool m_countsTurns;
 };
 
@@ -1698,8 +1704,6 @@ ASCIILiteral description(FlatProgramDecline reason)
         return "duplicate named groups"_s;
     case FlatProgramDecline::UnsignedLengthPattern:
         return "unsigned length pattern"_s;
-    case FlatProgramDecline::CopiedGroup:
-        return "copied group"_s;
     case FlatProgramDecline::NestedTooDeep:
         return "nested too deep"_s;
     case FlatProgramDecline::TooManySetsOrRegisters:

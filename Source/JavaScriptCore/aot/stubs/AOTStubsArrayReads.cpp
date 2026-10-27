@@ -19,6 +19,7 @@
 #include "JSCell.h"
 #include "JSObject.h"
 #include "SparseArrayValueMap.h"
+#include "Structure.h"
 
 namespace JSC { namespace AOT {
 
@@ -157,10 +158,19 @@ static void answerAtIndex(StubAssembler& jit, ElementQuestion question)
 
     isAbsent.link(&jit);
     jit.move(TrustedImm64(MAX_ARRAY_INDEX), shape);
-    callsOperation.append(jit.branch64(CCallHelpers::Above, position, shape));
+    Jump isName = jit.branch64(CCallHelpers::Above, position, shape);
     isAbsentAtIndex.link(&jit);
+    Label isFoundNowhere = jit.label();
     jit.move(question == ElementQuestion::Get ? TrustedImm64(JSValue::ValueUndefined) : TrustedImm64(0), result);
     jit.returnToCaller();
+
+    isName.link(&jit);
+    const GPRReg structure = butterfly;
+    callsOperation.append(jit.branchIfNotType(array, ArrayType));
+    loadStructure(jit, array, structure);
+    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasPristineElementsBits)));
+    branchIfHasNamesOrIsNotOfThisRealm(jit, structure, callsOperation);
+    jit.jump().linkTo(isFoundNowhere, &jit);
 
     callsOperation.link(&jit);
     jit.boxInt52(position, position, shape, number);

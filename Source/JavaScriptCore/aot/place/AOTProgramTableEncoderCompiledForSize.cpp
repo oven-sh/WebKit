@@ -13,6 +13,7 @@
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <wtf/BitVector.h>
 #include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>
 
@@ -354,6 +355,19 @@ void encodeStaticsTables(TableEncoder& encoder)
         .sizeFilledAtProgramEntry = statics.sizeFilledAtProgramEntry,
         .distanceFromArrayProfileToLastArray = statics.distanceFromArrayProfileToLastArray,
     } });
+    Vector<StaticsOfFile> files;
+    Vector<uint32_t> importedFiles;
+    // No run goes on from one file into the next.
+    BitVector beginsRun;
+    for (const PlacedStaticsOfFile& file : statics.filesFilledWhenEntered) {
+        files.append({ file.module.index(), file.firstWord, file.numberOfWords, static_cast<uint32_t>(importedFiles.size()) });
+        importedFiles.appendVector(file.importedFiles);
+        beginsRun.set(file.firstWord);
+    }
+    if (!files.isEmpty())
+        files.append({ UINT32_MAX, statics.endWordFilledWithFiles, statics.offsetOfFilledFiles, static_cast<uint32_t>(importedFiles.size()) });
+    encoder.setTable(ProgramTableIndex::staticsOfFiles, files);
+    encoder.setTable(ProgramTableIndex::staticsOfImportedFiles, importedFiles);
 
     Vector<InitialWord> parts;
     Vector<uint32_t> narrowRoots;
@@ -387,7 +401,7 @@ void encodeStaticsTables(TableEncoder& encoder)
     Vector<StaticsRun> runs;
     for (unsigned first = 0; first < initialWords.size();) {
         unsigned end = first + 1;
-        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation)
+        while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].index == initialWords[end - 1].index + 1 && initialWords[end].index != firstWordFilledAtInstanceCreation && !beginsRun.get(initialWords[end].index))
             ++end;
         uint64_t bits = initialWords[first].bits;
         runs.append({ initialWords[first].index, end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });

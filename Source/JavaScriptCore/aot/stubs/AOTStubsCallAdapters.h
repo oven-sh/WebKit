@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConvention.h"
 #include "AOTStubKey.h"
 #include "CCallHelpers.h"
 
@@ -22,6 +23,8 @@ constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterC
 // Only native code enters for a job of a coroutine, with as many arguments as fill their frame.
 enum class AdapterCaller : uint8_t { NativeCodeOrInterpreter, NativeCodeForJobOfCoroutine };
 void emitEnterAdapter(StubAssembler&, AdapterCaller, unsigned extraBytes = 0);
+// Native code passes a longer list out of line: the frame holds the register arguments and a pointer to all arguments, and the high word of its argument count is their number.
+static constexpr unsigned adapterArgumentCountWithOutOfLineArguments = numberOfArgumentGPRs + 1;
 void emitAdapterEpilogue(StubAssembler&);
 void emitRestoreAdapterCallerRegisters(StubAssembler&, GPRReg adapterFrame);
 

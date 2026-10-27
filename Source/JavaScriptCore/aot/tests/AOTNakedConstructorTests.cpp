@@ -9,6 +9,7 @@
 
 #include "AOTHostEntriesTestSupport.h"
 #include "AOTClosureTable.h"
+#include "AOTCompiledCallee.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleTable.h"
@@ -18,6 +19,8 @@
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
+#include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <wtf/DataLog.h>
 
@@ -98,6 +101,47 @@ static void checkClassNamesClassConstructor(LoadedProgram& program)
     checkCallThrowsTypeError(program, realm->get(realm, Identifier::fromString(vm, "Widget"_s)), "Cannot call a class constructor Widget without |new|"_s);
 }
 
+static void checkCompiledClosureIsDeclaredAsFunction(LoadedProgram& program)
+{
+    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
+    AOT_TEST_CHECK(entry);
+    JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
+
+    AOT_TEST_CHECK(declaredAs(closure) == DeclaredAs::Function);
+}
+
+static void checkBuiltinOfRealmIsDeclaredAsFunction(LoadedProgram& program)
+{
+    JSFunction* promiseConstructor = program.realm()->promiseConstructor();
+    AOT_TEST_CHECK(promiseConstructor->isHostFunction());
+
+    AOT_TEST_CHECK(declaredAs(promiseConstructor) == DeclaredAs::Function);
+}
+
+static void checkClassIsDeclaredAsClass(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.publish = function () { }"_s);
+    evaluateModuleSynchronously(realm, mainModule);
+    AOT_TEST_CHECK(!scope.exception());
+
+    AOT_TEST_CHECK(declaredAs(realm->get(realm, Identifier::fromString(vm, "Widget"_s)).asCell()) == DeclaredAs::Class);
+}
+
+static void checkHostFunctionsAreNotCompiled(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    JSValue resolve = realm->promiseConstructor()->get(realm, Identifier::fromString(vm, "resolve"_s));
+    AOT_TEST_CHECK(resolve.isCallable());
+
+    AOT_TEST_CHECK(declaredAs(resolve.asCell()) == DeclaredAs::NotCompiled);
+    AOT_TEST_CHECK(declaredAs(realm->objectConstructor()) == DeclaredAs::NotCompiled);
+    AOT_TEST_CHECK(declaredAs(realm->promisePrototype()) == DeclaredAs::NotCompiled);
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withConstructors)() = runNativeTestWithLoadedProgram<nakedConstructorTests, programText, body>;
 
@@ -107,6 +151,10 @@ std::span<const NativeTest> nakedConstructorTests()
         { "naked-constructor/compiled-closure-names-constructor"_s, withConstructors<checkCompiledClosureNamesConstructor> },
         { "naked-constructor/builtin-of-realm-names-constructor"_s, withConstructors<checkBuiltinOfRealmNamesConstructor> },
         { "naked-constructor/class-names-class-constructor"_s, withConstructors<checkClassNamesClassConstructor> },
+        { "naked-constructor/compiled-closure-is-declared-as-function"_s, withConstructors<checkCompiledClosureIsDeclaredAsFunction> },
+        { "naked-constructor/builtin-of-realm-is-declared-as-function"_s, withConstructors<checkBuiltinOfRealmIsDeclaredAsFunction> },
+        { "naked-constructor/class-is-declared-as-class"_s, withConstructors<checkClassIsDeclaredAsClass> },
+        { "naked-constructor/host-functions-are-not-compiled"_s, withConstructors<checkHostFunctionsAreNotCompiled> },
     };
     return tests;
 }

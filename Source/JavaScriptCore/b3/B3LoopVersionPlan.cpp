@@ -189,6 +189,9 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
     if (plan.countedLoop) {
         plan.rangeChecks = planRangeChecks({ m_proc, m_phiChildren, plan.region, attempt.invariance, *plan.countedLoop, attempt.blocksBeforeTopTest, canRewriteTest && clampsLoopBounds });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
+    } else if (clampsLoopBounds) {
+        plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance });
+        plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     }
     if (auto gaveUp = checkSpeculativeHoistBudget(attempt))
         return std::unexpected(*gaveUp);

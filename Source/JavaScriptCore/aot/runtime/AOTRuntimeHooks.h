@@ -43,6 +43,11 @@ inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl
 // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
 void didFlattenObjectOnPrototypeChain(VM&, JSObject* flattened);
 void didFlattenStructure(VM&, Structure*);
+// No object with this Structure has got this name before. An object that is filled once keeps its names in a table of its own, without a Structure for each. The second object that gets the same name behind the same names gets Structures, which the third shares.
+bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
+void didMakeStructureForAddition(VM&, Structure* made);
+// The code that gave those objects their names has returned to the event loop: they are made flat, and are objects like any other from here on.
+void finishFillingObjects(VM&);
 // From now on a store that replaces a value of some Structure has somebody to tell.
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);

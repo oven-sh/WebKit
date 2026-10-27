@@ -116,6 +116,8 @@ void branchUnlessASCIIOutsideRange(StubAssembler&, const ScannedBytes&, uint8_t 
 // Calls operationAOTFlatten in a frame of its own, which only preservedGPRs survive, then jumps to continuation or to the exception handler. Overwrites T9.
 void flattenSubject(StubAssembler&, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation);
 
+PreludeExit emitJSONAppendValuePrelude(StubAssembler&);
+
 // AOTStubsStringConversions.cpp A flat 8-bit string of ASCII characters without a letter of the other case is its own conversion.
 PreludeExit emitToLowerCasePrelude(StubAssembler&);
 PreludeExit emitToUpperCasePrelude(StubAssembler&);

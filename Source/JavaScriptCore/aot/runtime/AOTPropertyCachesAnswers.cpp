@@ -154,7 +154,14 @@ bool flattenOnce(VM& vm, JSObject* object)
         return true;
     if (structure->hasBeenFlattenedBefore() || structure->typeInfo().prohibitsPropertyCaching() || structure->isCompiledStructure())
         return false;
+    bool hasGivenNamesUp = structure->isUncacheableDictionary();
     structure->flattenDictionaryStructure(vm, object);
+    // What was a dictionary only while it was given its names has not grown into one. That may still come, and then it is made flat once.
+    if (vm.aotState().hasObjectsBeingFilled) {
+        Instance* instance = Instance::of(structure->realm());
+        if (instance && instance->state->firstAdditions && instance->state->firstAdditions->forget(object) && !hasGivenNamesUp)
+            structure->setHasBeenFlattenedBefore(false);
+    }
     return true;
 }
 
@@ -460,8 +467,10 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if ((structure->typeInfo().prohibitsPropertyCaching() && !structure->isCompiledStructure()) || isProxyType(type) || structure->needImpurePropertyWatchpoint())
         return PropertyAnswer::uncacheable(access);
     if (structure->isDictionary()) {
+        // Nothing of a cacheable dictionary moves when it is made flat: what the look found is where it was found.
+        bool staysInPlace = !structure->isUncacheableDictionary();
         bool didFlatten = mayAllocate && flattenOnce(vm, receiver);
-        if (didFlatten || structure->isUncacheableDictionary() || !slot.isCacheableValue() || slot.slotBase() != receiver)
+        if (!(didFlatten && staysInPlace) && (didFlatten || structure->isUncacheableDictionary() || !slot.isCacheableValue() || slot.slotBase() != receiver))
             return PropertyAnswer::uncacheable(access, didFlatten);
     } else if (slot.isTaintedByOpaqueObject() && !isModuleNamespace(receiver)) {
         ChainWalk walk = walkChain({ query.globalObject, structure, receiver, query.mode }, uid);

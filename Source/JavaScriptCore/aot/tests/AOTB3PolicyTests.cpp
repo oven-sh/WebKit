@@ -115,10 +115,13 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.foldsComparisonsWithBounds);
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
+    AOT_TEST_CHECK(policy.loops.limitsOfRangeChecksAreLengthsOfData);
+    AOT_TEST_CHECK(!policy.loops.unrolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);
 
     AOT_TEST_CHECK(policy.switchLowering.usesBitTests);
+    AOT_TEST_CHECK(policy.switchLowering.usesValueTables);
     AOT_TEST_CHECK(policy.switchLowering.minCasesForJumpTable == 7);
 
     AOT_TEST_CHECK(policy.knownProperties.trustsKnownRanges);
@@ -291,6 +294,14 @@ static void testFunctionTraits()
     AOT_TEST_CHECK(unlikelyReturnPolicy.optimization.returnsAreUnlikely);
     unlikelyReturnPolicy.optimization.returnsAreUnlikely = false;
     AOT_TEST_CHECK(WTF::toString(unlikelyReturnPolicy) == description);
+
+    traits = traitsFor(7);
+    traits.leastFrequencyOfWarmCode = 10;
+    B3::Policy policyWithWarmLoops = policyWith({ }, traits, lowering);
+    AOT_TEST_CHECK(policyWithWarmLoops.loops.unrolls && policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop == 10);
+    policyWithWarmLoops.loops.unrolls = false;
+    policyWithWarmLoops.loops.minFrequencyOfUnrolledLoop = warmPolicy.loops.minFrequencyOfUnrolledLoop;
+    AOT_TEST_CHECK(WTF::toString(policyWithWarmLoops) == description);
 
     AOT_TEST_CHECK(WTF::toString(policyWith({ }, traitsFor(8), lowering)) == description);
 }

@@ -2,7 +2,7 @@
 # A loop around such a loop, a loop that calls a function with a loop of its own, and a loop that counts up to any other number keep theirs.
 # FORM: AsRead
 # f6, f7 and f8 are the typed bodies of f1, f2 and f3.
-# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops disable=b3:UnrollLoops
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 # RUN(X64): generate-code
 # REQUIRES(X64): x86_64 faulting-loop-polls

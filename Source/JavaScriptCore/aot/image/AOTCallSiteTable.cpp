@@ -51,7 +51,30 @@ struct SiteWithCode {
     uint32_t returnOffset;
     uint32_t site;
     bool isFirstRead;
+    uint32_t firstReadColumnDelta { 0 };
 };
+
+// What CallSiteDetails::frame holds in a row of the kind FirstRead: the frame of a read that has a site, or the columns from a read without one to the site of the row, which is plain and in the frame of the site in front.
+struct FirstReadDetails {
+    static FirstReadDetails decode(uint32_t bits) { return { !!(bits & 1), bits >> 1 }; }
+    uint32_t encode() const { return value << 1 | hasNoSite; }
+
+    bool hasNoSite;
+    uint32_t value;
+};
+
+ALWAYS_INLINE void updateFrame(const CallSiteRow& row, unsigned& frame)
+{
+    if (!row.hasDetails)
+        return;
+    if (row.details.kind != CallSiteKind::FirstRead) [[likely]] {
+        frame = row.details.frame;
+        return;
+    }
+    FirstReadDetails details = FirstReadDetails::decode(row.details.frame);
+    if (!details.hasNoSite)
+        frame = details.value;
+}
 
 struct StreamHead : CallSiteHead {
     const uint8_t* sites() const { return checkpoints + SiteCheckpoint::numberFor(numberOfSites) * sizeof(SiteCheckpoint); }
@@ -80,11 +103,15 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
             RELEASE_ASSERT(!hasFirstRead);
             return;
         }
+        uint32_t firstReadColumnDelta = 0;
         if (hasFirstRead) {
-            returnSites.append({ returnOffset, firstReadSites.front().site, true });
+            if (firstReadSites.front().site)
+                returnSites.append({ returnOffset, firstReadSites.front().site, true });
+            else
+                firstReadColumnDelta = firstReadSites.front().columnDelta;
             firstReadSites = firstReadSites.subspan(1);
         }
-        returnSites.append({ returnOffset, *site, false });
+        returnSites.append({ returnOffset, *site, false, firstReadColumnDelta });
     });
     RELEASE_ASSERT(firstReadSites.empty());
     AOT::stableSort(returnSites, { }, &SiteWithCode::returnOffset);
@@ -112,7 +139,7 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
     Vector<uint8_t> siteBytes;
     siteBytes.reserveInitialCapacity(2 * returnSites.size());
     unsigned writtenCount = 0;
-    for (auto [offset, site, isFirstRead] : returnSites) {
+    for (auto [offset, site, isFirstRead, firstReadColumnDelta] : returnSites) {
         ++number;
         RELEASE_ASSERT(site == number);
         RELEASE_ASSERT(previousIsFirstRead ? offset == previousOffset : offset > previousOffset);
@@ -126,14 +153,18 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
         while (!flaggedSites.empty() && flaggedSites.front().site < number)
             flaggedSites = flaggedSites.subspan(1);
         CallSiteRow row { .distance = offset - previousOffset };
-        if (isFirstRead)
+        bool isFlagged = !flaggedSites.empty() && flaggedSites.front().site == number;
+        if (isFirstRead || firstReadColumnDelta) {
+            RELEASE_ASSERT(isFirstRead || (!isFlagged && frame == previousFrame));
             row.details.kind = CallSiteKind::FirstRead;
-        else if (!flaggedSites.empty() && flaggedSites.front().site == number) {
+        } else if (isFlagged) {
             row.details.kind = flaggedSites.front().kind;
             row.details.calledBuiltin = flaggedSites.front().calledBuiltin;
         }
         row.hasDetails = frame != previousFrame || row.details.kind != CallSiteKind::Plain;
-        if (row.hasDetails)
+        if (row.details.kind == CallSiteKind::FirstRead)
+            row.details.frame = FirstReadDetails { !isFirstRead, isFirstRead ? frame : firstReadColumnDelta }.encode();
+        else if (row.hasDetails)
             row.details.frame = frame;
         row.append(siteBytes);
         previousOffset = offset;
@@ -280,9 +311,7 @@ unsigned SiteFrames::next()
     if (!m_remainingSitesWithCode)
         return 0;
     --m_remainingSitesWithCode;
-    CallSiteRow row = CallSiteRow::read(m_sites);
-    if (row.hasDetails)
-        m_frame = row.details.frame;
+    updateFrame(CallSiteRow::read(m_sites), m_frame);
     return m_frame;
 }
 
@@ -343,8 +372,7 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     while (count--) {
         CallSiteRow row = CallSiteRow::read(cursor);
         offset += row.distance;
-        if (row.hasDetails)
-            frame = row.details.frame;
+        updateFrame(row, frame);
         ++number;
         if (offset > returnOffset)
             break;
@@ -357,6 +385,8 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
         CallSiteIndex callSite(static_cast<uint32_t>(number));
         if (row.details.kind != CallSiteKind::FirstRead)
             return CallSiteRecord { callSite, frame, row.details.kind, row.details.calledBuiltin, firstReadSite };
+        if (FirstReadDetails details = FirstReadDetails::decode(row.details.frame); details.hasNoSite)
+            return CallSiteRecord { callSite, frame, CallSiteKind::Plain, { }, firstReadSiteInFrontOf(callSite, details.value) };
         firstReadSite = callSite;
     }
     if (!hasSiteInFront)
@@ -728,10 +758,10 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
             return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers };
     }
-    unsigned methodReadColumnDelta = site.bits() >> siteNumberBits;
+    unsigned firstReadColumnDelta = site.bits() >> siteNumberBits;
     std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
-    if (position && methodReadColumnDelta)
-        position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - methodReadColumnDelta }, position->source };
+    if (position && firstReadColumnDelta)
+        position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - firstReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
         remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers };

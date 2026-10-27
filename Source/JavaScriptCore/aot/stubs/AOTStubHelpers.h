@@ -98,6 +98,8 @@ void loadShapeWord(StubAssembler&, GPRReg cell, GPRReg result);
 void loadCellVM(StubAssembler&, GPRReg cellAndResult);
 // Overwrites structure.
 Jump branchIfNotOfThisRealm(StubAssembler&, GPRReg structure);
+// Overwrites structure.
+void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler&, GPRReg structure, JumpList&);
 Jump branchIfNotPristine(StubAssembler&, GPRReg cell);
 // The masked indexing byte of a pristine cell. For any other cell a value above 0xff, which equals no indexing shape.
 void loadPristineArrayKind(StubAssembler&, GPRReg array, GPRReg kind, unsigned mask);
@@ -147,8 +149,9 @@ void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, Jum
 
 // AOTStubsElements.cpp
 // A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes storage, index and text.
-enum class BaseOfTrappedIndex : bool { IsAnything, IsProxy };
-void loadTextOfIndexForTrap(StubAssembler&, BaseOfTrappedIndex, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
+void loadTextOfIndexForTrap(StubAssembler&, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
+// The same for a key that is an int32, whatever it is asked of.
+void loadKeptTextOfIndex(StubAssembler&, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
 // AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);

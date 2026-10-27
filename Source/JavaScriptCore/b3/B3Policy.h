@@ -117,12 +117,17 @@ struct LoopPolicy {
     bool foldsComparisonsWithBounds { false };
     bool versions { false };
     bool clampsLoopBounds { false };
+    // A loop that cannot outrun such a limit needs no poll.
+    bool limitsOfRangeChecksAreLengthsOfData { false };
+    bool unrolls { false };
+    double minFrequencyOfUnrolledLoop { 1 };
     bool hoistsOnlyFromLikelyPaths { false };
     bool hoistsImmutableLoadsPastWrites { false };
 };
 
 struct SwitchLoweringPolicy {
     bool usesBitTests { false };
+    bool usesValueTables { false };
     unsigned minCasesForJumpTable { 7 };
 };
 
@@ -166,6 +171,7 @@ enum class PolicySwitch : uint8_t {
     FoldComparisonsWithBounds,
     VersionLoops,
     ClampLoopBounds,
+    UnrollLoops,
     BitTests,
     KnownRanges,
     KnownDereferenceableBytes,
@@ -189,7 +195,7 @@ enum class PolicySwitch : uint8_t {
     FoldTrapsIntoAccesses,
 };
 
-static constexpr unsigned numberOfSwitches = 40;
+static constexpr unsigned numberOfSwitches = 41;
 static_assert(static_cast<unsigned>(PolicySwitch::FoldTrapsIntoAccesses) + 1 == numberOfSwitches);
 static_assert(numberOfSwitches <= 64);
 

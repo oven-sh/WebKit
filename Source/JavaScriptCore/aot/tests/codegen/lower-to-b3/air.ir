@@ -1,0 +1,32 @@
+# lower-to-air prints the Air that code is emitted from. With `loops` it counts the instructions of each innermost loop.
+# FORM: Placed
+# OPTIONS: heat=EverythingIsHot disable=b3:UnrollLoops
+# RUN: lower-to-air
+# RUN(LOOPS): lower-to-air loops
+# RUN(POINT): lower-to-air optimized
+# POINT: error: bad argument optimized
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countUp" parameters=[{type=int[0, 1000]}] results=[{type=int[0, 1000]}] {
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2: int[0, 1000]):
+    LoopHint
+    v4 = Less v2, v0 form=Integers
+    TestAndBranch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Increment v5 form=Integers
+    Jump -> next b1(v6)
+  b3():
+    Return v2
+
+# CHECK-NEXT: BB#0:
+# CHECK: Ret64
+# CHECK: Add32 $1,
+
+# LOOPS-NEXT: loop #[[header]], instructions: 2, patchpoints: 1, %[[counter]] steps by 1
+# LOOPS-NEXT: BB#[[header]]:
+# LOOPS: Add32 $1, %[[counter]]
+# LOOPS: end of loop #[[header]]
+# LOOPS-NOT: loop
+}

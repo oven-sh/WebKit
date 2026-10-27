@@ -10,6 +10,8 @@
 
 #include "B3BasicBlockInlines.h"
 #include "B3CountedLoops.h"
+#include "B3DominatingConditions.h"
+#include "B3Dominators.h"
 #include "B3LoopInvariance.h"
 #include "B3LoopRegions.h"
 #include "B3MemoryValue.h"
@@ -151,7 +153,7 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
     const Procedure& proc = inputs.proc;
     const CountedLoop& loop = inputs.loop;
     const LoopInvariance& invariance = inputs.invariance;
-    if (!inputs.canClampBound || !loop.increases())
+    if (!inputs.canClampBound)
         return;
     Int128 maxStart = intervalFor(proc, loop.start, Signedness::Signed).max;
     for (BasicBlock* block : inputs.region.blocks) {
@@ -198,6 +200,170 @@ RangeCheckPlan planRangeChecks(const RangeCheckInputs& inputs)
     return plan;
 }
 
+namespace {
+
+struct MeetingCounters {
+    CountedLoop rising;
+    CountedLoop falling;
+    bool isStrict { false };
+};
+
+} // anonymous namespace
+
+static std::optional<CountedLoop> findSteppingCounter(const MeetingCountersInputs& inputs, Value* phi)
+{
+    const NaturalLoop& loop = *inputs.region.loop;
+    if (phi->opcode() != Phi || phi->owner != inputs.region.header || !phi->type().isInt())
+        return std::nullopt;
+    CountedLoop counter;
+    counter.preHeader = inputs.region.preHeader;
+    counter.header = inputs.region.header;
+    counter.inductionVariable = phi;
+    for (UpsilonValue* upsilon : inputs.phiChildren[phi]) {
+        Value* input = upsilon->child(0)->foldIdentity();
+        if (upsilon->owner == counter.preHeader) {
+            if (counter.start)
+                return std::nullopt;
+            counter.start = input;
+            continue;
+        }
+        if (!inputs.loops.belongsTo(upsilon->owner, loop))
+            return std::nullopt;
+        auto form = affineFormOf(inputs.proc, input, phi, Signedness::Signed);
+        if (!form || !form->offset || (counter.step && counter.step != form->offset))
+            return std::nullopt;
+        IntegerInterval known = intervalFor(inputs.proc, phi, Signedness::Signed);
+        if (!form->exactBaseRange.contains(known))
+            return std::nullopt;
+        counter.step = form->offset;
+        if (inputs.region.contains(upsilon->owner)) {
+            if (counter.next && counter.next != input)
+                return std::nullopt;
+            counter.next = input;
+        }
+    }
+    if (!counter.start || !counter.next || counter.step > Limits::maxCountedLoopStep || counter.step < -Limits::maxCountedLoopStep)
+        return std::nullopt;
+    if (!inputs.invariance.isAvailableInPreHeader(counter.start))
+        return std::nullopt;
+    return counter;
+}
+
+static std::optional<MeetingCounters> findMeetingCounters(const MeetingCountersInputs& inputs)
+{
+    const NaturalLoop& loop = *inputs.region.loop;
+    Dominators& dominators = inputs.proc.dominators();
+    for (BasicBlock* block : inputs.region.blocks) {
+        if (block->last()->opcode() != Branch)
+            continue;
+        bool firstStays = inputs.loops.belongsTo(block->successorBlock(0), loop);
+        if (firstStays == inputs.loops.belongsTo(block->successorBlock(1), loop))
+            continue;
+        DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
+        Value* comparison = condition.value->foldIdentity();
+        std::optional<Opcode> inverted = invertedRelation(comparison->opcode());
+        if (!inverted || isUnsignedRelation(comparison->opcode()))
+            continue;
+        Opcode relation = firstStays == condition.isNonZero ? comparison->opcode() : *inverted;
+        Value* left = comparison->child(0)->foldIdentity();
+        Value* right = comparison->child(1)->foldIdentity();
+        if (!isLessRelation(relation)) {
+            std::swap(left, right);
+            relation = flippedRelation(relation);
+        }
+
+        auto counterSteppedTo = [&](Value* next) -> std::optional<CountedLoop> {
+            for (Value* phi : *inputs.region.header) {
+                if (phi->opcode() != Phi || phi->type() != next->type())
+                    continue;
+                std::optional<CountedLoop> counter = findSteppingCounter(inputs, phi);
+                if (counter && counter->next == next)
+                    return counter;
+            }
+            return std::nullopt;
+        };
+        std::optional<CountedLoop> rising = counterSteppedTo(left);
+        std::optional<CountedLoop> falling = rising ? counterSteppedTo(right) : std::nullopt;
+        if (!falling || rising->step < 0 || falling->step > 0)
+            continue;
+        bool runsEveryTurn = true;
+        for (BasicBlock* predecessor : inputs.region.header->predecessors())
+            runsEveryTurn &= !inputs.loops.belongsTo(predecessor, loop) || dominators.dominates(block, predecessor);
+        if (!runsEveryTurn)
+            continue;
+        rising->bound = falling->inductionVariable;
+        falling->bound = rising->inductionVariable;
+        rising->test = falling->test = block;
+        return MeetingCounters { *rising, *falling, relation == LessThan };
+    }
+    return std::nullopt;
+}
+
+RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs& inputs)
+{
+    RangeCheckPlan plan;
+    std::optional<MeetingCounters> counters = findMeetingCounters(inputs);
+    if (!counters)
+        return plan;
+    const LoopInvariance& invariance = inputs.invariance;
+    Value* low = counters->rising.start;
+    Value* high = counters->falling.start;
+    IndexSet<BasicBlock*> noBlocks;
+    Vector<Value*, 4> limits;
+    for (BasicBlock* block : inputs.region.blocks) {
+        for (Value* value : *block) {
+            auto rangeCheck = rangeCheckFor(value);
+            if (!rangeCheck || invariance.plan().isHoisted(value) || rangeCheck->index->type() != counters->rising.type())
+                continue;
+            Value* limit = rangeCheck->limit;
+            if (!invariance.isInvariant(limit) || isStoredInLoop(*inputs.region.loop, limit))
+                continue;
+            limit = invariance.canonicalValue(limit);
+            if (!invariance.isAvailableInPreHeader(limit))
+                continue;
+            auto offsetFrom = [&](const CountedLoop& counter) {
+                return offsetFromCounter({ inputs.proc, inputs.phiChildren, inputs.region, invariance, counter, noBlocks, true }, rangeCheck->index);
+            };
+            int64_t strict = counters->isStrict;
+            if (auto offset = offsetFrom(counters->rising)) {
+                plan.entryGuards.append({ GreaterEqual, low, Signedness::Signed, nullptr, Signedness::Signed, -*offset });
+                plan.entryGuards.append({ LessEqual, high, Signedness::Signed, limit, Signedness::Unsigned, -*offset - 1 + strict });
+            } else if (auto offset = offsetFrom(counters->falling)) {
+                plan.entryGuards.append({ GreaterEqual, low, Signedness::Signed, nullptr, Signedness::Signed, -*offset - strict });
+                plan.entryGuards.append({ LessEqual, high, Signedness::Signed, limit, Signedness::Unsigned, -*offset - 1 });
+            } else
+                continue;
+            if (!limits.contains(limit))
+                limits.append(limit);
+            plan.decidedComparisons.add(value, rangeCheck->isTrueInBounds);
+        }
+    }
+    if (plan.entryGuards.isEmpty())
+        return plan;
+    for (Value* limit : limits)
+        plan.entryGuards.insert(0, EntryGuard { BelowEqual, limit, Signedness::Unsigned, nullptr, Signedness::Signed, maxLimitForRangeChecks(counters->rising.type()) });
+    plan.entryGuards.append({ counters->isStrict ? LessThan : LessEqual, low, Signedness::Signed, high, Signedness::Signed, 0 });
+    return plan;
+}
+
+void appendEntryGuards(FastPreHeader& front, Origin origin, std::span<const EntryGuard> guards, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
+{
+    Procedure& proc = front.procedure();
+    auto widen = [&](Value* value, Signedness signedness) -> Value* {
+        value = valueInPreHeader(value);
+        if (value->type() == Int64)
+            return value;
+        return front.last()->appendNew<Value>(proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
+    };
+    for (const EntryGuard& guard : guards) {
+        Value* left = widen(guard.left, guard.leftSignedness);
+        Value* right = front.appendIntConstant(origin, Int64, guard.addend);
+        if (guard.right)
+            right = front.last()->appendNew<Value>(proc, Add, origin, widen(guard.right, guard.rightSignedness), right);
+        front.appendGuard(origin, guard.relation, left, right);
+    }
+}
+
 static Opcode safeBoundRelation(const CountedLoop& loop)
 {
     if (loop.increases())
@@ -226,6 +392,13 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
     Value* start = widen(startInPreHeader, Signedness::Signed);
     for (auto& rangeCheckBound : plan.bounds) {
         Value* limit = widen(valueInPreHeader(rangeCheckBound.limit), Signedness::Unsigned);
+        if (!loop.increases()) {
+            front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
+            front.appendGuard(origin, LessThan, start, front.last()->appendNew<Value>(proc, Sub, origin, limit, constant(rangeCheckBound.maxOffset)));
+            Value* first = constant(-rangeCheckBound.minOffset - !loop.includesEqual());
+            clamped = front.last()->appendNew<Value>(proc, Select, origin, front.last()->appendNew<Value>(proc, GreaterThan, origin, first, clamped), first, clamped);
+            continue;
+        }
         front.appendGuard(origin, GreaterEqual, start, constant(-rangeCheckBound.minOffset));
         front.appendGuard(origin, BelowEqual, limit, constant(maxLimit));
         Value* last = front.last()->appendNew<Value>(proc, Sub, origin, limit, constant(rangeCheckBound.maxOffset + loop.includesEqual()));
@@ -241,7 +414,6 @@ static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& pla
 
 FastLoopBounds appendEntryGuards(FastPreHeader& front, const RangeCheckPlan& plan, const CountedLoop& loop, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
 {
-    ASSERT(!plan.clampsBound() || loop.increases());
     Origin origin = loop.test->last()->origin();
     Value* bound = valueInPreHeader(loop.bound);
     Value* clamped = plan.clampsBound() ? appendClampedBound(front, plan, loop, bound, valueInPreHeader) : bound;

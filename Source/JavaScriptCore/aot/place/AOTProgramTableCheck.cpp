@@ -230,6 +230,11 @@ static void checkSortedTables(const TableCheck& check)
     checkAscending(check.tables.staticsRoots(), &StaticsRange::offset);
     checkAscending(check.tables.staticsNarrowRoots(), &StaticsRange::offset);
     checkAscending(check.tables.staticsRuns(), &StaticsRun::firstWord);
+    checkAscending(check.tables.staticsOfFiles(), &StaticsOfFile::module);
+    check.expect(std::ranges::is_sorted(check.tables.staticsOfFiles(), { }, &StaticsOfFile::firstWord) && std::ranges::is_sorted(check.tables.staticsOfFiles(), { }, &StaticsOfFile::firstImportedFile), ProgramTableRule::TableNotSorted);
+    check.expect(std::ranges::all_of(check.tables.staticsOfImportedFiles(), [&](uint32_t file) {
+        return file + 1 < check.tables.staticsOfFiles().size();
+    }), ProgramTableRule::TableOutOfBounds);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
     checkAscending(check.tables.compiledRuntimeFunctions(), &CompiledRuntimeFunctionData::id);
 

@@ -185,7 +185,7 @@ constexpr std::array rows {
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
     countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
-    programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
+    programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries, CallingConventions }, { }, resultsAboutBodies),
     programPass(InlineHeads, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
     programPass(ElideStackChecks, Optional, { Selected, Selected }, { CallGraph }, { StackChecks }, { }),
     programPass(PlanSlots, Required, { Prepared, Selected }, slotInputs, { SlotPlan }, { }),

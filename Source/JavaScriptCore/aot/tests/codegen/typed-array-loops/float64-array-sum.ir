@@ -1,0 +1,99 @@
+# function total(list: Float64Array, first: number) { let sum = first; for (let k = 0; k < list.length; k++) sum += list[k]; return sum; }
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(LOWERED): lower-to-b3 f1
+# RUN(UNROLLED): lower-to-b3 optimized loops f1
+# REQUIRES(UNROLLED): unsanitized-code
+# RUN(HOT): lower-to-b3 optimized loops f1
+# REQUIRES(HOT): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=11 kind=Parameter
+typesite w2 module=m0 position=12 kind=Result
+typesite w3 module=m0 position=13 kind=Variable
+typesite w4 module=m0 position=14 kind=Variable
+typesite w5 module=m0 position=15 kind=PropertyRead
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=0
+    v3 = CallDirect v1, v2 function=f1
+    Return v3
+}
+function f1 name="total" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=undefined|null|Float64Array site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w1}] results=[{type=number site=w2}] {
+  b0(v0: undefined|null|Float64Array, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=number site=w3}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w4}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w5} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number site=w3}
+    Jump -> next b5()
+  b5():
+    v17 = Increment v13
+    v18 = Convert v17 declared={type=number site=w4}
+    Jump -> next b2(v16, v18)
+  b6(v19):
+    Jump -> next b7()
+  b7():
+    v20 = Convert v5 declared={type=number site=w2}
+    Return v20
+
+# The code generator emits one bounds check against the length field, then a load at vector + (index << 3). Nothing is called.
+# LOWERED: Int64 b@[[length]] = Load(b@[[view]], offset = 24, ControlDependent|Reads:JSArrayBufferView_length, [[check]]:IsInsideView)
+# LOWERED: Int32 b@[[isInBounds]] = Below(b@[[index]], b@[[length]], [[check]]:IsInsideView)
+# LOWERED-NEXT: Branch(b@[[isInBounds]], Terminal, [[check]]:IsInsideView)
+# LOWERED-NEXT: Successors: Then:#[[body]], Else:Rare:
+# LOWERED-NEXT: BB#[[body]]:
+# LOWERED-NOT: Branch(
+# LOWERED: Int64 b@[[vector]] = Load(b@[[view]], offset = 16, ControlDependent|Reads:JSArrayBufferView_vector, [[read]]:GetTypedArrayElement)
+# LOWERED-NEXT: Int64 b@[[offset]] = Shl(b@[[index]], $3(
+# LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[offset]], [[read]]:GetTypedArrayElement)
+# LOWERED-NEXT: Double b@[[element]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
+# LOWERED: Double b@{{*}} = Add(b@{{*}}, b@[[element]], {{*}}:Add)
+
+# B3 unrolls the loop eight times: eight element loads off one counter.
+# UNROLLED-LABEL: steps by 8
+# UNROLLED: Double b@{{*}} = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements
+# REPEAT: turn = 1..7
+# UNROLLED: Double b@{{*}} = Load(b@{{*}}, offset = %(turn*8), ControlDependent|Reads:TypedArrayElements
+# END REPEAT
+# UNROLLED-NOT: Reads:TypedArrayElements
+# UNROLLED-LABEL: end of loop
+
+# The unrolled loop has no bounds check, no poll and no reload of the length or the vector: its only branch is the loop condition.
+# HOT-LABEL: steps by 8
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-NOT: Reads:JSArrayBufferView
+# HOT: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-LABEL: end of loop
+
+# Eight elements cost ten instructions: eight additions from memory, the counter, the branch.
+# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
+# X64-COUNT-8: AddDouble {{*}}(%{{*}},%{{*}},8), %xmm
+# ARM64 has no base + index * 8 + offset address, and seven of the eight loads compute base + index * 8 again.
+# ARM64: instructions: 25, patchpoints: 8, {{*}} steps by 8
+}

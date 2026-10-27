@@ -852,7 +852,7 @@ const CallSiteCache::Entry* CallSiteCache::withMethodReadSite(const Image& image
         return entry;
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(throwSite->throwSite[0]);
     if (word.isCallSite() && word.registerNumber)
-        const_cast<Entry*>(entry)->site.firstReadSite = methodReadSite(entry->site.callSite, word.registerNumber - 1);
+        const_cast<Entry*>(entry)->site.firstReadSite = firstReadSiteInFrontOf(entry->site.callSite, word.registerNumber - 1);
     return entry;
 }
 

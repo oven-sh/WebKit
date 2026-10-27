@@ -15,6 +15,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTGuardEmitter.h"
+#include "AOTModuleEmitter.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
@@ -211,6 +212,10 @@ Condition TypeTestEmitter::hasSharingMode(CellPointer cell, ArrayBufferSharingMo
 
 Condition TypeTestEmitter::isNamespaceOf(CellPointer cell, ModuleID module)
 {
+    ModuleEmitter& modules = emitter<ModuleEmitter>();
+    if (modules.hasSingleNamespaceInValueWord(module))
+        return equal(boxCell(cell), modules.loadModuleValue(module));
+
     // The cell type of a namespace object never changes. A cell that leaves ObjectType is refused by the call, whichever type was read.
     Condition mayBeNamespace = hasOrHadCellType(cell, ObjectType);
     return selectByBranch<Condition>(mayBeNamespace, [&] {

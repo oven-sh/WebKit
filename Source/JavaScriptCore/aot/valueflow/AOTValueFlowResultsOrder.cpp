@@ -312,6 +312,9 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
                 order = { InitializationState::SetAtCreation, StoreCount::Unknown };
             fields[field].undefinedAtStartIsNeverRead = order.undefinedAtStartIsNeverRead;
             apply(fields[field].flow.location, order, index, false, false);
+            LocationFlow& flow = fields[field].flow.location;
+            flow.isStoredBeforeCapturersRun = order.isStoredBeforeCapturersRun && flow.initialization == InitializationState::StoredBeforeEveryRead;
+            flow.holdsClosureOverOwnEnvironment = order.holdsClosureOverOwnEnvironment && flow.writers == WriterState::AllKnown && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
         }
     }
 

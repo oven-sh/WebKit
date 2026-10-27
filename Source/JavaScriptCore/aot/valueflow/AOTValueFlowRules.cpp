@@ -211,6 +211,11 @@ static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context
     return context.restrict(objects, ValueSets::complement(universe.objectsOfLibraryFoundByNameAlone()));
 }
 
+ValueFlowNodeID heldPrototypeObjectsOfLibraryClasses(ValueFlowRuleContext& context)
+{
+    return context.masked(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), context.universe().prototypeObjectsOfLibraryClasses());
+}
+
 static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
 {
     const ValueFlowUniverse& universe = context.universe();

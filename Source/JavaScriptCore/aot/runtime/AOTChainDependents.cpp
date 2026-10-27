@@ -230,7 +230,8 @@ enum class ChainObjectChange : bool { MayChangeWhatNamesFind, KeepsWhatNamesFind
 
 static void tellDependentsOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChainObjectChange change)
 {
-    if (vm.aotState().propertyCaches)
+    // What says that a name is absent above an object, or that nothing above stops a store, says so of an object that is made flat as it did before.
+    if (vm.aotState().propertyCaches && change == ChainObjectChange::MayChangeWhatNamesFind)
         vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
     JSGlobalObject* realm = changed->structure()->realm();
     // What a realm does to its Object.prototype before it has an Instance is seen when the Instance is created.
@@ -298,6 +299,42 @@ static State* stateOrNull(Structure* structure)
     JSGlobalObject* realm = structure->realm();
     Instance* instance = realm ? Instance::of(realm) : nullptr;
     return instance ? instance->state : nullptr;
+}
+
+bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structure* structure, UniquedStringImpl* uid)
+{
+    JSType type = structure->typeInfo().type();
+    if (type != FinalObjectType && type != CompiledClosureType && type != SlimClosureWithPropertiesType)
+        return false;
+    if (structure->hasBeenDictionary() || isCopyOnWrite(structure->indexingMode()) || structure->isCompiledStructure() || structure->typeInfo().prohibitsPropertyCaching())
+        return false;
+    // The Structure of the extra properties of a compiled object is part of what the Structure of that object says.
+    if (structure->inlineCapacity() == extraPropertiesInlineCapacity && structure->hasMonoProto() && structure->storedPrototype().isNull())
+        return false;
+    State* state = stateOrNull(structure);
+    if (!state || !state->caches)
+        return false;
+    FirstAdditions& additions = firstAdditionsOf(*state);
+    if (additions.shouldMakeStructure(structure, uid))
+        return false;
+    additions.didBeginToFill(vm, object);
+    return true;
+}
+
+void RuntimeHooks::finishFillingObjects(VM& vm)
+{
+    vm.aotState().hasObjectsBeingFilled = false;
+    for (Instance* instance : vm.aotState().instances) {
+        if (State* state = instance->state; state && state->firstAdditions)
+            state->firstAdditions->finishFilling(vm);
+    }
+}
+
+void RuntimeHooks::didMakeStructureForAddition(VM&, Structure* made)
+{
+    State* state = stateOrNull(made);
+    if (state && state->firstAdditions)
+        state->firstAdditions->didMakeStructure(made);
 }
 
 bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
@@ -521,9 +558,14 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
     VM& vm = start.globalObject->vm();
     Structure* structure = object->structure();
     if (!canWalkThrough(structure)) {
-        if (structure->isDictionary() && start.mode == ChainWalkMode::MayAllocate)
+        // Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated: the walk goes on through it.
+        bool staysInPlace = structure->isDictionary() && !structure->isUncacheableDictionary();
+        if (staysInPlace)
+            flattenOnce(vm, object);
+        else if (structure->isDictionary() && start.mode == ChainWalkMode::MayAllocate)
             walk.didFlatten = flattenOnce(vm, object);
-        return stopAt(object, walk);
+        if (!staysInPlace || !canWalkThrough(structure))
+            return stopAt(object, walk);
     }
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);

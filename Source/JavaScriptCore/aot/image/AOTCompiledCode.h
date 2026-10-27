@@ -47,7 +47,14 @@ struct ReturnSite {
 
 struct FirstReadSite {
     uint32_t returnOffset;
+    // Zero: the read has no site. It is written columnDelta columns in front of the site at the return offset.
     uint32_t site;
+    uint32_t columnDelta { 0 };
+};
+
+struct CodeRange {
+    uint32_t begin;
+    uint32_t end;
 };
 
 struct CodeBody {
@@ -68,6 +75,8 @@ struct CodeBody {
     Vector<ArgumentMoves> argumentMoves;
     Vector<ConstantData> constants;
     Vector<JumpTable> jumpTables;
+    // Loops of a few instructions that are expected to turn. The layout keeps each in one line of the instruction cache where it can.
+    Vector<CodeRange, 0> smallLoops;
 };
 
 inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
@@ -78,11 +87,6 @@ inline std::optional<uint32_t> CodeBody::offsetOfEntry(uint16_t id) const
     }
     return std::nullopt;
 }
-
-struct CodeRange {
-    uint32_t begin;
-    uint32_t end;
-};
 
 struct FrameDescription {
     bool hasFrame() const { return !frameRanges.isEmpty(); }
@@ -213,6 +217,10 @@ void forEachCodeOffset(Code& code, const Functor& functor)
             functor(target, CodeOffsetRole::Target, 0u);
     }
     functor(body.paddingStart, CodeOffsetRole::Boundary, 0u);
+    for (auto& loop : body.smallLoops) {
+        functor(loop.begin, CodeOffsetRole::Boundary, 0u);
+        functor(loop.end, CodeOffsetRole::Boundary, 0u);
+    }
     for (auto& handler : sites.handlers)
         functor(handler.codeOffset, CodeOffsetRole::Target, 0u);
     for (auto& access : sites.faultingAccesses)

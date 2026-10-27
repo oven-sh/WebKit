@@ -20,6 +20,7 @@
 #include "JSCInlines.h"
 #include "MathCommon.h"
 #include "NumberPrototype.h"
+#include "NumericStrings.h"
 #include "Operations.h"
 #include "TypeofType.h"
 
@@ -98,7 +99,8 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTValueBitNot, EncodedJSValue, JSValue::enc
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumber, double, operand.toNumber(globalObject))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encode(operand.toNumeric(globalObject)))
 AOT_DEFINE_UNARY_OPERATION(operationAOTToString, JSCell*, operand.toString(globalObject))
-AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.toPropertyKeyValue(globalObject)))
+// The stub finds the text of a small index there the next time.
+AOT_DEFINE_UNARY_OPERATION(operationAOTToKey, EncodedJSValue, JSValue::encode(operand.isInt32() && static_cast<uint32_t>(operand.asInt32()) < NumericStrings::cacheSize ? JSValue(instance->vm->numericStrings.addJSString(*instance->vm, operand.asInt32())) : operand.toPropertyKeyValue(globalObject)))
 #undef AOT_DEFINE_BINARY_OPERATION
 #undef AOT_DEFINE_NUMERIC_BINARY_OPERATION
 #undef AOT_DEFINE_COMPARISON_OPERATION

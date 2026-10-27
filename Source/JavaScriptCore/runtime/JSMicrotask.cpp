@@ -82,6 +82,7 @@ extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObj
 #include "WebAssemblyCompileOptions.h"
 #endif
 #include <wtf/NoTailCalls.h>
+#include <wtf/Scope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -1187,6 +1188,21 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     auto* loadPromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
 
+#if ENABLE(AOT)
+    // hostLoadImportedModule() may have left another promise in the entry, for whoever asked for the entry point while its graph was loaded. However a step ends the load, that promise ends with it.
+    auto settleLoadPromiseInEntry = makeScopeExit([&] {
+        if (loadPromise->status() == JSPromise::Status::Pending || context->step() == ModuleLoadingContext::Step::Cached || !vm.hasCompiledCode())
+            return;
+        JSPromise* promiseInEntry = context->entry()->loadPromise();
+        if (promiseInEntry == loadPromise || promiseInEntry->status() != JSPromise::Status::Pending)
+            return;
+        if (loadPromise->status() == JSPromise::Status::Fulfilled)
+            promiseInEntry->fulfill(vm, loadPromise->result());
+        else
+            promiseInEntry->reject(vm, loadPromise->result());
+    });
+#endif
+
     switch (context->step()) {
     case ModuleLoadingContext::Step::Main: {
         // modulePromise settled: on fulfillment, call loadRequestedModules and chain next step
@@ -1254,10 +1270,6 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             JSValue errorValue = arguments[1];
             entry->setEvaluationError(globalObject, errorValue);
             loadPromise->reject(vm, errorValue);
-#if ENABLE(AOT)
-            if (entry->loadPromise() != loadPromise && entry->loadPromise()->status() == JSPromise::Status::Pending)
-                entry->loadPromise()->reject(vm, errorValue);
-#endif
         }
         return;
     }

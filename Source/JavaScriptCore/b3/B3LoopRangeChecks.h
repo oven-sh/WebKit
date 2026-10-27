@@ -7,10 +7,14 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3IntRange.h"
 #include "B3Limits.h"
+#include "B3NaturalLoops.h"
+#include "B3Origin.h"
 #include "B3Value.h"
 #include <limits>
 #include <optional>
+#include <span>
 #include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/ScopedLambda.h>
@@ -38,12 +42,25 @@ struct RangeCheckBound {
     int64_t maxOffset { 0 };
 };
 
+// relation(left, right + addend), as integers of 64 bits. Without a right side: relation(left, addend).
+struct EntryGuard {
+    Opcode relation { Oops };
+    Value* left { nullptr };
+    Signedness leftSignedness { Signedness::Signed };
+    Value* right { nullptr };
+    Signedness rightSignedness { Signedness::Signed };
+    int64_t addend { 0 };
+};
+
 struct RangeCheckPlan {
     UncheckedKeyHashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
+    Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
+    // The number of turns is at most the limit of a range check.
+    bool endsWithinLimit() const { return clampsBound() || !entryGuards.isEmpty(); }
 };
 
 struct RangeCheckInputs {
@@ -57,6 +74,18 @@ struct RangeCheckInputs {
 };
 
 RangeCheckPlan planRangeChecks(const RangeCheckInputs&);
+
+struct MeetingCountersInputs {
+    Procedure& proc;
+    NaturalLoops& loops;
+    PhiChildren& phiChildren;
+    const HotRegion& region;
+    const LoopInvariance& invariance;
+};
+
+// For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.
+RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
+void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)
 {

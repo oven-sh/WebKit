@@ -50,7 +50,7 @@ enum class BrokenClaim : uint32_t {
 #define FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(v, reserved) \
     v(operationAOTPrepareProxyCall) \
     FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
-    v(operationAOTCallNativeFunction) \
+    v(operationAOTCallEngineCallee) \
     v(operationAOTReportBrokenClaim) \
     reserved(operationArrayIndexOfValueInt32OrContiguous) \
     reserved(operationArrayIncludesValueInt32OrContiguous) \
@@ -187,7 +187,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Inst
 // What is to be called in place of the Proxy that is the callee of the frame, and, where that is the trap, the list of arguments, or one where the caller makes it.
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance*, CallFrame* hostCallFrame, uint32_t makesList));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven));
-JSC_DECLARE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
+JSC_DECLARE_JIT_OPERATION(operationAOTCallEngineCallee, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
 JSC_DECLARE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance*, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys));
 
 class RuntimeTable {

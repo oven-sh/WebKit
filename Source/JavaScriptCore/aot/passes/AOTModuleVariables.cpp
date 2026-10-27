@@ -1044,6 +1044,23 @@ struct MovableCode {
         return arenas.types.intern(widened);
     }
 
+    // `new` lays the object below what the function that it is made for holds under `prototype` at that moment. A class holds one object there for good.
+    bool findsSamePrototypeWheneverDone(const Function& caller, const Knowledge& known, const Value& construct, std::span<const FunctionID> callees) const
+    {
+        ValueID newTarget = construct.newTargetOperand() ? construct.newTargetOperand() : construct.calleeOperand();
+        if (known.made.get(newTarget.index()) || known.unchanging.get(newTarget.index()))
+            return true;
+        if (construct.newTargetOperand()) {
+            if (!hasOnlyFunctions(typeOf(caller, newTarget)))
+                return false;
+            callees = typeOf(caller, newTarget).functions.span();
+        }
+        const PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+        return std::ranges::all_of(callees, [&](FunctionID id) {
+            return isClassConstructorFunction(program.at(id)) || context.inputs.flow.areClosuresAsCreated(id, singleElementSpan(prototype));
+        });
+    }
+
     InitializerCalleeAnswer answerForCall(const Function& caller, const Knowledge& known, const Value& call)
     {
         if (call.opcode != Opcode::Call && call.opcode != Opcode::Construct && call.opcode != Opcode::CallDirect)
@@ -1057,6 +1074,8 @@ struct MovableCode {
         }
         std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
         if (!functions || functions->value().empty())
+            return { };
+        if (call.opcode == Opcode::Construct && !findsSamePrototypeWheneverDone(caller, known, call, functions->value()))
             return { };
         InitializerCalleeAnswer result { true, true };
         for (FunctionID id : functions->value()) {

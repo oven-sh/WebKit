@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
+#include "AOTRecordTypes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTStringBuilderWords.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
@@ -277,6 +279,92 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
 
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStackStringBuilderAppend, { .saves = Saves::CallerSavedRegisters });
+}
+
+PreludeExit emitJSONAppendValuePrelude(StubAssembler& jit)
+{
+    if (jit.key().family() != StubFamily::CallOperation || jit.signature().result != StubResult::TwoGPRs)
+        return PreludeExit::CallsOperation;
+
+    constexpr uint64_t reciprocalOfTen = 0xcccccccd;
+    constexpr unsigned shiftOfReciprocalOfTen = 35;
+    constexpr auto fourBytes = [](const char (&text)[5]) {
+        return static_cast<int32_t>(text[0] | text[1] << 8 | text[2] << 16 | text[3] << 24);
+    };
+    const GPRReg builder = jit.allocateScratch(StubRegister::A1);
+    const GPRReg cursor = jit.allocateScratch(StubRegister::A2);
+    const GPRReg value = jit.allocateScratch(StubRegister::A3);
+    const GPRReg reciprocal = jit.allocateScratch(StubRegister::A4);
+    const GPRReg quotient = jit.allocateScratch(StubRegister::A5);
+    const GPRReg end = jit.result();
+    const GPRReg place = builder;
+    const GPRReg product = cursor;
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
+    RELEASE_ASSERT(noOverlap(builder, cursor, value, reciprocal, quotient, end));
+    JumpList callsOperation;
+    auto returnEnd = [&] {
+        jit.move(TrustedImm32(static_cast<int32_t>(JSONOutcome::Parsed)), jit.secondResult());
+        jit.returnToCaller();
+    };
+    auto returnBehind = [&](int32_t length) {
+        jit.addPtr(TrustedImm32(length), cursor, end);
+        returnEnd();
+    };
+
+    callsOperation.append(jit.branchIfCell(value));
+    jit.load32(Address(builder, StringBuilderStorage::offsetOfLimit()), end);
+    jit.addPtr(Address(builder, StringBuilderStorage::offsetOfCharacters()), end);
+    jit.subPtr(cursor, end);
+    callsOperation.append(jit.branch64(CCallHelpers::Below, end, TrustedImm32(jsonNumberBytes + maxStringBuilderReservation)));
+    Jump isNotInt32 = jit.branch64(CCallHelpers::Below, value, numberTag);
+    callsOperation.append(jit.branch32(CCallHelpers::LessThan, value, TrustedImm32(0)));
+
+    jit.zeroExtend32ToWord(value, value);
+    jit.move(TrustedImm64(reciprocalOfTen), reciprocal);
+    jit.move(value, quotient);
+    jit.addPtr(TrustedImm32(1), cursor, end);
+    Label countsDigit = jit.label();
+    Jump isLastDigit = jit.branch32(CCallHelpers::Below, quotient, TrustedImm32(10));
+    jit.mul64(reciprocal, quotient);
+    jit.urshift64(TrustedImm32(shiftOfReciprocalOfTen), quotient);
+    jit.addPtr(TrustedImm32(1), end);
+    jit.jump().linkTo(countsDigit, &jit);
+
+    isLastDigit.link(&jit);
+    jit.move(end, place);
+    Label writesDigit = jit.label();
+    jit.move(value, quotient);
+    jit.mul64(reciprocal, quotient);
+    jit.urshift64(TrustedImm32(shiftOfReciprocalOfTen), quotient);
+    jit.lshift32(quotient, TrustedImm32(2), product);
+    jit.add32(quotient, product);
+    jit.lshift32(TrustedImm32(1), product);
+    jit.sub32(product, value);
+    jit.add32(TrustedImm32('0'), value);
+    jit.subPtr(TrustedImm32(1), place);
+    jit.store8(value, Address(place));
+    jit.move(quotient, value);
+    jit.branchTest32(CCallHelpers::NonZero, value).linkTo(writesDigit, &jit);
+    returnEnd();
+
+    isNotInt32.link(&jit);
+    Jump isNotTrue = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueTrue));
+    jit.store32(TrustedImm32(fourBytes("true")), Address(cursor));
+    returnBehind(4);
+
+    isNotTrue.link(&jit);
+    Jump isNotFalse = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueFalse));
+    jit.store32(TrustedImm32(fourBytes("fals")), Address(cursor));
+    jit.store8(TrustedImm32('e'), Address(cursor, 4));
+    returnBehind(5);
+
+    isNotFalse.link(&jit);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueNull)));
+    jit.store32(TrustedImm32(fourBytes("null")), Address(cursor));
+    returnBehind(4);
+
+    callsOperation.link(&jit);
+    return PreludeExit::CallsOperation;
 }
 
 void generateRopeCharacters(StubAssembler& jit)

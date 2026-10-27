@@ -46,15 +46,18 @@ static constexpr StubRegister constructArgumentBaseRegister = StubRegister::T12;
 #endif
 
 struct EntryCall {
-    explicit EntryCall(Address firstArgument)
+    EntryCall(Address firstArgument, StubFrameKind kind)
         : arguments(firstArgument)
+        , isInAdapterFrame(kind == StubFrameKind::Adapter || kind == StubFrameKind::ConstructAdapter)
     {
     }
 
     Address arguments;
+    bool isInAdapterFrame;
     JumpList passesFewer;
     JumpList passesMore;
     Label ready;
+    Label readyWithTestedStack;
     Label afterCall;
     JumpList stackDoesNotFit;
 };
@@ -223,7 +226,7 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
 
 [[nodiscard]] static EntryCall emitLoadArgumentsAndCallEntry(StubAssembler& jit, GPRReg word, Address arguments, StubFrameKind kind)
 {
-    EntryCall call(arguments);
+    EntryCall call(arguments, kind);
     call.passesMore.append(jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(numberOfArgumentGPRs)));
     constexpr GPRReg numberOfParameters = argumentGPR(numberOfArgumentGPRs - 1);
     ASSERT(noOverlap(word, numberOfParameters, arguments.base));
@@ -234,14 +237,34 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
 
     call.ready = jit.label();
     call.stackDoesNotFit.append(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit()));
+    call.readyWithTestedStack = jit.label();
     toCodeAddress(jit, word, jit.reuseScratch(StubRegister::T13), StackIsTested::Yes);
     jit.call(word, JSEntryPtrTag);
     call.afterCall = jit.bindReturnLabel(kind);
     return call;
 }
 
-static void emitCopyStackWords(StubAssembler& jit, Address arguments, JumpList& stackDoesNotFit)
+static void emitLocateOutOfLineArguments(StubAssembler& jit, GPRReg source, GPRReg count, GPRReg scratch)
 {
+    jit.load32(CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis), count);
+    Jump areInFrame = jit.branchTest32(CCallHelpers::Zero, count);
+    // The interpreter stores only the low word of the count.
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+    jit.loadPtr(Address(scratch, VM::topEntryFrameOffset()), scratch);
+    Jump isCalledByInterpreter = jit.branchPtr(CCallHelpers::NotEqual, Address(fp, CallFrame::callerFrameOffset()), scratch);
+    jit.add32(count, countGPR);
+    jit.sub32(TrustedImm32(adapterArgumentCountWithOutOfLineArguments), countGPR);
+    jit.loadPtr(Address(fp, offsetOfFirstArgument + static_cast<ptrdiff_t>(numberOfArgumentGPRs * sizeof(Register))), scratch);
+    jit.subPtr(fp, source);
+    jit.addPtr(scratch, source);
+    jit.subPtr(TrustedImm32(offsetOfFirstArgument), source);
+    areInFrame.link(&jit);
+    isCalledByInterpreter.link(&jit);
+}
+
+static void emitCopyStackWords(StubAssembler& jit, const EntryCall& call, JumpList& stackDoesNotFit)
+{
+    const Address arguments = call.arguments;
     static_assert(numberOfArgumentGPRs >= 4 && gprOf(StubRegister::A3) == argumentGPR(3));
     constexpr int32_t numberOfRegisters = numberOfArgumentGPRs;
     const GPRReg index = jit.reuseScratch(StubRegister::A0);
@@ -251,6 +274,10 @@ static void emitCopyStackWords(StubAssembler& jit, Address arguments, JumpList& 
     const GPRReg size = value;
     ASSERT(noOverlap(arguments.base, index, value, destination, source));
 
+    jit.addPtr(TrustedImm32(static_cast<int32_t>(arguments.offset + numberOfArgumentGPRs * sizeof(Register))), arguments.base, source);
+    if (call.isInAdapterFrame)
+        emitLocateOutOfLineArguments(jit, source, value, index);
+
     emitAlignedSizeOfWords(jit, countGPR, -numberOfRegisters, size);
     jit.move(sp, destination);
     jit.subPtr(size, destination);
@@ -258,7 +285,6 @@ static void emitCopyStackWords(StubAssembler& jit, Address arguments, JumpList& 
     jit.move(destination, sp);
 
     jit.add32(TrustedImm32(-numberOfRegisters), countGPR, index);
-    jit.addPtr(TrustedImm32(static_cast<int32_t>(arguments.offset + numberOfArgumentGPRs * sizeof(Register))), arguments.base, source);
     emitCopyFromLastWord(jit, Address(source), Address(destination), index, value);
 }
 
@@ -270,9 +296,9 @@ static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)
     jit.jump().linkTo(call.ready, &jit);
 
     call.passesMore.link(&jit);
-    emitCopyStackWords(jit, call.arguments, call.stackDoesNotFit);
+    emitCopyStackWords(jit, call, call.stackDoesNotFit);
     emitLoadArgumentRegisters(jit, call.arguments);
-    jit.jump().linkTo(call.ready, &jit);
+    jit.jump().linkTo(call.readyWithTestedStack, &jit);
 }
 
 static void emitThrowFromAdapter(StubAssembler& jit, Label afterCall, StubKey target)

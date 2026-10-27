@@ -660,6 +660,8 @@ void HeapRule::readMember(BuiltinID member, ModuleID module, ValueFlowNodeID res
             add(result, m_universe.builtinTables().primitivesOf(type));
             return;
         }
+        if (entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Constructor && m_program.keyOf(entry.name) == m_tables.prototypeKey())
+            add(ValueFlowProgramNodes::escaped(), only(objectOfMember(m_builtins.canonicalID(entry.holder), module)));
         getters.append(objectOfMember(member, module));
         return;
     }

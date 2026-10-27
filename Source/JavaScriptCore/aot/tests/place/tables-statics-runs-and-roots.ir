@@ -57,6 +57,8 @@ function f3 name="early" module=m1 results=[{type=anything}] {
 }
 
 # CHECK: staticsRuns 2 32
+# CHECK-NEXT: staticsOfFiles 0 0
+# CHECK-NEXT: staticsOfImportedFiles 0 0
 # CHECK-NEXT: staticsRoots 2 16
 # STATICS: layout filledAtProgramEntry=48
 # STATICS-NEXT: run firstWord=0 words=5 bits=0xa

@@ -1124,7 +1124,117 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
 
 bool takesFactOfEntry(const Program& program, const Value& value, bool calleeIsPredicted)
 {
-    return value.opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(program.at(value.variable()).flow, calleeIsPredicted) && !value.factOperand() && !value.mayPrecedeItsStore();
+    const LocationFlow* flow = flowOfVariableReadBy(program, value);
+    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, calleeIsPredicted) && !namesFactOrGivesWordThatMayBeAnything(value);
+}
+
+ValueID readWordAndAssumeInPlace(Function& function, TypeArena& types, ValueID id, ValueID fact)
+{
+    Value word = function.at(id);
+    word.setMayPrecedeItsStore(true);
+    word.setLeansOnEntryOfBody(false);
+    word.type = types.intern(types.at(word.type).withPrimitives(Primitive::Unspecified));
+    word.setExpected({ });
+    ValueID read = function.add(WTF::move(word));
+
+    Value& value = function.edit(id, ValueEdit::Definition);
+    value.becomeAssumeType(read, Proven::behindFact(value.type));
+    value.setFactOperand(fact);
+    return read;
+}
+
+// A function that is declared beside others lies in a field of the environment that it captures.
+static ValueID sameEnvironment(const Program& program, const Function& function, const TypeArena& types, ValueID value)
+{
+    while (true) {
+        value = sameObjectBehindFacts(function, value);
+        const Value& capture = function.at(value);
+        if (capture.opcode != Opcode::GetCapture)
+            return value;
+        const Value& closure = function.at(sameObjectBehindFacts(function, capture.closureOperand()));
+        if (closure.opcode != Opcode::GetEnvironmentField || closure.mayPrecedeItsStore() || types.at(capture.type).environment != closure.layout())
+            return value;
+        if (!flowOf(program, { closure.layout(), closure.field() }).location.holdsClosureOverOwnEnvironment)
+            return value;
+        value = closure.environmentOperand();
+    }
+}
+
+// A field that is stored before any function that captures the environment can run is stored wherever a function is entered with the environment, and what is stored stays stored.
+// A part of the function that makes the environment may be entered with it too: there a store stands in front of a call that flow has followed, and no read goes ahead of a store to what it reads.
+static bool leansOnEntryOfBody(const Program& program, const Function& function, const TypeArena& types, const Value& read)
+{
+    return flowOf(program, { read.layout(), read.field() }).location.isStoredBeforeCapturersRun
+        && function.at(entryBlock).parameters.contains(sameEnvironment(program, function, types, read.environmentOperand()));
+}
+
+void nameFactOfEntry(const Program& program, Function& function, TypeArena& types, std::span<const BlockID> blocks, ValueID fact, bool calleeIsPredicted)
+{
+    Vector<ValueID, 8> readsOfFields;
+    for (BlockID block : blocks) {
+        for (ValueID id : function.at(block).values) {
+            if (!takesFactOfEntry(program, function.at(id), calleeIsPredicted))
+                continue;
+            if (function.at(id).opcode == Opcode::GetModuleVariable)
+                function.edit(id).setFactOperand(fact);
+            else if (!calleeIsPredicted && leansOnEntryOfBody(program, function, types, function.at(id)))
+                function.edit(id).setLeansOnEntryOfBody(true);
+            else
+                readsOfFields.append(id);
+        }
+    }
+    if (readsOfFields.isEmpty())
+        return;
+
+    auto takesFact = [&](ValueID id) {
+        return readsOfFields.contains(id);
+    };
+    for (BlockID block : blocks) {
+        if (std::ranges::none_of(function.at(block).values, takesFact))
+            continue;
+        BlockValues values;
+        values.reserveInitialCapacity(function.at(block).values.size() + 1);
+        for (ValueID id : function.at(block).values) {
+            if (takesFact(id))
+                values.append(readWordAndAssumeInPlace(function, types, id, fact));
+            values.append(id);
+        }
+        function.edit(block, BlockEdit::Values).values = WTF::move(values);
+    }
+}
+
+void nameFactsWhereReadsStand(const Program& program, Function& function, TypeArena& types)
+{
+    if (function.inlineFrames.size() <= 1)
+        return;
+    auto needsFact = [&](ValueID id) {
+        const Value& value = function.at(id);
+        bool leansOnEntryOfBody = value.opcode == Opcode::GetEnvironmentField && value.leansOnEntryOfBody();
+        return value.inlineFrame && !leansOnEntryOfBody && holdsDeclaredTypeOnlyBehindEntry(program, function, value) && !namesFactOrGivesWordThatMayBeAnything(value);
+    };
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        BlockID block(index);
+        if (std::ranges::none_of(function.at(block).values, needsFact))
+            continue;
+        BlockValues values;
+        values.reserveInitialCapacity(function.at(block).values.size() + 2);
+        for (ValueID id : function.at(block).values) {
+            if (needsFact(id)) {
+                Value fact = IRBuilder::make(Opcode::Entered);
+                fact.setFunction(function.inlineFrames[function.at(id).inlineFrame].callee);
+                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
+                fact.setOrigin(function.at(id).origin());
+                ValueID entered = function.add(WTF::move(fact));
+                values.append(entered);
+                if (function.at(id).opcode == Opcode::GetModuleVariable)
+                    function.edit(id).setFactOperand(entered);
+                else
+                    values.append(readWordAndAssumeInPlace(function, types, id, entered));
+            }
+            values.append(id);
+        }
+        function.edit(block, BlockEdit::Values).values = WTF::move(values);
+    }
 }
 
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
@@ -1145,11 +1255,13 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
     }
     cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
         clone.inlineFrame += firstFrame;
-        if (entered && takesFactOfEntry(program, clone, calleeIsPredicted))
-            clone.setFactOperand(entered);
+        if (clone.opcode == Opcode::GetEnvironmentField)
+            clone.setLeansOnEntryOfBody(false);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
+    if (entered)
+        nameFactOfEntry(program, builder.function(), builder.types(), cloner.clonedBlocks(), entered, calleeIsPredicted);
 }
 
 // No program writes a construction in tail position. One that stands there begins the construction of the frame again, in place of the frame.

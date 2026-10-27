@@ -284,6 +284,21 @@ void AllocationEmitter::initializeHiddenFields(CellPointer cell, LayoutID layout
         m_out.store32As8(m_out.constInt32(0), m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), cell.value(), *isEscapedOffset));
 }
 
+Representation AllocationEmitter::representationWantedBy(const InitialField& field)
+{
+    return field.slot->representation == SlotRepresentation::DeferredClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
+}
+
+bool AllocationEmitter::isNarrowedWhereStored(const InitialField& field) const
+{
+    return representationOf(field.value) == Representation::Cell && representationWantedBy(field) == Representation::Cell32;
+}
+
+Operand AllocationEmitter::takeForSlot(const InitialField& field)
+{
+    return isNarrowedWhereStored(field) ? Operand(in<NarrowReference>(field.value)) : get(field.value);
+}
+
 void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, const InitialFields& initialFields)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
@@ -294,7 +309,7 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
             continue;
         MemoryLocation location = locationOfField(m_program, layout, field.field);
         if (field.slot->representation != SlotRepresentation::DeferredClosure)
-            slots.storeSlot(cell, *field.slot, location, get(field.value), nullptr, typeOf(field.value));
+            slots.storeSlot(cell, *field.slot, location, takeForSlot(field), nullptr, typeOf(field.value));
         else if (isDeferredClosure(m_function, field.value))
             m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, *field.slot, location));
         else
@@ -387,7 +402,7 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
         Pointer extension = slots.extensionOf(cell, extensionWord);
         for (const InitialField& field : initialFields) {
             if (field.slot->isOutOfLine())
-                slots.storeInExtension(extension, *field.slot, locationOfField(m_program, layout, field.field), get(field.value));
+                slots.storeInExtension(extension, *field.slot, locationOfField(m_program, layout, field.field), takeForSlot(field));
         }
     }
     if (barrier == OwnerBarrier::Emitted)
@@ -477,9 +492,9 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     BitVector isInitialField(layout.numberOfFields());
     for (const InitialField& field : initialFields) {
         bool defersClosure = field.slot->representation == SlotRepresentation::DeferredClosure;
-        Representation wanted = defersClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
+        Representation wanted = representationWantedBy(field);
         bool hasNoValue = defersClosure && isDeferredClosure(m_function, field.value);
-        if (!hasNoValue && representationOf(field.value) != wanted)
+        if (!hasNoValue && representationOf(field.value) != wanted && !isNarrowedWhereStored(field))
             return failWithoutCell(InternalErrorKind::WrongRepresentation);
         if (!field.slot->isOutOfLine())
             isInitialField.set(field.field);

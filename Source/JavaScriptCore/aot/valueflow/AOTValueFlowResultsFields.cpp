@@ -274,13 +274,13 @@ struct FieldResults {
     // For the layouts of literals that are born with copies: the keys that every object holds once its birth is over, sorted.
     KeysByLayout keysHeldSinceBirth { };
     BitVector isBornWithCopies { };
-    // What the last step of mayFindNameIn() asks of the members of a set: the same for every name but one.
-    struct KindsOfMembers {
-        ValueSetID objects;
-        bool mayHoldMoreUnderEveryKey { false };
-        bool holdsPrototypeObject { false };
-    };
     mutable SharedMemo<KindsOfMembers> kindsOfMembers { };
+    struct AnswersAboutObject {
+        OptionSet<Actor> open;
+        bool isMadeByRowThatNamesLayoutOrByOperation { false };
+    };
+    // For the layouts that have objects.
+    Vector<OptionSet<Actor>> actorsOpenOnObjectsOfLayouts { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
@@ -823,49 +823,23 @@ struct FieldResults {
 
     bool mayFindNameIn(ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key) const
     {
-        const ValueFlowUniverse& universe = inputs.universe();
-        if (ValueSets::isComplement(objects) || sets.meet(objects, universe.placeholdersAlone()))
-            return true;
-        const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
-        if (sets.meet(objects, members.holders) || sets.meet(objects, members.holdersOfUndeclaredProperties))
-            return true;
-        for (ValueFlowName name : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
-            if (heap.writtenUnder(maker, objects, name) != ValueSets::nothing)
-                return true;
-        }
-        KindsOfMembers kinds = kindsOfMembersOf(objects);
-        return kinds.mayHoldMoreUnderEveryKey || (kinds.holdsPrototypeObject && key == universe.builtinTables().heap().constructorKey());
-    }
-
-    KindsOfMembers findKindsOfMembersOf(ValueSetID objects) const
-    {
-        const ValueFlowUniverse& universe = inputs.universe();
-        KindsOfMembers kinds { objects };
-        sets.forEachMember(objects, [&](ValueFlowObjectID object) {
-            ValueFlowObjectKind kind = universe.kindOf(object);
-            if (kind == ValueFlowObjectKind::Site || kind == ValueFlowObjectKind::Instance) {
-                LayoutID layout = universe.layoutOf(object);
-                kinds.mayHoldMoreUnderEveryKey |= !layout || !hasObjectsThatCodeAlters(program.at(layout).kind) || inputs.classOf(object);
-            } else if (kind == ValueFlowObjectKind::Prototype)
-                kinds.holdsPrototypeObject = true;
-            else
-                kinds.mayHoldMoreUnderEveryKey |= kind != ValueFlowObjectKind::Builtin && kind != ValueFlowObjectKind::ModuleBuiltin;
+        return Typed::mayFindNameIn(inputs, heap, maker, objects, key, [&](ValueSetID members) {
+            return kindsOfMembersOf(members);
         });
-        return kinds;
     }
 
     KindsOfMembers kindsOfMembersOf(ValueSetID objects) const
     {
         AOT_THRESHOLD(size_t, fewestMembersToRemember, 8);
         if (sets.size(objects) < fewestMembersToRemember)
-            return findKindsOfMembersOf(objects);
+            return findKindsOfMembersOf(inputs, objects);
         uint32_t hash = IntHash<uint32_t>::hash(objects.index());
         auto isWanted = [&](const KindsOfMembers& known) {
             return known.objects == objects;
         };
         if (const KindsOfMembers* known = kindsOfMembers.find(hash, isWanted))
             return *known;
-        return kindsOfMembers.add(hash, findKindsOfMembersOf(objects), isWanted);
+        return kindsOfMembers.add(hash, findKindsOfMembersOf(inputs, objects), isWanted);
     }
 
     ValueSetID objectsAbove(ValueSetMaker& maker, LayoutID id, ValueSetID& above) const
@@ -875,22 +849,11 @@ struct FieldResults {
         return above;
     }
 
-    // Who has not accounted for the names on those of the objects that the program makes. For its own objects the table answers name by name.
-    OptionSet<Actor> actorsOpenOnNamesOfObjectsOfProgramAmong(ValueSetMaker& maker, ValueSetID objects) const
-    {
-        ValueSetID objectsOfProgram = maker.intersect(objects, ValueSets::complement(inputs.universe().builtinObjects()));
-        OptionSet<Actor> open = actorsOpenOn(inputs, objectsOfProgram);
-        // No row lists every name that its built-in puts on what it is handed.
-        if (sets.anyMember(objectsOfProgram, [&](ValueFlowObjectID object) { return markedMutationsOf(inputs, object).contains(ObjectMutation::ReachNativeCode); }))
-            open.add(Actor::NativeCode);
-        return open & actorsThatCanWrite(PlaceKind::Property);
-    }
-
     bool inheritsNothingUnder(ValueSetMaker& maker, LayoutID id, ValueSetID& above, PropertyKeyID key) const
     {
         if (program.isIndexLike(key) || stores.hasObjectOfCodeWithoutSolve(id) || stores.getsCopiedProperties(id) || mayFindNameIn(maker, objectsAbove(maker, id, above), key))
             return false;
-        if (!actorsOpenOnNamesOfObjectsOfProgramAmong(maker, above).isEmpty())
+        if (!actorsOpenOnNamesOfObjectsOfProgramAmong(inputs, maker, above).isEmpty())
             return false;
         RELEASE_ASSERT(tables.builtins.areFilled);
         bool mayGainName = false;
@@ -927,13 +890,11 @@ struct FieldResults {
     }
 
     // A row that answers with objects of a layout lays the fields that the layout lists and nothing else. An operation of the program makes the others.
-    bool isMadeByRowsThatNameLayout(ValueSetID objects) const
+    bool isMadeByRowThatNamesLayoutOrByOperation(ValueFlowObjectID object) const
     {
-        return !sets.anyMember(objects, [&](ValueFlowObjectID object) {
-            const ValueFlowSite* site = inputs.universe().siteOf(object);
-            bool isMadeByRowThatNamesLayout = site && site->origin == ValueFlowSiteOrigin::TypedResult;
-            return !isMadeByRowThatNamesLayout && !sets.contains(inputs.universe().builtinTables().heap().objectsWithoutPropertiesOfNativeCode(), object);
-        });
+        const ValueFlowSite* site = inputs.universe().siteOf(object);
+        bool isMadeByRowThatNamesLayout = site && site->origin == ValueFlowSiteOrigin::TypedResult;
+        return isMadeByRowThatNamesLayout || sets.contains(inputs.universe().builtinTables().heap().objectsWithoutPropertiesOfNativeCode(), object);
     }
 
     // What a built-in makes has from its makers the own names that the classes above it list.
@@ -945,15 +906,23 @@ struct FieldResults {
     }
 
     // Who has not accounted for the objects of a layout.
-    OptionSet<Actor> actorsOpenOnObjectsWith(LayoutID id) const
+    OptionSet<Actor> actorsOpenOnObjectsWith(LayoutID id) const { return actorsOpenOnObjectsOfLayouts[id.index()]; }
+
+    OptionSet<Actor> findActorsOpenOnObjectsWith(LayoutID id, std::span<const AnswersAboutObject> answers) const
     {
         constexpr OptionSet<Actor> makers { Actor::Creation, Actor::Table, Actor::NativeCode };
         ValueSetID objects = layoutsOfObjects.objectsWith(id);
-        OptionSet<Actor> open = actorsOpenOn(inputs, objects) & actorsThatCanWrite(PlaceKind::Field);
-        if (open.containsAny(makers) && (isMadeByRowsThatNameLayout(objects) || makerAboveClassesHasAccountedFor(id) || everyClassAboveListsOwnNames(objects)))
+        RELEASE_ASSERT(!ValueSets::isComplement(objects));
+        AnswersAboutObject all { { }, true };
+        sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+            all.open.add(answers[object.index()].open);
+            all.isMadeByRowThatNamesLayoutOrByOperation &= answers[object.index()].isMadeByRowThatNamesLayoutOrByOperation;
+        });
+        OptionSet<Actor> open = all.open & actorsThatCanWrite(PlaceKind::Field);
+        if (open.containsAny(makers) && (all.isMadeByRowThatNamesLayoutOrByOperation || makerAboveClassesHasAccountedFor(id) || everyClassAboveListsOwnNames(objects)))
             open.remove(makers);
         // No row describes the native code that holds an object.
-        if (sets.anyMember(objects, [&](ValueFlowObjectID object) { return inputs.isHeldByNativeCode(object); }))
+        if (sets.meet(objects, inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode))))
             open.add(Actor::NativeCode);
         // Nobody lists where the objects are made.
         if (application.layouts[id.index()].flow.allocationClasses.isEmpty())
@@ -964,6 +933,33 @@ struct FieldResults {
         if (stores.getsCopiedProperties(id))
             open.add(Actor::KeysNobodyKnows);
         return open;
+    }
+
+    // An object that takes its class from a prototype nobody knows is among the objects of every class that has escaped: each object is asked once, and each layout once.
+    void findActorsOpenOnObjects()
+    {
+        Vector<ValueSetID> objectsOfLayouts;
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+            if (hasObjects(LayoutID(index)) && layoutsOfObjects.objectsWith(LayoutID(index)) != ValueSets::nothing)
+                objectsOfLayouts.append(layoutsOfObjects.objectsWith(LayoutID(index)));
+        }
+        Vector<ValueFlowObjectID> objects;
+        {
+            BorrowedValueSetMaker maker(inputs.makerPool());
+            sets.forEachMember(maker.get().uniteAll(objectsOfLayouts.span()), [&](ValueFlowObjectID object) {
+                objects.append(object);
+            });
+        }
+        Vector<AnswersAboutObject> answers(inputs.universe().numberOfObjects());
+        forEachIndexInParallel(loops, objects.size(), [&](unsigned position) {
+            ValueFlowObjectID object = objects[position];
+            answers[object.index()] = { actorsOpenOn(inputs, object), isMadeByRowThatNamesLayoutOrByOperation(object) };
+        });
+        actorsOpenOnObjectsOfLayouts = Vector<OptionSet<Actor>>(numberOfLayouts);
+        forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
+            if (hasObjects(LayoutID(index)))
+                actorsOpenOnObjectsOfLayouts[index] = findActorsOpenOnObjectsWith(LayoutID(index), answers.span());
+        });
     }
 
     using WritesSeen = Vector<Write, 4>;
@@ -1931,6 +1927,8 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
     times.didFinish("fields: the rest of the initial orders"_s);
     results.followCopiesAtBirth(allocatingOperations.span());
     times.didFinish("fields: copies at birth"_s);
+    results.findActorsOpenOnObjects();
+    times.didFinish("fields: who is open on the objects of layouts"_s);
     ValueFlowFieldContents contents = results.computeDeclaredFields(allocatingOperations.span());
     allocatingOperations.clear();
     times.didFinish("fields: declared fields"_s);

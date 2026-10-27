@@ -1296,6 +1296,8 @@ private:
                 });
             }
         }
+        if (m_overload->code.implementation.inlineBuiltin == InlineBuiltin::OwnPropertyKeys && parameter.protocols.contains(Protocol::OwnKeys))
+            letMembersOfListedPrototypeObjectsOfLibraryClassesEscape(parameter.operand);
         if (parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused))
             describeRefusedOperands(parameter);
         if (parameter.protocols.contains(Protocol::Species))
@@ -1311,6 +1313,28 @@ private:
                 });
             }
         }
+    }
+
+    // The members of the prototype object of a library class are found by name alone. Whoever lists its own keys has every name.
+    void letMembersOfListedPrototypeObjectsOfLibraryClassesEscape(BuiltinOperand operand)
+    {
+        ClimbingSet prototypeObjects(m_universe.prototypeObjectsOfLibraryClasses());
+        ClimbingSet listed = m_context.restrict(valueAt(operand), m_universe.prototypeObjectsOfLibraryClasses());
+        forEachOperandAt(operand, [&](const ValueFlowOperand& passed) {
+            if (passed.node)
+                listed = m_context.unite(listed, m_context.valueWithin(prototypeObjects, passed.node));
+        });
+        if (holdsAnything(listed))
+            m_context.connect(m_context.readWhatWasWritten(listed, everyPropertyName), escaped());
+    }
+
+    bool isCalledByProgramCode() const
+    {
+        FunctionID function = m_call.operation && m_call.operation->function ? m_call.operation->function : m_context.functionOfStatement();
+        if (!function)
+            return false;
+        FunctionRole role = m_program.at(function).role;
+        return role != FunctionRole::Library && role != FunctionRole::Model;
     }
 
     void constructSpecies(BuiltinOperand operand)
@@ -1524,6 +1548,9 @@ private:
                 functor(m_context.lookup(m_context.restrict(objects, m_universe.placeholdersAlone()), prototypeLinkName));
             if (mayBeUnknownObject(objects))
                 functor(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances));
+            // The prototype objects of library classes above escaped instances are held apart. The modules of the run time list the keys of none.
+            if (mayBeUnknownObject(objects) && isCalledByProgramCode())
+                functor(heldPrototypeObjectsOfLibraryClasses(m_context));
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
             m_context.forEachMember(known(objects), [&](ValueFlowObjectID object) {

@@ -24,6 +24,7 @@
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeCounters.h"
@@ -1616,18 +1617,33 @@ void PropertyCaches::didFileNothing()
         *counter = 0;
 }
 
-bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, UniquedStringImpl* uid)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FirstAdditions);
+
+FirstAdditions::FirstAdditions(State& state)
+    : m_pairs(static_cast<uint32_t*>(state.pages.allocate(numberOfPairs * sizeof(uint32_t))), numberOfPairs)
 {
-    if (structure->id() == m_structureMadeForAdditionByKey)
+    state.caches->add(CacheKind::WeakByKey, "objects being filled"_s, *this);
+}
+
+FirstAdditions& firstAdditionsOf(State& state)
+{
+    if (!state.firstAdditions)
+        state.firstAdditions = makeUnique<FirstAdditions>(state);
+    return *state.firstAdditions;
+}
+
+bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl* uid)
+{
+    if (structure->id() == m_structureMade)
         return true;
     // A pair that came once has the highest bit set. One that came again has it clear: it is still found once nothing holds its Structure any more, until a newcomer takes its place. Zero stands for no pair.
     constexpr uint32_t cameOnce = 1u << 31;
     uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
-    constexpr uint32_t numberOfSets = numberOfFirstAdditionsByKey / firstAdditionsByKeyPerSet;
-    static_assert(hasOneBitSet(numberOfSets) && !(firstAdditionsByKeyPerSet % SIMD::stride<uint32_t>));
-    uint32_t* set = &m_firstAdditionsByKey[hash % numberOfSets * firstAdditionsByKeyPerSet];
+    constexpr uint32_t numberOfSets = numberOfPairs / pairsPerSet;
+    static_assert(hasOneBitSet(numberOfSets) && !(pairsPerSet % SIMD::stride<uint32_t>));
+    uint32_t* set = &m_pairs[hash % numberOfSets * pairsPerSet];
     auto findInSet = [&](auto matches) -> uint32_t* {
-        for (uint32_t* places = set; places < set + firstAdditionsByKeyPerSet; places += SIMD::stride<uint32_t>) {
+        for (uint32_t* places = set; places < set + pairsPerSet; places += SIMD::stride<uint32_t>) {
             if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(matches(SIMD::load(places))))
                 return places + *index;
         }
@@ -1639,7 +1655,7 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
     if (uint32_t* found = findInSet(holdsPair)) {
         // Newcomers take the lowest place that they may, so it moves above the free ones.
         *found = 0;
-        uint32_t* highestFree = set + firstAdditionsByKeyPerSet - 1;
+        uint32_t* highestFree = set + pairsPerSet - 1;
         while (*highestFree)
             --highestFree;
         *highestFree = hash & ~cameOnce;
@@ -1652,10 +1668,57 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
     if (!place) {
         // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
         m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;
-        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), firstAdditionsByKeyPerSet - 1);
+        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), pairsPerSet - 1);
     }
     *place = hash;
     return false;
+}
+
+// Nothing of a cacheable dictionary moves when it is made flat, and no cell is allocated.
+static void makeFlatWhatWasFilled(VM& vm, JSObject* object)
+{
+    if (!object)
+        return;
+    Structure* structure = object->structure();
+    if (!structure->isDictionary() || structure->isUncacheableDictionary() || structure->hasBeenFlattenedBefore())
+        return;
+    structure->flattenDictionaryStructure(vm, object);
+    structure->setHasBeenFlattenedBefore(false);
+}
+
+bool FirstAdditions::forget(JSObject* object)
+{
+    for (JSObject*& filled : m_objectsBeingFilled) {
+        if (filled == object) {
+            filled = nullptr;
+            return true;
+        }
+    }
+    return false;
+}
+
+void FirstAdditions::didBeginToFill(VM& vm, JSObject* object)
+{
+    makeFlatWhatWasFilled(vm, std::exchange(m_objectsBeingFilled[m_numberOfObjectsFilled++ % numberOfObjectsBeingFilled], object));
+    vm.aotState().hasObjectsBeingFilled = true;
+}
+
+void FirstAdditions::finishFilling(VM& vm)
+{
+    for (JSObject*& object : m_objectsBeingFilled)
+        makeFlatWhatWasFilled(vm, std::exchange(object, nullptr));
+}
+
+size_t FirstAdditions::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t numberOfDeadObjects = 0;
+    for (JSObject*& object : m_objectsBeingFilled) {
+        if (object && !vm.heap.isMarked(object)) {
+            object = nullptr;
+            ++numberOfDeadObjects;
+        }
+    }
+    return numberOfDeadObjects;
 }
 
 const Slot* PropertyCaches::findByKey(Structure* structure, UniquedStringImpl* uid, SlotAccess access)

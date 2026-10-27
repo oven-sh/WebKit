@@ -14,6 +14,7 @@
 #include "AOTFunctionDescription.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTIdentifierTable.h"
+#include "AOTModuleTable.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPlacementTestSupport.h"
 #include "AOTProgramTableEncoder.h"
@@ -527,6 +528,10 @@ static void printStatics(const TablesContext& context)
         RecordLine(context, "layout"_s).field("filledAtProgramEntry"_s, layout.sizeFilledAtProgramEntry).field("fromArrayProfileToLastArray"_s, layout.distanceFromArrayProfileToLastArray);
     for (const StaticsRun& run : tables.staticsRuns())
         RecordLine(context, "run"_s).field("firstWord"_s, run.firstWord).field("words"_s, run.numberOfWords).hex("bits"_s, run.bits());
+    for (const StaticsOfFile& file : tables.staticsOfFiles())
+        RecordLine(context, "file"_s).field("module"_s, file.module).field("firstWord"_s, file.firstWord).field("words"_s, file.numberOfWords).field("firstImportedFile"_s, file.firstImportedFile);
+    for (uint32_t file : tables.staticsOfImportedFiles())
+        RecordLine(context, "importedFile"_s).field("file"_s, file);
     for (const StaticsRange& range : tables.staticsRoots())
         RecordLine(context, "roots"_s).field("offset"_s, range.offset).field("size"_s, range.size);
     for (const StaticsRange& range : tables.staticsNarrowRoots())
@@ -666,6 +671,22 @@ static void printModules(const TablesContext& context)
     ModuleNumbers evaluationRequests(tables.evaluationRequests(), tables.modules().size());
     for (uint32_t index = 0; index < evaluationRequests.size(); ++index)
         RecordLine(context, "evaluationRequest"_s, index).field("target"_s, ModuleID(evaluationRequests[index]));
+    ModuleTable table(tables);
+    for (uint32_t index = 0; index < table.size(); ++index) {
+        if (!table.data(ModuleID(index)).isESModuleOfProgram())
+            continue;
+        ModuleID head = table.headOfLoadGroup(ModuleID(index));
+        if (head.index() != index) {
+            RecordLine(context, "loadedTogether"_s).field("module"_s, ModuleID(index)).field("head"_s, head);
+            continue;
+        }
+        ModuleNumbers loadedWithIt = table.groupsLoadedWith(head);
+        if (loadedWithIt.empty())
+            continue;
+        RecordLine(context, "groupsLoadedWith"_s).field("head"_s, head).list("heads"_s, loadedWithIt, [&](uint32_t module) {
+            context.printer.print(ModuleID(module));
+        });
+    }
     for (const LinkPlanStepData& step : tables.entryPointLinkPlan())
         RecordLine(context, "linkPlanStep"_s).field("module"_s, step.targetModule()).flag("resolvesNames"_s, step.resolvesNames);
     for (const LinkPlanRootData& root : tables.linkPlanRoots()) {

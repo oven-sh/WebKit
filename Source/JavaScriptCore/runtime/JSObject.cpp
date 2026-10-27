@@ -2324,6 +2324,11 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     VM& vm = globalObject->vm();
 
+#if ENABLE(AOT)
+    if (vm.aotState().hasObjectsBeingFilled) [[unlikely]]
+        AOT::RuntimeHooks::finishFillingObjects(vm);
+#endif
+
     // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
     if (thisObject->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);

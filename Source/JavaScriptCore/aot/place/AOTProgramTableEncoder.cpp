@@ -2338,7 +2338,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));
     RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
-    entry.referrerOrRuntimeModule = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
+    entry.referrerRuntimeModuleOrLoadGroup = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
     if (module.exportsVariable)
         entry.value = placedVariableSlot(encoder, module.exportsVariable);
     else if (encoder.placement.hasModuleValue(id))
@@ -2608,6 +2608,10 @@ void encodeModuleTables(TableEncoder& encoder)
     if (plannedEntryPoint)
         entryPointLinkPlan = planLinkOfEntryPoint(lists.modules.mutableSpan(), lists.requests.span(), *plannedEntryPoint);
     LinkPlansOfRoots linkPlansOfRoots = planLinksOfRoots(lists.modules.mutableSpan(), lists.requests.span(), encoder.inputs.bodyFacts.importSites.span(), plannedEntryPoint);
+    Vector<ModuleImportSite> sitesThatAskRunTime = encoder.inputs.bodyFacts.importSites;
+    for (const RequireEdge& edge : encoder.placement.requireEdges())
+        sitesThatAskRunTime.append(ModuleImportSite { edge.referrer.index(), edge.target.index() });
+    Vector<uint32_t> groupsLoadedWithGroups = groupModulesLoadedTogether(lists.modules.mutableSpan(), lists.requests.span(), sitesThatAskRunTime.span());
     Vector<uint32_t> modulesOfUncompiledCode;
     for (uint32_t index = 0; index + 1 < lists.modules.size(); ++index) {
         if (lists.modules[index].isUncompiledCode())
@@ -2620,6 +2624,7 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::moduleRequests, lists.requests);
     encoder.setTable(ProgramTableIndex::linkRequests, encodeModuleNumbers(encoder, contracted.linkRequests));
     encoder.setTable(ProgramTableIndex::evaluationRequests, encodeModuleNumbers(encoder, contracted.evaluationRequests));
+    encoder.setTable(ProgramTableIndex::groupsLoadedWithGroups, encodeModuleNumbers(encoder, groupsLoadedWithGroups));
     encoder.setTable(ProgramTableIndex::entryPointLinkPlan, entryPointLinkPlan);
     encoder.setTable(ProgramTableIndex::linkPlanRoots, linkPlansOfRoots.roots);
     encoder.setTable(ProgramTableIndex::linkPlanStepsOfRoots, linkPlansOfRoots.steps);

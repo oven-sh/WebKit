@@ -38,11 +38,14 @@ static constexpr uint32_t imageFormatVersion = 2;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
+static constexpr size_t sizeOfInstructionCacheLine = 64;
+// On x86-64. On arm64 a loop turns as fast in two lines as in one.
+static constexpr bool keepsSmallLoopsInLines = isX86_64();
 static constexpr size_t imageSectionAlignment = 16;
 static constexpr size_t imageConstantsAlignment = 16;
 static constexpr size_t imageFFIDirectoryAlignment = 4;
 constexpr uint32_t alignmentOfConstant(size_t size) { return static_cast<uint32_t>(std::min(imageConstantsAlignment, size_t { 1 } << std::countr_zero(size))); }
-static_assert(!(imagePageSize % imageSectionAlignment));
+static_assert(!(imagePageSize % imageSectionAlignment) && !(imagePageSize % sizeOfInstructionCacheLine));
 
 static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);

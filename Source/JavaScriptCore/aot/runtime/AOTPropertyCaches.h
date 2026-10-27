@@ -321,10 +321,6 @@ public:
     void countNamed(ASCIILiteral what, UniquedStringImpl* name);
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
-    // A store by key is about to give an object of the Structure a name that no object of it has been given. A Structure is made for what comes again: the first such object becomes a dictionary,
-    // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
-    bool shouldMakeStructureForAdditionByKey(Structure*, UniquedStringImpl*);
-    void didMakeStructureForAdditionByKey(Structure* made) { m_structureMadeForAdditionByKey = made->id(); }
     // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
     bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
@@ -357,8 +353,6 @@ private:
     static constexpr uint32_t bitsOfMissCount = 2;
     static constexpr uint32_t missesBeforeFiling = 2;
     static constexpr uint32_t storeMissesBeforeFiling = 1;
-    static constexpr uint32_t numberOfFirstAdditionsByKey = 1 << 12;
-    static constexpr uint32_t firstAdditionsByKeyPerSet = 8;
 
     void ensureChangesAreReported(std::span<JSObject* const>);
     bool canCache(Structure*, const PropertyAnswer&) const;
@@ -384,9 +378,6 @@ private:
     JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
-    std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
-    uint32_t m_evictionSeed { 0 };
-    StructureID m_structureMadeForAdditionByKey;
     StructureID m_structureOfLastFieldCreatedOutsideStubs;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
@@ -394,6 +385,40 @@ private:
 };
 
 static_assert(RowDisplacementTable::maxColumn <= UINT16_MAX);
+
+// Which names objects were given that no object of their Structure had been given before. A State makes it when it is first asked for.
+class FirstAdditions {
+    WTF_MAKE_NONCOPYABLE(FirstAdditions);
+    WTF_MAKE_TZONE_ALLOCATED(FirstAdditions);
+public:
+    explicit FirstAdditions(State&);
+
+    // An object of the Structure is about to be given a name that no object of it has been given. A Structure is made for what comes again: the first such object becomes a dictionary,
+    // and the next one that is given the same name there, and whatever it is given behind that, makes Structures.
+    bool shouldMakeStructure(Structure*, UniquedStringImpl*);
+    void didMakeStructure(Structure* made) { m_structureMade = made->id(); }
+    // The object has become a dictionary for the names that it is given now. It is made flat when as many other objects have followed it as are remembered, when the code that fills it has returned to the event loop,
+    // or when somebody asks what its Structure says.
+    void didBeginToFill(VM&, JSObject*);
+    void finishFilling(VM&);
+    // Whether the object was being filled. It is so no longer.
+    bool forget(JSObject*);
+    size_t removeDeadEntries(VM&, CollectionScope);
+
+private:
+    static constexpr uint32_t numberOfPairs = 1 << 12;
+    static constexpr uint32_t pairsPerSet = 8;
+    static constexpr uint32_t numberOfObjectsBeingFilled = 8;
+
+    // Pages that are zero until they are written.
+    std::span<uint32_t, numberOfPairs> m_pairs;
+    uint32_t m_evictionSeed { 0 };
+    StructureID m_structureMade;
+    std::array<JSObject*, numberOfObjectsBeingFilled> m_objectsBeingFilled { };
+    uint32_t m_numberOfObjectsFilled { 0 };
+};
+
+FirstAdditions& firstAdditionsOf(State&);
 
 } } // namespace JSC::AOT
 

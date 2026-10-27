@@ -1907,6 +1907,11 @@ void VM::drainMicrotasks()
     if (m_drainMicrotaskDelayScopeCount) [[unlikely]]
         return;
 
+#if ENABLE(AOT)
+    if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
+        AOT::RuntimeHooks::finishFillingObjects(*this);
+#endif
+
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue->clear();
     else {

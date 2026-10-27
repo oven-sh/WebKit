@@ -684,6 +684,16 @@ static bool keepsNoBitsOfNumber(const Terminator& terminator, uint32_t)
     return terminator.kind == TerminatorKind::Switch;
 }
 
+static bool writesNumberIntoBytes(const Value& value)
+{
+    return value.opcode == Opcode::PutTypedArrayElement || (value.opcode != Opcode::GetTypedArrayElement && readsDoubleOutOfBytes(value));
+}
+
+static bool writesNumberIntoBytes(const Terminator& terminator)
+{
+    return readsDoubleOutOfBytes(terminator);
+}
+
 template<typename User>
 static bool takesAnyNaN(const User& user, uint32_t operandIndex)
 {
@@ -712,15 +722,16 @@ static Representation formOfDoubleMadeBy(const RepresentationInputs& inputs, con
     Representation form = Representation::Double;
     if (!handsBitsOfNaNOnToResult(user))
         return form;
+    bool takesMarker = false;
     user.forEachOperand([&](ValueID operand, uint32_t) {
         Representation chosen = inputs.function.at(operand).representation;
         if (holdsAnyNaN(chosen))
             form = std::max(form, chosen);
         // An operator takes undefined as its marker, which is a NaN.
         else if (computesWithNumbers(user) && !inputs.typeOf(operand).isNumber())
-            form = std::max(form, Representation::DoubleWithPayload);
+            takesMarker = true;
     });
-    return form;
+    return takesMarker ? Representation::DoubleWithPayload : form;
 }
 
 template<typename User>
@@ -733,7 +744,15 @@ static Representation wantedByUser(const RepresentationInputs& inputs, const Use
     bool takesDouble = wanted == Representation::Double || wanted == Representation::Unchosen;
     if (!operand || !takesDouble || convertsOperand(user) || !holdsAnyNaN(inputs.function.at(operand).representation))
         return wanted;
-    return takesAnyNaN(user, operandIndex) ? inputs.function.at(operand).representation : Representation::Double;
+    Representation chosen = inputs.function.at(operand).representation;
+    if (!takesAnyNaN(user, operandIndex))
+        return Representation::Double;
+    // The payload of the marker reaches no bytes, and nothing that is kept as bits out of bytes.
+    if (writesNumberIntoBytes(user))
+        return chosen == Representation::DoubleWithPayload ? Representation::Double : chosen;
+    if (!handsBitsOfNaNOnToResult(user))
+        return chosen;
+    return chosen == formOfDoubleMadeBy(inputs, user) ? chosen : Representation::Double;
 }
 
 Representation wantedRepresentationOf(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)

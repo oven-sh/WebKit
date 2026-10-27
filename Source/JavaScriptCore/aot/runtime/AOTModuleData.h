@@ -75,8 +75,9 @@ struct ModuleData {
     SyntheticExportRule exportRule : 2;
     RequireResult requireResult : 2;
     Number24 body;
-    // Of a module outside the image: the module that names it. Of a module of the library: its number in the host's registry. No other module has either.
-    Number24 referrerOrRuntimeModule;
+    // Of a module outside the image: the module that names it. Of a module of the library: its number in the host's registry.
+    // Of an ES module of the program: the head of its group, if that is another module. Of a head: the number of modules and the place of its list in ProgramTables::groupsLoadedWithGroups(), if it has one.
+    Number24 referrerRuntimeModuleOrLoadGroup;
     Number24 firstRequest;
     Number24 firstExport;
     Number24 firstSyntheticExport;
@@ -87,10 +88,9 @@ struct ModuleData {
     uint8_t loadedByLoader : 1;
     uint8_t faceOfFile : 1;
     uint8_t importedByModule : 1;
-    uint8_t firstEntryPoint : 1;
-    uint8_t loadedWithFirstEntryPoint : 1;
     uint8_t importedWhileItRuns : 1;
-    uint8_t unusedBits : 1;
+    uint8_t beginsLoads : 1;
+    uint8_t unusedBits : 2;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -114,10 +114,8 @@ struct ModuleData {
     bool isFaceOfFile() const { return faceOfFile; }
     // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
     bool isImportedByModule() const { return importedByModule; }
-    // The entry point that the program starts with.
-    bool isFirstEntryPoint() const { return firstEntryPoint; }
-    // A graph of imports leads to it from that entry point: whoever loads the one loads the other.
-    bool isLoadedWithFirstEntryPoint() const { return loadedWithFirstEntryPoint; }
+    // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().
+    bool mayBeginLoad() const { return beginsLoads; }
     // A CommonJS file that leads by a require() to an ES module that imports it. No code of the image takes what a require() of it answers for what the file exports.
     bool mayBeImportedWhileItRuns() const { return importedWhileItRuns; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
@@ -128,6 +126,7 @@ struct ModuleData {
     bool hasLinkPlan() const { return isEntryPoint() && isLinkedWithEntryPoint(); }
 
     bool hasExportTable() const;
+    bool isESModuleOfProgram() const { return kind == ModuleKind::SourceText && !isOfLibrary(); }
     bool isUncompiledCode() const { return kind == ModuleKind::External && externalKind == ExternalKind::UncompiledCode; }
     bool isHostValue() const { return kind == ModuleKind::External && externalKind == ExternalKind::HostValue; }
     bool capturesExports() const;
@@ -136,10 +135,10 @@ struct ModuleData {
     bool holdsNamespaceInValue() const { return hasValue() && (hasExportTable() || isUncompiledCode()); }
 
     std::optional<FunctionID> bodyFunction() const { return optionalIDInImage<FunctionID>(body); }
-    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
+    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
     // Of a text that the program evaluates: the file that evaluates it.
-    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs ? std::nullopt : optionalIDInImage<uint32_t>(referrerOrRuntimeModule); }
+    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs || isESModuleOfProgram() ? std::nullopt : optionalIDInImage<uint32_t>(referrerRuntimeModuleOrLoadGroup); }
 };
 
 inline bool ModuleData::hasExportTable() const
@@ -397,6 +396,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(moduleRequests, ModuleRequestData) \
     v(linkRequests, uint16_t) \
     v(evaluationRequests, uint16_t) \
+    v(groupsLoadedWithGroups, uint16_t) \
     v(entryPointLinkPlan, LinkPlanStepData) \
     v(linkPlanRoots, LinkPlanRootData) \
     v(linkPlanStepsOfRoots, LinkPlanStepData) \

@@ -213,6 +213,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTArrayTests.cpp
     aot/tests/AOTArrivalCountTests.cpp
     aot/tests/AOTAssignmentPlanTests.cpp
+    aot/tests/AOTB3Dump.cpp
     aot/tests/AOTB3HeapTests.cpp
     aot/tests/AOTB3PolicyTests.cpp
     aot/tests/AOTBackEndPhaseTests.cpp
