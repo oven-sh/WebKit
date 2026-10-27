@@ -1,2 +1,4 @@
 # Written by ../module-load-failed-fetch-keeps-concurrent-load.js, one file per run.
 module-load-failed-fetch-*.generated.js
+# Written by ../module-load-failed-before-evaluation-is-loaded-again.js, some files per run.
+module-load-failed-before-evaluation-*.generated.js

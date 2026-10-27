@@ -1123,6 +1123,11 @@ static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, Thr
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue))
             JSModuleLoader::attachErrorInfo(globalObject, error, nullptr, entry->key(), entry->moduleType(), JSModuleLoader::ModuleFailure::Kind::Instantiation);
         entry->setFetchError(globalObject, errorValue);
+#if USE(BUN_JSC_ADDITIONS)
+        // Not left for the next load by name to remove (JSModuleLoader::removeFailedFetchEntry()): a static import of
+        // the key fetches again as well.
+        entry->failLoad(globalObject, errorValue);
+#endif
         modulePromise->reject(vm, errorValue);
     }
 }
@@ -1153,7 +1158,11 @@ static void moduleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm, st
         modulePromise->fulfill(vm, moduleRecord);
     } else {
         JSValue errorValue = arguments[1];
+#if USE(BUN_JSC_ADDITIONS)
+        entry->failMakeModule(globalObject, errorValue);
+#else
         entry->setEvaluationError(globalObject, errorValue);
+#endif
         modulePromise->reject(vm, errorValue);
     }
 }
@@ -1195,6 +1204,11 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             context->module(vm, module);
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+                // As when loadRequestedModules() rejects, below.
+                if (Exception* exception = scope.exception(); !vm.isTerminationException(exception))
+                    context->entry()->failLoad(globalObject, exception->value());
+#endif
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
             }
@@ -1249,7 +1263,12 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             // onRejected logic: store evaluation error on entry
             auto* entry = context->entry();
             JSValue errorValue = arguments[1];
+#if USE(BUN_JSC_ADDITIONS)
+            // A module that this one requests did not load: this one was not loaded either.
+            entry->failLoad(globalObject, errorValue);
+#else
             entry->setEvaluationError(globalObject, errorValue);
+#endif
             loadPromise->reject(vm, errorValue);
         }
         return;
@@ -1304,8 +1323,20 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         // From here on the load has the entry that holds its key: the one it joined, the one it registers now, or one
         // that another load registered while this one fetched.
         ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
-        if (context->entry() != entry)
+        if (context->entry() != entry) {
+            if (ModuleRegistryEntry* joined = context->entry()) {
+                if (JSValue error = joined->failedLoadError()) {
+                    // The entry that the load joined is out of the registry because its own load failed
+                    // (ModuleRegistryEntry::failLoad()). This load fails with it. It does not provide for the key
+                    // again with the source of the load that failed.
+                    if (entry->status() == ModuleRegistryEntry::Status::New)
+                        context->loader()->unregisterFailedLoad(vm, entry, error);
+                    intermediatePromise->reject(vm, error);
+                    return;
+                }
+            }
             context->setEntry(vm, entry);
+        }
         // As JSModuleLoader::provideFetch().
         if (entry->status() == ModuleRegistryEntry::Status::New) {
             entry->provideFetch(globalObject, moduleData);
@@ -1371,19 +1402,17 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         intermediatePromise->pipeFrom(vm, combinedPromise);
     } else {
         // onFetchRejected logic
+        JSValue errorValue = arguments[1];
+        // Bun: nothing was fetched, so no module of the key ran. The key is not registered with the error, whatever
+        // module the error is of: the next load of the key fetches again.
+#if !USE(BUN_JSC_ADDITIONS)
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
-        JSValue errorValue = arguments[1];
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
-#if USE(BUN_JSC_ADDITIONS)
-            // This load has no entry. One that holds its key is another load's, and is not where this error goes.
-            if (failure.isEvaluationError(specifier, type) && !context->loader()->getRegisteredMayBeNull(specifier, type)) {
-#else
             if (failure.isEvaluationError(specifier, type)) {
-#endif
                 ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
@@ -1392,6 +1421,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
                 entry->setEvaluationError(globalObject, error);
             }
         }
+#endif
         intermediatePromise->reject(vm, errorValue);
     }
 }
@@ -1409,9 +1439,10 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         resultPromise->fulfill(vm, arguments[1]);
     else {
 #if USE(BUN_JSC_ADDITIONS)
-        // The load's own entry, if it has one: an entry that the key holds by now can be another load's. A load whose
-        // fetch failed has none, unless it joined one, and that one holds the fetch error already.
-        if (ModuleRegistryEntry* entry = context->entry())
+        // The load's own entry, if it has one: an entry that the key holds by now can be another load's. What is stored
+        // is a link or an evaluation error. A load that failed before its module was loaded is dealt with where it
+        // failed (ModuleRegistryEntry::failLoad()), and a load that joined this entry can fail on its own.
+        if (ModuleRegistryEntry* entry = context->entry(); entry && entry->isModuleLoaded())
 #else
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
@@ -1578,7 +1609,10 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
 #if USE(BUN_JSC_ADDITIONS)
+        // As in moduleLoadTopRejected.
         ModuleRegistryEntry* entry = context->entry();
+        if (entry && !entry->isModuleLoaded())
+            return;
 #else
         ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
 #endif

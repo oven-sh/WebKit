@@ -897,8 +897,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #endif
                         mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
                         modulePromise->fulfillPromise(vm, makePromise->result());
-                    } else if (makePromise->status() == JSPromise::Status::Rejected)
+                    } else if (makePromise->status() == JSPromise::Status::Rejected) {
+                        // As moduleRegistryModuleSettled, whose turn this is.
+                        mapEntry->failMakeModule(globalObject, makePromise->result());
                         modulePromise->rejectPromise(vm, makePromise->result());
+                    }
                 }
                 // The reactions above were diverted to the sync queue but
                 // haven't *run* yet — they'll run when the caller's
@@ -955,7 +958,15 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         // Per "fetch the descendants of a module script", the referrer is the referring module's base URL.
         if (!promise)
             promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), moduleRequest.m_attributes, scriptFetcher);
+#if USE(BUN_JSC_ADDITIONS)
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            // The hook threw. Nothing was fetched for the entry, and nothing will be: it does not stay behind as New.
+            unregisterFailedLoad(vm, mapEntry, exception->value());
+            return nullptr;
+        }
+#else
         RETURN_IF_EXCEPTION(scope, nullptr);
+#endif
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
@@ -1034,6 +1045,16 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
         //  fast for the common already-seen case before we pay for the dyncast.)
         if (!state->containsVisited(module)) {
             if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
+#if USE(BUN_JSC_ADDITIONS)
+                // The load of this record's entry has failed, and the entry is out of the registry (unregisterFailedLoad()).
+                // An importer still names the record. It is not loaded again: what it requests would be resolved and
+                // registered for a module that no key holds.
+                if (m_hasUnregisteredRecord && cyclic->evaluationError()) [[unlikely]] {
+                    state->appendVisited(vm, cyclic);
+                    failGraphOfUnregisteredRecord(vm, state);
+                    break;
+                }
+#endif
                 // 2.a. Append module to state.[[Visited]].
                 state->appendVisited(vm, cyclic);
 #if ENABLE(AOT)
@@ -1117,6 +1138,10 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
         if (!state->pendingModulesCount()) {
             // 5.a. Set state.[[IsLoading]] to false.
             state->setIsLoading(false);
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_hasUnregisteredRecord && failGraphOfUnregisteredRecord(vm, state)) [[unlikely]]
+                break;
+#endif
             // 5.b. For each Cyclic Module Record loaded of state.[[Visited]], do
             state->iterateVisited([](CyclicModuleRecord* loaded) {
                 // 5.b.i. If loaded.[[Status]] is NEW, set loaded.[[Status]] to UNLINKED.
@@ -1224,6 +1249,10 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
             state->setPendingModulesCount(state->pendingModulesCount() - 1);
             if (!state->pendingModulesCount()) {
                 state->setIsLoading(false);
+#if USE(BUN_JSC_ADDITIONS)
+                if (m_hasUnregisteredRecord && failGraphOfUnregisteredRecord(vm, state)) [[unlikely]]
+                    RELEASE_AND_RETURN(scope, void());
+#endif
                 state->iterateVisited([](CyclicModuleRecord* loaded) {
                     if (loaded->status() == CyclicModuleRecord::Status::New)
                         loaded->setStatus(CyclicModuleRecord::Status::Unlinked);
@@ -1438,6 +1467,58 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
     m_moduleMap.remove(iter);
     didRemoveModuleMapEntry(moduleMapKey.second);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSModuleLoader::unregisterFailedLoad(VM& vm, ModuleRegistryEntry* entry, JSValue error)
+{
+    ASSERT(!entry->isModuleLoaded());
+    ASSERT(!entry->record() || !entry->record()->isPrelinked());
+    UniquedStringImpl* key = entry->key().impl();
+    ModuleMapKey moduleMapKey { key, entry->moduleType() };
+    auto iter = m_moduleMap.find(moduleMapKey);
+    if (iter == m_moduleMap.end() || iter->value.get() != entry)
+        return;
+
+    // A record that is not loaded is a Cyclic Module Record that is New (ModuleRegistryEntry::isModuleLoaded()).
+    auto* record = entry->record() ? uncheckedDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+    if (record) {
+        record->setEvaluationError(vm, error);
+        m_hasUnregisteredRecord = true;
+    }
+
+    Locker locker { cellLock() }; // visitChildren iterates these
+    m_moduleMap.remove(iter);
+    didRemoveModuleMapEntry(moduleMapKey.second);
+    // The next load of the key resolves what this one could not.
+    m_resolutionFailures.removeIf([&](auto& failure) { return failure.key.first == key; });
+    if (!record)
+        return;
+    // A load by name that joined this one has put the record there (hostLoadImportedModule()), and hostLoadImportedModule()
+    // relies on the realm's [[LoadedModules]] holding only what the registry holds.
+    m_loadedModules.removeIf([&](auto& loaded) { return loaded.value.m_module.get() == record; });
+}
+
+// A record is taken up by every graph that reaches it while it is New (innerModuleLoading()), and not only by the load of
+// its own entry. When that load fails, unregisterFailedLoad() takes the entry out of the registry, so the next load of the
+// key makes another record. None of the graphs that hold the first record may go on to link and run it then: a graph that
+// is done loading fails with the error that the record was left with. Returns whether it did.
+bool JSModuleLoader::failGraphOfUnregisteredRecord(VM& vm, ModuleGraphLoadingState* state)
+{
+    JSValue error;
+    state->iterateVisited([&](CyclicModuleRecord* visited) {
+        if (!error && visited->status() == CyclicModuleRecord::Status::New)
+            error = visited->evaluationError();
+    });
+    if (!error)
+        return false;
+    state->setIsLoading(false);
+#if ENABLE(AOT)
+    AOT::ModuleRecord::didFailToLoad(*state);
+#endif
+    state->promise()->reject(vm, error);
+    return true;
+}
+#endif
 
 #if ENABLE(AOT)
 void JSModuleLoader::removeEntryOfRecord(AbstractModuleRecord* record)

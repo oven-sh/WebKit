@@ -102,10 +102,33 @@ public:
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
+
+    // record()'s requested modules are loaded, or it has none. What fails from then on is a link or an evaluation
+    // error, and stays the answer for the key.
+    bool isModuleLoaded() const;
+    // The error of a load of this entry that failed before that, if there is one.
+    JSValue failedLoadError() const
+    {
+        JSValue error = m_error.get();
+        return error && !isModuleLoaded() ? error : JSValue();
+    }
+    // The load of this entry failed before its module was loaded, so the module was never linked and never ran. The
+    // entry keeps the error for the loads that hold it, and leaves the registry (JSModuleLoader::unregisterFailedLoad()):
+    // the next load of the key starts with a fetch. Two kinds of entry stay. One whose record the host made or
+    // registered with others (hostOwnsRecord()) stays with the error, as before. One whose record another graph has
+    // loaded in the meantime stays as the entry of a loaded module.
+    void failLoad(JSGlobalObject*, JSValue error);
+    // makeModule() rejected for what the fetch gave.
+    void failMakeModule(JSGlobalObject*, JSValue error);
 #endif
 
 private:
     ModuleRegistryEntry(VM&, Structure*, JSModuleLoader*, Identifier key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher>);
+
+#if USE(BUN_JSC_ADDITIONS)
+    JSSourceCode* fetchedSource() const;
+    bool hostOwnsRecord() const;
+#endif
 
     void finishCreation(VM&);
 
@@ -123,6 +146,9 @@ private:
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
+    // The load of this entry failed after another graph had loaded record(): what a load reports from then on is not
+    // stored as the module's error (failLoad()).
+    bool m_isLoadedByAnotherGraph { false };
 #endif
 };
 

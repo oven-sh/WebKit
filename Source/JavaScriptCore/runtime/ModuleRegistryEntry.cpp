@@ -206,6 +206,10 @@ void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JS
     ASSERT(error);
     if (m_status == Status::FetchFailed)
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isLoadedByAnotherGraph)
+        return; // failLoad()
+#endif
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::InstantiationFailed);
@@ -216,6 +220,10 @@ void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSVal
     ASSERT(error);
     if (m_status == Status::FetchFailed)
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isLoadedByAnotherGraph)
+        return; // failLoad()
+#endif
     VM& vm = globalObject->vm();
     m_error.set(vm, this, error);
     setStatus(Status::EvaluationFailed);
@@ -277,6 +285,68 @@ JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
         m_loadPromise.set(vm, this, promise);
     }
     return m_loadPromise.get();
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+bool ModuleRegistryEntry::isModuleLoaded() const
+{
+    if (!m_record)
+        return false;
+    auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get());
+    return !cyclic || cyclic->status() != CyclicModuleRecord::Status::New;
+}
+
+// The source that the host fetched for the loader to make the module from, if that is what the fetch gave.
+JSSourceCode* ModuleRegistryEntry::fetchedSource() const
+{
+    if (!m_fetchPromise || m_fetchPromise->status() != JSPromise::Status::Fulfilled)
+        return nullptr;
+    return dynamicDowncast<JSSourceCode>(m_fetchPromise->result());
+}
+
+// The host gave the record itself (provideModule(), or a record as the result of the fetch), and gives the same one to the
+// next load. Or the record is of the host's pre-resolved graph: the host registers the records of such a graph together,
+// and those below this one have no load of their own that would take them out with it.
+bool ModuleRegistryEntry::hostOwnsRecord() const
+{
+    return m_record && (m_record->isPrelinked() || !fetchedSource());
+}
+
+void ModuleRegistryEntry::failLoad(JSGlobalObject* globalObject, JSValue error)
+{
+    VM& vm = globalObject->vm();
+    if (hostOwnsRecord()) {
+        setEvaluationError(globalObject, error);
+        return;
+    }
+    if (isModuleLoaded()) {
+        // Another graph took the record up while this load was in flight (JSModuleLoader::hostLoadImportedModule()) and
+        // has finished loading it. The module may be linked or running by now, so it stays the module of its key. It is
+        // loaded, and the error of this load is not an error of the module: the loads that wait for this one get the
+        // error from its promise, and the next load gets the module.
+        JSPromise* loaded = JSPromise::create(vm, globalObject->promiseStructure());
+        loaded->markAsHandled();
+        loaded->fulfill(vm, m_record.get());
+        m_loadPromise.set(vm, this, loaded);
+        m_isLoadedByAnotherGraph = true;
+        return;
+    }
+    setEvaluationError(globalObject, error);
+    m_loader->unregisterFailedLoad(vm, this, error);
+}
+
+void ModuleRegistryEntry::failMakeModule(JSGlobalObject* globalObject, JSValue error)
+{
+    // makeModule() can run code of the module. A synthetic source generates its exports there, which for Bun is the body
+    // of a CommonJS module, and a record that the host made can do the same. A body that ran is not run again: its error
+    // stays, like the error of a module that threw in Evaluate().
+    JSSourceCode* source = fetchedSource();
+    if (!source || source->sourceCode().provider()->sourceType() == SourceProviderSourceType::Synthetic) {
+        setEvaluationError(globalObject, error);
+        return;
+    }
+    failLoad(globalObject, error);
 }
 #endif
 

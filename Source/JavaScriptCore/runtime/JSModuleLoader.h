@@ -271,6 +271,13 @@ public:
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     void removeFailedFetchEntry(ModuleRegistryEntry*);
+#if USE(BUN_JSC_ADDITIONS)
+    // For ModuleRegistryEntry::failLoad(): the entry leaves the registry, with what else the loader keeps of its load
+    // (the resolution failures of its module, the realm's [[LoadedModules]] record, the prelinked slot). Nothing
+    // happens when the key holds another entry by now. A record the entry has is left with the error: no graph that
+    // took the record up may link it (failGraphOfUnregisteredRecord()).
+    void unregisterFailedLoad(VM&, ModuleRegistryEntry*, JSValue error);
+#endif
 #if ENABLE(AOT)
     void removeEntryOfRecord(AbstractModuleRecord*);
 #endif
@@ -284,6 +291,7 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
+    bool failGraphOfUnregisteredRecord(VM&, ModuleGraphLoadingState*);
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
@@ -291,6 +299,7 @@ private:
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
     BitVector m_prelinkedRecordRemoved; // empty until the first removal
     unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
+    bool m_hasUnregisteredRecord { false }; // unregisterFailedLoad() left a record with its error, for failGraphOfUnregisteredRecord()
 #endif
     void didAddModuleMapEntry(ScriptFetchParameters::Type type)
     {
