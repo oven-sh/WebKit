@@ -561,7 +561,7 @@ private:
                 break;
             }
 
-            if (node->canSpeculateInt32(node->sourceFor(FixupPass)) && !m_graph.hasExitSite(node->origin.semantic, BadType)) {
+            if (m_graph.mulCanSpeculateInt32(node, FixupPass) && !m_graph.hasExitSite(node->origin.semantic, BadType)) {
                 auto convertToInt32 = [&](Edge& edge) {
                     Node* toNumber = m_insertionSet.insertNode(m_indexInBlock, SpecInt32Only, ToNumber, node->origin, Edge(edge.node(), StringUse));
                     toNumber->clearFlags(NodeMustGenerate);
