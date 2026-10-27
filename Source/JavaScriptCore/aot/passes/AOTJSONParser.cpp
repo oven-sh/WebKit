@@ -358,6 +358,7 @@ struct JSONParserBuilder final : Emission {
         emitRequireByte(cursor, '[', exits.rejected);
         ValueID afterBracket = appendSkipPunctuator(cursor);
         ValueID array = builder().append(makeArrayOf(program(), node));
+        afterBracket = appendElementsParsedBefore(node.children[0], array, afterBracket);
         BlockID header = builder().addBlock();
         BlockID done = builder().addBlock();
         ValueID cursorAtHeader = builder().addParameter(header, cursorType());
@@ -383,6 +384,26 @@ struct JSONParserBuilder final : Emission {
 
         builder().moveToEndOf(done);
         return { array, builder().append(Opcode::JSONSkipByte, { cursorAtDone }) };
+    }
+
+    ValueID appendElementsParsedBefore(ResultNodeRef element, ValueID array, ValueID firstElement)
+    {
+        ResultNode node = describeNode(program(), element);
+        if (node.shape == ResultShape::Union) {
+            Vector<ResultNodeRef, 4> objects;
+            for (ResultNodeRef arm : node.children) {
+                if (valueClassesOf(program(), arm).contains(JSONValueClass::Object))
+                    objects.append(arm);
+            }
+            if (objects.size() != 1)
+                return firstElement;
+            element = objects[0];
+            node = describeNode(program(), element);
+        }
+        if (node.shape != ResultShape::Object || !node.layout || decideNodeCode(decisionInputs(), element).code != NodeCode::Compiled)
+            return firstElement;
+        ValueID order = builder().append(make<&Value::setLayout>(Opcode::JSONObjectBegin, { }, node.layout));
+        return appendResultAt(builder().append(make<&Value::setLayout>(Opcode::JSONParseExtraMembers, { firstElement, array, order }, node.layout)), 2);
     }
 
     // The slot of a field of a function type holds fewer functions than the type admits.

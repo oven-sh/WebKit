@@ -202,7 +202,9 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
     };
 
     Pointer next;
-    if (!typeOf(value->extraOperand()).hasOnlyPrimitives(Primitive::Null))
+    const Type& typeOfExtra = typeOf(value->extraOperand());
+    bool appendsToList = !typeOfExtra.primitives && typeOfExtra.findClassPart(BuiltinClasses::Array);
+    if (!appendsToList && !typeOfExtra.hasOnlyPrimitives(Primitive::Null))
         next = parse(false);
     else {
         LBasicBlock wasSeenWithExtraMembers = newBlock();
@@ -223,6 +225,10 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
         m_out.appendTo(continuation);
         next = Pointer(m_out.phi(B3::Int64, sameCursor, nextCursor));
         state = { Boxed(m_out.phi(B3::Int64, noExtra, extra)), Pointer(m_out.phi(B3::Int64, sameOrder, order)) };
+    }
+    if (appendsToList) {
+        defineResults(value, { word32(parsedOutcome), state.extra, next, state.order });
+        return;
     }
     Condition isParsed(m_out.notNull(next.value()));
     Word32 outcome = select(isParsed, select(equal(next, cursor), word32(rejectedOutcome), word32(parsedOutcome)), word32(unknownOutcome));

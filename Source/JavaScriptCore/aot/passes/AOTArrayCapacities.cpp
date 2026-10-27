@@ -32,6 +32,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestSite.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <tuple>
@@ -714,12 +715,12 @@ struct CapacityPlanner {
     {
         if (!id)
             return { };
-        id = valueOnLikelyEdges(analyses.sameObjectThroughCasts(id)).predicted();
+        id = valueOnLikelyEdges(sameObjectBehindFacts(function, id)).predicted();
         KnownValue known = knownValueOf(context.program, function, id);
         if (known.kind() == KnownValue::Kind::Integer)
             return plannedTermRange.contains(known.asInteger()) ? CapacityTerm { CapacityTermKind::Constant, { }, known.asInteger() } : CapacityTerm { };
 
-        ValueID definition = analyses.sameObjectThroughCasts(id);
+        ValueID definition = sameObjectBehindFacts(function, id);
         const Type& type = context.program.typeOf(function, definition);
         bool isAvailable = analyses.dominates(definition, literal.point);
         if (isAvailable && type.isInteger() && type.integers.isSubsetOf(plannedTermRange))
@@ -1072,7 +1073,7 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         return ordinal;
     };
     auto groupNamedBy = [&](ValueID operand) -> std::optional<unsigned> {
-        ValueID array = analyses.sameObjectThroughCasts(operand);
+        ValueID array = analyses.sameObjectThroughCasts(operand).valueInFrontOfFacts();
         if (auto entry = ordinals.find(array); entry != ordinals.end())
             return leaderOf(entry->value);
         if (function.at(array).opcode != Opcode::Parameter || analyses.escape().gaveUp())

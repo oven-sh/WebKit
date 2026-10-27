@@ -10,6 +10,7 @@
 #include "AOTCellAllocationEmitter.h"
 #include "AOTOperationEmitter.h"
 #include "AOTRuntimeRecords.h"
+#include "Structure.h"
 #include <optional>
 #include <wtf/ScopedLambda.h>
 
@@ -27,6 +28,11 @@ public:
     void generateGetGlobalBinding(const ValueContext&);
     void generateSetGlobalBinding(const ValueContext&);
     void generateGetCachedGetter(const ValueContext&);
+    void generateMayBindAnswersOfGetAndSetTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(in<CellPointer>(value->targetOperand()), Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits)); }
+    void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(in<CellPointer>(value->targetOperand()), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
+    void generateValidateAnswerOfGetTrap(const ValueContext&);
+    void generateValidateDenialOfHasTrap(const ValueContext&);
+    void generateFinishStoreByTrap(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemSet(const ValueContext&);
     void generateElemHas(const ValueContext&);
@@ -64,6 +70,7 @@ public:
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
 
 private:
+    Condition mayBindAnswersOfTraps(CellPointer target, uint32_t bitsOfStructureThatMayBind);
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {

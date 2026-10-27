@@ -158,7 +158,7 @@ public:
     bool isInCycle(BlockID block) { return cfg().hasCycle() && blockCycles().isInCycle(block); }
 
     ValueID identityOf(ValueID);
-    ValueID sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
+    RootThroughCasts sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
     ValueID definitionThroughUpcasts(ValueID id) const { return Typed::definitionThroughUpcasts(m_function, id); }
 
     bool dominates(ValueID definition, ProgramPoint);

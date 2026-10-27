@@ -4,15 +4,23 @@
 # declare const input: any;
 # const list: number[] = [];
 # list.push(input | 0);
-# (globalThis as any).answer = find(list, input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = find(list, input | 0);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
-# RUN(X64): lower-to-air size f1
-# REQUIRES(X64): x86_64 not-windows unsanitized-code
-# RUN(ARM64): lower-to-air size f1
-# REQUIRES(ARM64): arm64 not-windows unsanitized-code
+# RUN(LOOP): lower-to-b3 optimized loops f1
+# REQUIRES(LOOP): unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64SIZE): lower-to-air size f1
+# REQUIRES(X64SIZE): x86_64 not-windows unsanitized-code
+# RUN(ARM64SIZE): lower-to-air size f1
+# REQUIRES(ARM64SIZE): arm64 not-windows unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -21,8 +29,9 @@ typesite w1 module=m0 position=14 kind=Parameter function=f1
 typesite w2 module=m0 position=30 kind=Parameter function=f1
 typesite w3 module=m0 kind=Result
 typesite w4 module=m0 position=140 kind=CallResult
-typesite w5 module=m0 position=191 kind=CallResult
-typesite w6 module=m0 position=64 kind=CallResult
+typesite w5 module=m0 position=171 kind=Variable
+typesite w6 module=m0 position=232 kind=CallResult
+typesite w7 module=m0 position=64 kind=CallResult
 data d0 root=Array{contents=number} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -40,20 +49,41 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = BitOr v7, v8
     v10 = Call v4, v3, v9 calleeKey="push" calleeName="list.push"
     v11 = Convert v10 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="globalThis" [isFreeName]
-    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number site=w5}
+    Jump -> next b2(v13)
+  b2(v14: number):
+    LoopHint
     v16 = Builtin builtin=GlobalThis
     v17 = PropGet v16 key="input" [isFreeName]
-    v18 = Convert v17 declared={type=i32 flags=[IsExpected]}
-    v19 = Integer
-    v20 = BitOr v18, v19
-    v21 = Call v1, -, v3, v20 calleeName="find"
-    v22 = Convert v21 declared={type=number site=w5}
-    PropSet v15, v22 key="answer"
-    v24 = Undefined
-    Return v24
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Less v14, v18
+    Branch v19 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="globalThis" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="input" [isFreeName]
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]}
+    v28 = Integer
+    v29 = BitOr v27, v28
+    v30 = Call v1, -, v3, v29 calleeName="find"
+    v31 = Convert v30 declared={type=number site=w6}
+    PropSet v24, v31 key="answer"
+    Jump -> next b5()
+  b5():
+    v33 = Increment v20
+    v34 = Convert v33 declared={type=number site=w5}
+    Jump -> next b2(v34)
+  b6(v35):
+    Jump -> next b7()
+  b7():
+    v36 = Undefined
+    Return v36
 }
 function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: number):
@@ -61,24 +91,49 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
   b1():
     v2 = PropGet v0 key="indexOf"
     v3 = Call v2, v0, v1 calleeKey="indexOf" calleeName="list.indexOf"
-    ReturnCall v3 casts=[{declared={type=number site=w6}}, {declared={type=number site=w3}}]
+    ReturnCall v3 casts=[{declared={type=number site=w7}}, {declared={type=number site=w3}}]
 }
 
-# indexOf looks at the kind of storage once. For integers and for doubles it calls a search that only reads: it cannot throw, allocate or run code of the program.
+# indexOf looks at the kind of storage once, integers first. A list of at most sixteen elements is searched in place; a longer one goes, by a rare edge, to a search in the run time.
 # CHECK-LABEL: name="find" role=Source
 # CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
 # CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
 # CHECK: Branch(b@[[isIntegers]], Terminal)
-# CHECK: Int64 b@{{*}} = Patchpoint(b@[[list]]:ColdAny, b@{{*}}:ColdAny, resultConstraints = Register({{*}}), ControlDependent|Reads:{JSCell_header, Elements, ArrayStorage})
-# CHECK: Int32 b@[[isDoubles]] = Equal(b@[[kind]], $6(b@{{*}}))
-# CHECK: Branch(b@[[isDoubles]], Terminal)
-# CHECK: Int64 b@{{*}} = Patchpoint(b@[[list]]:ColdAny, b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Reads:{JSCell_header, Elements, ArrayStorage})
-# Every other kind of storage calls Array.prototype.indexOf itself, the only call that can throw.
-# CHECK-NOT: ExitsSideways
-# CHECK: ExitsSideways{{*}}:CallBuiltin)
-# CHECK-NOT: ExitsSideways
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength)
+# CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]])
+# CHECK: Int32 b@[[isShort]] = BelowEqual(b@[[wide]], $16(b@{{*}}))
+# CHECK-NEXT: Branch(b@[[isShort]], Terminal)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK-LABEL: end of function
-# The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 28, patchpoints: 4, rare instructions: 6
-# ARM64: instructions: 26, patchpoints: 4, rare instructions: 6
+# A turn of the search among integers: one load of the boxed element, one comparison with the boxed value, the counter, its test. Nothing is unboxed, called or loaded again.
+# LOOP-LABEL: loop #
+# LOOP-NEXT: BB#
+# LOOP: Int64 b@[[element]] = Load(b@{{*}}, ControlDependent|Reads:indexedInt32Properties)
+# LOOP-NEXT: Int32 b@[[isFound]] = Equal(b@{{*}}, b@[[element]])
+# LOOP-NEXT: Branch(b@[[isFound]], Terminal)
+# LOOP-NOT: Reads:
+# LOOP-NOT: Patchpoint(
+# LOOP-LABEL: end of loop
+# The search among doubles compares doubles.
+# LOOP-LABEL: loop #
+# LOOP: Double b@[[number]] = Load(b@{{*}}, ControlDependent|Reads:indexedDoubleProperties)
+# LOOP-NEXT: Int32 b@[[isSame]] = Equal(b@{{*}}, b@[[number]])
+# LOOP-NEXT: Branch(b@[[isSame]], Terminal)
+# LOOP-NOT: Reads:
+# LOOP-NOT: Patchpoint(
+# LOOP-LABEL: end of loop
+# X64: loop #{{*}}, instructions: 3, patchpoints: 0
+# ARM64: loop #{{*}}, instructions: 4, patchpoints: 0
+# Only a list in another kind of storage calls Array.prototype.indexOf itself, the one call that can throw. Nothing reads the member by name or tests which function it holds.
+# CALLS-LABEL: name="find" role=Source
+# CALLS-NOT: :PropGet
+# CALLS-NOT: ExitsSideways
+# CALLS: ExitsSideways{{*}}:CallBuiltin)
+# CALLS-NOT: ExitsSideways
+# CALLS-NOT: :PropGet
+# CALLS-LABEL: end of function
+# The counts of the whole function hold calls, whose moves follow the calling convention: not for Windows.
+# X64SIZE: instructions: 46, patchpoints: 2, rare instructions: 15
+# ARM64SIZE: instructions: 43, patchpoints: 2, rare instructions: 15

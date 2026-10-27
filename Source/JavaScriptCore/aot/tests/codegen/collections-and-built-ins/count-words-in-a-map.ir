@@ -9,7 +9,7 @@
 # declare const input: any;
 # const words: string[] = [];
 # words.push(String(input));
-# (globalThis as any).answer = count(words);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = count(words);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -30,13 +30,14 @@ typesite w1 module=m0 position=15 kind=Parameter function=f1
 typesite w2 module=m0 kind=Result
 typesite w3 module=m0 position=309 kind=CallResult
 typesite w4 module=m0 position=298 kind=CallResult
-typesite w5 module=m0 position=354 kind=CallResult
-typesite w6 module=m0 position=72 kind=CallResult
-typesite w7 module=m0 position=110 kind=Variable
-typesite w8 module=m0 position=121 kind=PropertyRead
-typesite w9 module=m0 position=159 kind=Element
-typesite w10 module=m0 position=192 kind=CallResult
-typesite w11 module=m0 position=174 kind=CallResult
+typesite w5 module=m0 position=334 kind=Variable
+typesite w6 module=m0 position=395 kind=CallResult
+typesite w7 module=m0 position=72 kind=CallResult
+typesite w8 module=m0 position=110 kind=Variable
+typesite w9 module=m0 position=121 kind=PropertyRead
+typesite w10 module=m0 position=159 kind=Element
+typesite w11 module=m0 position=192 kind=CallResult
+typesite w12 module=m0 position=174 kind=CallResult
 data d0 root=Array{contents=undefined|null|string} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -54,15 +55,36 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = Convert v8 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
     v10 = Call v4, v3, v9 calleeKey="push" calleeName="words.push"
     v11 = Convert v10 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="globalThis" [isFreeName]
-    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v16 = Call v1, -, v3 calleeName="count"
-    v17 = Convert v16 declared={type=undefined|null|Map<undefined|null|string, number> site=w5 flags=[OmitsNull, OmitsUndefined]}
-    PropSet v15, v17 key="answer"
-    v19 = Undefined
-    Return v19
+    v12 = Integer
+    v13 = Convert v12 declared={type=number site=w5}
+    Jump -> next b2(v13)
+  b2(v14: number):
+    LoopHint
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Less v14, v18
+    Branch v19 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="globalThis" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v25 = Call v1, -, v3 calleeName="count"
+    v26 = Convert v25 declared={type=undefined|null|Map<undefined|null|string, number> site=w6 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v24, v26 key="answer"
+    Jump -> next b5()
+  b5():
+    v28 = Increment v20
+    v29 = Convert v28 declared={type=number site=w5}
+    Jump -> next b2(v29)
+  b6(v30):
+    Jump -> next b7()
+  b7():
+    v31 = Undefined
+    Return v31
 }
 function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Map<undefined|null|string, number> site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string>):
@@ -70,15 +92,15 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
   b1():
     v1 = Builtin builtin=Map
     v2 = Construct v1 calleeName="Map"
-    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, number> site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, number> site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     v4 = Integer
-    v5 = Convert v4 declared={type=number site=w7}
+    v5 = Convert v4 declared={type=number site=w8}
     Jump -> next b2(v5)
   b2(v6: number):
     LoopHint
     v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
     v9 = PropGet v0 key="length"
-    v10 = Convert v9 declared={type=number site=w8} illTypedCause=Assertion
+    v10 = Convert v9 declared={type=number site=w9} illTypedCause=Assertion
     v11 = Less v8, v10
     Branch v11 -> taken b3(| 0), notTaken b10(| 0)
   b3(v12):
@@ -86,11 +108,11 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
   b4():
     v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
     v14 = ElemGet v0, v13
-    v15 = Convert v14 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v15 = Convert v14 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
     v16 = PropGet v3 key="set"
     v17 = PropGet v3 key="get"
     v18 = Call v17, v3, v15 calleeKey="get" calleeName="counts.get"
-    v19 = Convert v18 declared={type=undefined|number site=w10} illTypedCause=FromLooseType
+    v19 = Convert v18 declared={type=undefined|number site=w11} illTypedCause=FromLooseType
     v20 = TypeTest v19 testedType=undefined|null
     Branch v20 -> taken b5(| 0), notTaken b7(| 0)
   b5(v21):
@@ -104,11 +126,11 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     v25 = Integer integer=1
     v26 = Add v24, v25
     v27 = Call v16, v3, v15, v26 calleeKey="set" calleeName="counts.set"
-    v28 = Convert v27 declared={type=undefined|null|Map<undefined|null|string, number> site=w11 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v28 = Convert v27 declared={type=undefined|null|Map<undefined|null|string, number> site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     Jump -> next b9()
   b9():
     v29 = Increment v13
-    v30 = Convert v29 declared={type=number site=w7}
+    v30 = Convert v29 declared={type=number site=w8}
     Jump -> next b2(v30)
   b10(v31):
     Jump -> next b11()

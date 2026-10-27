@@ -483,6 +483,7 @@ ClimbingSet makeIteratorResult(ValueFlowRuleContext& context, ValueFlowObjectID 
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet result = only(context, object);
     context.add(context.written(result, prototypeLinkName), only(context, universe.objectOf(Builtins::ObjectPrototype)));
+    context.add(context.written(result, allocatedAsName), only(context, universe.builtinTables().objectStandingFor(BuiltinClasses::Object)));
     context.add(context.written(result, nameOf(context, BuiltinNames::done)), kinds(context, { PrimitiveSet::False, PrimitiveSet::True }));
     connectOutcomeOfStep(context, iterators, mode, sent, context.written(result, nameOf(context, BuiltinNames::value)));
     return result;
@@ -529,6 +530,7 @@ bool applyStepOfBuiltinIterator(BuiltinID builtin, const ValueFlowBuiltinCall& c
     if (answersPromise) {
         ClimbingSet promise = only(context, resultObject);
         context.add(context.written(promise, prototypeLinkName), only(context, universe.objectOf(Builtins::PromisePrototype)));
+        context.add(context.written(promise, allocatedAsName), only(context, universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));
         context.add(context.written(promise, nameOf(BuiltinSlots::PromiseValue)), result);
         context.add(context.written(promise, nameOf(BuiltinSlots::PromiseReason)), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         result = promise;

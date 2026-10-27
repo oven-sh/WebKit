@@ -68,6 +68,7 @@ Value makeValidateType(ValueID operand, TypeID validatedType);
 Value makeValidateCallee(ValueID callee, TypeID validatedType);
 
 bool isWorthNarrowing(const Program&, const Type& current, const Type& narrowed);
+bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& held, TypeArena&);
 
 } } } // namespace JSC::AOT::Typed
 

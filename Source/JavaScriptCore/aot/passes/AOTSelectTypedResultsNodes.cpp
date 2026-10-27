@@ -588,14 +588,22 @@ static bool isDeepSubset(const Program& program, TypeID narrow, TypeID wide)
     return true;
 }
 
-static bool declaresNamesRead(const Program& program, const Type& type, std::span<const PropertyKeyID> namesRead)
+static bool isWrittenInLibrary(const Program& program, ModuleID module)
+{
+    return module && (program.at(module).kind == ModuleKind::RuntimeSource || program.at(module).flags.contains(ModuleFlags::IsLibrary));
+}
+
+static bool declaresNamesRead(const Program& program, const Function& function, const Type& type, std::span<const PropertyKeyID> namesRead)
 {
     bool hasObjectType = false;
+    bool isAskedByLibrary = isWrittenInLibrary(program, function.module);
     for (LayoutID member : membersOf(program, type)) {
         const Layout& layout = program.at(member);
         if (layout.kind != LayoutKind::Record)
             continue;
         hasObjectType = true;
+        if (!isAskedByLibrary && isWrittenInLibrary(program, layout.module))
+            continue;
         if (std::ranges::all_of(namesRead, [&](PropertyKeyID name) { return !!layout.findField(name); }))
             return true;
     }
@@ -615,7 +623,7 @@ TypeID findTypeOfTypedResultTarget(const Program& program, const Function& funct
         if (!isDeepSubset(program, mostSpecific, requested))
             return { };
     }
-    if (mostSpecific && !function.has(FunctionFlags::IsChecked) && !declaresNamesRead(program, program.at(mostSpecific), namesRead.span()))
+    if (mostSpecific && !function.has(FunctionFlags::IsChecked) && !declaresNamesRead(program, function, program.at(mostSpecific), namesRead.span()))
         return { };
     return mostSpecific;
 }

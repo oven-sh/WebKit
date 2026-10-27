@@ -6,7 +6,7 @@
 # declare const input: any;
 # const list: number[] = [];
 # list.push(+input);
-# (globalThis as any).answer = total(list);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(list);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -29,12 +29,13 @@ typesite w0 module=m0 position=148 kind=Variable
 typesite w1 module=m0 position=15 kind=Parameter function=f1
 typesite w2 module=m0 kind=Result
 typesite w3 module=m0 position=169 kind=CallResult
-typesite w4 module=m0 position=217 kind=CallResult
-typesite w5 module=m0 position=47 kind=Variable
-typesite w6 module=m0 position=71 kind=Parameter function=f2
-typesite w7 module=m1 position=4142 kind=Variable
-typesite w8 module=m1 position=4344 kind=Variable
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w5}}] ownFieldCount=1
+typesite w4 module=m0 position=197 kind=Variable
+typesite w5 module=m0 position=258 kind=CallResult
+typesite w6 module=m0 position=47 kind=Variable
+typesite w7 module=m0 position=71 kind=Parameter function=f2
+typesite w8 module=m1 position=4142 kind=Variable
+typesite w9 module=m1 position=4344 kind=Variable
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w6}}] ownFieldCount=1
 data d0 root=Array{contents=number} module=m0
 runtimefunction id=44 function=f5
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -52,15 +53,36 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v8 = ToNumber v7
     v9 = Call v4, v3, v8 calleeKey="push" calleeName="list.push"
     v10 = Convert v9 declared={type=number site=w3} illTypedCause=DeclarationWithoutBody
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="globalThis" [isFreeName]
-    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v15 = Call v1, -, v3 calleeName="total"
-    v16 = Convert v15 declared={type=number site=w4}
-    PropSet v14, v16 key="answer"
-    v18 = Undefined
-    Return v18
+    v11 = Integer
+    v12 = Convert v11 declared={type=number site=w4}
+    Jump -> next b2(v12)
+  b2(v13: number):
+    LoopHint
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Less v13, v17
+    Branch v18 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v19):
+    Jump -> next b4()
+  b4():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="globalThis" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v24 = Call v1, -, v3 calleeName="total"
+    v25 = Convert v24 declared={type=number site=w5}
+    PropSet v23, v25 key="answer"
+    Jump -> next b5()
+  b5():
+    v27 = Increment v19
+    v28 = Convert v27 declared={type=number site=w4}
+    Jump -> next b2(v28)
+  b6(v29):
+    Jump -> next b7()
+  b7():
+    v30 = Undefined
+    Return v30
 }
 function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>):
@@ -68,7 +90,7 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
   b1():
     v1 = NewObject layout=L0
     v2 = Integer
-    v3 = Convert v2 declared={type=number site=w5}
+    v3 = Convert v2 declared={type=number site=w6}
     PutEnvironmentField v1, v3 layout=L0
     v5 = PropGet v0 key="forEach"
     v6 = NewClosure v1 function=f2
@@ -78,14 +100,14 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     v10 = Convert v9 declared={type=number site=w2}
     Return v10
 }
-function f2 module=m0 position=71 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 module=m0 position=71 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w7}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: number):
     Jump -> next b1()
   b1():
     v2 = GetEnvironmentField v0 layout=L0
     v3 = CheckInitialized v2 name="sum"
     v4 = Add v3, v1
-    v5 = Convert v4 declared={type=number site=w5}
+    v5 = Convert v4 declared={type=number site=w6}
     v6 = GetEnvironmentField v0 layout=L0
     v7 = CheckInitialized v6 name="sum"
     PutEnvironmentField v0, v5 layout=L0
@@ -102,7 +124,7 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
     v4 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
     v5 = PropGet v4 key="length"
     v6 = ToLength v5
-    v7 = Convert v6 declared={type=undefined|number site=w7}
+    v7 = Convert v6 declared={type=undefined|number site=w8}
     v8 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
     v9 = TypeTest v8 testedType=function
     Branch v9 -> taken b2(| 0), notTaken b14(| 0)
@@ -110,7 +132,7 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
     Jump -> next b3()
   b3():
     v11 = Integer
-    v12 = Convert v11 declared={type=undefined|number site=w8}
+    v12 = Convert v11 declared={type=undefined|number site=w9}
     Jump -> next b4(v12)
   b4(v13: undefined|number):
     LoopHint
@@ -140,7 +162,7 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
     Jump -> next b11()
   b11():
     v31 = Increment v30
-    v32 = Convert v31 declared={type=undefined|number site=w8}
+    v32 = Convert v31 declared={type=undefined|number site=w9}
     Jump -> next b4(v32)
   b12(v33, v34):
     Jump -> next b13()
@@ -160,14 +182,14 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
 # LOOP-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:indexedDoubleProperties, {{*}}:GetArrayElement)
 # LOOP-NOT: Reads:indexedDoubleProperties
 # LOOP-LABEL: end of loop
-# The variable that the arrow adds to lives in memory. It is loaded once for the eight turns and stored in each.
+# The variable that the arrow adds to lives in memory, in the environment that the arrow would capture. It is loaded once for the eight turns and stored in each.
 # NONE-LABEL: steps by 8
-# NONE-COUNT-1: Reads:ModuleVariables
-# NONE-NOT: Reads:ModuleVariables
+# NONE-COUNT-1: Reads:EnvironmentFields
+# NONE-NOT: Reads:EnvironmentFields
 # NONE-LABEL: end of loop
 # STORES-LABEL: steps by 8
-# STORES-COUNT-8: Writes:ModuleVariables
-# STORES-NOT: Writes:ModuleVariables
+# STORES-COUNT-8: Writes:EnvironmentFields
+# STORES-NOT: Writes:EnvironmentFields
 # STORES-LABEL: end of loop
 # No function object is made for the arrow.
 # WHOLE-LABEL: name="total" role=Source

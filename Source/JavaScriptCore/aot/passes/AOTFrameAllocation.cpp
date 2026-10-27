@@ -339,7 +339,7 @@ static bool mayBorrowMoreBy(const Program& program, const FlowResults& flow, con
         if (!staysInFrame(function, decision))
             return false;
         return std::ranges::any_of(function.at(decision.allocation).capturesOperands(), [&](ValueID capture) {
-            size_t entryParameter = parameters.find(sameObjectThroughCasts(function, capture));
+            size_t entryParameter = parameters.find(sameObjectThroughCasts(function, capture).valueInFrontOfFacts());
             return entryParameter != notFound && !flow.borrowedParameters().isBorrowed(plan.function, entryParameter);
         });
     });

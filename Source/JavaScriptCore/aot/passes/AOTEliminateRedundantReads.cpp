@@ -279,7 +279,7 @@ struct RedundantReadElimination {
         if (!accessedHeapSet.contains(access.location.heap()))
             return std::nullopt;
         RELEASE_ASSERT(access.kind != MemoryAccess::Kind::Read || opcodesReadingAccessedHeaps.contains(value.opcode));
-        ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+        ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base).valueInFrontOfFacts() : ValueID();
         return Access { .location = access.location, .base = base, .id = id, .stored = access.stored, .point = point };
     }
 
@@ -1346,7 +1346,7 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
             const Value& value = function.at(values[index]);
             if (!isBrandOperation(value))
                 continue;
-            Brand brand { sameObjectThroughCasts(function, value.objectOperand()), sameObjectThroughCasts(function, value.tokenOperand()), value.layout(), value.field(), block };
+            Brand brand { sameObjectThroughCasts(function, value.objectOperand()).valueInFrontOfFacts(), sameObjectThroughCasts(function, value.tokenOperand()).valueInFrontOfFacts(), value.layout(), value.field(), block };
             // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
             bool isTaken = std::ranges::any_of(taken, [&](const Brand& earlier) {
                 return earlier.object == brand.object && earlier.token == brand.token && earlier.layout == brand.layout && earlier.field == brand.field

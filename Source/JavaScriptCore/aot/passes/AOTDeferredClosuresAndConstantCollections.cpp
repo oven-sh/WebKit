@@ -1048,11 +1048,15 @@ struct DeferralAnalysis {
         for (const ClosureFieldFreshObject& object : objects) {
             describedAllocations.append({ object.function, object.allocation });
             for (const FieldInitializer& initializer : object.initializers) {
-                if (initializer.store)
-                    initializingStores.append(initializer.store);
+                if (!initializer.store)
+                    continue;
+                initializingStores.append(initializer.store);
+                if (!initializer.isInCallee)
+                    storesToFreshObjects.append(initializer.store);
             }
         }
         AOT::sort(initializingStores);
+        AOT::sort(storesToFreshObjects);
         AOT::sort(describedAllocations);
 
         // One summary per key, kept at the index of the first candidate with that key.
@@ -1249,19 +1253,28 @@ struct DeferralAnalysis {
         }
     }
 
-    void rejectFieldsReadWhereTheyMayHaveLeftTheSlot()
+    bool isStoreToFreshObject(ValueReference store) const
     {
-        for (AccessKind kind : { SlotRead, PresenceTest }) {
+        if (std::ranges::binary_search(storesToFreshObjects, store))
+            return true;
+        auto found = std::ranges::lower_bound(calleeStores, store, { }, &CalleeStoreState::store);
+        return found != calleeStores.end() && found->store == store && found->canLeaveCallee;
+    }
+
+    void rejectFieldsWithUnguardedSlotAccesses()
+    {
+        for (AccessKind kind : { SlotRead, SlotStore, PresenceTest }) {
             for (ValueReference reference : accesses[kind]) {
                 const Value& access = valueAt(reference);
                 // A read that gives any value looks among the extra properties where it finds the slot empty and the object says that a field lies outside its slot.
                 bool looksOutsideSlot = kind == SlotRead && (access.opcode != Opcode::GetSlotOrUndefined || access.type == TypeTable::anything);
-                if (looksOutsideSlot || !reachesCandidate(reference, true))
+                bool isToFreshObject = kind == SlotStore && isStoreToFreshObject(reference);
+                if (looksOutsideSlot || isToFreshObject || !reachesCandidate(reference, true))
                     continue;
-                bool staysInSlot = holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
-                    return isNeverMovedOutByStore(program, field) || !slotTakesEveryValue(program, fieldAt(program, declarationOf(program, field)));
+                bool isValidForNarrowSlot = holdsForFieldInEveryReceiver(access, true, [&](FieldReference field) {
+                    return isNeverMovedOutByStore(program, field) || !staysInSlot(program, field);
                 });
-                if (staysInSlot)
+                if (isValidForNarrowSlot)
                     continue;
                 forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
                     reject(row);
@@ -1410,7 +1423,7 @@ struct DeferralAnalysis {
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
-            rejectFieldsReadWhereTheyMayHaveLeftTheSlot();
+            rejectFieldsWithUnguardedSlotAccesses();
             rejectFieldsOverSeveralEnvironments();
         }
         finish();
@@ -1427,6 +1440,7 @@ struct DeferralAnalysis {
     Vector<uint32_t> dataMembersOfFields { };
     Vector<ClosureFieldFreshObject> objects { };
     Vector<ClosureStore> closureStores { };
+    Vector<ValueReference> storesToFreshObjects { };
     Vector<FieldReference> candidates { };
     Vector<CandidateWithKey> candidatesByKey { };
     BitVector keysOfCandidates { };

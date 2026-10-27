@@ -47,6 +47,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: constructors 0 0
 # CHECK-NEXT: boundFunctions 0 0
 # CHECK-NEXT: constructEntrypoints 0 0
+# CHECK-NEXT: placesOfTailCalls 0 0
 # CHECK-NEXT: staticsLayout 1 8
 # CHECK-NEXT: staticsRuns 0 0
 # CHECK-NEXT: staticsOfFiles 0 0

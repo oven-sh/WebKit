@@ -1020,23 +1020,31 @@ bool TypePropagation::hasTypesOfEveryArgument(BlockID block, uint32_t index, con
     return !edges.empty();
 }
 
+// A block that is reached no longer hands nothing on: what the log says of it is said of the blocks that it leads to through blocks which are not reached either. Each of those has lost an edge.
+static void forEachReachedBlockBehind(const Function& function, const CFG& cfg, BlockID unreachedBlock, BitVector& didVisit, NOESCAPE const Invocable<void(BlockID)> auto& functor)
+{
+    Vector<BlockID, 8> unreachedBlocks { unreachedBlock };
+    while (!unreachedBlocks.isEmpty()) {
+        function.at(unreachedBlocks.takeLast()).forEachTarget([&](const Target& target) {
+            if (!target.block)
+                return;
+            if (cfg.isReachable(target.block))
+                functor(target.block);
+            else if (!didVisit.set(target.block.index()))
+                unreachedBlocks.append(target.block);
+        });
+    }
+}
+
 void TypePropagation::enqueueParametersOf(BlockID blockID)
 {
     if (m_didEnqueueParametersOf.set(blockID.index()))
         return;
     const Function& function = m_inputs.function;
     if (!m_cfg.isReachable(blockID)) {
-        Vector<BlockID, 8> unreachableBlocks { blockID };
-        while (!unreachableBlocks.isEmpty()) {
-            function.at(unreachableBlocks.takeLast()).forEachTarget([&](const Target& target) {
-                if (!target.block)
-                    return;
-                if (m_cfg.isReachable(target.block))
-                    enqueueParametersOf(target.block);
-                else if (!m_didEnqueueParametersOf.set(target.block.index()))
-                    unreachableBlocks.append(target.block);
-            });
-        }
+        forEachReachedBlockBehind(function, m_cfg, blockID, m_didEnqueueParametersOf, [&](BlockID reached) {
+            enqueueParametersOf(reached);
+        });
         return;
     }
     const CompactList<ValueID>& parameters = function.at(blockID).parameters;
@@ -1341,8 +1349,17 @@ void TypePropagation::tellWhatIsTyped()
     auto isTyped = [&](ValueID id) {
         return id.index() < m_marks.size() && isRemembered(id);
     };
+    const CFG& cfg = m_inputs.analyses.cfg();
     auto areParametersTyped = [&](BlockID block) {
-        return std::ranges::all_of(function.at(block).parameters, isTyped);
+        if (cfg.isReachable(block))
+            return std::ranges::all_of(function.at(block).parameters, isTyped);
+        bool areAllTyped = true;
+        BitVector didVisit;
+        didVisit.set(block.index());
+        forEachReachedBlockBehind(function, cfg, block, didVisit, [&](BlockID reached) {
+            areAllTyped &= std::ranges::all_of(function.at(reached).parameters, isTyped);
+        });
+        return areAllTyped;
     };
     auto isTypedWithItsTargets = [&](BlockID block) {
         bool areAllTyped = areParametersTyped(block);

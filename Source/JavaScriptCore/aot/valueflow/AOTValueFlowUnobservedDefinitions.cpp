@@ -759,7 +759,7 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
             bool isStrictStore = value.opcode == Opcode::PropSet && value.mode() == ECMAMode::Strict && program.nameClassOf(value.key()) != NameClass::Proto;
             ValueID receiver;
             for (uint32_t index = 0; index < value.numberOfOperands() && numberOfFreshObjects; ++index) {
-                ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)) : ValueID();
+                ValueID object = value.operand(index) ? sameObjectThroughCasts(function, value.operand(index)).valueInFrontOfFacts() : ValueID();
                 if (!object || !isFresh.get(object.index()))
                     continue;
                 if ((isStrictStore || value.opcode == Opcode::PropDefine) && index == *receiverOf(value.opcode))

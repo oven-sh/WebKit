@@ -50,6 +50,11 @@ family OwnAccess Prepared..Placed
 operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
 
 family Access Prepared..Placed
+operation MayBindAnswersOfGetAndSetTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
+operation MayBindAnswersOfHasTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
+operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap
+operation ValidateDenialOfHasTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateDenialOfHasTrap
+operation FinishStoreByTrap (mode: ECMAMode, target: Object/retains, property: Any/retains, value: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = FinishStoreByTrap
 operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding
 operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding

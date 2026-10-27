@@ -263,7 +263,7 @@ UnchangedAllocations::UnchangedAllocations(FunctionPassContext& context, std::sp
     : m_context(context)
 {
     auto addUse = [&](const OwnKeyWalkSite& site, ValueID object) {
-        ValueID origin = context.analyses.sameObjectThroughCasts(object);
+        ValueID origin = context.analyses.sameObjectThroughCasts(object).valueInFrontOfFacts();
         if (context.function.at(origin).opcode == Opcode::NewObject)
             m_uses.append(AllocationAtPoint { origin, { site.block, site.index } });
     };
@@ -427,7 +427,7 @@ static bool hasOrdinaryOwnKeys(LayoutKind kind) { return hasOrdinaryOwnKeysOf(ki
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
 {
-    ValueID origin = context.analyses.sameObjectThroughCasts(value);
+    ValueID origin = context.analyses.sameObjectThroughCasts(value).valueInFrontOfFacts();
     const Value& allocation = context.function.at(origin);
     if (allocation.opcode != Opcode::NewObject || allocation.prototypeOperand())
         return false;
@@ -574,7 +574,7 @@ static std::optional<OwnKeyWalkPlan> planWalkByLayouts(FunctionPassContext& cont
 
 static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
-    ValueID id = context.analyses.sameObjectThroughCasts(site.source);
+    ValueID id = context.analyses.sameObjectThroughCasts(site.source).valueInFrontOfFacts();
     const Value& allocation = context.function.at(id);
     if (allocation.opcode == Opcode::NewObject) {
         const Layout& layout = context.program.at(allocation.layout());

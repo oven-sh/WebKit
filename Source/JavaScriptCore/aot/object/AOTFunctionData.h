@@ -8,8 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTRecordTypes.h"
+#include "AOTVarint.h"
 #include "CodeType.h"
+#include <memory>
 #include <optional>
+#include <span>
+#include <wtf/IterationStatus.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
 
@@ -154,6 +159,56 @@ struct ConstructEntrypointData {
 };
 static_assert(sizeof(ConstructEntrypointData) == 8 && isImageRecord<ConstructEntrypointData>);
 
+// Where a plain function makes a call in tail position. A function that is constructed is listed in stack traces until that call has returned, though its frame is gone.
+// ProgramTables::placesOfTailCalls has them one behind the other, ascending by function. Each says how far it is from the one in front.
+struct TailCallPlace {
+    static constexpr uint32_t noCallee = UINT32_MAX;
+
+    void append(Vector<uint8_t>& bytes, const TailCallPlace& inFront) const
+    {
+        bool namesCallee = callee != noCallee;
+        bool isInOtherSource = sourcePlusOne != inFront.sourcePlusOne;
+        appendVarint(bytes, static_cast<uint64_t>(function - inFront.function) << 2 | isInOtherSource << 1 | namesCallee);
+        if (isInOtherSource)
+            appendVarint(bytes, sourcePlusOne);
+        appendVarint(bytes, zigZagEncode(static_cast<int64_t>(line) - inFront.line));
+        appendVarint(bytes, column);
+        if (namesCallee)
+            appendVarint(bytes, callee);
+    }
+
+    static TailCallPlace read(const uint8_t*& cursor, const TailCallPlace& inFront)
+    {
+        TailCallPlace place;
+        uint64_t head = readVarint(cursor);
+        place.function = inFront.function + static_cast<uint32_t>(head >> 2);
+        place.sourcePlusOne = head & 2 ? static_cast<uint32_t>(readVarint(cursor)) : inFront.sourcePlusOne;
+        place.line = static_cast<uint32_t>(inFront.line + zigZagDecode(readVarint(cursor)));
+        place.column = static_cast<uint32_t>(readVarint(cursor));
+        if (head & 1)
+            place.callee = static_cast<uint32_t>(readVarint(cursor));
+        return place;
+    }
+
+    // Both as they are written. The callee is named where the function has several places and the call says whom it enters.
+    uint32_t function { 0 };
+    uint32_t callee { noCallee };
+    // All three are zero in an image without positions.
+    uint32_t sourcePlusOne { 0 };
+    uint32_t line { 0 };
+    uint32_t column { 0 };
+};
+
+inline void forEachTailCallPlace(std::span<const uint8_t> bytes, NOESCAPE const Invocable<IterationStatus(const TailCallPlace&)> auto& functor)
+{
+    TailCallPlace place;
+    for (const uint8_t* cursor = bytes.data(); cursor < std::to_address(bytes.end());) {
+        place = TailCallPlace::read(cursor, place);
+        if (functor(place) == IterationStatus::Done)
+            return;
+    }
+}
+
 struct ClosureFunctionRangeData {
     uint32_t first;
     uint32_t end;
@@ -214,7 +269,8 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(functionTexts, FunctionTexts) \
     v(constructors, ConstructorData) \
     v(boundFunctions, BoundFunctionData) \
-    v(constructEntrypoints, ConstructEntrypointData)
+    v(constructEntrypoints, ConstructEntrypointData) \
+    v(placesOfTailCalls, uint8_t)
 
 } } // namespace JSC::AOT
 

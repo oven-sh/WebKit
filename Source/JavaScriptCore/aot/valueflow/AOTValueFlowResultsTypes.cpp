@@ -1793,6 +1793,9 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving), .holdsInEveryVersion = true });
                 replacedChecks.append(observed.test);
             }
+        } else if (std::optional<Type> arriving = positions.typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(held, program.at(test.expectedType().predicted()))) {
+            update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving), .holdsInEveryVersion = true });
+            replacedChecks.append(observed.test);
         }
         if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), program.at(test.expectedType().predicted())))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });

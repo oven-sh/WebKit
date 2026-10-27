@@ -233,7 +233,7 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         supplier.captures.reserveInitialCapacity(numberOfCaptures);
         for (ValueID captured : value.variadicOperands().first(numberOfCaptures)) {
             SuppliedCapture description { .supplied = captured, .isComputedAtMostOnce = isComputedAtMostOnce(captured) };
-            ValueID definitionID = sameObjectThroughCasts(function, captured);
+            ValueID definitionID = sameObjectThroughCasts(function, captured).valueInFrontOfFacts();
             const Value& definition = function.at(definitionID);
             if (definition.opcode == Opcode::Parameter) {
                 if (size_t position = function.at(entryBlock).parameters.find(definitionID); position != notFound)

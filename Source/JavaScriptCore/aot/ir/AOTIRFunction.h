@@ -141,6 +141,7 @@ struct Function : FunctionRecord {
     void releaseBody();
 
     const Value& at(ValueID id) const { ASSERT(id.index() < values.size()); return values.span().data()[id.index()]; }
+    const Value& at(RootThroughCasts root) const { return at(root.valueInFrontOfFacts()); }
     const Block& at(BlockID id) const { ASSERT(id.index() < blocks.size()); return blocks.span().data()[id.index()]; }
 
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)

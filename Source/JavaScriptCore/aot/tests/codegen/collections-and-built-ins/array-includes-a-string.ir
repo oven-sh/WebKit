@@ -4,11 +4,13 @@
 # declare const input: any;
 # const list: string[] = [];
 # list.push(String(input));
-# (globalThis as any).answer = has(list, String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = has(list, String(input));
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 not-windows unsanitized-code
 # RUN(ARM64): lower-to-air size f1
@@ -22,9 +24,10 @@ typesite w2 module=m0 position=29 kind=Parameter function=f1
 typesite w3 module=m0 kind=Result
 typesite w4 module=m0 position=149 kind=CallResult
 typesite w5 module=m0 position=139 kind=CallResult
-typesite w6 module=m0 position=204 kind=CallResult
-typesite w7 module=m0 position=194 kind=CallResult
-typesite w8 module=m0 position=63 kind=CallResult
+typesite w6 module=m0 position=174 kind=Variable
+typesite w7 module=m0 position=245 kind=CallResult
+typesite w8 module=m0 position=235 kind=CallResult
+typesite w9 module=m0 position=63 kind=CallResult
 data d0 root=Array{contents=undefined|null|string} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -42,20 +45,41 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = Convert v8 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
     v10 = Call v4, v3, v9 calleeKey="push" calleeName="list.push"
     v11 = Convert v10 declared={type=number site=w5} illTypedCause=DeclarationWithoutBody
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="globalThis" [isFreeName]
-    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v16 = Builtin builtin=String
-    v17 = Builtin builtin=GlobalThis
-    v18 = PropGet v17 key="input" [isFreeName]
-    v19 = Call v16, -, v18 calleeName="String"
-    v20 = Convert v19 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v21 = Call v1, -, v3, v20 calleeName="has"
-    v22 = Convert v21 declared={type=boolean site=w7}
-    PropSet v15, v22 key="answer"
-    v24 = Undefined
-    Return v24
+    v12 = Integer
+    v13 = Convert v12 declared={type=number site=w6}
+    Jump -> next b2(v13)
+  b2(v14: number):
+    LoopHint
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Less v14, v18
+    Branch v19 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="globalThis" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v25 = Builtin builtin=String
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="input" [isFreeName]
+    v28 = Call v25, -, v27 calleeName="String"
+    v29 = Convert v28 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v30 = Call v1, -, v3, v29 calleeName="has"
+    v31 = Convert v30 declared={type=boolean site=w8}
+    PropSet v24, v31 key="answer"
+    Jump -> next b5()
+  b5():
+    v33 = Increment v20
+    v34 = Convert v33 declared={type=number site=w6}
+    Jump -> next b2(v34)
+  b6(v35):
+    Jump -> next b7()
+  b7():
+    v36 = Undefined
+    Return v36
 }
 function f1 name="has" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string>, v1: undefined|null|string):
@@ -63,22 +87,23 @@ function f1 name="has" module=m0 flags=[IsChecked, HasExplicitName] length=2 thi
   b1():
     v2 = PropGet v0 key="includes"
     v3 = Call v2, v0, v1 calleeKey="includes" calleeName="list.includes"
-    ReturnCall v3 casts=[{declared={type=boolean site=w8}}, {declared={type=boolean site=w3}}]
+    ReturnCall v3 casts=[{declared={type=boolean site=w9}}, {declared={type=boolean site=w3}}]
 }
 
-# includes on a list of strings calls Array.prototype.includes itself, as native code is called: its function object is fetched by one call, then the function is called with it, the list and the string.
+# includes() with a string is one stub call that takes the array and the string. Array.prototype.includes is not called, so its function object is not loaded.
 # CHECK-LABEL: name="has" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK-NEXT: Int64 b@[[function]] = Patchpoint(resultConstraints = Register({{*}}), pureFunction = {{*}}:CallBuiltin)
 # CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[name]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[answer]] = Patchpoint(b@[[function]]:Register({{*}}), b@[[list]]:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallBuiltin)
-# The answer is a boolean in the lowest bit. Nothing tests which function the member holds, and there is no branch.
-# CHECK-NEXT: Int32 b@[[low]] = Trunc(b@[[answer]])
-# CHECK-NEXT: Int32 b@{{*}} = Const32(1)
-# CHECK-NEXT: Int32 b@[[bit]] = BitAnd(b@[[low]], $1(b@{{*}}))
-# CHECK-NEXT: Return(b@[[bit]], Terminal)
+# CHECK-NEXT: Int64 b@[[index]] = Patchpoint(b@[[list]]:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallInline)
+# The stub returns an index, which is compared with -1. Nothing tests which function the member holds.
+# CHECK-NEXT: Int64 b@{{*}} = Const64(-1
+# CHECK-NEXT: Int32 b@[[found]] = NotEqual(b@[[index]], $-1(b@{{*}})
+# CHECK-NEXT: Return(b@[[found]], Terminal)
 # CHECK-LABEL: end of function
-# The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 7, patchpoints: 2
-# ARM64: instructions: 7, patchpoints: 2
+# CALLS-LABEL: name="has" role=Source
+# CALLS-NOT: Branch(
+# CALLS-LABEL: end of function
+# The counts hold a call, whose moves follow the calling convention: not for Windows.
+# X64: instructions: 6, patchpoints: 1
+# ARM64: instructions: 6, patchpoints: 1

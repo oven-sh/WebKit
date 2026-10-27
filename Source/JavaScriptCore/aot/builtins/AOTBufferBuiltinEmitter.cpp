@@ -43,6 +43,12 @@ void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
     finish(call, length, Range { 1, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
 }
 
+void BufferBuiltinEmitter::generateArrayBufferByteLength(const InlineCall& call)
+{
+    Pointer buffer = loadField<Pointer>(cellOperand(call.receiver()), m_heaps.JSArrayBuffer_impl);
+    finish(call, loadField<Integer>(buffer, m_heaps.ArrayBuffer_sizeInBytes), Range { 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+}
+
 void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
 {
     TypedArrayType elements = call.parameter<TypedArrayType>(0);

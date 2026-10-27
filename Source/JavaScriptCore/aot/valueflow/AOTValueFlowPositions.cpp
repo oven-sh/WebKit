@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTFlowApply.h"
 #include "AOTLayout.h"
 #include "AOTNameClass.h"
 #include "AOTResultRules.h"
@@ -242,6 +243,25 @@ std::optional<Type> ValueFlowPositions::typeWhereNothingPasses(ValueSetID set, c
         return alone.anyObject || alone.isSubsetOf(type, program) || ((!universe.isObject(member) || findLayoutsPickedBy(member)) && alone.overlaps(type, program));
     });
     if (mayPass)
+        return std::nullopt;
+    return withinLimits(typeOf(set));
+}
+
+std::optional<Type> ValueFlowPositions::typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID set, const Type& type)
+{
+    const Program& program = m_inputs.program;
+    if (ValueSets::isComplement(set) || holds(set, ValueFlowUniverse::unknownObject()) || holds(set, ValueFlowUniverse::untrackedObject()) || !type.isJavaScriptValue() || !type.layouts)
+        return std::nullopt;
+    bool turnsAwayInstance = false;
+    bool turnsAwaySomethingElse = m_inputs.sets().anyMember(set, [&](ValueFlowObjectID member) {
+        Type alone = typeOfObject(member);
+        if (alone.isSubsetOf(type, program))
+            return false;
+        bool isInstance = alone.isObject() && alone.hasOnlyClassObjects() && !alone.classes.isEmpty();
+        turnsAwayInstance |= isInstance;
+        return !isInstance;
+    });
+    if (turnsAwaySomethingElse || !turnsAwayInstance)
         return std::nullopt;
     return withinLimits(typeOf(set));
 }
@@ -732,10 +752,12 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
 void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlowNodeID node, FlowPositionUpdate& update)
 {
     const Type& expected = m_inputs.program.at(declared.expected().predicted());
-    if (update.isProven || declared.site || !declared.isExpected() || !expected.layouts)
+    if (update.isProven || !declared.isExpected() || !expected.layouts)
         return;
     ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), m_inputs.solver().possibleValuesOf(node));
     if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->anyObject || arriving.narrowed->primitives & ~expected.primitives)
+        return;
+    if (declared.site && !leavesOutOnlyInstancesOfBuiltinClasses(expected, *arriving.narrowed, m_types))
         return;
     update.type = m_types.intern(*arriving.narrowed);
     update.replacesExpectation = true;

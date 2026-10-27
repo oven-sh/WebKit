@@ -846,7 +846,7 @@ private:
             auto captured = closure.variadicOperands();
             if (declared.size() != captured.size())
                 return false;
-            ValueID environment = sameObjectThroughCasts(function, store.environmentOperand());
+            RootThroughCasts environment = sameObjectThroughCasts(function, store.environmentOperand());
             unsigned numberOfCaptures = 0;
             for (size_t index = 0; index < declared.size(); ++index) {
                 if (program.at(declared[index].written()).environment != layout)

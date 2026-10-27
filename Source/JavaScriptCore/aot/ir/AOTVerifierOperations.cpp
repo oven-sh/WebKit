@@ -357,7 +357,7 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
         const ClassPart* part = m_program.at(value.provenType()).singleBuiltinClass();
         if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
             return;
-        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()));
+        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()).valueInFrontOfFacts());
         if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
             fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
         return;

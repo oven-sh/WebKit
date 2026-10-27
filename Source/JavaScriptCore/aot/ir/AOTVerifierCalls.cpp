@@ -211,7 +211,7 @@ void FunctionVerifier::verifyDirectCall(BlockID block, ValueID id, const Value& 
             return;
         }
         ValueID thisValue = arguments[*thisParameter];
-        if (!isLegalInitializerThis(m_program, m_function, analyses(), analyses().sameObjectThroughCasts(thisValue)))
+        if (!isLegalInitializerThis(m_program, m_function, analyses(), analyses().sameObjectThroughCasts(thisValue).valueInFrontOfFacts()))
             fail(InternalErrorKind::OperandTypeMismatch, block, id, thisValue.index());
         return;
     }

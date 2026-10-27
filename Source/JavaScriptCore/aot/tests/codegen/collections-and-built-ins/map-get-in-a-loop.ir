@@ -8,7 +8,7 @@
 # prices.set(String(input), +input);
 # const names: string[] = [];
 # names.push(String(input));
-# (globalThis as any).answer = total(prices, names);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = total(prices, names);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -33,12 +33,13 @@ typesite w5 module=m0 position=257 kind=CallResult
 typesite w6 module=m0 position=246 kind=CallResult
 typesite w7 module=m0 position=320 kind=CallResult
 typesite w8 module=m0 position=309 kind=CallResult
-typesite w9 module=m0 position=365 kind=CallResult
-typesite w10 module=m0 position=77 kind=Variable
-typesite w11 module=m0 position=97 kind=Variable
-typesite w12 module=m0 position=108 kind=PropertyRead
-typesite w13 module=m0 position=145 kind=Element
-typesite w14 module=m0 position=134 kind=CallResult
+typesite w9 module=m0 position=345 kind=Variable
+typesite w10 module=m0 position=406 kind=CallResult
+typesite w11 module=m0 position=77 kind=Variable
+typesite w12 module=m0 position=97 kind=Variable
+typesite w13 module=m0 position=108 kind=PropertyRead
+typesite w14 module=m0 position=145 kind=Element
+typesite w15 module=m0 position=134 kind=CallResult
 data d0 root=Array{contents=undefined|null|string} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -71,30 +72,51 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v24 = Convert v23 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
     v25 = Call v19, v18, v24 calleeKey="push" calleeName="names.push"
     v26 = Convert v25 declared={type=number site=w8} illTypedCause=DeclarationWithoutBody
-    v27 = Builtin builtin=GlobalThis
-    v28 = PropGet v27 key="globalThis" [isFreeName]
-    v29 = Convert v28 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v30 = Convert v29 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v31 = Call v1, -, v4, v18 calleeName="total"
-    v32 = Convert v31 declared={type=number site=w9}
-    PropSet v30, v32 key="answer"
-    v34 = Undefined
-    Return v34
+    v27 = Integer
+    v28 = Convert v27 declared={type=number site=w9}
+    Jump -> next b2(v28)
+  b2(v29: number):
+    LoopHint
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Less v29, v33
+    Branch v34 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v35):
+    Jump -> next b4()
+  b4():
+    v36 = Builtin builtin=GlobalThis
+    v37 = PropGet v36 key="globalThis" [isFreeName]
+    v38 = Convert v37 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v39 = Convert v38 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v40 = Call v1, -, v4, v18 calleeName="total"
+    v41 = Convert v40 declared={type=number site=w10}
+    PropSet v39, v41 key="answer"
+    Jump -> next b5()
+  b5():
+    v43 = Increment v35
+    v44 = Convert v43 declared={type=number site=w9}
+    Jump -> next b2(v44)
+  b6(v45):
+    Jump -> next b7()
+  b7():
+    v46 = Undefined
+    Return v46
 }
 function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|Array<undefined|null|string>):
     Jump -> next b1()
   b1():
     v2 = Integer
-    v3 = Convert v2 declared={type=number site=w10}
+    v3 = Convert v2 declared={type=number site=w11}
     v4 = Integer
-    v5 = Convert v4 declared={type=number site=w11}
+    v5 = Convert v4 declared={type=number site=w12}
     Jump -> next b2(v3, v5)
   b2(v6: number, v7: number):
     LoopHint
     v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
     v10 = PropGet v1 key="length"
-    v11 = Convert v10 declared={type=number site=w12} illTypedCause=Assertion
+    v11 = Convert v10 declared={type=number site=w13} illTypedCause=Assertion
     v12 = Less v9, v11
     Branch v12 -> taken b3(| 0), notTaken b10(| 0)
   b3(v13):
@@ -103,9 +125,9 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
     v14 = PropGet v0 key="get"
     v15 = Convert v13 declared={type=i32 flags=[IsExpected]}
     v16 = ElemGet v1, v15
-    v17 = Convert v16 declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v17 = Convert v16 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
     v18 = Call v14, v0, v17 calleeKey="get" calleeName="prices.get"
-    v19 = Convert v18 declared={type=undefined|number site=w14} illTypedCause=FromLooseType
+    v19 = Convert v18 declared={type=undefined|number site=w15} illTypedCause=FromLooseType
     v20 = TypeTest v19 testedType=undefined|null
     Branch v20 -> taken b5(| 0), notTaken b7(| 0)
   b5(v21):
@@ -117,11 +139,11 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
     Jump -> next b8(v23)
   b8(v24):
     v25 = Add v6, v24
-    v26 = Convert v25 declared={type=number site=w10}
+    v26 = Convert v25 declared={type=number site=w11}
     Jump -> next b9()
   b9():
     v27 = Increment v15
-    v28 = Convert v27 declared={type=number site=w11}
+    v28 = Convert v27 declared={type=number site=w12}
     Jump -> next b2(v26, v28)
   b10(v29):
     Jump -> next b11()
@@ -152,12 +174,12 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # CALLS-COUNT-1: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
-# Map.prototype.get cannot be replaced, so nothing in the function reads it by name, makes its function object or tests which function it is.
+# Map.prototype.get cannot be replaced and nothing of the same name hides it on the object: the function does not read it by name, make its function object, or test the object or the function.
 # WHOLE-LABEL: name="total" role=Source
 # WHOLE-NOT: :PropGet
 # WHOLE-NOT: :CallBuiltin
 # WHOLE-NOT: :Call)
-# WHOLE-NOT: :TestCallee
+# WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: loop #{{*}}, instructions: 23, patchpoints: 2

@@ -174,7 +174,7 @@ struct GenericVersionBuilder {
             const Value& call = function.at(values[index]);
             if (call.opcode != Opcode::Call || !call.calleeKey() || typeOf(call.calleeOperand()).functions.size() < 2)
                 continue;
-            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last());
+            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last().valueInFrontOfFacts());
             if (read.placement == ValuePlacement::InBlock && read.block == block && read.index < indexBehind)
                 return true;
         }
@@ -342,7 +342,7 @@ struct GenericVersionBuilder {
         for (const CheckSite& site : sites) {
             const Value& check = function.at(site.check);
             auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand())) && !isReliedOn(site.check);
+                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand()).valueInFrontOfFacts()) && !isReliedOn(site.check);
             };
             bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
             if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())

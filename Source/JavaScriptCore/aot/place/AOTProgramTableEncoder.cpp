@@ -2146,6 +2146,32 @@ static void appendConstructEntrypoints(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::constructEntrypoints, constructEntrypoints);
 }
 
+static void appendPlacesOfTailCalls(TableEncoder& encoder)
+{
+    const Program& program = encoder.program;
+    std::span<const WrittenTailCall> calls = encoder.inputs.bodyFacts.placesOfTailCalls.span();
+    Vector<uint8_t> bytes;
+    TailCallPlace inFront;
+    for (size_t index = 0; index < calls.size(); ++index) {
+        const WrittenTailCall& call = calls[index];
+        bool isOneOfSeveral = (index && calls[index - 1].function == call.function) || (index + 1 < calls.size() && calls[index + 1].function == call.function);
+        TailCallPlace place;
+        place.function = call.function.index();
+        if (isOneOfSeveral && call.callee)
+            place.callee = call.callee.index();
+        if (!encoder.obfuscates()) {
+            ModuleID module = program.at(call.function).module;
+            LineColumn lineColumn = program.lineColumnFor(module, call.position);
+            place.sourcePlusOne = module.index() + 1;
+            place.line = lineColumn.line;
+            place.column = lineColumn.column;
+        }
+        place.append(bytes, inFront);
+        inFront = place;
+    }
+    encoder.setTable(ProgramTableIndex::placesOfTailCalls, bytes);
+}
+
 void encodeFunctionTables(TableEncoder& encoder)
 {
     Vector<FunctionTraceRecord> traces(encoder.program.functions.size(), [&](size_t index) {
@@ -2176,6 +2202,7 @@ void encodeFunctionTables(TableEncoder& encoder)
     appendClosureFunctionTables(encoder);
     appendFunctionTexts(encoder);
     appendConstructEntrypoints(encoder);
+    appendPlacesOfTailCalls(encoder);
 }
 
 namespace {
@@ -2235,6 +2262,12 @@ static bool hasCompiledBody(const Program& program, const Module& module)
 static bool isNeverEvaluated(const Program& program, const Module& module)
 {
     return module.body && !program.at(module.body).hasBody();
+}
+
+// The image holds no code of a module that has a source and this kind. What a program writes of a module with an open namespace is the object.
+static bool isAnsweredByLoaderAlone(const Program& program, const Module& module)
+{
+    return module.kind == ModuleKind::Runtime && program.builtins().at(module.runtimeModule).flags.containsAny({ RuntimeModuleFlag::HasSource, RuntimeModuleFlag::HasOpenNamespace });
 }
 
 static bool isSourceTextOrCommonJs(const Module& module)
@@ -2308,7 +2341,7 @@ static void setDisplayPath(TableEncoder& encoder, ModuleID id, const Module& mod
 {
     std::span<const uint8_t> displayPath = module.displayPath ? encoder.program.string(module.displayPath) : std::span<const uint8_t>();
     entry.charactersInFrontOfDisplayPath = ModuleData::hasNoDisplayPath;
-    if (encoder.obfuscates() || displayPath.empty())
+    if ((encoder.obfuscates() && !module.runtimeModule) || displayPath.empty())
         return;
     std::span<const uint8_t> publicPath = encoder.program.string(module.path);
     if (publicPath.size() >= displayPath.size()) {
@@ -2350,7 +2383,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
         { isBundlerHelperModule(program, module), Flag::IsLibraryCodeWithFilePath },
-        { module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
+        { module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
     };
     for (auto [holds, flag] : flags) {
         if (holds)
@@ -2515,7 +2548,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!isFoundByPathOf(module.kind) || isAnsweredByLoaderAlone(program, module) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });
@@ -2760,6 +2793,64 @@ void encodeConstantTables(TableEncoder& encoder)
     });
 }
 
+static bool mayBeCalledAndConstructed(const Function& function)
+{
+    return function.kind == FunctionKind::Plain && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+}
+
+static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, const BitVector& bodiesWithoutCode)
+{
+    auto hasCode = [&](size_t index) {
+        return program.functions[index].hasBody() && !bodiesWithoutCode.get(index);
+    };
+    BitVector isEnteredByValue(program.functions.size());
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        if (program.functions[index].role == FunctionRole::GenericEntrypoint && hasCode(index))
+            isEnteredByValue.quickSet(firstSourceOf(program, FunctionID(index)).index());
+    }
+
+    Vector<WrittenTailCall> places;
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!hasCode(index) || !mayBeCalledAndConstructed(function))
+            continue;
+        FunctionID source = firstSourceOf(program, FunctionID(index));
+        // A function of the engine is shown at one place, wherever it stands.
+        if (!isEnteredByValue.quickGet(source.index()) || !program.at(source).module || program.at(source).enclosingRuntimeFunction)
+            continue;
+        for (const Block& block : function.blocks) {
+            if (block.terminator.kind != TerminatorKind::ReturnCall)
+                continue;
+            // The call takes every function from the stack that was copied in around it. The code was entered for the outermost of them that is shown.
+            const Value& call = function.at(block.terminator.callOperand());
+            std::optional<WrittenTailCall> place;
+            for (Origin origin = call.origin();;) {
+                FunctionID standing = origin.inlineFrame ? function.inlineFrames[origin.inlineFrame].callee : FunctionID(index);
+                if (standing && !program.at(standing).isHiddenInStackTraces() && firstSourceOf(program, standing) == source) {
+                    bool isCallOfFunction = origin.inlineFrame == call.origin().inlineFrame;
+                    place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
+                }
+                if (!origin.inlineFrame)
+                    break;
+                const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+                origin.position = frame.callPosition;
+                origin.inlineFrame = frame.parent;
+            }
+            if (place)
+                places.append(*place);
+        }
+    }
+    auto placeOf = [](const WrittenTailCall& place) {
+        return std::pair { place.function.index(), place.position };
+    };
+    // Of two forms of one call the one that knows its callee comes first.
+    AOT::sort(places, { }, [&](const WrittenTailCall& place) {
+        return std::tuple { placeOf(place), !place.callee, place.callee ? place.callee.index() : 0 };
+    });
+    places.shrink(std::ranges::unique(places, { }, placeOf).begin() - places.begin());
+    return places;
+}
+
 BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVector& bodiesWithoutCode, BuildContext& build)
 {
     BodyFactsForTables facts;
@@ -2778,6 +2869,7 @@ BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVe
         }
     }
     facts.importSites = findImportSites(program, build.parallelLoops());
+    facts.placesOfTailCalls = findPlacesOfTailCalls(program, bodiesWithoutCode);
     return facts;
 }
 

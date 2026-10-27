@@ -230,6 +230,7 @@ private:
     ClimbingSet letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID, std::initializer_list<ValueFlowName>);
     void readThroughChain(ClimbingSet start, const HeapKey&, const HeapReceiver&, ValueFlowNodeID result);
     void letNativeCodeRead(ClimbingSet entries, const ValueFlowNameReadByNativeCode&);
+    void letConstructorEscapeWithPrototypeObject(BuiltinID member, ModuleID);
     void readMember(BuiltinID member, ModuleID, ValueFlowNodeID result, Members& getters);
     void readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey&, ValueFlowNodeID result, Members& getters);
     void readEvaluators(const ValueFlowOperand& object, const HeapKey&);

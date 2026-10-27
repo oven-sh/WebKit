@@ -58,7 +58,7 @@ static TextRange appendUTF8(Vector<uint8_t>& names, const Typed::StringTable& st
     return { offset, static_cast<uint32_t>(names.size()) - offset };
 }
 
-static Vector<TextRange> encodeFrameNames(const LinkedFunctions& functions, const Typed::Program& program, const ParallelLoops& loops, Vector<uint8_t>& names)
+static Vector<TextRange> encodeFrameNames(const LinkedFunctions& functions, const Typed::Program& program, std::span<const Typed::WrittenTailCall> placesOfTailCalls, const ParallelLoops& loops, Vector<uint8_t>& names)
 {
     FastBitVector isFrameName(program.strings.size());
     forEachIndexInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned position) {
@@ -68,6 +68,10 @@ static Vector<TextRange> encodeFrameNames(const LinkedFunctions& functions, cons
                 isFrameName.atomicSetAndCheck(name.index(), true);
         }
     });
+    for (const Typed::WrittenTailCall& place : placesOfTailCalls) {
+        if (StringID name = program.at(place.function).name)
+            isFrameName.atomicSetAndCheck(name.index(), true);
+    }
 
     Vector<TextRange> rangeByString(program.strings.size());
     isFrameName.forEachSetBit([&](size_t string) {
@@ -99,14 +103,24 @@ static void appendSiteRecords(Vector<ObfuscatedSiteRecord>& records, uint32_t po
     }
 }
 
-ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context)
+ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const Typed::Program& program, BuildContext& context, std::span<const Typed::WrittenTailCall> placesOfTailCalls)
 {
     const ParallelLoops& loops = context.parallelLoops();
     ObfuscatedSites result;
-    Vector<TextRange> rangeByString = encodeFrameNames(functions, program, loops, result.names);
+    Vector<TextRange> rangeByString = encodeFrameNames(functions, program, placesOfTailCalls, loops, result.names);
     result.records = collectInParallel<ObfuscatedSiteRecord>(loops, static_cast<unsigned>(functions.size()), [&](unsigned position, Vector<ObfuscatedSiteRecord>& records) {
         appendSiteRecords(records, position, functions[position], program, rangeByString);
     });
+    uint32_t numberInFrames = static_cast<uint32_t>(functions.size());
+    for (const Typed::WrittenTailCall& place : placesOfTailCalls) {
+        const Typed::Function& function = program.at(place.function);
+        result.records.append(ObfuscatedSiteRecord {
+            .function = numberInFrames++,
+            .site = 0,
+            .location = { function.module.index(), place.position },
+            .name = function.name ? rangeByString[function.name.index()] : TextRange { },
+        });
+    }
     return result;
 }
 

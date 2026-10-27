@@ -211,7 +211,10 @@ export default b.declarations(
       },
     },
     proto: {
-      byteLength: bufferGetter(byteCount, readsState),
+      byteLength: {
+        ...bufferGetter(byteCount, readsState),
+        implementation: b.inline("ArrayBufferByteLength", { otherwise: b.hostCall }),
+      },
       detached: bufferGetter(b.bool, readsState),
       maxByteLength: bufferGetter(byteCount, readsState),
       resizable: bufferGetter(b.bool, b.inspected),

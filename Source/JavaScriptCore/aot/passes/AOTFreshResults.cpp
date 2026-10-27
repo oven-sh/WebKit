@@ -103,7 +103,7 @@ static bool allocates(const Function& function, const Block& block)
 static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
 {
     const Function& function = analyses.function();
-    if (isAllocation(function, analyses.sameObjectThroughCasts(value)))
+    if (isAllocation(function, analyses.sameObjectThroughCasts(value).valueInFrontOfFacts()))
         return true;
     if (!mayBeReference(analyses.program().typeOf(function, value)))
         return false;
@@ -743,7 +743,7 @@ static bool givesFieldsClosuresMadeOnDemand(FunctionAnalyses& analyses, const Fr
             }
             if (!storesIntoNamedFields.contains(value.opcode))
                 continue;
-            ValueID receiver = sameObjectThroughCasts(function, value.operand(*receiverOf(value.opcode)));
+            ValueID receiver = sameObjectThroughCasts(function, value.operand(*receiverOf(value.opcode))).valueInFrontOfFacts();
             if (objects.get(receiver.index()) && canLeaveClosureUnmade(analyses, block, receiver, value.operand(*storedOf(value.opcode))))
                 return true;
         }
@@ -819,7 +819,7 @@ static ValueID returnedValueOf(const Function& function, const Terminator& termi
     switch (terminator.kind) {
     case TerminatorKind::Return:
         if (ValueID value = terminator.valueOperand())
-            return sameObjectThroughCasts(function, value);
+            return sameObjectThroughCasts(function, value).valueInFrontOfFacts();
         return { };
     case TerminatorKind::ReturnCall:
         return terminator.callOperand();

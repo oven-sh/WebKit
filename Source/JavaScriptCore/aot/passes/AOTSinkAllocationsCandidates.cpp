@@ -1856,7 +1856,7 @@ bool AllocationSinking::isBuiltAtOnce(const Candidate& allocation) const
         return buildsOperand(m_program, user, firstUse->operandIndex);
     case Interpretation::Read:
     case Interpretation::Store: {
-        ValueID accessed = sameObjectThroughCasts(m_function, user.operand(0));
+        ValueID accessed = sameObjectThroughCasts(m_function, user.operand(0)).valueInFrontOfFacts();
         return accessed != allocation.definition && m_function.at(accessed).opcode != Opcode::Parameter && !candidateDefinedBy(accessed);
     }
     case Interpretation::Allocation:

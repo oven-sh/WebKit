@@ -212,6 +212,58 @@ static void insertBehindDefinitions(const FlowCastInsertion& insertion, const Ve
     }
 }
 
+bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& held, TypeArena& types)
+{
+    if (held.anyObject || held.anyFunction)
+        return false;
+    Type leftOut = held.withOnlyObjects().without(expected, types);
+    return leftOut.hasOnlyClassObjects() && !leftOut.classes.isEmpty();
+}
+
+static void expectWhatArrives(const FlowCastInsertion& insertion, std::span<const FlowValueProof> proofs)
+{
+    const Program& program = insertion.body.program;
+    Function& function = insertion.body.function;
+    TypeArena& types = insertion.body.types;
+    const UseLists& useLists = insertion.analyses.useLists();
+    Vector<ValueID, 8> worklist;
+    for (const FlowValueProof& proof : proofs) {
+        const Type& arriving = types.at(proof.type);
+        if (!arriving.hasObjects() || arriving.anyObject || arriving.anyFunction)
+            continue;
+        if (TypeID expected = function.at(proof.value).expected().predicted(); expected && leavesOutOnlyInstancesOfBuiltinClasses(types.at(expected), arriving, types))
+            worklist.append(proof.value);
+        for (const Use& use : useLists.usesOf(proof.value)) {
+            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::Upcast)
+                continue;
+            TypeID guess = function.at(use.user).expected().predicted();
+            if (!guess || guess == function.at(proof.value).expected().predicted())
+                continue;
+            const Type& guessed = types.at(guess);
+            if (guessed.layouts && !(arriving.primitives & ~guessed.primitives) && !arriving.isSubsetOf(guessed, program))
+                worklist.append(use.user);
+        }
+    }
+
+    BitVector isReached;
+    auto reach = [&](ValueID id) {
+        if (function.at(id).expected().predicted() && !isReached.set(id.index()))
+            worklist.append(id);
+    };
+    for (ValueID id : worklist)
+        isReached.set(id.index());
+    while (!worklist.isEmpty()) {
+        ValueID id = worklist.takeLast();
+        function.edit(id).setExpected({ });
+        for (const Use& use : useLists.usesOf(id)) {
+            if (use.isEdgeUse())
+                reach(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+            else if (use.kind == Use::Kind::Operand && isCast(function.at(use.user).opcode))
+                reach(use.user);
+        }
+    }
+}
+
 static void replaceDefinedValues(const FlowCastInsertion& insertion, const FlowBodyUpdate& update)
 {
     Function& function = insertion.body.function;
@@ -1092,6 +1144,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     defineListedMembers(body.function, builder, listedMembers.span());
 
     FlowCastInsertion insertion { body, analyses, builder };
+    expectWhatArrives(insertion, update.proofs.span());
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;
     }, [&](const FlowValueProof& proof) {

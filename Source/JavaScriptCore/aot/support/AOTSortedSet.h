@@ -9,6 +9,7 @@
 
 #include "AOTCompactList.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <concepts>
@@ -121,6 +122,14 @@ bool SortedSet<T, inlineCapacity>::remove(T value)
 template<typename T, size_t inlineCapacity>
 bool SortedSet<T, inlineCapacity>::unite(const SortedSet& other)
 {
+    // A few values find their places by halving, and what stands behind them moves up: nothing is compared one by one, nothing copied.
+    AOT_THRESHOLD(size_t, mostValuesAddedOneByOne, 4);
+    if (other.size() <= mostValuesAddedOneByOne && &other != this) {
+        bool hasGrown = false;
+        for (T value : other)
+            hasGrown |= add(value);
+        return hasGrown;
+    }
     if (other.isSubsetOf(*this))
         return false;
     if (isEmpty()) {

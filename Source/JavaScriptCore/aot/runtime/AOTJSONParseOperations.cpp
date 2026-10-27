@@ -33,6 +33,7 @@
 #include "GCMemoryOperations.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSArrayBufferView.h"
+#include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSONObject.h"
 #include "ObjectConstructor.h"
@@ -415,6 +416,7 @@ void JSONRuntime::clear()
     }
     m_numberOfObjectsLearned = 0;
     m_timesNotFoundInARow.fill(0);
+    m_timesRefusedInARow.fill(0);
     if (m_recordPlanCache)
         m_recordPlanCache->fill({ });
     for (const RecordPlanForNames& known : m_recordPlans) {
@@ -1288,6 +1290,14 @@ static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject
     if (!initial)
         return false;
     object.setInitialKeyOrder(vm, *initial, extraProperties);
+    if (extraProperties) {
+        const LayoutData& layout = object.layout();
+        for (const FieldData& field : layout.fields()) {
+            JSValue value = field.isPrivate() || field.isAccessor() ? JSValue() : object.readInline(field);
+            if (value && value.isCell() && isCompiledObject(value.asCell()))
+                instance.json.runtime->didSeeMember(layout.shape, layout.indexOf(field), uncheckedDowncast<Object>(value.asCell())->shape());
+        }
+    }
     // A list of keys lasts as long as its text; a number lasts.
     if (extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered) {
         born.orderAndCount = initial->orderAndCount;
@@ -1394,7 +1404,15 @@ JSONRuntime::LearnedObject& JSONRuntime::learnedObjectToReplace(uint32_t shape, 
 void JSONRuntime::didSeeExtraMembers(uint32_t shape)
 {
     unsigned bit = shape % numberOfJSONShapeBits;
-    m_instance.json.shapesSeenWithExtraMembers[bit / 32] |= 1u << (bit % 32);
+    if (m_timesRefusedInARow[bit] != maxTimesRefusedInARow)
+        m_instance.json.shapesSeenWithExtraMembers[bit / 32] |= 1u << (bit % 32);
+}
+
+void JSONRuntime::didRefuseTextOf(uint32_t shape)
+{
+    unsigned bit = shape % numberOfJSONShapeBits;
+    if (++m_timesRefusedInARow[bit] == maxTimesRefusedInARow)
+        m_instance.json.shapesSeenWithExtraMembers[bit / 32] &= ~(1u << (bit % 32));
 }
 
 void JSONRuntime::didNotFindTextOf(uint32_t shape)
@@ -1409,7 +1427,7 @@ JSONRuntime::LearnedExtraMembers* JSONRuntime::learnedExtraMembersWithoutNames(u
     if (!m_learnedExtraMembers)
         return nullptr;
     unsigned index = indexOfLearnedExtraMembers(key, firstName);
-    uint64_t firstWord = WTF::unalignedLoad<uint64_t>(firstName);
+    uint64_t firstWord = JSONRuntime::startOfName(firstName);
     for (unsigned way = 0; way < 2; ++way) {
         LearnedExtraMembers& learned = (*m_learnedExtraMembers)[index ^ way];
         if (learned.holdsNoNamesOf(key, firstWord))
@@ -1592,7 +1610,7 @@ static NEVER_INLINE const uint8_t* parseAndLearnExtraMembers(Instance* instance,
             learned = seenBefore ? seenBefore : &runtime.learnedExtraMembersToReplace(key, cursor);
             if (!seenBefore || learnsNames) {
                 beginLearning(members, *learned, shape);
-                learned->firstWord = WTF::unalignedLoad<uint64_t>(cursor);
+                learned->firstWord = JSONRuntime::startOfName(cursor);
                 learned->isOnlySeen = !seenBefore;
             }
         }
@@ -1613,7 +1631,9 @@ static NEVER_INLINE const uint8_t* parseAndLearnExtraMembers(Instance* instance,
     return next;
 }
 
-static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm, const uint8_t* start)
+static ParsedJSONValue parseLearnedObjectInside(Instance&, VM&, uint32_t shape, const uint8_t* brace);
+
+static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm, const uint8_t* start, uint32_t shapeOfObject = 0)
 {
     JSValue integer;
     if (const uint8_t* end = tryParseSmallJSONInteger(start, integer))
@@ -1625,6 +1645,8 @@ static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm,
         return { jsBoolean(true), start + 4 };
     else if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *start == 'f')
         return { jsBoolean(false), start + 5 };
+    if (shapeOfObject)
+        return parseLearnedObjectInside(instance, vm, shapeOfObject, start);
     return parseJSONValueAt(instance, vm, instance.globalObject, start);
 }
 
@@ -1697,22 +1719,77 @@ done:
     return reached;
 }
 
-static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName)
+static bool learnObject(Instance&, VM&, JSONRuntime::LearnedObject&, uint32_t shape, const uint8_t* firstName, unsigned depth);
+
+static std::optional<JSONRuntime::LearnedObject::Store> storeOf(ObjectBuilderPlan::FastField field, uint8_t kind)
+{
+    using Learned = JSONRuntime::LearnedObject;
+    using Store = Learned::Store;
+    SlotRepresentation representation = field.representation;
+    switch (kind) {
+    case Learned::String:
+        if (!(field.acceptedValues & ObjectBuilderPlan::AcceptsString))
+            return std::nullopt;
+        if (representation == SlotRepresentation::JSValue || representation == SlotRepresentation::Cell)
+            return Store::Word;
+        if (representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32)
+            return Store::Cell32;
+        return std::nullopt;
+    case Learned::SmallInteger:
+        if (!(field.acceptedValues & ObjectBuilderPlan::AcceptsInt32))
+            return std::nullopt;
+        if (representation == SlotRepresentation::JSValue)
+            return Store::Word;
+        if (representation == SlotRepresentation::Double || representation == SlotRepresentation::OptionalDouble)
+            return Store::Int32AsDouble;
+        if (representation == SlotRepresentation::Int32)
+            return Store::Int32;
+        return std::nullopt;
+    case Learned::Boolean:
+        if (!(field.acceptedValues & ObjectBuilderPlan::AcceptsBoolean))
+            return std::nullopt;
+        if (representation == SlotRepresentation::JSValue)
+            return Store::Word;
+        if (representation == SlotRepresentation::Boolean)
+            return Store::Boolean;
+        if (representation == SlotRepresentation::OptionalBoolean)
+            return Store::LowByte;
+        return std::nullopt;
+    case Learned::OtherKind:
+        break;
+    }
+    return std::nullopt;
+}
+
+static bool learnObjectInside(Instance& instance, VM& vm, const JSONRuntime::LearnedObject& outer, uint32_t shape, const uint8_t* brace, unsigned depth)
+{
+    AOT_THRESHOLD(unsigned, maxDepthOfLearnedObjects, 8);
+    const uint8_t* firstName = skipWhitespace(brace + 1);
+    if (!shape || depth == maxDepthOfLearnedObjects || *firstName != '"')
+        return false;
+    JSONRuntime::LearnedObject& inner = instance.json.runtime->learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName));
+    return &inner != &outer && learnObject(instance, vm, inner, shape, firstName, depth + 1);
+}
+
+static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName, unsigned depth)
 {
     using Learned = JSONRuntime::LearnedObject;
     learned.shape = shape;
-    learned.firstWord = WTF::unalignedLoad<uint64_t>(firstName);
+    learned.firstWord = JSONRuntime::startOfName(firstName);
     learned.structure = nullptr;
     learned.wasFound = false;
     learned.isOnlySeen = false;
     learned.members.shrink(0);
     learned.keys.shrink(0);
+    learned.stores.shrink(0);
+    learned.wordsBehindHeader.shrink(0);
 
     const LayoutData& layout = layoutOf(instance, shape);
     RuntimeLayoutTable& layouts = instance.state->objects->layouts;
     JSONValueParser parser(instance, vm, instance.globalObject);
     Vector<Identifier, 16> names;
     Vector<UniquedStringImpl*, 16> fieldNames;
+    Vector<Learned::Kind, 16> kindsOfFields;
     Vector<UniquedStringImpl*, 16> extraNames;
     Vector<Learned::Member, 16> members;
     size_t numberOfPositionedExtraNames = 0;
@@ -1732,10 +1809,17 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
             return false;
         UniquedStringImpl* name = key.name.impl();
         const uint8_t* value = skipWhitespace(key.afterColon);
+        member.shapeOfValue = 0;
         if (const FieldData* field = layouts.field(vm, layout, name)) {
-            bool isContainer = *value == '{' || *value == '[';
-            if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields || (isContainer && !layouts.typeOf(*field).acceptsEveryObject()))
+            JSValue integer;
+            kindsOfFields.append(*value == '"' ? Learned::String : *value == 't' || *value == 'f' ? Learned::Boolean : tryParseSmallJSONInteger(value, integer) ? Learned::SmallInteger : Learned::OtherKind);
+            if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields)
                 return false;
+            if ((*value == '{' || *value == '[') && !layouts.typeOf(*field).acceptsEveryObject()) {
+                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : 0;
+                if (!learnObjectInside(instance, vm, learned, member.shapeOfValue, value, depth))
+                    return false;
+            }
             positionExtraNames();
             learned.keys.append(layout.indexOf(*field));
             member.indexOfValue = fieldNames.size();
@@ -1761,24 +1845,53 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         quote = skipWhitespace(end + 1);
     }
     positionExtraNames();
-    if (!numberOfRuns || numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1))
+    if (!depth && (!numberOfRuns || numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
         return false;
 
     learned.plan = ObjectBuilder::tryCreatePlan(*instance.state, layout, fieldNames.span());
     if (!learned.plan || !learned.plan->hasFastPath())
         return false;
-    learned.extraStructure = Structure::createWithProperties(vm, instance.realm.emptyExtraPropertiesStructure, extraNames.span(), 0);
-    if (!learned.extraStructure || learned.extraStructure->isDictionary())
-        return false;
+    learned.extraStructure = nullptr;
+    if (!extraNames.isEmpty()) {
+        learned.extraStructure = Structure::createWithProperties(vm, instance.realm.emptyExtraPropertiesStructure, extraNames.span(), 0);
+        if (!learned.extraStructure || learned.extraStructure->isDictionary())
+            return false;
+    }
     learned.structureAtBirth = instance.state->objects->structures.objectStructure(vm, shape);
     learned.allocatorOfExtraProperties = subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(extraPropertiesInlineCapacity), AllocatorForMode::EnsureAllocator);
+    learned.allocator = vm.cellSpace().allocatorFor(layout.size, AllocatorForMode::EnsureAllocator);
+    learned.allocationSize = learned.allocator.cellSize();
     learned.numberOfExtraMembers = extraNames.size();
+    for (Learned::Member& member : members) {
+        if (member.indexOfValue >= Learned::maxNumberOfFields)
+            continue;
+        Learned::Kind kind = kindsOfFields[member.indexOfValue];
+        std::optional<Learned::Store> store = storeOf(learned.plan->fastFields()[member.indexOfValue], kind);
+        if (!store) {
+            learned.stores.shrink(0);
+            break;
+        }
+        learned.stores.append({ learned.plan->fastFields()[member.indexOfValue].offset, *store, member.indexOfValue, kind });
+    }
     learned.members.appendVector(members);
     return true;
 }
 
+static void rememberWordsOf(JSONRuntime::LearnedObject& learned, Object& object)
+{
+    if (!learned.shape || learned.stores.isEmpty())
+        return;
+    learned.hasPerCellBit = object.perCellBit();
+    learned.wordsBehindHeader.resize(WTF::roundUpToMultipleOf<sizeof(uint64_t)>(object.layout().size - sizeof(JSCell)) / sizeof(uint64_t));
+    memcpySpan(asMutableByteSpan(learned.wordsBehindHeader.mutableSpan()), std::span { reinterpret_cast<const uint8_t*>(&object) + sizeof(JSCell), learned.wordsBehindHeader.size() * sizeof(uint64_t) });
+}
+
 static NEVER_INLINE bool finishFirstLearnedObject(VM& vm, JSONRuntime::LearnedObject& learned, Object& object, JSObject* extraProperties)
 {
+    if (!extraProperties) {
+        rememberWordsOf(learned, object);
+        return true;
+    }
     DeferTerminationForAWhile deferTermination(vm);
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     std::optional<Object::InitialKeyOrder> initial = object.initialKeyOrder(vm, learned.keys.span(), extraProperties);
@@ -1794,6 +1907,7 @@ static NEVER_INLINE bool finishFirstLearnedObject(VM& vm, JSONRuntime::LearnedOb
         learned.orderWord = object.orderWord();
         learned.extraPropertiesSlot = *slot;
         learned.structure = initial->structure;
+        rememberWordsOf(learned, object);
     }
     return true;
 }
@@ -1819,7 +1933,75 @@ static ALWAYS_INLINE JSObject* createLearnedExtraProperties(VM& vm, const JSONRu
     return reinterpret_cast<JSObject*>(cell);
 }
 
-static ALWAYS_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, const uint8_t* quote, uint64_t& result)
+static ALWAYS_INLINE void storeExtraProperties(const JSONRuntime::LearnedObject& learned, uint8_t* cell, JSObject* extraProperties)
+{
+    SlotData slot = learned.extraPropertiesSlot;
+    if (slot.representation() == SlotRepresentation::Cell)
+        *reinterpret_cast<JSObject**>(cell + slot.offset) = extraProperties;
+    else
+        *reinterpret_cast<uint32_t*>(cell + slot.offset) = encodeCell32(reinterpret_cast<HeapCell*>(cell), extraProperties);
+}
+
+static ALWAYS_INLINE bool valuesAreOfLearnedKinds(const JSONRuntime::LearnedObject& learned, const EncodedJSValue* values)
+{
+    using Learned = JSONRuntime::LearnedObject;
+    bool areOfLearnedKinds = true;
+    for (const Learned::FieldStore& field : learned.stores) {
+        JSValue value = JSValue::decode(values[field.indexOfValue]);
+        if (field.kind == Learned::SmallInteger)
+            areOfLearnedKinds &= value.isInt32();
+        else if (field.kind == Learned::String)
+            areOfLearnedKinds &= value.isString();
+        else
+            areOfLearnedKinds &= value.isBoolean();
+    }
+    return areOfLearnedKinds;
+}
+
+static ALWAYS_INLINE JSObject* createLearnedObject(VM& vm, const JSONRuntime::LearnedObject& learned, Structure* structure, const EncodedJSValue* values, JSObject* extraProperties)
+{
+    using Store = JSONRuntime::LearnedObject::Store;
+    auto* cell = static_cast<uint8_t*>(learned.allocator.allocate(vm.heap, learned.allocationSize, nullptr, AllocationFailureMode::Assert));
+    auto* words = reinterpret_cast<uint64_t*>(cell);
+    words[0] = structure->id().bits() | static_cast<uint64_t>(structure->typeInfoBlob()) << 32;
+    const uint64_t* word = learned.wordsBehindHeader.begin();
+    const uint64_t* end = learned.wordsBehindHeader.end();
+#pragma clang loop unroll(disable) vectorize(disable)
+    for (uint64_t* target = words + 1; word != end; ++word, ++target)
+        *target = *word;
+    for (const JSONRuntime::LearnedObject::FieldStore& field : learned.stores) {
+        EncodedJSValue value = values[field.indexOfValue];
+        uint8_t* slot = cell + field.offset;
+        switch (field.store) {
+        case Store::Word:
+            *reinterpret_cast<EncodedJSValue*>(slot) = value;
+            break;
+        case Store::Cell32:
+            *reinterpret_cast<uint32_t*>(slot) = encodeCell32(reinterpret_cast<HeapCell*>(cell), JSValue::decode(value).asCell());
+            break;
+        case Store::Int32:
+            *reinterpret_cast<int32_t*>(slot) = static_cast<int32_t>(value);
+            break;
+        case Store::Int32AsDouble:
+            *reinterpret_cast<double*>(slot) = static_cast<int32_t>(value);
+            break;
+        case Store::Boolean:
+            *slot = JSValue::decode(value).asBoolean();
+            break;
+        case Store::LowByte:
+            *slot = static_cast<uint8_t>(value);
+            break;
+        }
+    }
+    if (extraProperties)
+        storeExtraProperties(learned, cell, extraProperties);
+    auto* object = reinterpret_cast<JSObject*>(cell);
+    if (learned.hasPerCellBit) [[unlikely]]
+        object->setPerCellBit(true);
+    return object;
+}
+
+static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, const uint8_t* quote, uint64_t& result)
 {
     using Learned = JSONRuntime::LearnedObject;
     EncodedJSValue values[Learned::maxNumberOfFields + Learned::maxNumberOfExtraMembers];
@@ -1831,7 +2013,8 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm,
     for (;;) {
         if (!member->standsAt(quote)) [[unlikely]]
             return nullptr;
-        ParsedJSONValue parsed = parseExtraValue(instance, vm, skipWhitespace(quote + member->textLength));
+        const uint8_t* start = skipWhitespace(quote + member->textLength);
+        ParsedJSONValue parsed = parseExtraValue(instance, vm, start, member->shapeOfValue);
         if (!parsed.end) [[unlikely]]
             return nullptr;
         values[member->indexOfValue] = JSValue::encode(parsed.value);
@@ -1846,22 +2029,29 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm,
     if (*quote != '}' || member != end) [[unlikely]]
         return nullptr;
 
-    JSObject* extraProperties = createLearnedExtraProperties(vm, learned, extraStructure, values + Learned::maxNumberOfFields);
+    JSObject* extraProperties = extraStructure ? createLearnedExtraProperties(vm, learned, extraStructure, values + Learned::maxNumberOfFields) : nullptr;
+    bool isFinishedAsBefore = structure || !extraProperties;
+    if (isFinishedAsBefore && !learned.wordsBehindHeader.isEmpty() && valuesAreOfLearnedKinds(learned, values)) [[likely]] {
+        result = JSValue::encode(createLearnedObject(vm, learned, structure ? structure : structureAtBirth, values, extraProperties));
+        return quote;
+    }
     JSObject* object = ObjectBuilder::tryBuild(vm, *learned.plan, structure ? structure : structureAtBirth, values);
     if (!object) [[unlikely]]
         return nullptr;
-    if (structure) [[likely]] {
-        Object& finished = *uncheckedDowncast<Object>(object);
-        finished.at<uint32_t>(offsetOfOrderWord) = learned.orderWord;
-        SlotData slot = learned.extraPropertiesSlot;
-        if (slot.representation() == SlotRepresentation::Cell)
-            finished.at<JSObject*>(slot.offset) = extraProperties;
-        else
-            finished.at<uint32_t>(slot.offset) = encodeCell32(object, extraProperties);
+    if (isFinishedAsBefore && (extraProperties || !learned.stores.isEmpty() == !learned.wordsBehindHeader.isEmpty())) {
+        if (extraProperties) {
+            uncheckedDowncast<Object>(object)->at<uint32_t>(offsetOfOrderWord) = learned.orderWord;
+            storeExtraProperties(learned, reinterpret_cast<uint8_t*>(object), extraProperties);
+        }
     } else if (!finishFirstLearnedObject(vm, learned, *uncheckedDowncast<Object>(object), extraProperties))
         return nullptr;
     result = JSValue::encode(object);
     return quote;
+}
+
+static NEVER_INLINE const uint8_t* tryParseObjectAs(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, const uint8_t* quote, uint64_t& result)
+{
+    return tryParseObjectInlineAs(instance, vm, learned, quote, result);
 }
 
 static NEVER_INLINE const uint8_t* learnAndParseObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject* seenOnce, uint32_t shape, const uint8_t* firstName, uint64_t& result)
@@ -1871,22 +2061,84 @@ static NEVER_INLINE const uint8_t* learnAndParseObject(Instance& instance, VM& v
         return nullptr;
     runtime.didNotFindTextOf(shape);
     if (!seenOnce) {
-        JSONRuntime::LearnedObject& seen = runtime.learnedObjectToReplace(shape, WTF::unalignedLoad<uint64_t>(firstName));
+        JSONRuntime::LearnedObject& seen = runtime.learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName));
         seen.shape = shape;
-        seen.firstWord = WTF::unalignedLoad<uint64_t>(firstName);
+        seen.firstWord = JSONRuntime::startOfName(firstName);
         seen.wasFound = false;
         seen.isOnlySeen = true;
         seen.members.shrink(0);
         return nullptr;
     }
-    if (!runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName) || !seenOnce->shape)
+    if (!runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName, 0) || !seenOnce->shape)
         return nullptr;
     return tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
 }
 
+static NEVER_INLINE ParsedJSONValue parseLearnedObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace)
+{
+    JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects();
+    if (*brace != '{' || !table || !vm.isSafeToRecurse()) [[unlikely]]
+        return { };
+    const uint8_t* firstName = skipWhitespace(brace + 1);
+    uint64_t firstWord = JSONRuntime::startOfName(firstName);
+    unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
+    for (unsigned way = 0; way < 2; ++way) {
+        JSONRuntime::LearnedObject& learned = (*table)[index ^ way];
+        if (!learned.isFor(shape, firstWord) || learned.members.isEmpty())
+            continue;
+        uint64_t result;
+        if (const uint8_t* end = tryParseObjectAs(instance, vm, learned, firstName, result)) [[likely]] {
+            learned.wasFound = true;
+            instance.json.runtime->setLearnedObjectFoundLast(&learned);
+            return { JSValue::decode(result), end + 1 };
+        }
+    }
+    return { };
+}
+
+static NEVER_INLINE const uint8_t* appendLearnedObjects(Instance& instance, VM& vm, uint32_t shape, JSArray* array, const uint8_t* element)
+{
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSONRuntime::LearnedObject* last = nullptr;
+    while (*element == '{') {
+        const uint8_t* firstName = skipWhitespace(element + 1);
+        ParsedJSONValue parsed;
+        uint64_t result;
+        const uint8_t* end = last && last->holdsMembersOf(shape) ? tryParseObjectInlineAs(instance, vm, *last, firstName, result) : nullptr;
+        if (end) [[likely]]
+            parsed = { JSValue::decode(result), end + 1 };
+        else {
+            parsed = parseLearnedObjectInside(instance, vm, shape, element);
+            if (!parsed.end)
+                break;
+            last = instance.json.runtime->learnedObjectFoundLast();
+        }
+        const uint8_t* next = skipWhitespace(parsed.end);
+        if (*next == ',') {
+            next = skipWhitespace(next + 1);
+            if (*next != '{')
+                break;
+        } else if (*next != ']')
+            break;
+        array->pushInline(instance.globalObject, parsed.value);
+        if (catchScope.exception()) [[unlikely]] {
+            catchScope.clearException();
+            break;
+        }
+        element = next;
+    }
+    return element;
+}
+
 static ALWAYS_INLINE const uint8_t* tryParseObjectAsLearned(Instance& instance, VM& vm, uint32_t shape, const uint8_t* firstName, uint64_t& result)
 {
-    uint64_t firstWord = WTF::unalignedLoad<uint64_t>(firstName);
+    if (JSONRuntime::LearnedObject* last = instance.json.runtime->learnedObjectFoundLast(); last && last->holdsMembersOf(shape)) {
+        if (const uint8_t* end = tryParseObjectAs(instance, vm, *last, firstName, result)) [[likely]] {
+            instance.json.runtime->didFindWholeTextOf(shape);
+            return end;
+        }
+    }
+    uint64_t firstWord = JSONRuntime::startOfName(firstName);
     JSONRuntime::LearnedObject* seenOnce = nullptr;
     if (JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects()) [[likely]] {
         unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
@@ -1898,11 +2150,14 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectAsLearned(Instance& instance, 
                 seenOnce = &learned;
                 continue;
             }
-            if (learned.isRefused())
+            if (learned.isRefused()) {
+                instance.json.runtime->didRefuseTextOf(shape);
                 return nullptr;
+            }
             if (const uint8_t* end = tryParseObjectAs(instance, vm, learned, firstName, result)) [[likely]] {
                 learned.wasFound = true;
-                instance.json.runtime->didFindTextOf(shape);
+                instance.json.runtime->didFindWholeTextOf(shape);
+                instance.json.runtime->setLearnedObjectFoundLast(&learned);
                 return end;
             }
         }
@@ -1948,6 +2203,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseExtraMembers, const uint8
         const uint8_t* end = tryParseObjectAsLearned(*instance, vm, shape, skipWhitespace(cursor + 1), extraAndOrder[0]);
         return end ? end : cursor;
     }
+    if (JSValue extra = JSValue::decode(extraAndOrder[0]); extra.isCell() && extra.asCell()->type() == ArrayType)
+        return appendLearnedObjects(*instance, vm, shape, uncheckedDowncast<JSArray>(extra.asCell()), cursor);
     if (*cursor != '"') [[unlikely]]
         return cursor;
     if (instance->json.runtime->remembersTextsOf(shape)) [[likely]] {

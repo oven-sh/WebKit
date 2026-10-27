@@ -524,7 +524,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     };
 
     auto entryParameterBehind = [&](ValueID value) -> std::optional<uint32_t> {
-        size_t index = function.at(entryBlock).parameters.find(sameObjectThroughCasts(function, value));
+        size_t index = function.at(entryBlock).parameters.find(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
         if (index == notFound)
             return std::nullopt;
         return static_cast<uint32_t>(index);
@@ -1244,8 +1244,8 @@ bool narrowsWhatFunctionIsHanded(const Program& program, const Function& functio
 {
     if (value.opcode != Opcode::AssumeType || value.factOperand() || program.typeOf(function, value.valueOperand()).mayBeUnspecified())
         return false;
-    ValueID handed = sameObjectThroughCasts(function, value.valueOperand());
-    return function.at(handed).opcode == Opcode::Parameter && function.at(entryBlock).parameters.contains(handed);
+    RootThroughCasts handed = sameObjectThroughCasts(function, value.valueOperand());
+    return function.at(handed).opcode == Opcode::Parameter && function.at(entryBlock).parameters.contains(handed.valueInFrontOfFacts());
 }
 
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
@@ -1398,7 +1398,7 @@ static void placeCallsOfLinks(const Program& program, Function& caller, const Fu
         for (const Target& target : traversal.at(block).terminator.targets) {
             const auto& parameters = traversal.at(target.block).parameters;
             for (uint32_t index = 0; index < target.arguments.size(); ++index) {
-                int64_t position = positionInOperands(sameObjectThroughCasts(traversal, target.arguments[index]));
+                int64_t position = positionInOperands(sameObjectThroughCasts(traversal, target.arguments[index]).valueInFrontOfFacts());
                 std::optional<int64_t>& known = positionOfParameter[parameters[index].index()];
                 known = known.value_or(position) == position ? position : isNoRead;
             }
@@ -1411,7 +1411,7 @@ static void placeCallsOfLinks(const Program& program, Function& caller, const Fu
             const Value& value = traversal.at(id);
             if (value.opcode != Opcode::Call || value.inlineFrame)
                 continue;
-            ValueID callback = sameObjectThroughCasts(traversal, value.calleeOperand());
+            ValueID callback = sameObjectThroughCasts(traversal, value.calleeOperand()).valueInFrontOfFacts();
             int64_t position = positionOfParameter[callback.index()].value_or(positionInOperands(callback));
             if (position < 0 || position % 2 || position >= 2 * static_cast<int64_t>(numberOfLinks))
                 continue;
@@ -1717,7 +1717,7 @@ static bool isHeldByCallAlone(FunctionPassContext& context, ValueID value, Value
 // `f(a, b)` for `function f(...list)`: the caller makes the list for the call.
 static std::optional<int64_t> lengthOfListMadeForCall(FunctionPassContext& context, ValueID argument, ValueID call)
 {
-    ValueID definition = sameObjectThroughCasts(context.function, argument);
+    ValueID definition = sameObjectThroughCasts(context.function, argument).valueInFrontOfFacts();
     const Value& list = context.function.at(definition);
     if (list.opcode == Opcode::EmptyArgumentList)
         return 0;
@@ -1824,7 +1824,7 @@ static uint64_t computeKnownCalleeBenefit(FunctionPassContext& context, ValueID 
             continue;
         bytes += InlineModel::knownCalleeArgumentBytes * (summary.parametersCalledInCycles.get(entryParameter) ? cycleWeight : 1);
         // A closure that the caller makes for the call alone is not made where the copy calls its function directly.
-        ValueID definition = sameObjectThroughCasts(caller, argument);
+        ValueID definition = sameObjectThroughCasts(caller, argument).valueInFrontOfFacts();
         if (caller.at(definition).opcode == Opcode::NewClosure && isHeldByCallAlone(context, definition, callID))
             bytes += estimatedCodeBytes(context.program, caller, caller.at(definition));
     }
@@ -2148,6 +2148,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.
     bool isRepeatedByCaller = isHot(heat).predicted() && context.analyses.isInCycle(block);
+    bool runsInLoopAroundCaller = heat.predicted() == HeatClass::Warm && context.inputs.heat.isCalledInLoop(program, context.id).predicted() && context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfNearlyCertainCall;
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
@@ -2229,7 +2230,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     if (canInlineWholeBody && !isTooDeep && isWithinBudget())
         verdict.decision = InlineDecision::Inline;
-    else if (isHot(heat).predicted() && summary.canInlineHead()) {
+    else if ((isHot(heat).predicted() || runsInLoopAroundCaller) && summary.canInlineHead()) {
         verdict.decision = InlineDecision::InlineHead;
         verdict.costBytes = summary.headBytes;
     } else if (!canInlineWholeBody)
@@ -2326,7 +2327,7 @@ static bool handsObjectToFrequentCode(FunctionPassContext& context, ValueID call
     if (context.program.at(caller.at(call).function()).role == FunctionRole::ResultWrapper)
         add(call);
     caller.at(call).forEachOperand([&](ValueID operand, uint32_t) {
-        add(sameObjectThroughCasts(caller, operand));
+        add(sameObjectThroughCasts(caller, operand).valueInFrontOfFacts());
     });
     while (!worklist.isEmpty()) {
         for (const Use& use : useLists.usesOf(worklist.takeLast())) {

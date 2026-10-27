@@ -13,6 +13,7 @@
 #include "AOTImage.h"
 #include "AOTImageFormat.h"
 #include "AOTLinkedFunctions.h"
+#include "AOTProgramTables.h"
 #include "AOTSort.h"
 #include "AOTStubKey.h"
 #include "AOTThreads.h"
@@ -764,6 +765,17 @@ static std::optional<SourcePosition> findPosition(const Image& image, uint32_t f
 
 std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex site) const
 {
+    if (function >= header().counts.functions) [[unlikely]] {
+        std::optional<SourcePosition> position;
+        uint32_t placesInFront = function - header().counts.functions;
+        forEachTailCallPlace(programTables().placesOfTailCalls(), [&](const TailCallPlace& place) {
+            if (placesInFront--)
+                return IterationStatus::Continue;
+            position = SourcePosition { { place.line, place.column }, place.sourcePlusOne ? ModuleID(place.sourcePlusOne - 1) : ModuleID() };
+            return IterationStatus::Done;
+        });
+        return position;
+    }
     RememberedPosition& remembered = rememberedPositions[(function * 31 + site.bits()) % rememberedPositions.size()];
     {
         Locker locker { rememberedPositionsLock };

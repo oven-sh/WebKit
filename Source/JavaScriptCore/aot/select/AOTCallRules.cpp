@@ -154,7 +154,7 @@ static Vector<ResolvedCalls> findCallsOfInvariantCallees(SelectionContext& conte
         if (!invariant || function.at(invariant->header).frequency.predicted() != BlockFrequency::Normal)
             continue;
 
-        ValueID object = analyses.sameObjectThroughCasts(callee);
+        ValueID object = analyses.sameObjectThroughCasts(callee).valueInFrontOfFacts();
         uint32_t argumentCount = numberOfArgumentsOf(call);
         auto entry = matchIndexes.add(std::tuple { invariant->header, object, argumentCount }, matches.size());
         if (entry.isNewEntry)

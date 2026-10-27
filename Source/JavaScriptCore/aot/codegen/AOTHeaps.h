@@ -62,6 +62,7 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
+    v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), TypedArrayStorage) \
     v(weakTableStorage, 0, CollectionStorage) \
     v(weakTableEntries, 0, CollectionEntries) \
     v(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::globalLexicalBindingEpochOffset(), RuntimeState)

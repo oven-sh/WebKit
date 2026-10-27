@@ -458,8 +458,8 @@ static LeafAnswer putToFinalObject(Instance* instance, JSObject* object, Uniqued
     bool repeatsAddition = repeatsPropertyAddition(structure, uid);
     if (!repeatsAddition && !hasStructureAtHand(vm))
         return LeafAnswer::TakeSlowPath;
-    // An object that has many names and is given more by key grows into a dictionary.
-    if (!repeatsAddition && (structure->hasBeenDictionary() || !hasFewEnoughNamesToBeFilled(structure)) && !firstAdditionsOf(*instance->state).shouldMakeStructure(structure, uid))
+    // An object that has been a dictionary and is given names by key again grows into one.
+    if (!repeatsAddition && structure->hasBeenDictionary() && !firstAdditionsOf(*instance->state).shouldMakeStructure(structure, uid))
         object->convertToDictionary(vm);
     object->putDirect(vm, uid, value, slot);
     if (repeatsAddition)

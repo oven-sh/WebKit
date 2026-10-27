@@ -638,6 +638,14 @@ void HeapRule::collectChain()
         add(ValueFlowProgramNodes::escaped(), start);
 }
 
+// A prototype object that the table does not describe leads whoever holds it back to its constructor.
+void HeapRule::letConstructorEscapeWithPrototypeObject(BuiltinID member, ModuleID module)
+{
+    const Builtin& entry = m_builtins.at(member);
+    if (entry.kind == BuiltinKind::DataProperty && entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Constructor && m_program.keyOf(entry.name) == m_tables.prototypeKey())
+        add(ValueFlowProgramNodes::escaped(), only(objectOfMember(m_builtins.canonicalID(entry.holder), module)));
+}
+
 void HeapRule::readMember(BuiltinID member, ModuleID module, ValueFlowNodeID result, Members& getters)
 {
     if (m_tables.letsInUnseenCode(member) && !isOperationOfFunction())
@@ -670,8 +678,7 @@ void HeapRule::readMember(BuiltinID member, ModuleID module, ValueFlowNodeID res
             add(result, m_universe.builtinTables().primitivesOf(type));
             return;
         }
-        if (entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Constructor && m_program.keyOf(entry.name) == m_tables.prototypeKey())
-            add(ValueFlowProgramNodes::escaped(), only(objectOfMember(m_builtins.canonicalID(entry.holder), module)));
+        letConstructorEscapeWithPrototypeObject(member, module);
         getters.append(objectOfMember(member, module));
         return;
     }
@@ -985,6 +992,7 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
         m_context.sets().forEachMember(members.accessors, [&](ValueFlowObjectID accessor) {
             BuiltinID member = m_builtins.canonicalID(m_universe.builtinOf(accessor));
+            letConstructorEscapeWithPrototypeObject(member, ModuleID());
             if (!isFoundByNameAlone(member) || (member == Builtins::ProcessMainModule && namesWaysToModuleObjects(m_program)))
                 getters.append(accessor);
         });

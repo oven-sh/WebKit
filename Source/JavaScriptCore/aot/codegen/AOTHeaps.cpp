@@ -337,7 +337,7 @@ B3::HeapRange AOTHeaps::rangeWrittenByWhateverMayCollect() const
 
 bool AOTHeaps::isFreedWithOwner(const B3::HeapRange& range) const
 {
-    for (const B3::AbstractHeap* heap : { &StringImpl_data, &StringImpl_hashAndFlags, &StringImpl_length, &characters8.atAnyIndex(), &characters16.atAnyIndex(), &ArrayBuffer_shared }) {
+    for (const B3::AbstractHeap* heap : { &StringImpl_data, &StringImpl_hashAndFlags, &StringImpl_length, &characters8.atAnyIndex(), &characters16.atAnyIndex(), &ArrayBuffer_shared, &ArrayBuffer_sizeInBytes }) {
         if (range.overlaps(rangeOf(*heap)))
             return true;
     }

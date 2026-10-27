@@ -2551,7 +2551,7 @@ static bool canDivideAsIntegers(const BuildContext& build, QuotientRounding roun
 
 static std::optional<Value> findIntegerDivisionFor(Rewrite& rewrite, ValueID operand, QuotientRounding rounding)
 {
-    const Value& quotient = rewrite.at(sameObjectThroughCasts(rewrite.function, operand));
+    const Value& quotient = rewrite.function.at(sameObjectThroughCasts(rewrite.function, operand));
     if (quotient.opcode != Opcode::Div || !canDivideAsIntegers(rewrite.context.build, rounding, rewrite.typeOf(quotient.leftOperand()), rewrite.typeOf(quotient.rightOperand())))
         return std::nullopt;
     Value division = IRBuilder::make(Opcode::DivideIntegers, { quotient.leftOperand(), quotient.rightOperand() });

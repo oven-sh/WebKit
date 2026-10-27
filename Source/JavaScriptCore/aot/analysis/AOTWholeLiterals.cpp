@@ -47,7 +47,7 @@ BitVector collectSitesOfWholeLiterals(const Program& program, const FlowResults&
                 const Value& value = function.at(id);
                 value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                     if (operandUsesOf(value.opcode, operandIndex).containsAny(operandWritingUses))
-                        isWritten.quickSet(sameObjectThroughCasts(function, operand).index());
+                        isWritten.quickSet(sameObjectThroughCasts(function, operand).valueInFrontOfFacts().index());
                 });
             }
         }

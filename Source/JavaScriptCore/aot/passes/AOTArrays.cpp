@@ -434,7 +434,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         ArrayMethodCall consumer = last;
         while (true) {
             ValueID receiver = consumer.receiver;
-            ValueID producer = analyses.sameObjectThroughCasts(receiver);
+            ValueID producer = analyses.sameObjectThroughCasts(receiver).valueInFrontOfFacts();
             std::optional<ArrayMethodCall> link = arrayMethodCallOf(program, function, producer);
             if (!link || analyses.useLists().blockOf(producer) != chain.block || !isUsedOnlyBy(receiver, consumer))
                 return receiver;
@@ -643,7 +643,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     const BlockValues& values = context.function.at(chain.block).values;
     uint32_t end = analyses.useLists().locationOf(chain.lastCall).index;
     for (uint32_t index = point.index + 1; index < end; ++index) {
-        if (!isCallOfChain(analyses.sameObjectThroughCasts(values[index])) && analyses.effectsOf(values[index]).onAnyEdge().interferesWith(moved))
+        if (!isCallOfChain(analyses.sameObjectThroughCasts(values[index]).valueInFrontOfFacts()) && analyses.effectsOf(values[index]).onAnyEdge().interferesWith(moved))
             return ArrayChainDeclineReason::ValueBetweenLinksInterferes;
     }
     return ArrayChainDeclineReason::None;

@@ -223,7 +223,7 @@ bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, con
         ValueID value = valuesToVisit.takeLast();
         if (isVisited.set(value.index()) || (!valuesBehindChecks.get(value.index()) && !program.typeOf(constructor, value).hasObjects()))
             continue;
-        ValueID object = sameObjectThroughConversionsToObject(constructor, value);
+        ValueID object = sameObjectThroughConversionsToObject(constructor, value).valueInFrontOfFacts();
         if (std::ranges::contains(constructorRoots, object))
             continue;
 
@@ -400,7 +400,7 @@ struct ConstructionEventCollector {
             ValueID stored = access.operand(*storedOf(access.opcode));
             event.storesValue = mayBeValue(stored);
             event.storesSelfReference = mayHoldObject(stored);
-            if (ValueID definition = sameObjectThroughCasts(function, stored); !event.storesSelfReference && callsTakingObject.contains(definition)) {
+            if (ValueID definition = sameObjectThroughCasts(function, stored).valueInFrontOfFacts(); !event.storesSelfReference && callsTakingObject.contains(definition)) {
                 event.holder = definition;
                 event.storesSelfReference = true;
             }
@@ -410,7 +410,7 @@ struct ConstructionEventCollector {
 
     bool isObjectWhereverItIsAllocated(ValueID value)
     {
-        ValueLocation location = useLists.locationOf(sameObjectThroughCasts(function, value));
+        ValueLocation location = useLists.locationOf(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
         if (location.placement != ValuePlacement::Parameter || location.block == entryBlock || analyses.isInCycle(location.block))
             return false;
         bool isOneOfThem = false;
@@ -418,7 +418,7 @@ struct ConstructionEventCollector {
             ValueID passed = valuePassedOn(function, edge, location.index);
             if (!passed || analyses.isInCycle(edge.from))
                 return false;
-            ValueID allocation = sameObjectThroughCasts(function, passed);
+            ValueID allocation = sameObjectThroughCasts(function, passed).valueInFrontOfFacts();
             std::optional<ObjectID> allocated = escape.objectDefinedBy(allocation);
             if (!allocated || function.at(allocation).opcode != Opcode::NewObject || useLists.locationOf(allocation).block != edge.from)
                 return false;

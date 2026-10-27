@@ -6,7 +6,7 @@
 # declare const input: any;
 # const marked = new Set<number>();
 # marked.add(input | 0);
-# (globalThis as any).answer = hits(marked, input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = hits(marked, input | 0);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -27,10 +27,11 @@ typesite w1 module=m0 position=35 kind=Parameter function=f1
 typesite w2 module=m0 kind=Result
 typesite w3 module=m0 position=198 kind=CallResult
 typesite w4 module=m0 position=217 kind=CallResult
-typesite w5 module=m0 position=269 kind=CallResult
-typesite w6 module=m0 position=66 kind=Variable
-typesite w7 module=m0 position=88 kind=Variable
-typesite w8 module=m0 position=115 kind=CallResult
+typesite w5 module=m0 position=249 kind=Variable
+typesite w6 module=m0 position=310 kind=CallResult
+typesite w7 module=m0 position=66 kind=Variable
+typesite w8 module=m0 position=88 kind=Variable
+typesite w9 module=m0 position=115 kind=CallResult
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1()
@@ -48,29 +49,50 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v10 = BitOr v8, v9
     v11 = Call v5, v4, v10 calleeKey="add" calleeName="marked.add"
     v12 = Convert v11 declared={type=undefined|null|Set<number> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v13 = Builtin builtin=GlobalThis
-    v14 = PropGet v13 key="globalThis" [isFreeName]
-    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v16 = Convert v15 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v13 = Integer
+    v14 = Convert v13 declared={type=number site=w5}
+    Jump -> next b2(v14)
+  b2(v15: number):
+    LoopHint
     v17 = Builtin builtin=GlobalThis
     v18 = PropGet v17 key="input" [isFreeName]
-    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
-    v20 = Integer
-    v21 = BitOr v19, v20
-    v22 = Call v1, -, v4, v21 calleeName="hits"
-    v23 = Convert v22 declared={type=number site=w5}
-    PropSet v16, v23 key="answer"
-    v25 = Undefined
-    Return v25
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Less v15, v19
+    Branch v20 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v21):
+    Jump -> next b4()
+  b4():
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="globalThis" [isFreeName]
+    v24 = Convert v23 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="input" [isFreeName]
+    v28 = Convert v27 declared={type=i32 flags=[IsExpected]}
+    v29 = Integer
+    v30 = BitOr v28, v29
+    v31 = Call v1, -, v4, v30 calleeName="hits"
+    v32 = Convert v31 declared={type=number site=w6}
+    PropSet v25, v32 key="answer"
+    Jump -> next b5()
+  b5():
+    v34 = Increment v21
+    v35 = Convert v34 declared={type=number site=w5}
+    Jump -> next b2(v35)
+  b6(v36):
+    Jump -> next b7()
+  b7():
+    v37 = Undefined
+    Return v37
 }
 function f1 name="hits" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set<number> site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Set<number>, v1: number):
     Jump -> next b1()
   b1():
     v2 = Integer
-    v3 = Convert v2 declared={type=number site=w6}
+    v3 = Convert v2 declared={type=number site=w7}
     v4 = Integer
-    v5 = Convert v4 declared={type=number site=w7}
+    v5 = Convert v4 declared={type=number site=w8}
     Jump -> next b2(v3, v5)
   b2(v6: number, v7: number):
     LoopHint
@@ -81,14 +103,14 @@ function f1 name="hits" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
   b4():
     v12 = PropGet v0 key="has"
     v13 = Call v12, v0, v10 calleeKey="has" calleeName="marked.has"
-    v14 = Convert v13 declared={type=boolean site=w8} illTypedCause=DeclarationWithoutBody
+    v14 = Convert v13 declared={type=boolean site=w9} illTypedCause=DeclarationWithoutBody
     v15 = ToBoolean v14
     Branch v15 -> taken b5(| 0), notTaken b7(| 0)
   b5(v16):
     Jump -> next b6()
   b6():
     v17 = Increment v6
-    v18 = Convert v17 declared={type=number site=w6}
+    v18 = Convert v17 declared={type=number site=w7}
     Jump -> next b8(v18)
   b7(v19):
     Jump -> next b8(v6)
@@ -96,7 +118,7 @@ function f1 name="hits" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
     Jump -> next b9()
   b9():
     v21 = Increment v10
-    v22 = Convert v21 declared={type=number site=w7}
+    v22 = Convert v21 declared={type=number site=w8}
     Jump -> next b2(v20, v22)
   b10(v23, v24):
     Jump -> next b11()
@@ -121,12 +143,12 @@ function f1 name="hits" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CALLS: isLoopPoll, ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
-# Set.prototype.has cannot be replaced, so nothing in the function reads it by name, makes its function object or tests which function it is.
+# Set.prototype.has cannot be replaced and nothing of the same name hides it on the object: the function does not read it by name, make its function object, or test the object or the function.
 # WHOLE-LABEL: name="hits" role=Source
 # WHOLE-NOT: :PropGet
 # WHOLE-NOT: :CallBuiltin
 # WHOLE-NOT: :Call)
-# WHOLE-NOT: :TestCallee
+# WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: loop #{{*}}, instructions: 10, patchpoints: 2

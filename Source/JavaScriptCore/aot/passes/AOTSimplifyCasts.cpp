@@ -325,7 +325,7 @@ struct CastSimplification : Rewrite {
             return 1ull << 63 | access.variable().index();
         if (access.opcode != Opcode::GetEnvironmentField && access.opcode != Opcode::PutEnvironmentField)
             return 0;
-        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand()));
+        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand())).valueInFrontOfFacts();
         return access.field() < 1u << 24 ? 1ull << 62 | static_cast<uint64_t>(environment.index()) << 24 | access.field() : 0;
     }
 
@@ -342,7 +342,7 @@ struct CastSimplification : Rewrite {
     unsigned repointOperand(ValueID id, uint32_t operandIndex, const Vector<ValueID>& narrowestCast)
     {
         ValueID current = at(id).operand(operandIndex);
-        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
+        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).valueInFrontOfFacts().index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
         if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
@@ -386,7 +386,7 @@ struct CastSimplification : Rewrite {
         auto addDominatingCast = [&](ValueID id) {
             passed.add(keyOf(id), id);
             addedCasts.append(id);
-            ValueID object = analyses.sameObjectThroughCasts(id);
+            ValueID object = analyses.sameObjectThroughCasts(id).valueInFrontOfFacts();
             ValueID before = narrowestCast[object.index()];
             if (before && typeOf(before).isSubsetOf(typeOf(id), program))
                 return;

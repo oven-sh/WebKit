@@ -2,7 +2,7 @@
 #   return Math.hypot(x, y);
 # }
 # declare const input: any;
-# (globalThis as any).answer = distance(+input, +input);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = distance(+input, +input);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
@@ -17,31 +17,53 @@ entry module=m0
 typesite w0 module=m0 position=18 kind=Parameter function=f1
 typesite w1 module=m0 position=29 kind=Parameter function=f1
 typesite w2 module=m0 kind=Result
-typesite w3 module=m0 position=134 kind=CallResult
-typesite w4 module=m0 position=59 kind=CallResult
+typesite w3 module=m0 position=114 kind=Variable
+typesite w4 module=m0 position=175 kind=CallResult
+typesite w5 module=m0 position=59 kind=CallResult
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
     v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="globalThis" [isFreeName]
-    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w3}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="input" [isFreeName]
     v8 = Convert v7 declared={type=number flags=[IsExpected]}
-    v9 = ToNumber v8
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="input" [isFreeName]
-    v12 = Convert v11 declared={type=number flags=[IsExpected]}
-    v13 = ToNumber v12
-    v14 = Call v1, -, v9, v13 calleeName="distance"
-    v15 = Convert v14 declared={type=number site=w3}
-    PropSet v5, v15 key="answer"
-    v17 = Undefined
-    Return v17
+    v9 = Less v4, v8
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="globalThis" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="input" [isFreeName]
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = ToNumber v21
+    v23 = Call v1, -, v18, v22 calleeName="distance"
+    v24 = Convert v23 declared={type=number site=w4}
+    PropSet v14, v24 key="answer"
+    Jump -> next b5()
+  b5():
+    v26 = Increment v10
+    v27 = Convert v26 declared={type=number site=w3}
+    Jump -> next b2(v27)
+  b6(v28):
+    Jump -> next b7()
+  b7():
+    v29 = Undefined
+    Return v29
 }
 function f1 name="distance" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
@@ -50,7 +72,7 @@ function f1 name="distance" module=m0 flags=[IsChecked, HasExplicitName] length=
     v2 = Builtin builtin=Math
     v3 = Builtin builtin=MathHypot
     v4 = Call v3, v2, v0, v1 calleeName="Math.hypot"
-    ReturnCall v4 casts=[{declared={type=number site=w4}}, {declared={type=number site=w2}}]
+    ReturnCall v4 casts=[{declared={type=number site=w5}}, {declared={type=number site=w2}}]
 }
 
 # Math.hypot of two numbers is one call of a pure function: both operands and the result stay doubles in registers. Nothing loads or tests Math or its member.

@@ -579,8 +579,12 @@ public:
         ValueSetID writtenThroughUnknownObject { ValueSets::nothing };
         ValueSetID writtenThroughUntrackedObject { ValueSets::nothing };
         AOT_CLASS_THRESHOLD(size_t, nodesInGroup, 8);
-        // By the number of members.
-        Vector<uint32_t> nodesOfManyMembers;
+        struct WrittenThroughManyMembers {
+            ValueSetID objects;
+            ValueSetID value;
+        };
+        // What the index by member leaves out, each value once, by the number of members.
+        Vector<WrittenThroughManyMembers> writtenThroughManyMembers;
         // The members of each `nodesInGroup` of them together, and of all.
         Vector<ValueSetID> membersOfGroupsOfNodes;
         ValueSetID membersOfNodesOfManyMembers { ValueSets::nothing };
@@ -638,6 +642,7 @@ public:
     std::span<const ValueFlowNodeID> firstNodesOfCallGroups() const LIFETIME_BOUND { return m_firstNodesOfCallGroups.span(); }
     std::span<const ValueFlowNodeID> nodesOfMarks() const LIFETIME_BOUND { return m_nodesOfMarks.span(); }
     ValueFlowAnswersAboutSets& prototypesOfSets() const LIFETIME_BOUND { return m_prototypesOfSets; }
+    ValueFlowAnswersAboutSets& prototypesOfBlocks() const LIFETIME_BOUND { return m_prototypesOfBlocks; }
     ValueFlowAnswersAboutSets& chainsOfSets() const LIFETIME_BOUND { return m_chainsOfSets; }
     ValueFlowAnswersAboutSets& writtenUnderNames() const LIFETIME_BOUND { return m_writtenUnderNames; }
 
@@ -659,6 +664,7 @@ private:
     Vector<ValueFlowNodeID> m_firstNodesOfCallGroups;
     Vector<ValueFlowNodeID> m_nodesOfMarks;
     mutable ValueFlowAnswersAboutSets m_prototypesOfSets;
+    mutable ValueFlowAnswersAboutSets m_prototypesOfBlocks;
     mutable ValueFlowAnswersAboutSets m_chainsOfSets;
     mutable ValueFlowAnswersAboutSets m_writtenUnderNames;
 };

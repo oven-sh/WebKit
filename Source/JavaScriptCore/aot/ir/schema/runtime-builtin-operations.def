@@ -20,6 +20,7 @@ runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSVa
 runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
 runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
+runtime ArrayIndexOfString : size_t (JSCell* array, JSCell* searched, uint64_t start) ; RuntimeCreatesString
 runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates

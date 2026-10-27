@@ -4,13 +4,13 @@
 # declare const input: any;
 # const list: number[] = [];
 # list.push(+input);
-# (globalThis as any).answer = append(list, +input);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = append(list, +input);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
-# RUN(NONE): lower-to-b3 optimized f1
-# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 not-windows unsanitized-code
 # RUN(ARM64): lower-to-air size f1
@@ -23,8 +23,9 @@ typesite w1 module=m0 position=16 kind=Parameter function=f1
 typesite w2 module=m0 position=32 kind=Parameter function=f1
 typesite w3 module=m0 kind=Result
 typesite w4 module=m0 position=139 kind=CallResult
-typesite w5 module=m0 position=187 kind=CallResult
-typesite w6 module=m0 position=66 kind=CallResult
+typesite w5 module=m0 position=167 kind=Variable
+typesite w6 module=m0 position=228 kind=CallResult
+typesite w7 module=m0 position=66 kind=CallResult
 data d0 root=Array{contents=number} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -41,19 +42,40 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v8 = ToNumber v7
     v9 = Call v4, v3, v8 calleeKey="push" calleeName="list.push"
     v10 = Convert v9 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="globalThis" [isFreeName]
-    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v11 = Integer
+    v12 = Convert v11 declared={type=number site=w5}
+    Jump -> next b2(v12)
+  b2(v13: number):
+    LoopHint
     v15 = Builtin builtin=GlobalThis
     v16 = PropGet v15 key="input" [isFreeName]
     v17 = Convert v16 declared={type=number flags=[IsExpected]}
-    v18 = ToNumber v17
-    v19 = Call v1, -, v3, v18 calleeName="append"
-    v20 = Convert v19 declared={type=number site=w5}
-    PropSet v14, v20 key="answer"
-    v22 = Undefined
-    Return v22
+    v18 = Less v13, v17
+    Branch v18 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v19):
+    Jump -> next b4()
+  b4():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="globalThis" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v23 = Convert v22 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="input" [isFreeName]
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    v27 = ToNumber v26
+    v28 = Call v1, -, v3, v27 calleeName="append"
+    v29 = Convert v28 declared={type=number site=w6}
+    PropSet v23, v29 key="answer"
+    Jump -> next b5()
+  b5():
+    v31 = Increment v19
+    v32 = Convert v31 declared={type=number site=w5}
+    Jump -> next b2(v32)
+  b6(v33):
+    Jump -> next b7()
+  b7():
+    v34 = Undefined
+    Return v34
 }
 function f1 name="append" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: number):
@@ -61,28 +83,40 @@ function f1 name="append" module=m0 flags=[IsChecked, HasExplicitName] length=2 
   b1():
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push" calleeName="list.push"
-    ReturnCall v3 casts=[{declared={type=number site=w6}}, {declared={type=number site=w3}}]
+    ReturnCall v3 casts=[{declared={type=number site=w7}}, {declared={type=number site=w3}}]
 }
 
-# A push onto a list of numbers that was handed in is one call of a stub, with the list and the bits of the number in registers: the number is not boxed.
+# A push onto a list of numbers that was handed in is written out. The storage, the length and the capacity are loaded and the length is compared with the capacity.
 # CHECK-LABEL: name="append" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK-NEXT: Double b@[[value]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[bits]] = BitwiseCast(b@[[value]], {{*}}:CallInline)
 # CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[length]] = Patchpoint(b@[[list]]:Register({{*}}), b@[[bits]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallInline)
-# The new length comes back boxed: one test says that it is an integer, and a length of 2^31 or more takes the rare path.
-# CHECK: Int32 b@[[isInteger]] = AboveEqual(b@[[length]], b@{{*}}, {{*}}:CallInline)
-# CHECK-NEXT: Branch(b@[[isInteger]], Terminal, {{*}}:CallInline)
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:CallInline)
+# CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:CallInline)
+# CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]], {{*}}:CallInline)
+# CHECK-NEXT: Int32 b@[[capacity]] = Load(b@[[storage]], offset = -4, ControlDependent|Reads:Butterfly_vectorLength, {{*}}:CallInline)
+# CHECK-NEXT: Int32 b@[[fits]] = Below(b@[[length]], b@[[capacity]], {{*}}:CallInline)
+# CHECK: Branch(b@[[fits]], Terminal, {{*}}:CallInline)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#[[slow]]
+# The storage must hold doubles, and the number must not be NaN, which marks a hole there.
+# CHECK: Int32 b@[[kind]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, {{*}}:CallInline)
+# CHECK: Int32 b@[[isDoubles]] = Equal(b@[[kind]], $7(b@{{*}}), {{*}}:CallInline)
+# CHECK-NEXT: Branch(b@[[isDoubles]], Terminal, {{*}}:CallInline)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#[[slow]]
+# CHECK: Int32 b@[[isNumber]] = Equal(b@[[value]], b@[[value]], {{*}}:CallInline)
+# CHECK-NEXT: Branch(b@[[isNumber]], Terminal, {{*}}:CallInline)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#[[slow]]
+# Then the number is stored unboxed and the longer length is stored.
+# CHECK: Store(b@[[value]], b@{{*}}, ControlDependent|Writes:indexedDoubleProperties, {{*}}:CallInline)
+# CHECK: Store(b@{{*}}, b@[[storage]], offset = -8, ControlDependent|Writes:Butterfly_publicLength, {{*}}:CallInline)
 # CHECK-LABEL: end of function
-# Array.prototype.push cannot be replaced: nothing reads it by name, makes its function object or tests which function it is. There is one call.
-# NONE-LABEL: name="append" role=Source
-# NONE-NOT: :PropGet
-# NONE-NOT: :CallBuiltin
-# NONE-COUNT-1: ExitsSideways
-# NONE-NOT: ExitsSideways
-# NONE-LABEL: end of function
-# The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 10, patchpoints: 1, rare instructions: 4
-# ARM64: instructions: 9, patchpoints: 1, rare instructions: 4
+# All three rare edges lead to one call of a stub, the only call. Array.prototype.push cannot be replaced: nothing reads it by name, makes its function object or tests which function it is.
+# CALLS-LABEL: name="append" role=Source
+# CALLS-NOT: :PropGet
+# CALLS-NOT: :CallBuiltin
+# CALLS-COUNT-1: ExitsSideways
+# CALLS-NOT: ExitsSideways
+# CALLS-NOT: :CallBuiltin
+# CALLS-LABEL: end of function
+# The rare instructions hold a call, whose moves follow the calling convention: not for Windows.
+# X64: instructions: 12, patchpoints: 0, rare instructions: 13
+# ARM64: instructions: 12, patchpoints: 0, rare instructions: 13

@@ -140,6 +140,8 @@ InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinSite& site)
     switch (site.builtin) {
     case InlineBuiltin::DataViewByteLength:
         return InlineForm::TwoWay;
+    case InlineBuiltin::ArrayBufferByteLength:
+        return InlineForm::Whole;
     case InlineBuiltin::DataViewGet:
         return twoWayIf(site, canAccessDataViewInline(site));
     case InlineBuiltin::DataViewSet:

@@ -174,7 +174,7 @@ struct StringBuilderStep {
     // As a state of a web such a word is never read where it is unfilled. As the text that a web begins with it would be.
     bool mayBeUnfilled(ValueID id) const
     {
-        return function.at(id).opcode != Opcode::Unspecified && (typeOf(id).mayBeUnspecified() || statesReadAsStrings.get(sameObjectThroughCasts(function, id).index()));
+        return function.at(id).opcode != Opcode::Unspecified && (typeOf(id).mayBeUnspecified() || statesReadAsStrings.get(sameObjectThroughCasts(function, id).valueInFrontOfFacts().index()));
     }
 
     void retype(Value& value)

@@ -9,10 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTBindGlobalNames.h"
+#include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinUses.h"
+#include "AOTCalleeSet.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
@@ -36,6 +39,7 @@
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
 #include "AOTSplitUnions.h"
+#include "AOTStringArena.h"
 #include "AOTThreshold.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTTypePropagation.h"
@@ -1099,12 +1103,201 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
     context.analyses.didChangeValues();
 }
 
+struct ProxyInSight {
+    ValueID target;
+    ValueID handler;
+};
+
+// Nobody can revoke what `new Proxy(target, handler)` makes, so it has that target and that handler for ever.
+static std::optional<ProxyInSight> findProxyMadeInSight(const Program& program, const Function& function, ValueID value)
+{
+    const Value& made = function.at(sameObjectThroughCasts(function, value));
+    if (made.opcode != Opcode::CallBuiltin)
+        return std::nullopt;
+    BuiltinCall call = builtinCallOf(program, made);
+    const BuiltinOverload& overload = program.builtins().at(call.overload);
+    if (program.builtins().canonicalID(overload.builtin) != Builtins::Proxy || overload.mode != BuiltinCallMode::Construct || call.form != BuiltinCallForm::Whole || call.arguments.size() < 2)
+        return std::nullopt;
+    return ProxyInSight { call.arguments[0], call.arguments[1] };
+}
+
+// The function of Reflect that does what the access does. The trap that the access calls has its name.
+static BuiltinID findFunctionOfReflectFor(Opcode access)
+{
+    if (access == Opcode::PropGet)
+        return Builtins::ReflectGet;
+    if (access == Opcode::PropSet)
+        return Builtins::ReflectSet;
+    if (access == Opcode::PropHas)
+        return Builtins::ReflectHas;
+    return { };
+}
+
+// The function that a literal in sight is given under the name. Whoever has the object may have stored another since.
+static FunctionID findFunctionGivenAtBirth(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
+{
+    const Value& allocation = function.at(sameObjectThroughCasts(function, object));
+    if (allocation.opcode != Opcode::NewObject)
+        return { };
+    std::optional<uint32_t> field = program.at(allocation.layout()).findField(key);
+    if (!field)
+        return { };
+    auto fields = allocation.fields();
+    auto listed = std::ranges::find(fields, *field);
+    if (listed == fields.end())
+        return { };
+    return program.typeOf(function, allocation.variadicOperands()[listed - fields.begin()]).singleFunction();
+}
+
+// As ProxyObject.cpp performProxyGet(), performHasProperty() and performPut(). The trap is read off the handler and called as the program would read and call it, so what is known of the handler and of the target is known here.
+static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& builder, ProgramPoint point, const ProxyInSight& proxyInSight)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    const Value access = function.at(function.at(point.block).values[point.index]);
+    const bool reads = access.opcode == Opcode::PropGet;
+    const bool stores = access.opcode == Opcode::PropSet;
+    ValueID proxy = access.objectOperand();
+    auto [target, handler] = proxyInSight;
+    Expected<BlockFrequency> frequency = function.at(point.block).frequency;
+    Expected<BlockFrequency> rare = rarerOf(frequency, BlockFrequency::Rare);
+
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    builder.setOrigin(access.origin());
+    Value nameOfAccess = IRBuilder::make(Opcode::String);
+    nameOfAccess.setString(program.at(access.key()).text);
+    ValueID name = builder.append(WTF::move(nameOfAccess));
+    PropertyKeyID nameOfTrap = program.keyOf(program.builtins().at(findFunctionOfReflectFor(access.opcode)).name);
+    Value readOfTrap = IRBuilder::make(Opcode::PropGet, { handler });
+    readOfTrap.setKey(nameOfTrap);
+    ValueID trap = builder.append(WTF::move(readOfTrap));
+
+    BlockID done = builder.addBlock(frequency);
+    ValueID answer = stores ? ValueID() : builder.addParameter(done, reads ? TypeTable::anything : TypeTable::boolean);
+    auto finishWith = [&](ValueID value) {
+        if (stores)
+            builder.emitJump(done);
+        else
+            builder.emitJump(done, { value });
+    };
+    IRBuilder::ProvenBranch isFunction = builder.emitBranchWithProof(builder.appendTypeTest(trap, TypeTable::function), 0, frequency, frequency);
+
+    builder.moveToEndOf(isFunction.taken);
+    Value call = IRBuilder::make(Opcode::Call);
+    call.setCalleeOperand(isFunction.provenOnTaken);
+    call.setThisValueOperand(handler);
+    if (FunctionID expected = findFunctionGivenAtBirth(program, function, handler, nameOfTrap))
+        call.setCallees(context.types.intern(CalleeSet::open({ expected }, { })));
+    if (reads)
+        call.setArgumentsOperands(std::array { target, name, proxy });
+    else if (stores)
+        call.setArgumentsOperands(std::array { target, name, access.valueOperand(), proxy });
+    else
+        call.setArgumentsOperands(std::array { target, name });
+    ValueID answerOfTrap = builder.append(WTF::move(call));
+    if (reads) {
+        IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfGetAndSetTraps, { target }), rare, frequency);
+        builder.moveToEndOf(mayBind.taken);
+        builder.append(Opcode::ValidateAnswerOfGetTrap, { target, name, answerOfTrap });
+        finishWith(answerOfTrap);
+        builder.moveToEndOf(mayBind.notTaken);
+        finishWith(answerOfTrap);
+    } else if (stores) {
+        // A trap that says no makes a strict store throw.
+        BlockID finishes = builder.addBlock(rare);
+        IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequency, rare);
+        builder.moveToEndOf(saysYes.notTaken);
+        builder.emitJump(finishes);
+        builder.moveToEndOf(saysYes.taken);
+        builder.emitBranch(builder.append(Opcode::MayBindAnswersOfGetAndSetTraps, { target }), Target { finishes, { }, { } }, Target { done, { }, { } });
+        builder.moveToEndOf(finishes);
+        Value finish = IRBuilder::make(Opcode::FinishStoreByTrap, { target, name, access.valueOperand(), answerOfTrap });
+        finish.setMode(access.mode());
+        builder.append(WTF::move(finish));
+        finishWith({ });
+    } else {
+        IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequency, frequency);
+        builder.moveToEndOf(saysYes.taken);
+        finishWith(builder.appendBoolean(true));
+        builder.moveToEndOf(saysYes.notTaken);
+        IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfHasTraps, { target }), rare, frequency);
+        builder.moveToEndOf(mayBind.taken);
+        builder.append(Opcode::ValidateDenialOfHasTrap, { target, name });
+        finishWith(builder.appendBoolean(false));
+        builder.moveToEndOf(mayBind.notTaken);
+        finishWith(builder.appendBoolean(false));
+    }
+
+    // Without a trap the target is asked, for the proxy.
+    builder.moveToEndOf(isFunction.notTaken);
+    IRBuilder::BranchBlocks isAbsent = builder.emitBranch(builder.appendTypeTest(trap, TypeTable::nullish), frequency, rare);
+    builder.moveToEndOf(isAbsent.taken);
+    if (reads) {
+        Value read = IRBuilder::make(Opcode::SuperGet);
+        read.setBaseOperand(target);
+        read.setReceiverOperand(proxy);
+        read.setKey(access.key());
+        finishWith(builder.append(WTF::move(read)));
+    } else if (stores) {
+        Value store = IRBuilder::make(Opcode::SuperSet);
+        store.setMode(access.mode());
+        store.setBaseOperand(target);
+        store.setReceiverOperand(proxy);
+        store.setValueOperand(access.valueOperand());
+        store.setKey(access.key());
+        builder.append(WTF::move(store));
+        finishWith({ });
+    } else {
+        Value test = IRBuilder::make(Opcode::PropHas, { target });
+        test.setKey(access.key());
+        finishWith(builder.append(WTF::move(test)));
+    }
+    builder.moveToEndOf(isAbsent.notTaken);
+    Value error = IRBuilder::make(Opcode::ThrowNewError);
+    error.setErrorKind(ErrorKind::TypeError);
+    error.setMessage(context.strings.intern(StringView(reads ? "'get' property of a Proxy's handler should be callable"_s : stores ? "'set' property of a Proxy's handler should be callable"_s : "'has' property of a Proxy's handler should be callable"_s)));
+    builder.append(WTF::move(error));
+    builder.emitUnreachable();
+
+    builder.moveToEndOf(done);
+    if (stores)
+        builder.endExpansion(expansion, std::span<const ValueID> { });
+    else
+        builder.endExpansion(expansion, answer);
+}
+
+static bool expandAccessesThroughProxies(FunctionPassContext& context, IRBuilder& builder)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    std::optional<ValueSite> found;
+    std::optional<ProxyInSight> proxy;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& access = function.at(site.value);
+        if (found || !findFunctionOfReflectFor(access.opcode) || (FlagMask::isFreeName(access.opcode) && access.isFreeName()) || program.at(access.key()).kind != PropertyKeyKind::Text)
+            return;
+        const ClassPart* part = program.typeOf(function, access.objectOperand()).singleBuiltinClass();
+        if (!part || part->builtinClass != BuiltinClasses::Proxy)
+            return;
+        proxy = findProxyMadeInSight(program, function, access.objectOperand());
+        if (proxy)
+            found = site;
+    });
+    if (!found)
+        return false;
+    expandAccessThroughProxy(context, builder, found->point(), *proxy);
+    return true;
+}
+
 PassOutcome resolveAccesses(FunctionPassContext& context)
 {
     const Program& program = context.program;
     Function& function = context.function;
     IRBuilder builder({ context.build, program, &context.inputs.flow, &context.inputs.effects, context.id }, function, context.types, &context.analyses);
     bool didListStores = listFirstStoresAtAllocations(context, builder);
+    // One at a time: an expansion moves what stands behind it.
+    if (expandAccessesThroughProxies(context, builder))
+        return PassOutcome::Changed;
 
     Vector<NamedAccessSite> namedSites;
     Vector<NamedAccessSite> readsOfFieldsThatMayBeEmpty;
@@ -1455,7 +1648,7 @@ static bool storesFieldThatAllocationLeftOut(TestSiteReporter& reporter, const V
 static bool storesWhatWasMadeOfField(const Program& program, const Function& function, const Value& store, PropertyKeyID key)
 {
     static constexpr size_t maxValuesWalked = 8;
-    ValueID object = sameObjectThroughCasts(function, store.operand(*receiverOf(store.opcode)));
+    RootThroughCasts object = sameObjectThroughCasts(function, store.operand(*receiverOf(store.opcode)));
     Vector<ValueID, maxValuesWalked> walked;
     walked.append(store.operand(*storedOf(store.opcode)));
     for (size_t next = 0; next < walked.size(); ++next) {
@@ -2800,12 +2993,17 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     const Type& expected = program.expectedOrTypeOf(function, receiver).predicted();
     AccessesResolvedOnParts evidence = countAccessesResolvedOnParts(context, singleElementSpan(receiver), parts);
     Vector<ChosenPart, 4> chosen;
+    bool restResolvesOnLikelyPart = false;
     for (size_t index = 0; index < parts.size(); ++index) {
         const UnionPart& part = parts[index];
-        if (!canSeparateByTest(program, context.types, whole, parts, part) || !resolvesOnPart(context, value, part) || waitsForTestThatNobodyPlaces(context, site.block, value, part))
+        if (!resolvesOnPart(context, value, part) || waitsForTestThatNobodyPlaces(context, site.block, value, part))
             continue;
         // A class without an instance test overlaps every class, so a class is expected where the expected type names it.
         bool isLikely = part.kind == UnionPartKind::BuiltinClass ? !!expected.findClassPart(part.type.classes[0].builtinClass) : part.type.overlaps(expected, program);
+        if (!canSeparateByTest(program, context.types, whole, parts, part)) {
+            restResolvesOnLikelyPart |= isLikely;
+            continue;
+        }
         chosen.append(ChosenPart { &part, isLikely, evidence.countOfPart[index] });
     }
     // What is expected is tested first, then the part that serves most of what the function does with the value.
@@ -2817,8 +3015,11 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
             return a.numberOfResolvedAccesses > b.numberOfResolvedAccesses;
         return isAccessedByNumber && a.part->type.hasObjects() && !b.part->type.hasObjects();
     });
-    if (context.exceeds(LimitID::MaxDispatchCases, chosen.size(), site.value))
-        chosen.shrink(static_cast<size_t>(context.limit(LimitID::MaxDispatchCases)));
+    if (context.exceeds(LimitID::MaxDispatchCases, chosen.size(), site.value)) {
+        size_t limit = static_cast<size_t>(context.limit(LimitID::MaxDispatchCases));
+        restResolvesOnLikelyPart |= limit < chosen.size() && chosen[limit].isLikely;
+        chosen.shrink(limit);
+    }
     if (chosen.isEmpty())
         return std::nullopt;
 
@@ -2827,7 +3028,8 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     bool hasCompleteStamp = PayloadWord::receivers(value.opcode) && value.receivers() && program.at(value.receivers()).listsEveryLayout();
 
     // What is expected goes somewhere: where no arm takes it, the rest does.
-    PlannedSplit plan { site, operandIndex, { receiver, { }, chosen.size() < parts.size(), chosen.first().isLikely ? unlikelyFrequency : frequency }, { }, { }, { } };
+    bool restIsLikely = restResolvesOnLikelyPart || !chosen.first().isLikely;
+    PlannedSplit plan { site, operandIndex, { receiver, { }, chosen.size() < parts.size(), restIsLikely ? frequency : unlikelyFrequency }, { }, { }, { } };
     for (const ChosenPart& arm : chosen) {
         plan.split.arms.append(SplitArm { context.types.intern(testedTypeOf(*arm.part)), arm.isLikely ? frequency : unlikelyFrequency });
         bool stampsLayouts = arm.part->kind == UnionPartKind::Layouts && !hasCompleteStamp;

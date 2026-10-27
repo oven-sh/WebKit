@@ -217,6 +217,40 @@ static void testUnrollLoopsSkipsLoopThatWalksNothing()
     CHECK_EQ(sum.proc.naturalLoops().numLoops(), 1u);
 }
 
+static void testUnrollLoopsReadsOnePlaceOnceATurn()
+{
+    for (bool storesBetween : { false, true }) {
+        CountedSum sum(LessThan, 1, 0, loopPolicy(), Walks::Nothing);
+        auto& [proc, graph, loop, relation, step, firstIndex] = sum;
+        auto address = [&] {
+            return graph.make(loop.body, Add, loop.pointer, graph.make(loop.body, Shl, graph.get(loop.body, loop.index), graph.int32(loop.body, 2)));
+        };
+        auto read = [&] {
+            return graph.make(loop.body, ZExt32, graph.load(loop.body, Int32, address(), 0, firstHeap));
+        };
+        graph.increase(loop.body, loop.sum, read());
+        if (storesBetween)
+            graph.store(loop.body, graph.int32(loop.body, 5), address(), 0, firstHeap);
+        graph.increase(loop.body, loop.sum, read());
+        sum.finish(loop.body, TestPlace::Bottom);
+
+        CHECK(unrollLoopsAndValidate(proc));
+        eliminateDeadCode(proc);
+        CHECK_EQ(numberOfValues(proc, Load), storesBetween ? 2 * (1 + Limits::minTurnsPerUnrolledLoop) : 1 + Limits::maxTurnsPerUnrolledLoop);
+        auto code = compileProc(proc);
+        for (int64_t bound = 1; bound <= 40; ++bound) {
+            int32_t words[40];
+            int64_t expected = 0;
+            for (int32_t index = 0; index < 40; ++index) {
+                words[index] = 100 + index;
+                if (index < bound)
+                    expected += words[index] + (storesBetween ? 5 : words[index]);
+            }
+            CHECK_EQ(run(*code, bound, reinterpret_cast<int64_t*>(words)), expected);
+        }
+    }
+}
+
 static void testUnrollLoopsSkipsLoopWithLikelySecondWayOut()
 {
     CountedSum sum(LessThan, 1, 0);
@@ -581,6 +615,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsLeavesRareBlocksToLoopItself());
     RUN(testUnrollLoopsSkipsLoopWithCall());
     RUN(testUnrollLoopsSkipsLoopThatWalksNothing());
+    RUN(testUnrollLoopsReadsOnePlaceOnceATurn());
     RUN(testUnrollLoopsSkipsLoopWithLikelySecondWayOut());
     RUN(testUnrollLoopsStoresInOrder());
     RUN(testUnrollLoopsSkipsLoopOverWords());

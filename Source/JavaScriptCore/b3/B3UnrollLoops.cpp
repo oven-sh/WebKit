@@ -27,6 +27,7 @@
 #include "B3VariableValue.h"
 #include <limits>
 #include <optional>
+#include <wtf/RangeSet.h>
 
 namespace JSC { namespace B3 {
 
@@ -402,6 +403,63 @@ private:
         return false;
     }
 
+    static bool computesSameValue(Value* left, Value* right, unsigned timeToLive)
+    {
+        left = left->foldIdentity();
+        right = right->foldIdentity();
+        if (left == right)
+            return true;
+        if (!timeToLive || left->kind() != right->kind() || left->type() != right->type() || left->numChildren() != right->numChildren())
+            return false;
+        if (left->isConstant())
+            return left->key() == right->key();
+        if (!left->numChildren() || !left->key() || left->as<MemoryValue>())
+            return false;
+        for (unsigned index = 0; index < left->numChildren(); ++index) {
+            if (!computesSameValue(left->child(index), right->child(index), timeToLive - 1))
+                return false;
+        }
+        return true;
+    }
+
+    // A turn may read one place twice, once to see what is there and once to take it. In the loop itself the later walk over all values finds that. In the turns that are written out
+    // each read gets an address of its own making, and the walk compares addresses by the value that computes them.
+    unsigned mergeRepeatedLoads(const Plan& plan)
+    {
+        RangeSet<HeapRange> written;
+        Vector<MemoryValue*, 8> loads;
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                Effects effects = value->effects();
+                if (effects.fence)
+                    return 0;
+                effects.writes.addTo(written);
+                MemoryValue* memory = value->as<MemoryValue>();
+                if (memory && memory->isLoad() && !memory->hasFence())
+                    loads.append(memory);
+            }
+        }
+        Dominators& dominators = m_proc.dominators();
+        unsigned numberOfMergedLoads = 0;
+        for (MemoryValue* load : loads) {
+            if (written.overlaps(load->range()))
+                continue;
+            for (MemoryValue* earlier : loads) {
+                if (earlier == load || earlier->opcode() == Identity || earlier->kind() != load->kind() || earlier->type() != load->type())
+                    continue;
+                if (!computesSameValue(earlier->lastChild(), load->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop) || earlier->offset() != load->offset() || earlier->range() != load->range())
+                    continue;
+                bool comesFirst = earlier->owner == load->owner ? earlier->owner->values().find(earlier) < load->owner->values().find(load) : dominators.strictlyDominates(earlier->owner, load->owner);
+                if (!comesFirst)
+                    continue;
+                load->replaceWithIdentity(earlier);
+                ++numberOfMergedLoads;
+                break;
+            }
+        }
+        return numberOfMergedLoads;
+    }
+
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         if (!isInnermostLoop(loops, loop))
@@ -437,6 +495,7 @@ private:
         PhiChildren& phiChildren = prepareToReadCounters();
         if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
+        numberOfValues -= mergeRepeatedLoads(plan);
         Dominators& dominators = m_proc.dominators();
         auto runsEveryTurn = [&](BasicBlock* block) {
             for (BasicBlock* predecessor : plan.header->predecessors()) {

@@ -169,6 +169,8 @@ bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFra
     static_assert(sizeof(AOT::CompiledFrameIterator) <= compiledFrameIteratorCapacity && alignof(AOT::CompiledFrameIterator) <= alignof(void*));
     ASSERT(!m_frame.m_compiledFrames);
     m_frame.m_compiledFrames = new (NotNull, m_compiledFramesStorage) AOT::CompiledFrameIterator(WTF::move(*frames));
+    if (m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins)
+        m_frame.m_compiledFrames->listConstructedFunctionsThatLeft();
     setCompiledFrame(callFrame, nullptr);
     return true;
 }
@@ -182,14 +184,22 @@ bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
 {
     auto& frames = *m_frame.m_compiledFrames;
     bool showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins && !std::exchange(m_frame.m_isOfBuiltinCalledByCompiledFrame, false);
+    m_frame.m_isOfConstructedFunctionThatLeft = false;
     for (; !frames.isAtEnd(); frames.advance(), showsCalledBuiltin = m_compiledFrameVisit == CompiledFrameVisit::ShownFramesAndCalledBuiltins) {
         auto& frame = frames.frame();
+        if (frames.constructedFunctionThatLeft()) [[unlikely]] {
+            m_frame.m_isOfConstructedFunctionThatLeft = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
+            setCompiledFrame(frame.callFrame, frame.returnAddress);
+            return true;
+        }
         if (showsCalledBuiltin && frame.calledBuiltin) {
             m_frame.m_isOfBuiltinCalledByCompiledFrame = m_shownFrameFilter.shows(AOT::TraceVisibility::Visible, false);
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;
         }
-        if (m_shownFrameFilter.shows(frame.visibility, frame.isTailDeleted)) {
+        // A function that is constructed waits for what its last call returns.
+        bool isTailDeleted = frame.isTailDeleted && !(frame.visibility == AOT::TraceVisibility::Visible && frames.isConstructCall());
+        if (m_shownFrameFilter.shows(frame.visibility, isTailDeleted)) {
             setCompiledFrame(frame.callFrame, frame.returnAddress);
             return true;
         }
@@ -802,6 +812,8 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
     if (callee().isNativeCallee())
         return false;
 #if ENABLE(AOT)
+    if (isOfConstructedFunctionThatLeft())
+        return AOT::isClosureOf(function, m_compiledFrames->constructedFunctionThatLeft()->function);
     if (isOfBuiltinCalledByCompiledFrame())
         return AOT::isClosureOf(function, AOT::functionInFramesOf(compiledFrame().calledBuiltin));
     if (isCompiledFrame())

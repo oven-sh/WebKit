@@ -116,7 +116,7 @@ static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& co
 {
     const Function& function = context.function;
     FunctionList closures;
-    ValueID joined = sameObjectThroughCasts(function, callee);
+    ValueID joined = sameObjectThroughCasts(function, callee).valueInFrontOfFacts();
     if (function.at(joined).opcode != Opcode::Parameter)
         return closures;
     ValueLocation location = context.analyses.useLists().locationOf(joined);
@@ -175,7 +175,7 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
 
 static ValueID findClosureCreation(const Function& function, ValueID closure, FunctionID closureFunction)
 {
-    ValueID definition = sameObjectThroughCasts(function, closure);
+    ValueID definition = sameObjectThroughCasts(function, closure).valueInFrontOfFacts();
     const Value& value = function.at(definition);
     return value.opcode == Opcode::NewClosure && value.function() == closureFunction ? definition : ValueID();
 }
@@ -2825,7 +2825,7 @@ struct CallResolver {
             RELEASE_ASSERT(location.placement == ValuePlacement::InBlock);
             return ProgramPoint { location.block, location.index };
         };
-        auto sourceOf = [&](ValueID append) { return sameObjectThroughCasts(function, function.at(append).operand(1)); };
+        auto sourceOf = [&](ValueID append) { return sameObjectBehindFacts(function, function.at(append).operand(1)); };
         static_assert(OperandIndex::AppendSpread::iterable == 1 && OperandIndex::AppendElements::source == 1);
         std::span<const ValueID> retired = spread.operationsOnList.span();
 
@@ -2950,7 +2950,7 @@ struct CallResolver {
             return declined;
 
         SpreadOfRest spread;
-        spread.list = sameObjectThroughCasts(function, call.listOperand());
+        spread.list = sameObjectBehindFacts(function, call.listOperand());
         const Value& list = function.at(spread.list);
         if (list.opcode != Opcode::NewArray || !list.holes().empty() || list.capacityOperand() || list.elementsOperands().size() != target.numberOfPositionalParameters())
             return declined;

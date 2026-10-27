@@ -236,7 +236,7 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
 
     if (value.opcode != Opcode::TryPutByValDirect || m_form < IRForm::Selected || value.arrayStorage() == ArrayStorage::Other)
         return;
-    ValueID arrayID = analyses().sameObjectThroughCasts(value.arrayOperand());
+    ValueID arrayID = analyses().sameObjectThroughCasts(value.arrayOperand()).valueInFrontOfFacts();
     const Value& array = m_function.at(arrayID);
     if (array.opcode == Opcode::Parameter && analyses().useLists().blockOf(arrayID) != entryBlock)
         return;

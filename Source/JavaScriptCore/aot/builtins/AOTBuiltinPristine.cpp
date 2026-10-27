@@ -80,7 +80,7 @@ bool canOnlyBeProvenPristine(const BuiltinTable& table, BuiltinClassID builtinCl
 
 static PristineProof proofSinceAllocation(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)
 {
-    ValueID definition = query.analyses->sameObjectThroughCasts(value);
+    ValueID definition = query.analyses->sameObjectThroughCasts(value).valueInFrontOfFacts();
     const Value& allocation = query.function.at(definition);
     if (!proofsOfAllocation(query.program, query.function, allocation).contains(Proof::Pristine))
         return PristineProof::Unknown;

@@ -8,7 +8,7 @@
 # list.push(String(input));
 # const names: string[] = [];
 # names.push(String(input));
-# (globalThis as any).answer = count(list, names);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = count(list, names);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -31,12 +31,13 @@ typesite w5 module=m0 position=233 kind=CallResult
 typesite w6 module=m0 position=223 kind=CallResult
 typesite w7 module=m0 position=288 kind=CallResult
 typesite w8 module=m0 position=277 kind=CallResult
-typesite w9 module=m0 position=333 kind=CallResult
-typesite w10 module=m0 position=64 kind=Variable
-typesite w11 module=m0 position=85 kind=Variable
-typesite w12 module=m0 position=96 kind=PropertyRead
-typesite w13 module=m0 position=133 kind=Element
-typesite w14 module=m0 position=119 kind=CallResult
+typesite w9 module=m0 position=313 kind=Variable
+typesite w10 module=m0 position=374 kind=CallResult
+typesite w11 module=m0 position=64 kind=Variable
+typesite w12 module=m0 position=85 kind=Variable
+typesite w13 module=m0 position=96 kind=PropertyRead
+typesite w14 module=m0 position=133 kind=Element
+typesite w15 module=m0 position=119 kind=CallResult
 data d0 root=Array{contents=undefined|null|string} module=m0
 data d1 root=Array{contents=undefined|null|string} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -65,30 +66,51 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v19 = Convert v18 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
     v20 = Call v14, v13, v19 calleeKey="push" calleeName="names.push"
     v21 = Convert v20 declared={type=number site=w8} illTypedCause=DeclarationWithoutBody
-    v22 = Builtin builtin=GlobalThis
-    v23 = PropGet v22 key="globalThis" [isFreeName]
-    v24 = Convert v23 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v25 = Convert v24 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v26 = Call v1, -, v3, v13 calleeName="count"
-    v27 = Convert v26 declared={type=number site=w9}
-    PropSet v25, v27 key="answer"
-    v29 = Undefined
-    Return v29
+    v22 = Integer
+    v23 = Convert v22 declared={type=number site=w9}
+    Jump -> next b2(v23)
+  b2(v24: number):
+    LoopHint
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="input" [isFreeName]
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    v29 = Less v24, v28
+    Branch v29 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v30):
+    Jump -> next b4()
+  b4():
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="globalThis" [isFreeName]
+    v33 = Convert v32 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v34 = Convert v33 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v35 = Call v1, -, v3, v13 calleeName="count"
+    v36 = Convert v35 declared={type=number site=w10}
+    PropSet v34, v36 key="answer"
+    Jump -> next b5()
+  b5():
+    v38 = Increment v30
+    v39 = Convert v38 declared={type=number site=w9}
+    Jump -> next b2(v39)
+  b6(v40):
+    Jump -> next b7()
+  b7():
+    v41 = Undefined
+    Return v41
 }
 function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string>, v1: undefined|null|Array<undefined|null|string>):
     Jump -> next b1()
   b1():
     v2 = Integer
-    v3 = Convert v2 declared={type=number site=w10}
+    v3 = Convert v2 declared={type=number site=w11}
     v4 = Integer
-    v5 = Convert v4 declared={type=number site=w11}
+    v5 = Convert v4 declared={type=number site=w12}
     Jump -> next b2(v3, v5)
   b2(v6: number, v7: number):
     LoopHint
     v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
     v10 = PropGet v1 key="length"
-    v11 = Convert v10 declared={type=number site=w12} illTypedCause=Assertion
+    v11 = Convert v10 declared={type=number site=w13} illTypedCause=Assertion
     v12 = Less v9, v11
     Branch v12 -> taken b3(| 0), notTaken b10(| 0)
   b3(v13):
@@ -97,16 +119,16 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
     v14 = PropGet v0 key="includes"
     v15 = Convert v13 declared={type=i32 flags=[IsExpected]}
     v16 = ElemGet v1, v15
-    v17 = Convert v16 declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v17 = Convert v16 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
     v18 = Call v14, v0, v17 calleeKey="includes" calleeName="list.includes"
-    v19 = Convert v18 declared={type=boolean site=w14} illTypedCause=DeclarationWithoutBody
+    v19 = Convert v18 declared={type=boolean site=w15} illTypedCause=DeclarationWithoutBody
     v20 = ToBoolean v19
     Branch v20 -> taken b5(| 0), notTaken b7(| 0)
   b5(v21):
     Jump -> next b6()
   b6():
     v22 = Increment v6
-    v23 = Convert v22 declared={type=number site=w10}
+    v23 = Convert v22 declared={type=number site=w11}
     Jump -> next b8(v23)
   b7(v24):
     Jump -> next b8(v6)
@@ -114,7 +136,7 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
     Jump -> next b9()
   b9():
     v26 = Increment v15
-    v27 = Convert v26 declared={type=number site=w11}
+    v27 = Convert v26 declared={type=number site=w12}
     Jump -> next b2(v25, v27)
   b10(v28):
     Jump -> next b11()
@@ -123,22 +145,21 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
     Return v29
 }
 
-# In a loop the function object of Array.prototype.includes is not made by a call each turn: its word is loaded and tested, and only an empty word goes to the rare call that makes it.
+# In a loop includes() with a string is one stub call per iteration, with the array and the element that was read. Its result is compared with -1.
 # LOOP-LABEL: loop #
 # LOOP: Int64 b@[[name]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
-# LOOP: Int64 b@[[made]] = Load(b@{{*}}, ControlDependent|Reads:AllocatorState, {{*}}:CallBuiltin)
-# LOOP-NEXT: Branch(b@[[made]], Terminal, {{*}}:CallBuiltin)
-# LOOP-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# LOOP: Int64 b@[[answer]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallBuiltin)
-# LOOP-NEXT: Int32 b@[[low]] = Trunc(b@[[answer]])
-# LOOP: Int32 b@[[bit]] = BitAnd(b@[[low]], $1(b@{{*}}))
-# LOOP-NEXT: Branch(b@[[bit]], Terminal)
+# LOOP-NOT: CallBuiltin
+# LOOP: Int64 b@[[index]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[name]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallInline)
+# LOOP-NEXT: Int64 b@{{*}} = Const64(-1
+# LOOP-NEXT: Int32 b@[[found]] = NotEqual(b@[[index]], $-1(b@{{*}})
+# LOOP-NEXT: Branch(b@[[found]], Terminal)
+# LOOP-NOT: CallBuiltin
 # LOOP-LABEL: end of loop
-# The call of the function is the only call on the likely path, and the only one that can throw.
+# The stub call is the only call that can throw.
 # CALLS-LABEL: loop #
 # CALLS-COUNT-1: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 13, patchpoints: 2, rare instructions: 3
-# ARM64: loop #{{*}}, instructions: 13, patchpoints: 2, rare instructions: 3
+# X64: loop #{{*}}, instructions: 11, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 10, patchpoints: 2

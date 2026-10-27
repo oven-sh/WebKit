@@ -85,7 +85,7 @@ void RegExpBuiltinEmitter::generateNewRegExp(const InlineCall& call)
 {
     OptionSet<Yarr::Flags> flags;
     if (ValueID flagsArgument = call.argumentOrNull(1)) {
-        StringID text = typeOf(sameObjectThroughCasts(m_function, flagsArgument)).singleStringLiteral();
+        StringID text = typeOf(sameObjectThroughCasts(m_function, flagsArgument).valueInFrontOfFacts()).singleStringLiteral();
         std::optional<OptionSet<Yarr::Flags>> parsed = text ? Yarr::parseFlags(emitter<StringEmitter>().textOf(text)) : std::nullopt;
         if (!parsed) {
             fail(call.context(), InternalErrorKind::OpcodeWithoutCode);

@@ -821,6 +821,17 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
     const ValueFlowUniverse& universe = inputs.universe();
     using Noted = std::pair<ValueFlowObjectID, BuiltinClassID>;
     ValueSetMakers makers(inputs);
+    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName);
+#if ASSERT_ENABLED
+    BitVector hasNotedAllocation;
+    for (const ValueFlowHeapIndex::WrittenNode& node : written ? written->nodes.span() : std::span<const ValueFlowHeapIndex::WrittenNode>()) {
+        if (ValueSets::isComplement(node.objects) || node.value == ValueSets::nothing)
+            continue;
+        inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+            hasNotedAllocation.set(object.index());
+        });
+    }
+#endif
     Vector<Noted> noted = collectWithMakers<Noted>(inputs, makers, inputs.program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<Noted>& found) {
         if (!inputs.isReached(FunctionID(function)))
             return;
@@ -835,6 +846,8 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
                 continue;
             }
             ValueSetID builtinCallees = maker.intersect(callees, universe.builtinFunctions());
+            // Whatever rule answers a call with the object of the call has noted as what it made the object.
+            ASSERT(!call.result || !inputs.sets().contains(inputs.solver().possibleValuesOf(call.result), object) || hasNotedAllocation.get(object.index()));
             inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
                 for (const BuiltinOverload& overload : builtins.overloadsOf(universe.builtinOf(callee))) {
                     if (overload.mode != *mode || !overload.result.type)
@@ -865,7 +878,6 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
         }
     });
     // One object a built-in stands for all that it makes where native code calls it. The constructor of a typed array answers nothing else, and each allocation has noted its class there.
-    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName);
     if (written) {
         HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classMadeAs;
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {

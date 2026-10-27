@@ -17,6 +17,7 @@
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
+#include "AOTShapeTestEmitter.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
@@ -256,6 +257,38 @@ Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Ki
 }
 
 // A site that has no answer for the Structure of the object has the name looked up, so the first object of a Structure is answered like those behind it.
+// Only a target that is not extensible or has a property that is not configurable binds what a trap may answer. The Structure of a compiled object says yes for all of them: what was done to one object stands in the object, and what its fields are born with in the layout.
+Condition AccessEmitter::mayBindAnswersOfTraps(CellPointer target, uint32_t bitsOfStructureThatMayBind)
+{
+    Pointer structure = loadStructure(target);
+    return either<Condition>(hasBits(loadField<Word32>(structure, m_heaps.Structure_bitField), bitsOfStructureThatMayBind), [&] {
+        return either<Condition>(hasCellType(target, CompiledObjectType), [&] {
+            Condition isBornFree = hasBits(loadByte(structure, m_heaps.AOTCompiledStructure_flags), static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable));
+            Condition isAsBorn = hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(target), ~orderAndCountMask);
+            return logicalNot(logicalAnd(isBornFree, isAsBorn));
+        }, [&] {
+            return boolean(true);
+        });
+    }, [&] {
+        return boolean(false);
+    });
+}
+
+void AccessEmitter::generateValidateAnswerOfGetTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateAnswerOfGetTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->answerOperand()) }, { .isOnRarePath = true });
+}
+
+void AccessEmitter::generateValidateDenialOfHasTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateDenialOfHasTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
+}
+
+void AccessEmitter::generateFinishStoreByTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::FinishStoreByTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->answerOperand()), word32(value->mode() == ECMAMode::Strict) }, { .isOnRarePath = true });
+}
+
 void AccessEmitter::generateGetCachedGetter(const ValueContext& value)
 {
     SiteCacheID cache = value->siteCache();

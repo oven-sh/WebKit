@@ -57,6 +57,7 @@ struct B3DumpRequest {
     std::optional<unsigned> runOfStep;
     B3DumpScope scope { B3DumpScope::WholeProcedure };
     Vector<FunctionID> functions;
+    bool printsOnlyEntryModules { false };
 };
 
 } // anonymous namespace
@@ -462,6 +463,10 @@ static std::optional<B3DumpRequest> parseB3DumpRequest(TestCommandContext& conte
             request.scope = request.scope == B3DumpScope::SizeOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::LoopsOnly;
             continue;
         }
+        if (word == "entry-modules"_s) {
+            request.printsOnlyEntryModules = true;
+            continue;
+        }
         if (!takesPoint && word == "size"_s) {
             request.scope = request.scope == B3DumpScope::LoopsOnly ? B3DumpScope::SizeOfFunctionAndLoops : B3DumpScope::SizeOnly;
             continue;
@@ -484,6 +489,12 @@ static std::optional<B3DumpRequest> parseB3DumpRequest(TestCommandContext& conte
 
 static bool isRequested(const B3DumpRequest& request, const BuildContext& build, const Program& program, FunctionID id)
 {
+    if (request.printsOnlyEntryModules) {
+        FunctionID functionAsRead = findFunctionAsRead(&program, id);
+        return functionAsRead && program.entries.containsIf([&](const Entry& entry) {
+            return entry.module == program.at(functionAsRead).module;
+        });
+    }
     if (request.functions.isEmpty())
         return program.at(id).role != FunctionRole::Library && build.shouldDump(id);
     return request.functions.contains(id) || request.functions.contains(findFunctionAsRead(&program, id));

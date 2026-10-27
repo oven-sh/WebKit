@@ -30,6 +30,7 @@ struct BuiltinUseInputs {
     bool keepsFunctionNames { false };
     bool asksOnlyForProvenPlans { false };
     bool* asksAboutPlace { nullptr };
+    FunctionAnalyses* identities { nullptr };
 
     TypingContext typing() const { return { program, function, types }; }
     BuiltinLookupContext lookup() const { return { program, flow }; }

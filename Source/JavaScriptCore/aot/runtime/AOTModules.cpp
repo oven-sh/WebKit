@@ -786,12 +786,20 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
 }
 
+std::optional<ModuleID> Modules::findByName(const Identifier& key)
+{
+    std::optional<ModuleID> found = m_table.findByPath(key.string());
+    if (found && data(*found).kind == ModuleKind::Runtime && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, key.string()))
+        return std::nullopt;
+    return found;
+}
+
 std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
         return std::nullopt;
     // A module of the library has one form.
-    if (std::optional<ModuleID> module = m_table.findByPath(key.string()); module && data(*module).registryID())
+    if (std::optional<ModuleID> module = findByName(key); module && data(*module).registryID())
         return module;
     if (!host().findModuleWithAttributes)
         return std::nullopt;
@@ -805,6 +813,18 @@ std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const
     if (module)
         m_formsAnsweredFirst.add(keyOfLoader, FormAnsweredFirst { key, *module });
     return module;
+}
+
+// The program gets a promise of its own, as from import() in code that is not compiled.
+static JSPromise* createPromiseOfProgram(JSGlobalObject* realm, JSPromise* loaded)
+{
+    VM& vm = realm->vm();
+    JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
+    if (loaded->status() == JSPromise::Status::Fulfilled)
+        promise->fulfill(vm, loaded->result());
+    else
+        promise->resolve(realm, vm, loaded);
+    return promise;
 }
 
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller)
@@ -866,14 +886,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         if (!isCalledByProgram)
             return loaded;
-        // The program gets a promise of its own, as from import() in code that is not compiled.
-        JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
-        scope.release();
-        if (loaded->status() == JSPromise::Status::Fulfilled)
-            promise->fulfill(vm, loaded->result());
-        else
-            promise->resolve(realm, vm, loaded);
-        return promise;
+        RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));
     }
 
     if (data(module).reachesUncompiledCode() && status(module) == ModuleStatus::Unlinked) {
@@ -1404,7 +1417,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         return fetchParameters.error();
     Identifier key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : m_table.findByPath(key.string())) {
+    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key)) {
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         // An import() that names a file in its text names the face of the file.
@@ -1419,9 +1432,9 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     handCountedImportsToLoader();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    JSPromise* promise = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
+    JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    return promise;
+    RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));
 }
 
 static bool isText(StringView path)
@@ -1911,7 +1924,7 @@ static PathOfModule pathOfModule(ModuleID module)
         RELEASE_ASSERT(table);
         // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
-        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->pathText(module);
+        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
         return PathOfModule { &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef(), !!evaluator };
     }).iterator->value;
 }
@@ -1938,6 +1951,12 @@ bool isESModule(ModuleID module)
 {
     std::optional<ModuleTable> table = currentModuleTable();
     return table && table->data(module).kind == ModuleKind::SourceText;
+}
+
+bool isNativeModule(ModuleID module)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && table->data(module).kind == ModuleKind::Runtime;
 }
 
 bool leavesModuleToHost(JSGlobalObject* realm, ModuleID module)

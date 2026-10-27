@@ -306,6 +306,7 @@ static int printProgramFile(const ProgramFile& file, const ProgramArguments& arg
         TestCommandContext context { WTF::move(program), IRForm::AsRead, flags.commandArguments.span(), out, build };
         flags.command->run(context);
         out.flush();
+        build.diagnostics().finish(context.program.get());
         return build.diagnostics().hasErrors() ? reportDiagnostics(build.diagnostics(), errors) : exitCodeForSuccess;
     }
 

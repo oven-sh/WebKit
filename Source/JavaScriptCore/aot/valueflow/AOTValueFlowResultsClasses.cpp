@@ -191,7 +191,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
                 if (value.opcode != Opcode::DefineMethod)
                     continue;
                 ClassDefinition& definition = classes[value.layout().index()];
-                ValueID closure = sameObjectThroughCasts(function, value.functionOperand());
+                ValueID closure = sameObjectThroughCasts(function, value.functionOperand()).valueInFrontOfFacts();
                 if (function.at(closure).opcode != Opcode::NewClosure) {
                     definition.isFollowed = false;
                     continue;

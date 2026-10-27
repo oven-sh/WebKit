@@ -1,0 +1,40 @@
+# interface Sized { byteLength: number }   function size(chunk: Sized) { return chunk.byteLength }   size({ byteLength: 2 }); size(new Uint8Array(4))
+# A Uint8Array satisfies the interface and has no layout of the program, so the check of the parameter would turn it away, and everything behind the check would go on by name for it.
+# Flow knows all that arrives. What the check would turn away are instances of built-in classes alone: it is no check, and the value has the type of what arrives.
+# Beside it: an object of another layout of the program is turned away as before.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="size"
+# CHECK-NOT: Check
+# CHECK: [[chunk]]: L0|Uint8Array{{*}} = AssumeType {{*}} provenType=L0|Uint8Array
+# CHECK: = PropGet [[chunk]] key="byteLength"
+# CHECK-LABEL: function f2 name="sizeOfEither"
+# CHECK: = Check {{*}} expectedType=undefined|null|L0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Sized" fields=[{key="byteLength" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Named" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = Builtin builtin=Uint8Array
+    v4 = Integer integer=4
+    v5 = Construct v3, -, v4
+    v6 = CallDirect v5 function=f1
+    v7 = CallDirect v1 function=f2
+    v8 = String string="a"
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = CallDirect v9 function=f2
+    Return
+}
+function f1 name="size" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="byteLength"
+    Return v2
+}
+function f2 name="sizeOfEither" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="byteLength"
+    Return v2
+}

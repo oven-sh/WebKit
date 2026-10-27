@@ -125,7 +125,7 @@ FreshArgumentCollector::FreshArgumentCollector(const AnalysisContext& context, V
 
 bool FreshArgumentCollector::isFreshObject(ValueID id)
 {
-    ValueID definition = sameObjectThroughCasts(m_caller, id);
+    ValueID definition = sameObjectThroughCasts(m_caller, id).valueInFrontOfFacts();
     if (interpretedOf(m_caller.at(definition).opcode) != Interpretation::Allocation)
         return false;
     if (!m_analyses)

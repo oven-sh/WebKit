@@ -118,6 +118,7 @@ public:
 
     bool isSurelyInside(ValueSetID, const Type&, std::optional<TypeID> numberOfType = std::nullopt);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);
+    std::optional<Type> typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(ValueSetID, const Type&);
     bool holdsObjectThatMayLieOutside(ValueSetID, const Type&);
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
 

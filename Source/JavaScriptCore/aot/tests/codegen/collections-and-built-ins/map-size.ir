@@ -4,7 +4,7 @@
 # declare const input: any;
 # const prices = new Map<string, number>();
 # prices.set(String(input), +input);
-# (globalThis as any).answer = size(prices);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = size(prices);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
@@ -21,8 +21,9 @@ typesite w1 module=m0 kind=Result
 typesite w2 module=m0 position=118 kind=CallResult
 typesite w3 module=m0 position=156 kind=CallResult
 typesite w4 module=m0 position=145 kind=CallResult
-typesite w5 module=m0 position=209 kind=CallResult
-typesite w6 module=m0 position=62 kind=PropertyRead
+typesite w5 module=m0 position=189 kind=Variable
+typesite w6 module=m0 position=250 kind=CallResult
+typesite w7 module=m0 position=62 kind=PropertyRead
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
     Jump -> next b1()
@@ -44,22 +45,43 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v14 = ToNumber v13
     v15 = Call v5, v4, v10, v14 calleeKey="set" calleeName="prices.set"
     v16 = Convert v15 declared={type=undefined|null|Map<undefined|null|string, number> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v17 = Builtin builtin=GlobalThis
-    v18 = PropGet v17 key="globalThis" [isFreeName]
-    v19 = Convert v18 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v20 = Convert v19 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v21 = Call v1, -, v4 calleeName="size"
-    v22 = Convert v21 declared={type=number site=w5}
-    PropSet v20, v22 key="answer"
-    v24 = Undefined
-    Return v24
+    v17 = Integer
+    v18 = Convert v17 declared={type=number site=w5}
+    Jump -> next b2(v18)
+  b2(v19: number):
+    LoopHint
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="input" [isFreeName]
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Less v19, v23
+    Branch v24 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v25):
+    Jump -> next b4()
+  b4():
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="globalThis" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v29 = Convert v28 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v30 = Call v1, -, v4 calleeName="size"
+    v31 = Convert v30 declared={type=number site=w6}
+    PropSet v29, v31 key="answer"
+    Jump -> next b5()
+  b5():
+    v33 = Increment v25
+    v34 = Convert v33 declared={type=number site=w5}
+    Jump -> next b2(v34)
+  b6(v35):
+    Jump -> next b7()
+  b7():
+    v36 = Undefined
+    Return v36
 }
 function f1 name="size" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Map<undefined|null|string, number>):
     Jump -> next b1()
   b1():
     v1 = PropGet v0 key="size"
-    v2 = Convert v1 declared={type=number site=w6} illTypedCause=Assertion
+    v2 = Convert v1 declared={type=number site=w7} illTypedCause=Assertion
     Return v2
 }
 

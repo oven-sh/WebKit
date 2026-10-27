@@ -4,7 +4,7 @@
 # declare const input: any;
 # const list: number[] = [];
 # list.push(input | 0);
-# (globalThis as any).answer = pick(list, input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = pick(list, input | 0);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f1
@@ -21,8 +21,9 @@ typesite w1 module=m0 position=14 kind=Parameter function=f1
 typesite w2 module=m0 position=30 kind=Parameter function=f1
 typesite w3 module=m0 kind=Result
 typesite w4 module=m0 position=140 kind=CallResult
-typesite w5 module=m0 position=191 kind=CallResult
-typesite w6 module=m0 position=64 kind=CallResult
+typesite w5 module=m0 position=171 kind=Variable
+typesite w6 module=m0 position=232 kind=CallResult
+typesite w7 module=m0 position=64 kind=CallResult
 data d0 root=Array{contents=number} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -40,20 +41,41 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v9 = BitOr v7, v8
     v10 = Call v4, v3, v9 calleeKey="push" calleeName="list.push"
     v11 = Convert v10 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="globalThis" [isFreeName]
-    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number site=w5}
+    Jump -> next b2(v13)
+  b2(v14: number):
+    LoopHint
     v16 = Builtin builtin=GlobalThis
     v17 = PropGet v16 key="input" [isFreeName]
-    v18 = Convert v17 declared={type=i32 flags=[IsExpected]}
-    v19 = Integer
-    v20 = BitOr v18, v19
-    v21 = Call v1, -, v3, v20 calleeName="pick"
-    v22 = Convert v21 declared={type=number site=w5}
-    PropSet v15, v22 key="answer"
-    v24 = Undefined
-    Return v24
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = Less v14, v18
+    Branch v19 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="globalThis" [isFreeName]
+    v23 = Convert v22 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v24 = Convert v23 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="input" [isFreeName]
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]}
+    v28 = Integer
+    v29 = BitOr v27, v28
+    v30 = Call v1, -, v3, v29 calleeName="pick"
+    v31 = Convert v30 declared={type=number site=w6}
+    PropSet v24, v31 key="answer"
+    Jump -> next b5()
+  b5():
+    v33 = Increment v20
+    v34 = Convert v33 declared={type=number site=w5}
+    Jump -> next b2(v34)
+  b6(v35):
+    Jump -> next b7()
+  b7():
+    v36 = Undefined
+    Return v36
 }
 function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: number):
@@ -61,7 +83,7 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
   b1():
     v2 = PropGet v0 key="at"
     v3 = Call v2, v0, v1 calleeKey="at" calleeName="list.at"
-    v4 = Convert v3 declared={type=undefined|number site=w6} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|number site=w7} illTypedCause=FromLooseType
     v5 = TypeTest v4 testedType=undefined|null
     Branch v5 -> taken b2(| 0), notTaken b4(| 0)
   b2(v6):

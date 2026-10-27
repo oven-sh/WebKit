@@ -486,6 +486,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfProxyTrap, EncodedJSValue, 
     OPERATION_RETURN(scope, answer);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateAnswerOfGetTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateAnswerOfGetTrap);
+    ProxyObject::validateGetTrapResultWhereBound(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateDenialOfHasTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateDenialOfHasTrap);
+    ProxyObject::finishHas(globalObject, jsBoolean(false), asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTFinishStoreByTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue value, EncodedJSValue answer, uint32_t isStrict))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishStoreByTrap);
+    ProxyObject::finishSet(globalObject, JSValue::decode(answer), asObject(JSValue::decode(target)), JSValue::decode(property), JSValue::decode(value), isStrict);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTHasWithProxyTrap, size_t, (Instance* instance, EncodedJSValue* wordsOfAccess, EncodedJSValue trap))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasWithProxyTrap);

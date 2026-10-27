@@ -2857,7 +2857,8 @@ ValueID ObjectInterpreter::resolve(ValueID value)
     ValueID cell = cellOf(object);
     if (m_enteredEdge.edge && m_enteredEdge.edge->edge.isHandlerEdge())
         return cell;
-    TypeID type = function().at(value).type;
+    // A call that delivers its result in parts has the type of that form by now, which is not the type of the result.
+    TypeID type = value == m_sinking.at(object).definition ? typeOfCell(m_sinking, object) : function().at(value).type;
     if (!type || function().at(cell).type == type || program().typeOf(function(), cell).isSubsetOf(program().at(type), program()))
         return cell;
     return cursor().emit(makeAssumeType(cell, Proven::byConstruction(type)));

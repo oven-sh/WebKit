@@ -315,7 +315,7 @@ bool RuntimeHooks::becomesDictionaryByAddition(VM& vm, JSObject* object, Structu
     if (!state || !state->caches)
         return false;
     FirstAdditions& additions = firstAdditionsOf(*state);
-    if (additions.shouldMakeStructure(structure, uid) || !hasFewEnoughNamesToBeFilled(structure))
+    if (additions.shouldMakeStructure(structure, uid))
         return false;
     additions.didBeginToFill(vm, object);
     return true;

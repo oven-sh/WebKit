@@ -107,6 +107,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTSlotAccess.h
     aot/object/AOTSlotRepresentation.h
     aot/pipeline/AOTPassID.h
+    aot/place/AOTBodyFactsForTables.h
     aot/runtime/AOTBuiltinCells.h
     aot/runtime/AOTBuiltinModules.h
     aot/runtime/AOTCallSiteCache.h
@@ -127,6 +128,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTJSONWords.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
+    aot/runtime/AOTModuleGraph.h
     aot/runtime/AOTModuleHost.h
     aot/runtime/AOTModuleRecord.h
     aot/runtime/AOTModuleWords.h

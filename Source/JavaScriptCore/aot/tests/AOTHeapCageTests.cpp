@@ -537,7 +537,6 @@ static void checkSharedReserveHoldsLargeCellsOfSeveralCages()
     cages[0].free(largest);
 }
 
-// A cell that lies in the range grows where the range has no room: it gets what a new cell of that size gets.
 static void checkCellInFullRangeGrowsIntoSharedReserve()
 {
     MarkedBlockCage first;

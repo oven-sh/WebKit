@@ -574,6 +574,11 @@ static void printFunctions(const TablesContext& context)
     }
     for (const ConstructEntrypointData& entrypoint : tables.constructEntrypoints())
         RecordLine(context, "constructEntrypoint"_s).field("function"_s, FunctionID(entrypoint.function)).field("entrypoint"_s, FunctionID(entrypoint.constructEntrypoint())).field("allocatesThis"_s, !!(entrypoint.constructEntrypointAndFlag & ConstructEntrypointData::allocatesThis));
+    forEachTailCallPlace(tables.placesOfTailCalls(), [&](const TailCallPlace& place) {
+        RecordLine(context, "placeOfTailCall"_s).field("function"_s, FunctionID(place.function)).field("callee"_s, place.callee == TailCallPlace::noCallee ? std::optional<FunctionID>() : FunctionID(place.callee))
+            .field("line"_s, place.line).field("column"_s, place.column);
+        return IterationStatus::Continue;
+    });
 }
 
 static void printFunctionTraces(const TablesContext& context)

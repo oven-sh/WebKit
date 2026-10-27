@@ -1,0 +1,28 @@
+# /(a)|b/g.exec("undefined")[1], where the test for a list stands in front of the check that the value is neither undefined nor null, and the check names the call itself
+# The call delivers its result in parts and no list is made. Where nothing was found the check is given null, and throws.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="reach" results=[{type=anything}] {
+    v0 = NewRegExp pattern="(a)|b" regExpFlags=[Global]
+    v1 = String string="undefined"
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = Integer integer=1
+    v4 = TypeTest v2 testedType=Array
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = RequireObjectCoercible v2
+    v8 = ElemGet v7, v3 [keyIsIntegral]
+    Jump -> next b3()
+  b3():
+    Return
+# CHECK: CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix
+# CHECK: [[nothing]]: null = Null
+# CHECK-NEXT: RequireObjectCoercible [[nothing]]
+# CHECK-NOT: AssumeType
+}
