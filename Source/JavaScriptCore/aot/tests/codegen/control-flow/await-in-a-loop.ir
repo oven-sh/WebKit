@@ -11,6 +11,8 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
+# RUN(SUM): lower-to-b3 optimized loops f1
+# REQUIRES(SUM): unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -102,7 +104,13 @@ function f1 name="total" module=m0 flags=[IsAsync, HasThis, IsChecked, HasExplic
 # CHECK-NOT: Switch(
 # CHECK-NOT: Reads:InternalFields
 # CHECK: Double b@[[product]] = Mul(b@{{*}}, b@{{*}}, {{*}}:Mul)
-# CHECK-NEXT: Double b@{{*}} = Add(b@[[product]], b@[[sum]], {{*}}:Add)
+# CHECK-NEXT: Double b@{{*}} = Add({{*}}b@[[product]],{{*}}:Add)
 # CHECK: Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSObject_butterfly
 # CHECK: Int64 b@{{*}} = Add(b@[[k]], $1(
 # CHECK-LABEL: end of loop
+# The sum of the loop is the other operand. Which of the two stands first goes by their numbers, which differ from target to target.
+# SUM-LABEL: name="total" role=CoroutineBody
+# SUM-LABEL: steps by 1
+# SUM: Double b@[[sum]] = Phi(
+# SUM: Double b@{{*}} = Add({{*}}b@[[sum]],{{*}}:Add)
+# SUM-LABEL: end of loop
