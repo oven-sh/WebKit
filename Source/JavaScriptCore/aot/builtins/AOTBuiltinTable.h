@@ -533,7 +533,6 @@ struct BuiltinClass {
     BuiltinID constructor { };
     BuiltinID prototype { };
     JSType type { CellType };
-    TypedArrayType typedArrayType { NotTypedArray };
     BuiltinInstanceTest instanceTest { BuiltinInstanceTest::None };
     ArrayBufferSharingMode sharingMode { ArrayBufferSharingMode::Default };
     bool isPrimitiveWrapper { false };
@@ -735,6 +734,8 @@ enum class BuiltinMark : uint8_t {
     HoldsLoader,
     IsSpy,
     IsNotEnumerable,
+    IsReplacedBySetter,
+    RunsWaitingJobs,
 };
 
 struct BuiltinMarkedEntry {
@@ -966,6 +967,7 @@ public:
 
     BuiltinClassID receiverClassOf(BuiltinID) const;
     bool isSameOrSubclassOf(BuiltinClassID, BuiltinClassID ancestor) const;
+    TypedArrayType typedArrayTypeOf(BuiltinClassID) const;
     BuiltinClassID typedArrayClassOf(BuiltinClassID) const;
     BuiltinSlotID findSlot(BuiltinClassID, BuiltinName) const;
     BuiltinSlotID findSlot(BuiltinClassID, ContentsSlot) const;
@@ -979,6 +981,8 @@ public:
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
     bool isLocationOfLockedObject(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
+    // Of the engine or of the host. A realm that locks its built-ins gives every native function one structure, which keeps the prototype.
+    bool isNativeFunction(BuiltinID) const;
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
     bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
@@ -996,6 +1000,7 @@ public:
     std::span<const BuiltinCalledFunction> calledFunctionsOf(BuiltinID) const;
     const BuiltinUnseenCode* unseenCodeOf(BuiltinID) const;
     bool letsInUnseenCode(BuiltinID) const;
+    bool letsInUnseenCodeWhenCalled(BuiltinID) const;
     const BuiltinForms* formsOf(BuiltinID) const;
     std::optional<BuiltinBoxedStub> boxedCallStubOf(BuiltinID) const;
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }

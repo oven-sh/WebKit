@@ -634,6 +634,73 @@ static void testPushedJobsAreTakenInOrder()
     checkNoJobIsTaken(realm, takeJob);
 }
 
+static Snippet assembleTakeOfReactionJob()
+{
+    return Snippet({ savedRegister, modeRegister, valueRegister }, [](StubAssembler& jit, JumpList& noJob) {
+        const GPRReg promise = jit.allocateScratch(savedRegister);
+        const GPRReg handler = jit.allocateScratch(modeRegister);
+        const GPRReg argument = jit.allocateScratch(valueRegister);
+        const HeadJobRegisters head {
+            .queue = jit.allocateScratch(StubRegister::A4),
+            .slot = jit.allocateScratch(StubRegister::T9),
+            .word = jit.allocateScratch(StubRegister::A5),
+        };
+        emitLoadHeadJob(jit, head, noJob);
+        emitTakeReactionJob(jit, ReactionJob::HasNoAsyncContext, head, promise, handler, argument, noJob);
+    });
+}
+
+static void testReactionJobsAreTakenByTheirLastArgument()
+{
+    JobTestRealm realm;
+    Snippet snippet = assembleTakeOfReactionJob();
+    JobEnvironment& environment = realm.environment();
+    JSPromise* promise = JSPromise::create(realm.vm(), realm.globalObject()->promiseStructure());
+    realm.instance().allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Promise)].header = cellHeaderFor(promise->structure());
+    const JSValue handler = realm.waiter();
+    const JSValue argument = jsNumber(7);
+    const std::array<uint64_t, 3> taken { bitsOf(promise), bitsOf(handler), bitsOf(argument) };
+    auto takeJobWithLastArgument = [&](JSValue last) {
+        realm.emptyRingAt(0);
+        realm.queue().enqueue(QueuedTask { nullptr, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), realm.globalObject(), promise, handler, argument, last });
+        environment.registersAfterwards = { };
+        return snippet.run(environment);
+    };
+
+    for (JSValue last : { JSValue(), jsUndefined(), jsNull() }) {
+        AOT_TEST_CHECK(takeJobWithLastArgument(last) == Path::FellThrough);
+        AOT_TEST_CHECK(environment.registersAfterwards == taken);
+        AOT_TEST_CHECK(realm.queue().isEmpty());
+    }
+    for (JSValue last : { jsNumber(0), jsBoolean(false), jsBoolean(true), handler }) {
+        AOT_TEST_CHECK(takeJobWithLastArgument(last) == Path::Left);
+        AOT_TEST_CHECK(realm.queue().size() == 1);
+    }
+}
+
+static void testMaskedTestsOfWordsInMemory()
+{
+    JobTestRealm realm;
+    JobEnvironment& environment = realm.environment();
+    for (int32_t mask : { -1, 1, 0x10, 0xff, ~0xa, 0x12345, -0x12345 }) {
+        Snippet testsAddress({ savedRegister }, [&](StubAssembler& jit, JumpList& hasBitOfMask) {
+            hasBitOfMask.append(jit.branchTest64(CCallHelpers::NonZero, operandSlot(0), TrustedImm32(mask)));
+        });
+        Snippet testsIndexedAddress({ savedRegister }, [&](StubAssembler& jit, JumpList& hasBitOfMask) {
+            const GPRReg index = jit.allocateScratch(savedRegister);
+            const Address slot = operandSlot(0);
+            jit.move(TrustedImm32(sizeof(uint64_t)), index);
+            hasBitOfMask.append(jit.branchTest64(CCallHelpers::NonZero, BaseIndex(slot.base, index, CCallHelpers::TimesOne, slot.offset - static_cast<int32_t>(sizeof(uint64_t))), TrustedImm32(mask)));
+        });
+        for (uint64_t word : { uint64_t { 0 }, uint64_t { 2 }, uint64_t { 8 }, uint64_t { 0xa }, uint64_t { 0x10 }, uint64_t { 0x12345 }, uint64_t { 1 } << 40, ~uint64_t { 0 } }) {
+            environment.operands[0] = word;
+            Path expected = word & static_cast<uint64_t>(static_cast<int64_t>(mask)) ? Path::Left : Path::FellThrough;
+            AOT_TEST_CHECK(testsAddress.run(environment) == expected);
+            AOT_TEST_CHECK(testsIndexedAddress.run(environment) == expected);
+        }
+    }
+}
+
 std::span<const NativeTest> coroutineJobTests()
 {
     static constexpr NativeTest tests[] = {
@@ -644,6 +711,8 @@ std::span<const NativeTest> coroutineJobTests()
         { "stubs/coroutine-jobs/taken-resume-jobs"_s, ImageTests::whenExecutable<testTakenResumeJobs> },
         { "stubs/coroutine-jobs/jobs-that-stay-in-the-queue"_s, ImageTests::whenExecutable<testJobsThatStayInTheQueue> },
         { "stubs/coroutine-jobs/pushed-jobs-are-taken-in-order"_s, ImageTests::whenExecutable<testPushedJobsAreTakenInOrder> },
+        { "stubs/coroutine-jobs/reaction-jobs-are-taken-by-their-last-argument"_s, ImageTests::whenExecutable<testReactionJobsAreTakenByTheirLastArgument> },
+        { "stubs/coroutine-jobs/masked-tests-of-words-in-memory"_s, ImageTests::whenExecutable<testMaskedTestsOfWordsInMemory> },
     };
     return tests;
 }

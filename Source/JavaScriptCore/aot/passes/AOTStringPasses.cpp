@@ -45,6 +45,7 @@
 #include "AOTSplitStringWalk.h"
 #include "AOTStringArena.h"
 #include "AOTStringRanges.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
 #include "YarrFlags.h"
@@ -67,7 +68,7 @@ static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet, Opc
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
-    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
+    Opcode::StringBuilderAppend, Opcode::StringBuilderAppendJSON, Opcode::StringBuilderAppendJSONMembers, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::CallDirect,
 };
 static constexpr AbstractHeapSet stringCreationHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
 
@@ -376,7 +377,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
     auto isPartOfOtherWeb = [&](uint32_t web) {
         return std::ranges::any_of(webs[web].members, [&](ValueID member) {
             return std::ranges::any_of(useLists.usesOf(member), [&](Use use) {
-                while (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::Upcast) {
+                while (use.kind == Use::Kind::Operand && isCastThatProvesNothing(function.at(use.user).opcode)) {
                     std::optional<Use> next = useLists.singleUse(use.user);
                     if (!next)
                         return false;
@@ -393,7 +394,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
     // The append that replaces a concatenation completes or leaves the content as it was, so the builder holds the member wherever the block can throw.
     auto isLiveOnlyForHandler = [&](ValueID member, BlockID blockID, uint32_t index) {
         const Block& block = function.at(blockID);
-        if (!block.handler || !block.handler->arguments.contains(member))
+        if (!block.handler || (!block.handler->arguments.contains(member) && !liveness->isLiveAtHead(member, block.handler->block)))
             return false;
         if (std::ranges::any_of(useLists.usesOf(member), [&](const Use& use) { return use.block == blockID && useLists.pointOf(use).index > index; }))
             return false;
@@ -516,6 +517,60 @@ StringBuilderPlan StringBuilderStep::findWebs()
         return false;
     };
 
+    // A text goes from the operands of a concatenation to its result, and from arguments to a parameter.
+    Vector<ValueID> argumentsOfParameters;
+    Vector<std::pair<uint32_t, uint32_t>> argumentRanges;
+    std::optional<StronglyConnectedComponents> textCycles;
+    auto sourcesOfText = [&](unsigned index) -> std::span<const ValueID> {
+        const Value& value = function.at(ValueID(index));
+        if (value.opcode == Opcode::Parameter)
+            return argumentsOfParameters.subspan(argumentRanges[index].first, argumentRanges[index].second);
+        if (isCastThatProvesNothing(value.opcode) || isStringConcatenation(program, function, value))
+            return value.operands();
+        return { };
+    };
+    auto findTextCycles = [&] {
+        argumentRanges.fill({ 0, 0 }, numberOfValues);
+        for (BlockID blockID : cfg.reversePostOrder()) {
+            std::span<const ValueID> parameters = sharedParametersOf(blockID);
+            for (uint32_t index = 0; index < parameters.size(); ++index) {
+                uint32_t start = argumentsOfParameters.size();
+                for (Edge edge : cfg.incomingEdges(blockID))
+                    argumentsOfParameters.append(argumentOn(edge, index));
+                argumentRanges[parameters[index].index()] = { start, argumentsOfParameters.size() - start };
+            }
+        }
+        textCycles = computeStronglyConnectedComponents(numberOfValues, sourcesOfText);
+    };
+    // A text that grows around a loop stays in one builder all the way around. Where any step of the way takes it as a string, a builder would be begun with a copy of the whole text at every turn.
+    auto cutTextsCopiedAroundCycles = [&] {
+        if (!cfg.hasCycle() || !numberOfUndecidedWebs)
+            return false;
+        if (!textCycles)
+            findTextCycles();
+        BitVector cyclesWithCopies;
+        for (ValueID member : candidates) {
+            std::optional<uint32_t> web = undecidedWebOf(member);
+            if (!web || !textCycles->isInCycle.get(member.index()))
+                continue;
+            uint32_t cycle = textCycles->componentOf[member.index()];
+            bool isParameter = function.at(member).opcode == Opcode::Parameter;
+            std::span<const ValueID> sources = sourcesOfText(member.index());
+            for (uint32_t index = 0; index < sources.size(); ++index) {
+                bool staysInBuilder = plan.webOf(sources[index]) == web && (isParameter || index == stateOperandIndex);
+                if (!staysInBuilder && textCycles->componentOf[sources[index].index()] == cycle)
+                    cyclesWithCopies.set(cycle);
+            }
+        }
+        if (cyclesWithCopies.isEmpty())
+            return false;
+        for (ValueID id : candidates) {
+            if (cyclesWithCopies.get(textCycles->componentOf[id.index()]))
+                isCut.quickSet(id.index());
+        }
+        return true;
+    };
+
     for (;;) {
         plan = { };
         candidates.shrink(0);
@@ -624,7 +679,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
             else if (++numberOfWebs > maxWebs)
                 setDecision(index, StringBuilderDeclineReason::WebLimit, web.members.first());
         }
-        if (!numberOfUndecidedWebs || !cutAtInterference())
+        if (!numberOfUndecidedWebs || (!cutAtInterference() && !cutTextsCopiedAroundCycles()))
             break;
     }
 
@@ -708,7 +763,7 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
         NestedWeb nested;
         nested.lastState = function.at(concatenation).operand(operandIndex);
         nested.readOfLastState = operandUse(concatenation, operandIndex);
-        while (function.at(nested.lastState).opcode == Opcode::Upcast && useLists.useCount(nested.lastState) == 1) {
+        while (isCastThatProvesNothing(function.at(nested.lastState).opcode) && useLists.useCount(nested.lastState) == 1) {
             nested.casts.append(nested.lastState);
             nested.readOfLastState = operandUse(nested.lastState, OperandIndex::Upcast::value);
             nested.lastState = function.at(nested.lastState).valueOperand();
@@ -721,6 +776,12 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
         if (nested.web->reads.size() != 1 || nested.web->entries.isEmpty())
             return std::nullopt;
         if (nested.web->reads.first().use != nested.readOfLastState || !nested.web->reads.first().endsWeb)
+            return std::nullopt;
+        // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
+        bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
+            return context.program.typeOf(context.function, entry.value).mayBeUnspecified();
+        });
+        if (wouldReadEmptyFirstState)
             return std::nullopt;
         return nested;
     };
@@ -1334,7 +1395,7 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
             if (use->kind != Use::Kind::Operand)
                 return std::nullopt;
             const Value& user = function.at(use->user);
-            if (user.opcode == Opcode::Upcast) {
+            if (isCastThatProvesNothing(user.opcode)) {
                 string = use->user;
                 continue;
             }
@@ -1585,7 +1646,7 @@ static bool markLikelyKeys(FunctionPassContext& context)
                     continue;
                 }
                 // As the call by name that stands in where a Map is not what its type says.
-                if (function.at(use.block).frequency != BlockFrequency::Normal)
+                if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
                     continue;
 
                 ValueID sameString;
@@ -1622,6 +1683,71 @@ static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context)
         return std::ranges::any_of(block.values, [&](ValueID id) { return isStringConcatenation(context.program, context.function, context.function.at(id)); });
     });
     return hasConcatenation ? StringBuilderStep { context }.findWebs() : StringBuilderPlan { };
+}
+
+// The parts of an append are written one after the other, and each of them may find that the text gets too long. A handler that goes on with the builder wants the text as it was in front of the append.
+static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    auto isRolledBackIn = [&](BlockID handler, ValueID builder) {
+        return std::ranges::any_of(function.at(handler).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::StringBuilderRollBack && function.at(id).builderOperand() == builder;
+        });
+    };
+    auto forEachAppendOfSeveralParts = [&](BlockID blockID, const Invocable<void(uint32_t index, ValueID builder)> auto& functor) {
+        const Block& block = function.at(blockID);
+        if (!block.handler)
+            return;
+        for (uint32_t index = block.values.size(); index--;) {
+            const Value& value = function.at(block.values[index]);
+            if (value.opcode == Opcode::StringBuilderAppend && value.partsOperands().size() > 1 && !isRolledBackIn(block.handler->block, value.builderOperand()))
+                functor(index, value.builderOperand());
+        }
+    };
+
+    BitVector builders(function.values.size());
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        forEachAppendOfSeveralParts(blockID, [&](uint32_t, ValueID builder) {
+            builders.quickSet(builder.index());
+        });
+    }
+    if (builders.isEmpty())
+        return PassOutcome::Unchanged;
+
+    Liveness liveness(function, cfg, context.analyses.useLists(), LivenessOptions { .trackedValues = &builders });
+    Vector<ProgramPoint, 4> appends;
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        forEachAppendOfSeveralParts(blockID, [&](uint32_t index, ValueID builder) {
+            const Target& handler = *function.at(blockID).handler;
+            if (handler.arguments.contains(builder) || liveness.isLiveAtHead(builder, handler.block))
+                appends.append(ProgramPoint { blockID, index });
+        });
+    }
+    if (appends.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // The appends of a block come last to first, so the block in front of a split keeps its indexes.
+    IRBuilder builder(context.analyses.context(), function, context.types);
+    for (ProgramPoint point : appends) {
+        ValueID append = function.at(point.block).values[point.index];
+        ValueID handle = function.at(append).builderOperand();
+        builder.setOrigin(function.at(append).origin());
+        builder.setHandler(std::optional<Target> { *function.at(point.block).handler });
+        std::array<uint32_t, 2> indexes { point.index, point.index + 1 };
+        BlockID covered = builder.splitBlock(point.block, indexes).first();
+        ValueID checkpoint = builder.insertBefore(pointBeforeTerminatorOf(function, point.block), IRBuilder::make(Opcode::StringBuilderCheckpoint, { handle }));
+        builder.applyInsertions();
+
+        BlockID failed = builder.addHandlerBlock(BlockRole::CleanupHandler, ValueID());
+        function.edit(covered, { BlockEdit::Edges, BlockEdit::Arguments }).handler = Target { failed, { }, { } };
+        builder.moveToEndOf(failed);
+        ValueID exception = builder.append(Opcode::CatchException, { });
+        builder.append(Opcode::StringBuilderRollBack, { handle, checkpoint });
+        builder.emitRethrow(exception);
+    }
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
 }
 
 static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
@@ -1662,7 +1788,8 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
     outcome |= StringBuilderStep { context }.joinNestedBuilders();
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
-    return outcome | expandAppendedStringRanges(context);
+    outcome |= expandAppendedStringRanges(context);
+    return outcome | rollBackAppendsUnderHandlers(context);
 }
 
 PassOutcome createStringBuilders(FunctionPassContext& context)
@@ -1733,11 +1860,16 @@ std::optional<StringRangeSource> stringRangeSourceOf(const Program& program, con
 StringRangeBounds insertStringRange(IRBuilder& builder, ProgramPoint point, const StringRangeSource& source, std::optional<StringRangeBounds> enclosing)
 {
     auto insert = [&](Value&& value) { return builder.insertBefore(point, WTF::move(value)); };
+    // A range lies within its string, so the sums and differences of bounds are positions in the string, also where the types of the bounds are too wide to say so.
+    auto insertPosition = [&](Opcode opcode, ValueID left, ValueID right) {
+        ValueID position = insert(IRBuilder::make(opcode, { left, right }));
+        return builder.context().program.typeOf(builder.function(), position).isInteger() ? position : insert(IRBuilder::make(Opcode::ToInt32, { position }));
+    };
     StringRangeBounds bounds;
     if (source.bounds)
         bounds = *source.bounds;
     else {
-        ValueID length = insert(enclosing ? IRBuilder::make(Opcode::Sub, { enclosing->end, enclosing->start }) : IRBuilder::make(Opcode::GetStringLength, { source.string }));
+        ValueID length = enclosing ? insertPosition(Opcode::Sub, enclosing->end, enclosing->start) : insert(IRBuilder::make(Opcode::GetStringLength, { source.string }));
         ValueID first = source.first ? source.first : insert(makeInteger(0));
         Value range = IRBuilder::make(Opcode::StringRange, { length, first, source.second });
         range.setMethod(source.method);
@@ -1747,8 +1879,8 @@ StringRangeBounds insertStringRange(IRBuilder& builder, ProgramPoint point, cons
     }
     if (!enclosing)
         return bounds;
-    ValueID start = insert(IRBuilder::make(Opcode::Add, { enclosing->start, bounds.start }));
-    return { start, insert(IRBuilder::make(Opcode::Add, { enclosing->start, bounds.end })) };
+    ValueID start = insertPosition(Opcode::Add, enclosing->start, bounds.start);
+    return { start, insertPosition(Opcode::Add, enclosing->start, bounds.end) };
 }
 
 Value makeStringRangeRead(Opcode read, ValueID string, std::optional<StringRangeBounds> bounds, ValueID position)
@@ -1909,8 +2041,10 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
     };
     // No string is too long to be made of such parts, so the concatenation throws nothing and may run at any later time.
     auto hasBoundedLength = [&](const Value& value) {
-        constexpr uint16_t bounded = Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull | Primitive::LiteralString;
-        return std::ranges::all_of(value.operands(), [&](ValueID operand) { return typeOf(operand).hasOnlyPrimitives(bounded); });
+        JoinedTexts texts;
+        for (ValueID operand : value.operands())
+            texts.add(program, typeOf(operand));
+        return texts.fitInString();
     };
     // A key is looked up by its parts, and no string is made of a number among them.
     auto mayBecomeKey = [&](ValueID string) {
@@ -1924,8 +2058,9 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
             return isKeyOperand(program, function, use);
         });
     };
-    // A concatenation fails for lack of memory alone. Which of two such operations fails first, nobody can tell: `a[i] + a[j] + a[k]` reads a character, which may have to be made, between two concatenations.
-    auto hasObservableEffects = [&](ValueID id) { return !analyses.isRemovableWhenUnused(id); };
+    // A concatenation fails for lack of memory or for its length, with one error. Which of two such operations fails first, nobody can tell: `a[i] + a[j] + a[k]` reads a character, which may have to be made, between two concatenations.
+    // The analyses hear of a concatenation that has absorbed another at the end of the walk, so they are asked about the other values alone.
+    auto hasObservableEffects = [&](ValueID id) { return !isConcatenation(function.at(id)) && !analyses.isRemovableWhenUnused(id); };
     auto hasObservableEffectsBetween = [&](BlockID id, uint32_t begin, uint32_t end) { return std::ranges::any_of(function.at(id).values.subspan(begin, end - begin), hasObservableEffects); };
 
     auto becomeConcatenationOf = [&](ValueID id, std::span<const ValueID> parts) {
@@ -2486,7 +2621,7 @@ PassOutcome foldConstantRegExps(FunctionPassContext& context)
             return;
         KnownValue flags = arguments.size() == 2 ? known(arguments[1]) : KnownValue::undefined();
         std::optional<RegExpLiteralInType> literal = createdLiteralOf(arguments.empty() ? ValueID() : arguments[0], flags);
-        if (!literal || mayRunJavaScript(call) || !regExpSummaryOf(context, literal->pattern, literal->flags()).isValid())
+        if (!literal || mayRunJavaScript(call) || !regExpSummaryOf(context, literal->pattern, literal->flags()).canBeCreated())
             return;
         Value creation(Opcode::NewRegExp);
         creation.setPattern(literal->pattern);
@@ -2589,11 +2724,15 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
     const EscapeAnalysis& escape = context.analyses.escape();
     const ValueIdentities& identities = context.analyses.identities();
     auto isOnlyInspected = [](const ObjectUse& objectUse) { return !objectUse.isEscape && objectUse.uses.containsOnly({ OperandUse::Inspects }); };
-    // The copies of a site that inlining and cloning make share the object of the site.
-    auto takesObjectOfAnotherCopy = [&](const Value& user, ValueID id) {
+    // The copies of a site that inlining and cloning make share the object of the site. A built-in that matches takes one of them where they meet in one operand.
+    auto takesObjectOfAnotherCopy = [&](const Value& user, const ObjectUse& objectUse, ValueID id) {
         const Value& literal = function.at(id);
+        ValueID operandThatMatches = effectRuleOf(user.opcode) == EffectRule::Builtin && objectUse.uses.containsAny(contentsReadOrWritten) ? user.operand(objectUse.use.operandIndex) : ValueID();
+        bool isNamedOnce = operandThatMatches && std::ranges::count(user.operands(), operandThatMatches) == 1;
         bool result = false;
         user.forEachChild([&](ValueID operand) {
+            if (isNamedOnce && operand == operandThatMatches)
+                return;
             for (ObjectID object : escape.pointsTo(operand).objects) {
                 const Value& other = function.at(escape.at(object).definition);
                 if (escape.at(object).definition != id && other.opcode == Opcode::NewRegExp && other.position == literal.position && other.pattern() == literal.pattern() && other.regExpFlags() == literal.regExpFlags())
@@ -2602,9 +2741,9 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         });
         return result;
     };
-    auto isHarmlessInBuiltin = [&](const Value& call, const ObjectUse& objectUse, OptionSet<RegExpFlags> flags) {
+    auto isHarmlessInBuiltin = [&](const Value& call, const ObjectUse& objectUse, OptionSet<RegExpFlags> flags, bool isOfOneEvaluation) {
         if (!objectUse.uses.containsAny(contentsReadOrWritten))
-            return isOnlyInspected(objectUse);
+            return isOfOneEvaluation && isOnlyInspected(objectUse);
         std::optional<InlineBuiltin> builtin;
         if (objectUse.uses.containsOnly(usesOfMatching) && declaredBehaviorOf(program.builtins().at(call.overload()), builtinOperandAt(call, objectUse.use.operandIndex)).protocols.containsOnly({ Protocol::ToPrimitive }))
             builtin = inlineImplementationOf(program, call);
@@ -2626,22 +2765,23 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
             return build.isSabotaged(Sabotage::SharedPatternsAreUsedInUnknownWays);
         }
     };
-    auto isHarmless = [&](const ObjectUse& objectUse, ValueID literal) {
+    // A value that stands for the objects of several evaluations may be handed on and matched with. Whoever inspects it could tell them apart.
+    auto isHarmless = [&](const ObjectUse& objectUse, ValueID literal, bool isOfOneEvaluation) {
         if (objectUse.use.kind != Use::Kind::Operand)
-            return isOnlyInspected(objectUse);
+            return isOnlyInspected(objectUse) && (isOfOneEvaluation || objectUse.use.isEdgeUse());
         const Value& user = function.at(objectUse.use.user);
-        if (takesObjectOfAnotherCopy(user, literal))
+        if (takesObjectOfAnotherCopy(user, objectUse, literal))
             return false;
         switch (effectRuleOf(user.opcode)) {
         case EffectRule::Declared:
         case EffectRule::Operator:
         case EffectRule::Access:
-            return isOnlyInspected(objectUse);
+            return isOnlyInspected(objectUse) && (isOfOneEvaluation || isCastWithoutTest(user.opcode));
         case EffectRule::Call:
             // A callee may evaluate the site of the literal again, and would find the two objects identical.
             return build.isSabotaged(Sabotage::SharedPatternsReachCalls);
         case EffectRule::Builtin:
-            return isHarmlessInBuiltin(user, objectUse, function.at(literal).regExpFlags());
+            return isHarmlessInBuiltin(user, objectUse, function.at(literal).regExpFlags(), isOfOneEvaluation);
         case EffectRule::Inline:
             return false;
         }
@@ -2651,9 +2791,8 @@ PassOutcome shareRegExpLiterals(FunctionPassContext& context)
         std::optional<ObjectID> object = escape.objectDefinedBy(literal);
         if (!object || escape.at(*object).reasons.contains(EscapeReason::LimitReached))
             return false;
-        if (!std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) { return identities.identityOf(alias) == literal; }))
-            return false;
-        if (!std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) { return isHarmless(objectUse, literal); }))
+        bool isOfOneEvaluation = std::ranges::all_of(escape.aliasesOf(*object), [&](ValueID alias) { return identities.identityOf(alias) == literal; });
+        if (!std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) { return isHarmless(objectUse, literal, isOfOneEvaluation); }))
             return false;
         // The operation that creates a shared literal cannot throw, and a pattern may fail to compile unless the build has its metadata.
         const RegExpSummary& summary = regExpSummaryOf(context, function.at(literal).pattern(), function.at(literal).regExpFlags());
@@ -2681,7 +2820,7 @@ static_assert(defaultLimitValue(LimitID::MaxLiteralStrings, Architecture::X86_64
 static_assert(literalStringWord(0) == emptyLiteralStringWord);
 
 // Their value is one that another value, a field or a variable of the program held before.
-static constexpr OpcodeSet operationsHandingOnValues { Opcode::Parameter, Opcode::Upcast, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
+static constexpr OpcodeSet operationsHandingOnValues = castsThatProveNothing | OpcodeSet { Opcode::Parameter, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
 
 std::optional<uint32_t> LiteralStringTable::indexOf(StringID string) const
 {
@@ -2741,12 +2880,12 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     };
     auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
         for (const DeclaredType& declared : positions)
-            collectLiteralsOf(declared.type, source);
+            collectLiteralsOf(declared.written(), source);
     };
     auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
         const Function& function = program.at(id);
         collectLiteralsOfAll(function.captures.span(), Source::Program);
-        collectLiteralsOf(function.thisType.type, sourceOfArguments);
+        collectLiteralsOf(function.thisType.written(), sourceOfArguments);
         collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
         collectLiteralsOfAll(function.results.span(), Source::Program);
 
@@ -2807,11 +2946,11 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
         bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         for (const Field& field : layout.fields)
-            collectLiteralsOf(field.declared.type, isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+            collectLiteralsOf(field.declared.written(), isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
-        TypeID type = program.variables[index].declared.type;
+        TypeID type = program.variables[index].declared.written();
         if (described.quickGet(index) || variablesNamedByCode.at(index)) {
             collectLiteralsOf(type, !described.quickGet(index) && program.variables[index].flow.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
             continue;

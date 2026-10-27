@@ -132,6 +132,21 @@ public:
     private:
         ClassTable& m_classes;
     };
+    class InternalPutScope {
+        WTF_MAKE_NONCOPYABLE(InternalPutScope);
+    public:
+        explicit InternalPutScope(ClassTable& classes)
+            : m_classes(classes)
+        {
+            ++classes.m_internalPutDepth;
+        }
+
+        ~InternalPutScope() { --m_classes.m_internalPutDepth; }
+
+    private:
+        ClassTable& m_classes;
+    };
+    bool isInInternalPut() const { return m_internalPutDepth; }
     void didChangeEveryMember(const LayoutData&, ClassSide);
     void didChangePrototypeLink(const LayoutData&, ClassSide);
     void didDefineWithOtherParent(const LayoutData&, ClassSide);
@@ -176,7 +191,9 @@ public:
         return prototype.isObject() ? asObject(prototype) : nullptr;
     }
     void rememberPlaceOfPrototypeProperty(VM&, Closure* function, JSObject* prototype);
-    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false);
+    Object* createInstanceOfClassBelow(VM&, size_t indexOfRecord);
+    // What an allocation makes for a prototype is remembered under its number.
+    JSObject* instanceWithPrototype(VM&, Object* allocated, JSObject* prototype, bool holdsNoField = false, std::optional<uint32_t> allocation = std::nullopt);
 
 private:
     using ByIndex = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -203,13 +220,8 @@ private:
 
     std::array<PlaceOfPrototypeProperty, numberOfPlacesOfPrototypeProperties> m_placesOfPrototypeProperties { };
     std::array<PrototypeOfClassObject, numberOfPrototypesOfClassObjects> m_prototypesOfClassObjects { };
-    struct InstanceOfClassBelow {
-        JSObject* prototype;
-        const LayoutData* allocatedLayout;
-        CompiledStructure* structure;
-    };
-    static constexpr size_t numberOfInstancesOfClassesBelow = 16;
-    static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> 4 & (numberOfInstancesOfClassesBelow - 1); }
+    static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> shiftOfPrototypeForInstanceOfClassBelow & (numberOfInstancesOfClassesBelow - 1); }
+    void rememberInstanceOfOtherEvaluation(VM&, const Object& instance, JSObject* prototype, uint32_t allocation);
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
     State& m_state;
     const ProgramTables& m_tables;
@@ -227,6 +239,7 @@ private:
         ClassSide side { ClassSide::Prototype };
         UniquedStringImpl* uid { nullptr };
     } m_memberBeingDefined;
+    unsigned m_internalPutDepth { 0 };
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsWithoutClass;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsThatAreOnlyBases;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sidesEnteredWithoutGuards;

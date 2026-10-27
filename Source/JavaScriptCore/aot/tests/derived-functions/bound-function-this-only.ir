@@ -10,6 +10,7 @@ function f0 name="target" kind=Method flags=[HasThis] length=2 captures=[{type=e
   b0(v0: env L1, v1: L0, v2: anything, v3: boolean):
     Return v2
 }
-# CHECK: function f1 name="target" module=m0 kind=Method role=BoundFunction length=2 captures=[{type=env L1}, {type=L0}, {type=function}] thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}]{{*}}derivation={source=f0} creator=BoundFunction{target=f0 capturesTargetClosure=true} {
-# CHECK-NEXT: b0([[scope]]: env L1, [[receiver]]: L0, [[closure]]: function, [[first]]: anything, [[second]]: boolean):
+# CHECK: function f1 name="target" module=m0 kind=Method role=BoundFunction length=2 captures=[{type=L0}, {type=f0}] thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}]{{*}}derivation={source=f0} creator=BoundFunction{target=f0 capturesTargetClosure=true} {
+# CHECK-NEXT: b0([[receiver]]: L0, [[closure]]: f0, [[first]]: anything, [[second]]: boolean):
+# CHECK-NEXT: [[scope]]: env L1 = GetCapture [[closure]] function=f0
 # CHECK-NEXT: = CallDirect [[scope]], [[receiver]], [[first]], [[second]] function=f0

@@ -305,6 +305,7 @@ void Procedure::resetReachability()
         if (isBlockDead(block.get())) {
             for (Value* value : *block)
                 deleteValue(value);
+            m_movedLoadLog.willDelete(block.get());
             block = nullptr;
         }
     }

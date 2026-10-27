@@ -56,7 +56,7 @@ using CanEmitArm = ScopedLambda<bool(const MemberArm&)>;
 
 DispatchPlan planDispatch(FunctionPassContext&, const MemberPartition&, const ReceiverCandidates&, ValueID site, NOESCAPE const CanEmitArm&);
 
-ValueSplit createSplit(FunctionPassContext&, const DispatchPlan&, const MemberPartition&, ValueID receiver, BlockFrequency siteFrequency);
+ValueSplit createSplit(FunctionPassContext&, const DispatchPlan&, const MemberPartition&, ValueID receiver, Expected<BlockFrequency> siteFrequency);
 
 } } } // namespace JSC::AOT::Typed
 

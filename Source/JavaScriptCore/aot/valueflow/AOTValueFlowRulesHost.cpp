@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTKnownClosures.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
@@ -59,16 +60,16 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
         return;
     }
     const DeclaredType* declared = callee.declaredEntryParameter(index);
-    bool hasType = declared && declared->type;
-    bool isAssumedByEveryEntrypoint = hasType && !declared->site && !declared->flags.contains(PositionFlags::IsExpected);
-    bool isKeptByHost = hasType && caller == NativeCaller::NamedByTable && callee.entryParameterKind(index) == EntryParameter::Parameter && declared->site && !declared->flags.contains(PositionFlags::IsFromCompiler) && callee.has(FunctionFlags::IsChecked);
-    ValueSetID mask = isAssumedByEveryEntrypoint || isKeptByHost ? universe.maskOf(context.maker(), program, program.at(declared->type)) : ValueSets::anything;
+    bool hasType = declared && declared->written();
+    bool isAssumedByEveryEntrypoint = hasType && !declared->site && !declared->isExpected();
+    bool isKeptByHost = hasType && caller == NativeCaller::NamedByTable && callee.entryParameterKind(index) == EntryParameter::Parameter && declared->site && !declared->has(PositionFlags::IsFromCompiler) && callee.has(FunctionFlags::IsChecked);
+    ValueSetID mask = isAssumedByEveryEntrypoint || isKeptByHost ? universe.maskOf(context.maker(), program, program.at(declared->expected().predicted())) : ValueSets::anything;
     if (mask == ValueSets::anything) {
         context.add(parameter, unknown);
         return;
     }
 
-    const Type& type = program.at(declared->type);
+    const Type& type = program.at(declared->expected().predicted());
     context.add(parameter, context.maker().intersect(universe.anyPrimitive(), mask));
     if (!type.hasObjects())
         return;
@@ -94,10 +95,10 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
     if (const auto* summary = nodes.resultSummaryOf(function))
-        context.connect(summary->ownResult, escaped);
+        carryOut(context, summary->ownResult);
     else {
         for (unsigned index = 0; index < callee.results.size(); ++index)
-            context.connect(nodes.result(function, index), escaped);
+            carryOut(context, nodes.result(function, index));
     }
     context.connect(nodes.thrown(function), escaped);
     if (!callee.isUnsplitCoroutine() || !callee.has(FunctionFlags::IsGenerator))
@@ -185,7 +186,7 @@ static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionI
 static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
 {
     std::optional<PropertyKeyID> key = context.program().types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(*key) : everyPropertyName) }, { } };
+    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
 }
 
 static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& context, ModuleID id, StringID name)
@@ -196,7 +197,7 @@ static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& conte
 
     auto found = std::ranges::find(module.exports, name, &ModuleExport::name);
     if (found != module.exports.end())
-        return found->kind == ModuleExportKind::Indirect ? unknown : exportedValueOf(context, *found);
+        return found->kind == ModuleExportKind::Indirect && program.at(found->module).kind == ModuleKind::External ? unknown : exportedValueOf(context, *found);
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         bool isDefault = name == program.stringOf(BuiltinNames::defaultKeyword);
@@ -235,19 +236,26 @@ static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueF
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet configuration = valueOf(context, value);
-    if (context.meet(configuration, universe.placeholdersAlone()))
-        return true;
     auto found = [&](BuiltinName name) {
-        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program.keyOf(name))));
+        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program, program.keyOf(name))));
     };
-    for (BuiltinName name : { BuiltinNames::fetch, BuiltinNames::then }) {
-        ClimbingSet function = found(name);
-        if (context.meet(function, universe.callables()) || context.meet(function, universe.placeholdersAlone()))
+    auto hasHandler = [&] {
+        if (context.meet(configuration, universe.placeholdersAlone()))
             return true;
-    }
-    ValueFlowObjectID missing[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
-    ValueSetID present = ValueSets::complement(context.maker().of(std::span<const ValueFlowObjectID>(missing)));
-    return context.meet(found(BuiltinNames::app), present) || context.meet(found(BuiltinNames::routes), present);
+        for (BuiltinName name : { BuiltinNames::fetch, BuiltinNames::then }) {
+            ClimbingSet function = found(name);
+            if (context.meet(function, universe.callables()) || context.meet(function, universe.placeholdersAlone()))
+                return true;
+        }
+        ValueFlowObjectID missing[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
+        ValueSetID present = ValueSets::complement(context.maker().of(std::span<const ValueFlowObjectID>(missing)));
+        return context.meet(found(BuiltinNames::app), present) || context.meet(found(BuiltinNames::routes), present);
+    };
+    if (!hasHandler())
+        return false;
+    // A server has `fetch` too: the host reads `stop` to tell one from a configuration.
+    found(BuiltinNames::stop);
+    return true;
 }
 
 static bool mayHold(const BuiltinCondition* condition)
@@ -271,7 +279,7 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
     if (!condition->calledOn && (isRun || mayCallWhateverHasEscaped(context)) && context.holdsAnyOf(object, ValueFlowProgramNodes::escaped()))
         return true;
 
-    auto holdsSomething = [&](ValueFlowName cell) {
+    auto holdsSomething = [&](ValueFlowCellName cell) {
         return context.meet(context.valueOf(context.read(object, cell)), ValueSets::anything);
     };
     if (isObjectKind(builtins.at(builtin).kind)) {
@@ -279,10 +287,10 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
             return false;
         if (condition->callRunsOtherCode && !holdsSomething(cellOfCallsThatRunOtherCode(builtins)))
             return false;
-        if (condition->firstText() && !holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
+        if (condition->firstText() && !holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
             return false;
     }
-    return !condition->hasProperty || holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
+    return !condition->hasProperty || holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
 }
 
 static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModuleLoad& load)
@@ -315,7 +323,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
     if (load.readsEveryExport) {
         ValueFlowSources answer = requiredValueOf(context, id);
         connect(context, answer, escaped);
-        context.connect(context.read(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
+        context.connect(context.readWhatWasWritten(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
         return;
     }
     for (size_t index = 0; index < load.exports.size(); ++index) {
@@ -335,6 +343,8 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
             use(namespaceOf(context, found->module), index);
             break;
         case ModuleExportKind::Indirect:
+            if (program.at(found->module).kind != ModuleKind::External)
+                use(exportedValueOf(context, *found), index);
             break;
         }
     }
@@ -484,14 +494,14 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
     ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
     ClimbingSet all = context.valueOf(heldNode);
     ClimbingSet held = context.restrict(all, objectsOfProgram);
-    held = context.unite(held, context.valueWithin(ClimbingSet(universe.holdersOfLibraryExports()), heldNode));
+    held = context.unite(held, context.valueWithin(ClimbingSet(universe.objectsOfLibraryFoundByNameAlone()), heldNode));
     if (context.contains(all, ValueFlowUniverse::untrackedObject()))
         held = context.unite(held, context.valueWithin(ClimbingSet(objectsOfProgram), ValueFlowProgramNodes::lost()));
     if (!context.meet(held, ValueSets::anything))
         return;
 
     for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryProperty, ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter, ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::CopiedFrom })
-        context.connect(context.read(held, { kind, 0 }), heldNode);
+        context.connect(context.readWhatWasWritten(held, { kind, 0 }), heldNode);
     context.add(heldNode, objectsHeldFromCreation(context, held));
     context.mark(held, ObjectMutation::ReachNativeCode);
 
@@ -503,7 +513,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
         { ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::PrototypeLink },
     };
     for (auto [found, written] : foundAndWrittenNames)
-        context.connect(context.read(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
+        context.connect(context.readWhatWasWritten(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
     for (ObjectMutation mutation : OptionSet<ObjectMutation>::all()) {
         if (context.meet(context.markedAmong(unknownObject, mutation), ValueSets::anything))
             context.mark(held, mutation);
@@ -598,7 +608,7 @@ static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& conte
     const BuiltinUnseenCode* row = builtins.unseenCodeOf(builtin);
     if (!row || !row->condition || !row->condition->hasProperty)
         return false;
-    ValueFlowName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
+    ValueFlowCellName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
     return context.meet(context.valueOf(context.read(only(context, context.universe().objectOf(builtin)), cell)), ValueSets::anything);
 }
 
@@ -696,6 +706,83 @@ static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenC
     }
 }
 
+static bool isNameOfLibraryModule(const Program& program, std::span<const uint8_t> name)
+{
+    static constexpr std::array<uint8_t, 5> prefix { 'n', 'o', 'd', 'e', ':' };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (!module.runtimeModule || !mayAnswerToName(program, ModuleID(index)) || (module.body && !isAskedOfHostByName(module)))
+            continue;
+        std::span<const uint8_t> path = program.string(module.path);
+        if (equalSpans(path, name) || (path.size() == prefix.size() + name.size() && spanHasPrefix(path, std::span(prefix)) && equalSpans(path.subspan(prefix.size()), name)))
+            return true;
+    }
+    return false;
+}
+
+// "left-pad/lib" and "@scope/left-pad/lib" name the packages "left-pad" and "@scope/left-pad". A path, a URL and a name that a package maps for itself name none.
+static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
+{
+    if (name.empty() || name[0] == '.' || name[0] == '/' || name[0] == '#' || std::ranges::any_of(name, [](uint8_t character) { return character == ':' || character == '\\'; }))
+        return { };
+    auto lengthOfPart = [](std::span<const uint8_t> text) -> size_t {
+        return std::ranges::find(text, '/') - text.begin();
+    };
+    size_t length = lengthOfPart(name);
+    if (name[0] == '@' && length < name.size())
+        length += 1 + lengthOfPart(name.subspan(length + 1));
+    return name.first(length);
+}
+
+static bool liesInPackage(std::span<const uint8_t> path, std::span<const uint8_t> package)
+{
+    static constexpr std::array<uint8_t, 12> folder { 'n', 'o', 'd', 'e', '_', 'm', 'o', 'd', 'u', 'l', 'e', 's' };
+    for (size_t start = 0; start + folder.size() + 1 + package.size() <= path.size(); ++start) {
+        std::span<const uint8_t> rest = path.subspan(start);
+        uint8_t separator = rest[folder.size()];
+        if (spanHasPrefix(rest, std::span(folder)) && (separator == '/' || separator == '\\') && spanHasPrefix(rest.subspan(folder.size() + 1), package))
+            return true;
+    }
+    return false;
+}
+
+// Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
+static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
+{
+    std::span<const uint8_t> package = packageNamedBy(name);
+    if (package.empty() || !context.refusedCode().codeOutsideImage)
+        return false;
+    const Program& program = context.program();
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        std::span<const uint8_t> path = program.string(program.modules[index].path);
+        if (mayAnswerToName(program, ModuleID(index)) && (spanHasPrefix(path, package) || liesInPackage(path, package)))
+            return false;
+    }
+    return true;
+}
+
+static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+{
+    constexpr size_t indexOfName = 2;
+    if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
+        return false;
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    auto isSuchName = [&](StringID text) {
+        return isNameOfLibraryModule(program, program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
+    };
+    // A text that is no key of the program is any string to the values.
+    const Function& function = program.at(call.function);
+    if (const Value& name = function.at(definitionThroughSameValues(function, function.at(call.site).operand(indexOfName))); name.opcode == Opcode::String)
+        return isSuchName(name.string());
+    bool passesOnlyThose = true;
+    context.forEachMember(context.valueOf(context.operandsOf(call)[indexOfName]), [&](ValueFlowObjectID name) {
+        const PropertyKey* key = universe.kindOf(name) == ValueFlowObjectKind::Key ? &program.at(universe.keyOf(name)) : nullptr;
+        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isSuchName(key->text);
+    });
+    return passesOnlyThose;
+}
+
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -717,7 +804,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
         if (!cause)
             return;
-        if (loadsOnlyLibraryModules(builtin))
+        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesThatNoFileOfProgramAnswersTo(statement, context)))
             handLibraryModulesTo(context, statement.result);
         else
             raiseEvent(context, builtin, *cause, statement.result);
@@ -771,7 +858,7 @@ void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext& context, ValueSet
         context.add(ValueFlowProgramNodes::escaped(), children);
 }
 
-static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
+static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID holderObject, BuiltinID holder, bool programNamesWaysToModuleObjects, Vector<BuiltinID, 4>& waysBetweenModuleObjectsAnswered)
 {
     const ValueFlowUniverse& universe = context.universe();
     const BuiltinTable& builtins = context.program().builtins();
@@ -785,7 +872,7 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
         if (builtins.canonicalID(member) == Builtins::ModuleObjectExports)
             continue;
         if (BuiltinID way = builtins.canonicalID(member); way == Builtins::ModuleRequireMain || way == Builtins::ModuleObjectChildren || way == Builtins::ModuleObjectParent) {
-            if (namesWaysToModuleObjects(context.program()) && !waysBetweenModuleObjectsAnswered.contains(builtins.canonicalID(member))) {
+            if (programNamesWaysToModuleObjects && !waysBetweenModuleObjectsAnswered.contains(builtins.canonicalID(member))) {
                 waysBetweenModuleObjectsAnswered.append(builtins.canonicalID(member));
                 Vector<ValueFlowObjectID, 32> answers;
                 appendModuleObjectsAnsweredBy(context, builtins.canonicalID(member), answers);
@@ -963,7 +1050,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         attachments.addStartupModules();
     attachments.enter();
 
-    if (namesWaysToModuleObjects(program))
+    bool programNamesWaysToModuleObjects = namesWaysToModuleObjects(program);
+    if (programNamesWaysToModuleObjects)
         exposeModuleObjectsOfEntryPoints(context);
     bool modulesFindImportsByName = std::ranges::any_of(entriesThatInstantiateModules, [&](BuiltinID entry) {
         return context.contains(run, universe.objectOf(entry));
@@ -976,7 +1064,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         if (builtins.at(builtin).origin != BuiltinOrigin::Host)
             context.use(builtin, context.contains(run, object) ? OptionSet<BuiltinUse> { BuiltinUse::Escaped, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Escaped });
         if (membersFollowHolders || builtins.at(builtin).scope != BuiltinScope::Realm)
-            exposeMembersOf(context, object, builtin, waysBetweenModuleObjectsAnswered);
+            exposeMembersOf(context, object, builtin, programNamesWaysToModuleObjects, waysBetweenModuleObjectsAnswered);
         else if (modulesFindImportsByName && builtins.at(builtin).origin != BuiltinOrigin::Host)
             letModulesImportMembersOf(context, builtin);
     });

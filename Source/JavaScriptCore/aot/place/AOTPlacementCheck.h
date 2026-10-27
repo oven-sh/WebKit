@@ -68,7 +68,8 @@ namespace JSC { namespace AOT { namespace Typed {
     v(DataNotPlaced) \
     v(SiteCacheNotDistinct) \
     v(SiteCacheOrder) \
-    v(SiteCacheNotUsed)
+    v(SiteCacheNotUsed) \
+    v(ValueInAccessorSlot)
 
 enum class PlacementRule : uint32_t {
     None,

@@ -94,7 +94,8 @@ private:
     JSObject* findKnownObject(BuiltinID) const;
     std::expected<JSCell*, BuiltinLookupFailure> find(BuiltinCellKey) const;
     void fillAndKeepAlive(uint32_t number, JSCell*);
-    bool awaitCreation(uint32_t number);
+    enum class AwaitedOrigin : bool { Host, Any };
+    bool awaitCreation(uint32_t number, AwaitedOrigin = AwaitedOrigin::Host);
     void loadModuleOf(BuiltinID);
 
     State& m_state;

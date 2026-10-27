@@ -74,6 +74,9 @@ private:
 
 void boxDouble(StubAssembler&, PureDouble, GPRReg result);
 void boxDoubleBits(StubAssembler&, PureDoubleBits bitsAndResult);
+// A NaN keeps its sign and none of its other bits.
+void boxNaN(StubAssembler&, FPRReg nan, GPRReg result);
+void boxDoubleWithoutPayload(StubAssembler&, FPRReg number, GPRReg result);
 void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
 // The caller has proven that the value is a number.
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);
@@ -110,6 +113,8 @@ void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratc
 [[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt, CountedUnder = CountedUnder::FamilyOfStub);
 // The upper 32 bits of allocation are zero.
 void countCellOfAllocation(StubAssembler&, GPRReg allocation, GPRReg scratch);
+// Behind an allocation with CountedUnder::Allocation, in a stub whose slow path calls an operation that is counted as making the cell.
+void countAllocatedCellOfStub(StubAssembler&, GPRReg scratch, unsigned cellSize);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
 void fenceAfterAllocation(StubAssembler&);
 
@@ -132,11 +137,18 @@ struct VectorGrowth {
     GPRReg storage;
     GPRReg allocator;
     GPRReg scratch;
+    // In place of an array: the extra properties of a compiled object.
+    bool isOfExtraProperties { false };
 };
 // For an array whose vector is as long as the array. Gives it the vector that JSObject::ensureLength() gives it for one more element. The public length stays. Preserves array alone.
 void growFullVector(StubAssembler&, const VectorGrowth&, JumpList& slowPath);
 // The same for an array that is to have neededLength elements, which its vector has no room for. Preserves array and neededLength.
 void growVectorFor(StubAssembler&, const VectorGrowth&, GPRReg neededLength, JumpList& slowPath);
+
+// AOTStubsElements.cpp
+// A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes storage, index and text.
+enum class BaseOfTrappedIndex : bool { IsAnything, IsProxy };
+void loadTextOfIndexForTrap(StubAssembler&, BaseOfTrappedIndex, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText);
 
 // AOTStubsBarriers.cpp
 Jump branchIfBarrierIsNeeded(StubAssembler&, GPRReg owner, GPRReg scratch);

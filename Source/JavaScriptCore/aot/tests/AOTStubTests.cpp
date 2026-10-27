@@ -94,11 +94,11 @@ static_assert(ClosureRequest::canEncode(0, 0, maxClosureAllocation) && !ClosureR
 static_assert(ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable, 0, 0) && !ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable + 1, 0, 0));
 static_assert(ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord) && !ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord + 1));
 
-static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 14);
+static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 15);
 static_assert(hasSingleReturnSite(StubFrameKind::Adapter) && hasSingleReturnSite(StubFrameKind::ConstructAdapter));
 static_assert(hasSingleReturnSite(StubFrameKind::SavedFrameAdapter) && hasSingleReturnSite(StubFrameKind::AsyncGeneratorBody) && hasSingleReturnSite(StubFrameKind::ArgumentList));
 static_assert(!hasSingleReturnSite(StubFrameKind::Plain) && !hasSingleReturnSite(StubFrameKind::EngineCallee) && !hasSingleReturnSite(StubFrameKind::HostCall));
-static_assert(!hasSingleReturnSite(StubFrameKind::GeneratorBody) && !hasSingleReturnSite(StubFrameKind::FirstOfTwoReads));
+static_assert(!hasSingleReturnSite(StubFrameKind::GeneratorBody) && !hasSingleReturnSite(StubFrameKind::FirstOfTwoReads) && !hasSingleReturnSite(StubFrameKind::MethodRead));
 static_assert(!hasSingleReturnSite(StubFrameKind::BelowSpilledArguments) && !hasSingleReturnSite(StubFrameKind::AtStubEntry) && !hasSingleReturnSite(StubFrameKind::InHostCallFrame));
 static_assert(bytesAboveReturnAddressOf(StubFrameKind::EngineCallee) == sizeOfSpilledArgumentRegisters && bytesAboveReturnAddressOf(StubFrameKind::BelowSpilledArguments) == sizeOfSpilledArgumentRegisters);
 static_assert(!bytesAboveReturnAddressOf(StubFrameKind::Plain) && !bytesAboveReturnAddressOf(StubFrameKind::Adapter) && !bytesAboveReturnAddressOf(StubFrameKind::AtStubEntry));
@@ -326,7 +326,7 @@ static void checkFrontEnds()
         AOT_TEST_CHECK(!rawOperations.testAndSet(indexOf(frontEnd.raw)));
         stubs.append(frontEnd.stub);
     }
-    AOT_TEST_CHECK(stubs.size() == 10);
+    AOT_TEST_CHECK(stubs.size() == 9);
     operations.filter(rawOperations);
     AOT_TEST_CHECK(operations.isEmpty());
     std::sort(stubs.begin(), stubs.end());
@@ -370,7 +370,7 @@ static void testHandlerTables()
     Vector<StubKey> allHandlers;
     for (SlotHandlerTable table : allSlotHandlerTables) {
         auto handlers = slotHandlerKeys(table);
-        for (Slot::Kind kind : allSlotKinds) {
+        for (Slot::Kind kind : slotKindsWithHandlers) {
             StubKey handler = handlers[static_cast<unsigned>(kind)];
             const StubDescriptor& descriptor = checkedHandlerDescriptor(handler);
             AOT_TEST_CHECK(descriptor.family == (isReadTable(table) ? StubFamily::ReadSlot : StubFamily::StoreSlot));

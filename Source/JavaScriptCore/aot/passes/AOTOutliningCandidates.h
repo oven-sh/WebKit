@@ -19,6 +19,8 @@ class BuildContext;
 
 namespace Typed {
 
+class FunctionAnalyses;
+struct AnalysisContext;
 struct OptimizationInputs;
 struct OutliningSite;
 
@@ -33,6 +35,9 @@ public:
 
     // Once for a function, from any thread, while the caches of the program and an interning phase of its types are open.
     bool findIn(FunctionID);
+    // With analyses of the function as it is now, made for contextOf(): whoever reads the function next may go on with them.
+    bool findIn(FunctionID, FunctionAnalyses&);
+    AnalysisContext contextOf(FunctionID) const;
     // By function, as many as the program had when the finder was made.
     std::span<const uint8_t> hasSites() const LIFETIME_BOUND;
     // Behind the last function.

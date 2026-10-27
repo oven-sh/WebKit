@@ -1,0 +1,28 @@
+# A record that may hold anything calls the serializer of a record that runs no code and may hold itself under a handler, behind which the host writes that record. The handler puts back the list of holders as it was in front of the call: the list that begins with the record's own holder where that is listed, and else what the builder holds
+# FORM: Prepared
+# RUN: derived-functions Serializer:L1 Serializer:L2
+# STATISTIC: SerializersCreated = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Link" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="below" declared={type=Array<L0, proven, pristine[Storage, Names]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="Crate" fields=[{key="link" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="any" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L2 name="Shelf" fields=[{key="crate" declared={type=L1} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="link" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK-NOT: JSONEnterHolder
+# CHECK: [[listed1]]: jsonholders = JSONListedHolders v1
+# CHECK: [[threw1]]() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: JSONRestoreHolders v1, [[listed1]]
+# CHECK: handler=[[threw1]]():
+# CHECK-NEXT: = CallDirect {{*}}, v1 function=
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: [[entered2]]: jsonholders = JSONEnterHolder v1, v0
+# CHECK-NOT: JSONListedHolders
+# CHECK: [[threw2]]() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: JSONRestoreHolders v1, [[entered2]]
+# CHECK: handler=[[threw2]]():
+# CHECK-NEXT: = CallDirect {{*}}, v1 function=
+# CHECK: JSONLeaveHolder v1, [[entered2]]

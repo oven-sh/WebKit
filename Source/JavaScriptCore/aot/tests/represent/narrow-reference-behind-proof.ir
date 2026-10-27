@@ -101,7 +101,7 @@ function f6 name="readFilledOnOnePath" results=[{type=anything}] {
 # CHECK-NEXT: Return [[optional]]
 # CHECK-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
 # CHECK: [[next]]: undefined|L0 @Cell32 = GetSlot {{*}} key="next"
-# CHECK-NEXT: [[proven]]: L0 @Cell32 = AssumeType [[next]] castType=L0
+# CHECK-NEXT: [[proven]]: L0 @Cell32 = AssumeType [[next]] provenType=L0
 # CHECK-NEXT: [[previous]]: undefined|L0 @Cell32 = GetSlot [[proven]] key="previous"
-# CHECK-NEXT: [[provenPrevious]]: L0 @Cell32 = AssumeType [[previous]] castType=L0
+# CHECK-NEXT: [[provenPrevious]]: L0 @Cell32 = AssumeType [[previous]] provenType=L0
 # CHECK-NEXT: = GetSlot [[provenPrevious]] key="a"

@@ -10,10 +10,12 @@
 
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTState.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
+#include "Exception.h"
 #include <initializer_list>
 #include <iterator>
 
@@ -238,6 +240,8 @@ static void dumpRegistersAndThrow(StubAssembler& jit, ThrowSiteSource source)
         jit.move(instanceGPR, operationArgumentGPR(0));
         jit.move(TrustedImm32(static_cast<uint32_t>(source)), operationArgumentGPR(3));
         jit.callOperation(Entry::operationAOTThrowAtSite, jit.allocateScratch(StubRegister::T9));
+        // The operation makes the Error. What throws it comes behind.
+        jit.bindReturnLabel(StubFrameKind::FirstOfTwoReads);
     };
     if (!isFrameless) {
         jit.withSavedRegisters(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()), callThrowOperation);
@@ -274,28 +278,99 @@ void generateThrowAtFault(StubAssembler& jit)
     dumpRegistersAndThrow(jit, ThrowSiteSource::FaultSite);
 }
 
-PreludeExit emitCatchPrelude(StubAssembler& jit)
+enum class CaughtWord : uint8_t { Value, Exception, ValueAndException };
+
+// The word holds what compiled code threw: the value, or the Exception that a cleanup throws on.
+static PreludeExit emitCatchPrelude(StubAssembler& jit, CaughtWord wanted)
 {
     if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
         return PreludeExit::CallsOperation;
     const GPRReg value = jit.reuseScratch(StubRegister::R0);
     Address thrownValue(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue));
     jit.load64(thrownValue, value);
-    Jump valueIsInException = jit.branchTest64(CCallHelpers::Zero, value);
-    jit.store64(TrustedImm32(0), thrownValue);
-    jit.returnToCaller();
-    valueIsInException.link(&jit);
+    JumpList callsOperation;
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, value));
+    switch (wanted) {
+    case CaughtWord::Value:
+        jit.store64(TrustedImm32(0), thrownValue);
+        jit.returnToCaller();
+        break;
+    case CaughtWord::Exception:
+        callsOperation.append(jit.branchIfNotCell(value));
+        callsOperation.append(jit.branchIfNotType(value, CellType));
+        jit.store64(TrustedImm32(0), thrownValue);
+        jit.returnToCaller();
+        break;
+    case CaughtWord::ValueAndException: {
+        const GPRReg exception = jit.clobberRegister(GPRInfo::returnValueGPR2);
+        jit.store64(TrustedImm32(0), thrownValue);
+        jit.move(TrustedImm32(0), exception);
+        Jump isNotCell = jit.branchIfNotCell(value);
+        Jump isException = jit.branchIfType(value, CellType);
+        isNotCell.link(&jit);
+        jit.returnToCaller();
+        isException.link(&jit);
+        jit.move(value, exception);
+        jit.load64(Address(exception, Exception::valueOffset()), value);
+        jit.returnToCaller();
+        break;
+    }
+    }
+    callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
 }
 
-PreludeExit emitThrowPrelude(StubAssembler& jit)
+PreludeExit emitCatchPrelude(StubAssembler& jit)
+{
+    return emitCatchPrelude(jit, CaughtWord::Value);
+}
+
+PreludeExit emitCatchExceptionPrelude(StubAssembler& jit)
+{
+    return emitCatchPrelude(jit, CaughtWord::Exception);
+}
+
+PreludeExit emitCatchValueAndExceptionPrelude(StubAssembler& jit)
+{
+    return emitCatchPrelude(jit, CaughtWord::ValueAndException);
+}
+
+PreludeExit emitAddressOfThrowPrelude(StubAssembler& jit)
+{
+    if (jit.key().family() != StubFamily::TailCallOperation && jit.signature().result != StubResult::GPR)
+        return PreludeExit::CallsOperation;
+    jit.loadCallerReturnAddress(0, jit.reuseScratch(StubRegister::R0));
+    jit.returnToCaller();
+    // Like every head of an operation this one ends in the call, so that what is known of the call holds for the head.
+    return PreludeExit::CallsOperation;
+}
+
+static PreludeExit emitThrowPrelude(StubAssembler& jit, bool endsCleanup)
 {
     std::optional<OperationCallShape> shape = tryGetShape(jit.key());
     if (!shape || shape->returns != OperationCall::Returns::Void || shape->firstArgument != OperationCall::FirstArgument::Instance || !shape->checksException)
         return PreludeExit::CallsOperation;
     jit.store64(operationArgumentGPR(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.thrownValue)));
+    if (endsCleanup) {
+        const GPRReg returnAddress = jit.allocateScratch(StubRegister::T9);
+        const GPRReg state = jit.allocateScratch(StubRegister::T10);
+        jit.loadCallerReturnAddress(0, returnAddress);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(state)), state);
+        jit.storePtr(returnAddress, Address(state, OBJECT_OFFSETOF(State, returnAddressOfThrowAfterCleanup)));
+        jit.store64(operationArgumentGPR(2), Address(state, OBJECT_OFFSETOF(State, keptByCleanup)));
+    }
     jit.jumpToExceptionHandler();
     return PreludeExit::Returns;
+}
+
+PreludeExit emitThrowPrelude(StubAssembler& jit)
+{
+    return emitThrowPrelude(jit, false);
+}
+
+PreludeExit emitThrowAfterCleanupPrelude(StubAssembler& jit)
+{
+    return emitThrowPrelude(jit, true);
 }
 
 } } // namespace JSC::AOT

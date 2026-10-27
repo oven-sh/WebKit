@@ -55,6 +55,18 @@ void RememberedSlotSet::didMoveTable(std::span<const uint8_t> table)
     recordAll();
 }
 
+void RememberedSlotSet::didMoveAndGrowTable(std::span<const uint8_t> table)
+{
+    RELEASE_ASSERT(m_cards == m_ownedCards.span().data() && m_regionShift != shiftOfSingleRegion && table.size() >= m_tableSize);
+    m_tableStart = std::bit_cast<uintptr_t>(table.data());
+    m_tableSize = table.size();
+    size_t previousNumberOfCards = std::exchange(m_numberOfCards, numberOfCardsFor(m_tableSize, m_regionShift));
+    m_maxNumberOfListedCards = maxNumberOfListedCardsFor(m_numberOfCards);
+    m_ownedCards.grow(m_numberOfCards);
+    m_cards = m_ownedCards.mutableSpan().data();
+    memset(m_cards + previousNumberOfCards, neverWrittenCard, m_numberOfCards - previousNumberOfCards);
+}
+
 void RememberedSlotSet::recordAll()
 {
     m_listsEveryWrittenCard = false;

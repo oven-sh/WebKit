@@ -3,9 +3,9 @@
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveAccesses
 # RUN: tables layouts
-# CHECK: layout shape=1 index=L0 {{*}}hasFieldThatKeepsStateOfBirth
+# CHECK: layout shape=1 index=L0 {{*}}hasSlotWithUnusedMarkers
 # CHECK: name="kind"{{*}}isFilledAtBirth{{*}}keepsStateOfBirth
-# CHECK: name="size"
+# CHECK: name="size"{{*}}slotHoldsUndefinedAndNull
 # CHECK-NOT: keepsStateOfBirth
 # CHECK: name="label"
 # CHECK-NOT: keepsStateOfBirth

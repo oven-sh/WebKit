@@ -34,19 +34,19 @@ function f4 name="either" captures=[{type=f0|f1 flags=[IsFromCompiler]}] paramet
     v3 = Convert v2 declared={type=number site=w0}
     Return v3
 # CHECK: [[result]]: anything = Call v0, -, v1
-# CHECK: = Check [[result]] castType=number
+# CHECK: = Check [[result]] expectedType=number
 }
 function f5 name="unknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1
     v3 = Convert v2 declared={type=number site=w0}
     Return v3
 # CHECK: [[result]]: anything = Call v0, -, v1
-# CHECK: = Check [[result]] castType=number
+# CHECK: = Check [[result]] expectedType=number
 }
 function f6 name="expected" captures=[{type=f2 flags=[IsFromCompiler]}] parameters=[{type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1
     v3 = Convert v2 declared={type=number site=w0}
     Return v3
 # CHECK: [[result]]: anything{{*}} = Call v0, -, v1
-# CHECK: = Check [[result]] castType=number
+# CHECK: = Check [[result]] expectedType=number
 }

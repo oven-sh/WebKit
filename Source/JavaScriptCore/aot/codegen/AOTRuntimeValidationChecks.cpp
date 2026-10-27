@@ -53,7 +53,7 @@ static bool everyReceiverHasInlineSlot(const FieldAccess& field)
 
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
-    if (generator().mayBeUnspecified(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
+    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
         return;
     const Type& type = typeOf(id);
     if (type.isNever() || type.opaque)
@@ -62,8 +62,7 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        bool mayPrecedeItsStore = definition.opcode == Opcode::GetModuleVariable && definition.mayPrecedeItsStore();
-        checkHasType(id, operand, readsMemberKeptInVariable || mayPrecedeItsStore ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        checkHasType(id, operand, readsMemberKeptInVariable ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
         return;
     }
     if (operand.is<CellPointer>())
@@ -108,7 +107,7 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
 {
-    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id))
+    if (generator().isValidatedWhereLookedAt(id) || isDeferredClosure(m_function, id))
         return false;
     Representation representation = representationOf(id);
     return representation != Representation::Void && representation != Representation::LiteralString;
@@ -193,7 +192,7 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
     if (!hasTestableBits(object) || !get(object).is<CellPointer>())
         return;
     const SlotPlan& slots = m_placement.slots();
-    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).members, [&](LayoutID member) {
+    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
         return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(access.receivers());
@@ -298,7 +297,7 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, CellPointer cell, co
     if (hasArrayStorageForm(part.arrayStorage))
         failUnless(emitter<ElementAccessEmitter>().hasArrayStorage(cell, part.arrayStorage), ValidationFailureKind::ArrayStorageKind, cell, id);
     for (ContentsSlot slot : allMembersOf<ContentsSlot>) {
-        TypeID contents = part.contentsAt(m_builtins, slot);
+        TypeID contents = part.provenContentsAt(m_builtins, slot).value_or(Proven::byFlowOfContents(TypeTable::anything));
         if (contents == TypeTable::anything || !m_builtins.findSlot(part.builtinClass, slot))
             continue;
         if (!m_placement.typesNeededAtRunTime().get(contents.index()))
@@ -344,7 +343,7 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
-    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.at(keptOperation.builtinClass()).typedArrayType != NotTypedArray)
+    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.typedArrayTypeOf(keptOperation.builtinClass()) != NotTypedArray)
         return;
     // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
     if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {
@@ -421,7 +420,7 @@ void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
         return typeTestPlanFor(widest, operand.representation, types().intern(type));
     };
     const Type& listed = m_program.at(value->validatedType());
-    if (listed.anyFunction || hasMembersWithoutLayout(m_program, listed))
+    if (listed.anyFunction)
         return;
     Type testable = testableTypeOf(listed);
     bool isWidened = (testable.anyFunction && !listed.anyFunction) || (testable.anyObject && !listed.anyObject);
@@ -476,10 +475,6 @@ void RuntimeValidationEmitter::generateValidateLookup(const ValueContext& value)
 Type RuntimeValidationEmitter::testableTypeOf(const Type& type)
 {
     Type testable = type.withoutClassProofs().withUntestableBuiltinsWidened();
-
-    // Functions, objects of the host and ordinary objects were converted to such a family, and nothing lists them.
-    if (hasMembersWithoutLayout(m_program, type))
-        testable = testable.unionWith(Type::object(), types());
 
     // Placement numbers the cells and keys that shipped code names, and validation adds none.
     bool everyBuiltinHasCell = std::ranges::all_of(testable.builtins, [&](BuiltinID builtin) {

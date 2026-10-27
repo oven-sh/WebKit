@@ -42,6 +42,7 @@ StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPR
 StubSignature signatureOfStringCodePointAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 StubSignature signatureOfStringBuilderAppendString(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfStringBuilderDiscard(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1) }); }
 StubSignature signatureOfStackStringBuilderAppendString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 
 namespace {
@@ -178,6 +179,9 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.load32(Address(source, StringImpl::lengthMemoryOffset()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, Storage::offsetOfMinLengthAppendedByReference())));
     jit.load32(Address(builder, Storage::offsetOfPosition()), target);
+    Jump hasText = jit.branchTest32(CCallHelpers::NonZero, target);
+    slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, StringBuilderStorage::offsetOfMinLengthAdoptedByFinish())));
+    hasText.link(&jit);
     jit.add64(length, target, first);
     jit.load32(Address(builder, Storage::offsetOfLimit()), second);
     slowPath.append(jit.branch64(CCallHelpers::Above, first, second));
@@ -205,6 +209,24 @@ void generateStringBuilderAppendString(StubAssembler& jit)
 
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringBuilderAppendString, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters });
+}
+
+// A builder without text is as it came out of the pool, and its link to the next one has been null since. Into an empty pool it goes by one store, which is into no cell.
+void generateStringBuilderDiscard(StubAssembler& jit)
+{
+    static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1));
+    const GPRReg builder = jit.operand(0);
+    const Address pool(instanceGPR, AOT_INSTANCE_OFFSET(stringBuilder.freeStorage));
+    JumpList slowPath;
+
+    slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, pool));
+    slowPath.append(jit.branchTest32(CCallHelpers::NonZero, Address(builder, StringBuilderStorage::offsetOfPosition())));
+    slowPath.append(jit.branchTest32(CCallHelpers::NonZero, Address(builder, StringBuilderStorage::offsetOfLengthOutsideBuffer())));
+    jit.storePtr(builder, pool);
+    jit.returnToCaller();
+
+    slowPath.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTStringBuilderDiscard, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false });
 }
 
 // The same two kinds of strings as above, and a piece of a flat string. The cursor is left alone, so the slow path starts with nothing done.
@@ -414,6 +436,22 @@ void branchIfCharactersDiffer(StubAssembler& jit, const ComparedImpls& impls, Ju
     areSame.link(&jit);
 }
 
+void branchIfCharactersInPlaceDiffer(StubAssembler& jit, const ComparedStrings& strings, JumpList& differ, JumpList& needsOperation)
+{
+    auto [first, second, firstFiber, secondFiber, length, offset, word] = strings;
+    needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
+    for (auto [string, fiber] : { std::pair { first, firstFiber }, std::pair { second, secondFiber } }) {
+        Jump isRope = jit.branchIfRopeStringImpl(fiber);
+        needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+        Jump hasCharacters = jit.jump();
+        isRope.link(&jit);
+        load8BitCharactersOfSubstring(jit, string, fiber, offset, needsOperation);
+        hasCharacters.link(&jit);
+    }
+    branchIfBytesDiffer(jit, { firstFiber, secondFiber, length, offset, word }, differ, DifferingWords::MayBeUnloaded);
+}
+
 void generateStringsAreEqual(StubAssembler& jit)
 {
     const GPRReg first = jit.operand(0);
@@ -456,6 +494,13 @@ void generateStringsAreEqual(StubAssembler& jit)
     loadStringLength(jit, first, firstFiber, length);
     loadStringLength(jit, second, secondFiber, scratch);
     jit.branch32(CCallHelpers::NotEqual, length, scratch).linkTo(returnFalse, &jit);
+    JumpList differ;
+    JumpList needsOperation;
+    branchIfCharactersInPlaceDiffer(jit, { first, second, firstFiber, secondFiber, length, scratch, word }, differ, needsOperation);
+    returnResult(jit, TrustedImm32(1));
+
+    differ.linkTo(returnFalse, &jit);
+    needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringsAreEqual, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = first, .thirdArgumentIn = second });
 }
 

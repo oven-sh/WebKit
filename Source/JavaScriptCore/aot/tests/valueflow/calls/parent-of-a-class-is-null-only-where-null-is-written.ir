@@ -5,19 +5,19 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0 name="main"
 # CHECK: [[above]]: {{*}} = ResolveHeritage v4
-# CHECK-NEXT: : object = AssumeType [[above]] castType=object
+# CHECK-NEXT: : object = AssumeType [[above]] provenType=object
 # CHECK-LABEL: function f2 name="D"
 # CHECK: [[parent]]: {{*}} = GetSuperBase
-# CHECK-NEXT: : f1 = AssumeType [[parent]] castType=f1
+# CHECK-NEXT: : f1 = AssumeType [[parent]] provenType=f1
 # CHECK-LABEL: function f4 name="m"
 # CHECK: [[base]]: {{*}} = GetSuperBase
-# CHECK-NEXT: : object = AssumeType [[base]] castType=object
+# CHECK-NEXT: : object = AssumeType [[base]] provenType=object
 # CHECK-LABEL: function f6 name="m"
 # CHECK: [[none]]: {{*}} = GetSuperBase
-# CHECK-NEXT: : null = AssumeType [[none]] castType=null
+# CHECK-NEXT: : null = AssumeType [[none]] provenType=null
 # CHECK-LABEL: function f7 name="S"
 # CHECK: [[either]]: {{*}} = GetSuperBase
-# CHECK-NEXT: : null|f1 = AssumeType [[either]] castType=null|f1
+# CHECK-NEXT: : null|f1 = AssumeType [[either]] provenType=null|f1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

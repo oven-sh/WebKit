@@ -242,7 +242,7 @@ struct TestEvents::Collector {
                 for (BlockID target : cfg.successors(from)) {
                     if (isReached.get(target.index()))
                         continue;
-                    bool comesBack = isRarerThan(function.at(from).frequency, function.at(target).frequency) && !std::ranges::contains(cfg.incomingEdges(target), Edge::toHandlerOf(from));
+                    bool comesBack = isRarerThan(function.at(from).frequency, function.at(target).frequency).predicted() && !std::ranges::contains(cfg.incomingEdges(target), Edge::toHandlerOf(from));
                     if (comesBack)
                         continue;
                     isReached.set(target.index());
@@ -440,6 +440,8 @@ struct TestEvents::Collector {
         uint32_t lastResultRead = 0;
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID value = block.values[index];
+            if (events.startsNewStretch(value))
+                appendEvent(TestEvent::Kind::Barrier, index, 0);
             if (readsAsDefinition(analyses.program(), function, function.at(value))) {
                 std::optional<uint32_t> endOfReads = findEndOfResultReads(value, id, numberOfValues);
                 if (!endOfReads || mayPlaceTestBetween(index, *endOfReads))
@@ -530,12 +532,12 @@ std::span<const TestEvent> TestEvents::eventsOf(BlockID block) const
 }
 
 // Only a mark says that a block is a slow path: the arm of a failed test, a generic copy.
-bool TestEvents::isRejoiningEdge(Edge edge) const
+Expected<bool> TestEvents::isRejoiningEdge(Edge edge) const
 {
     if (edge.isHandlerEdge())
         return false;
     BlockID target = targetOf(m_function, edge).block;
-    return !m_isEnteredOnlyFromRarerCode.get(target.index()) && isRarerThan(m_function.at(edge.from).frequency, m_function.at(target).frequency);
+    return !m_isEnteredOnlyFromRarerCode.get(target.index()) && isRarerThan(m_function.at(edge.from).frequency, m_function.at(target).frequency).predicted();
 }
 
 uint32_t TestEvents::endOfResultReadsAfter(ProgramPoint point) const
@@ -642,7 +644,7 @@ struct TestCoverageProblem {
             && &targetOf(events.function(), edge) == &events.function().at(edge.from).terminator.notTaken();
     }
 
-    bool leavesOut(Edge edge) const { return inputs.slowPaths == SlowPaths::MayLeave && events.isRejoiningEdge(edge); }
+    bool leavesOut(Edge edge) const { return inputs.slowPaths == SlowPaths::MayLeave && events.isRejoiningEdge(edge).predicted(); }
 
     void enterEdge(State& state, Edge edge) const
     {
@@ -1099,7 +1101,7 @@ TestStretches::TestStretches(const TestEvents& events, const TestCoverage& cover
                 extendedUntil = events.endOfResultReadsAfter({ block, index });
                 isInStretch = index < extendedUntil;
             }
-            if (begin && (!isInStretch || startsNewCopy(block, index))) {
+            if (begin && (!isInStretch || startsNewCopy(block, index) || events.startsNewStretch(values[index]))) {
                 appendRange(block, *begin, index);
                 begin = std::nullopt;
             }
@@ -1113,7 +1115,7 @@ TestStretches::TestStretches(const TestEvents& events, const TestCoverage& cover
     auto forEachNextRange = [&](unsigned index, const auto& functor) {
         BlockID id = m_ranges[index].block;
         uint32_t end = m_ranges[index].end;
-        if (index + 1 < m_ranges.size() && m_ranges[index + 1].block == id && m_ranges[index + 1].begin == end)
+        if (index + 1 < m_ranges.size() && m_ranges[index + 1].block == id && m_ranges[index + 1].begin == end && !events.startsNewStretch(function.at(id).values[end]))
             functor(index + 1);
         if (end != function.at(id).values.size())
             return;

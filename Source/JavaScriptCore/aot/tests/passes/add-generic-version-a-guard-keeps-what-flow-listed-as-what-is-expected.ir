@@ -9,8 +9,8 @@ layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequi
 layout L1 name="Made" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=L0 cause=MayFail
-    v3 = Check v1 castType=L0 cause=MayFail
+    v2 = Check v0 expectedType=L0 cause=MayFail
+    v3 = Check v1 expectedType=L0 cause=MayFail
     v4 = PropGet v2 key="limit" receivers=[L0, L1]
     v5 = PropGet v3 key="limit" receivers=[L1, ..]
     v6 = Less v5, v4

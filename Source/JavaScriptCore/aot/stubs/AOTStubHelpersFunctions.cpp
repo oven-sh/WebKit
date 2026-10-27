@@ -19,7 +19,7 @@ void toCodeAddress(StubAssembler& jit, GPRReg word, GPRReg scratch, StackIsTeste
 {
     ASSERT(noOverlap(word, scratch, instanceGPR));
     if (stackIsTested == StackIsTested::No)
-        jit.checkStackBeforeEntering();
+        jit.checkStackBeforeEnteringCallee();
     static_assert(ClosureWord::numberOfOffsetBits == 32);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), scratch);
 #if CPU(ARM64)

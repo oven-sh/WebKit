@@ -91,7 +91,7 @@ function f8 name="resultIsNotReturned" parameters=[{type=function}, {type=anythi
     v3 = Builtin builtin=PromiseTry
     v4 = Call v3, v2, v0, v1
     ReturnCall v4
-# CHECK: v4: Promise = CallBuiltin v2, v0, v1 overload=PromiseTry/0 [isDemotedTailCall]
+# CHECK: v4: Promise = CallBuiltin v2, v0, v1 overload=PromiseTry/0 @0 tail
 # CHECK-NEXT: Return v4
 }
 

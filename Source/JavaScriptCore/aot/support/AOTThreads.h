@@ -61,6 +61,9 @@ public:
     JS_EXPORT_PRIVATE void schedule(TaskPriority, void (*run)(void* argument), void* argument) const;
     bool shouldYield(TaskPriority) const;
 
+    // Whether the current thread is at one of several indices of a loop or at one of several tasks, whatever the width.
+    JS_EXPORT_PRIVATE static bool isInsideLoop();
+
 private:
     class RestingThreads;
 
@@ -266,7 +269,7 @@ template<typename T, typename Less>
 void sortOnPool(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
 {
     size_t count = list.size();
-    if constexpr (movesAsBytes<T>) {
+    if constexpr (sortsAsBytes<T>) {
         std::decay_t<Less> order = isLess;
         std::identity identity;
         sortRunsAndMerge(loops, OrderedSteps<T, std::decay_t<Less>, std::identity>(order, identity).stepsOfSortAndMerge(), reinterpret_cast<char*>(list.data()), count);

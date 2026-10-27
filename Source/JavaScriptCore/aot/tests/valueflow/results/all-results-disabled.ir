@@ -3,7 +3,7 @@
 # OPTIONS: disable=flow-results
 # RUN: valueflow-apply
 # CHECK: = Call v3, -, v1
-# CHECK-NEXT: = Check v4 castType=undefined|null|L0 site=w0
+# CHECK-NEXT: = Check v4 expectedType=undefined|null|L0 site=w0
 # CHECK: string="unreached"
 # RUN(NOTHING): valueflow-apply
 # NOTHING-NOT: AssumeType

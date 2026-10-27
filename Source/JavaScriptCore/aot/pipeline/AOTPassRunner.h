@@ -9,6 +9,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTInterningPhases.h"
+#include "AOTObservableOperations.h"
 #include "AOTOpcode.h"
 #include "AOTPass.h"
 #include "AOTProgramAnalyses.h"
@@ -18,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -64,6 +66,8 @@ public:
     bool mayRunAnalysesTogether() const;
 
     bool isStopped() const { return m_isStopped; }
+    // For what a stage checks between two passes.
+    void stopAfterErrors() { m_isStopped |= m_build.diagnostics().hasErrors(); }
     PassOutcome lastProgramPassOutcome() const { return m_lastProgramPassOutcome; }
     void didFinishFunctionLoop();
 
@@ -83,11 +87,17 @@ private:
     };
     static const AffectedPasses& passesAffectedBy(PassID);
 
+    struct BodiesBeforeProgramPass {
+        Vector<Function> functions;
+        Vector<ReasonsForOperationsThatWent> reasons;
+    };
+
     struct PassTimer {
         MonotonicTime wallStart;
         Seconds cpuStart;
         PassID enclosingPass { PassID::None };
         double startOfEnclosingPassInSeconds { 0 };
+        std::shared_ptr<BodiesBeforeProgramPass> bodiesBefore;
     };
 
     // To read either takes a microsecond, and a build runs millions of function passes, most of them on functions of a few values, where the pass takes no longer than that.
@@ -161,16 +171,29 @@ private:
             numberOfValuesInContents = function.values.size();
         }
 
-        const BodyContents& contentsOf(const Function& function)
+        NEVER_INLINE void readContents(const Function& function, const ChangeLog& changes)
+        {
+            if (!CountedContents::paysFor(function)) {
+                setContents(Typed::contentsOf(function), function);
+                return;
+            }
+            if (!countedContents)
+                countedContents.emplace();
+            setContents(countedContents->bringUpToDate(function, changes), function);
+            if (recordsChangers) [[unlikely]]
+                RELEASE_ASSERT(*contents == Typed::contentsOf(function));
+        }
+
+        const BodyContents& contentsOf(const Function& function, const ChangeLog& changes)
         {
             if (!contents || numberOfValuesInContents != function.values.size())
-                setContents(Typed::contentsOf(function), function);
+                readContents(function, changes);
             return *contents;
         }
 
-        bool mayFire(PassID pass, const Function& function)
+        bool mayFire(PassID pass, const Function& function, const ChangeLog& changes)
         {
-            contentsOf(function);
+            contentsOf(function, changes);
             return passesThatMayFire.contains(pass);
         }
 
@@ -178,7 +201,23 @@ private:
         bool isAtRest(PassID pass) const
         {
             unsigned index = static_cast<unsigned>(pass);
-            return passesThatRan.contains(pass) && !passesWithWork.get(index) && !passesEnabledByTable.get(index) && !passesBehindChange.get(index) && !reachedFixpoint[index];
+            return passesThatRan.contains(pass) && !passesWithWork.get(index) && !passesEnabledByTable.get(index) && !passesBehindChange.get(index) && !reachedFixpoint.get(index);
+        }
+
+        bool areAtRest(const PassBits& passes) const
+        {
+            PassBits passesWithStepToTake = passesWithWork;
+            passesWithStepToTake.merge(passesEnabledByTable);
+            passesWithStepToTake.merge(passesBehindChange);
+            passesWithStepToTake.merge(reachedFixpoint);
+            passesWithStepToTake.filter(passes);
+            return passesWithStepToTake.isEmpty() && passesThatHaveRun.subsumes(passes);
+        }
+
+        void didRun(PassID pass)
+        {
+            passesThatRan.add(pass);
+            passesThatHaveRun.set(static_cast<unsigned>(pass));
         }
 
         FunctionID functionAsRead;
@@ -191,12 +230,14 @@ private:
         uint64_t maxRounds { std::numeric_limits<uint64_t>::max() };
         bool isStopped { false };
         PassSet passesThatRan;
+        PassBits passesThatHaveRun;
         // None behind a change, until somebody asks.
         std::optional<BodyContents> contents;
+        std::optional<CountedContents> countedContents;
         PassSet passesThatMayFire;
         // A run that says that it has changed nothing may still have added a value that stands in no list.
         size_t numberOfValuesInContents { 0 };
-        std::array<bool, numberOfPasses> reachedFixpoint { };
+        PassBits reachedFixpoint;
         PassBits passesBehindChange;
         PassBits passesEnabledByTable;
         PassBits passesWithWork;
@@ -243,7 +284,8 @@ private:
 
     void checkFormAndInputs(const PassDescriptor&, const Program&) const;
 
-    std::optional<PassTimer> beginProgramPass(PassID, const Program&);
+    enum class MayChangeBodies : bool { No, Yes };
+    std::optional<PassTimer> beginProgramPass(PassID, const Program&, MayChangeBodies = MayChangeBodies::No);
     void endProgramPass(PassID, const Program&, PassTimer, PassOutcome);
     void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&) const;
     bool canVerify(IRForm form) const { return form != IRForm::Placed || m_verifierInputs.placed; }
@@ -252,7 +294,14 @@ private:
     PassOutcome runFunctionPass(PassID, FunctionPassContext&, ScheduleRun&) const;
     PassOutcome runFunctionPassThatMayFire(PassID, FunctionPassContext&, ScheduleRun&) const;
     enum class WhatFollows : uint8_t { MoreSteps, Nothing };
-    void runSteps(std::span<const ScheduleStep>, FunctionPassContext&, ScheduleRun&, WhatFollows = WhatFollows::MoreSteps) const;
+    // Of a step that holds other steps: where they end, and the passes among them. While all of those are at rest the steps do nothing.
+    struct StepsInside {
+        uint32_t numberOfStepsToEnd { 0 };
+        bool mayBeLeftOutAtRest { false };
+        PassBits passes;
+    };
+    static std::span<const StepsInside> stepsInsideStepsOf(FunctionSchedule);
+    void runSteps(std::span<const ScheduleStep>, std::span<const StepsInside>, FunctionPassContext&, ScheduleRun&, WhatFollows = WhatFollows::MoreSteps) const;
     void verifyAfterFunctionPass(const PassDescriptor&, FunctionPassContext&, ScheduleRun&) const;
     void verifySkippedFunctionPass(const PassDescriptor&, const FunctionPassContext&, ScheduleRun&) const;
     void stopBehind(PassID, ScheduleRun&) const;
@@ -264,6 +313,8 @@ private:
     BuildContext& m_build;
     std::optional<PassID> m_stopAfter;
     bool m_isStopped { false };
+    // A fixpoint that may take no round says so wherever it is reached.
+    bool m_everyFixpointMayTakeRound { false };
     PassOutcome m_lastProgramPassOutcome { PassOutcome::Unchanged };
     OptionSet<ProgramResult> m_availableResults;
     VerifierInputs m_verifierInputs;
@@ -276,7 +327,7 @@ private:
 template<typename Functor>
 auto PassRunner::runProgramPass(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor) -> std::invoke_result_t<Functor, ProgramEditor&>
 {
-    auto timer = beginProgramPass(id, program);
+    auto timer = beginProgramPass(id, program, MayChangeBodies::Yes);
     if (!timer)
         return std::invoke_result_t<Functor, ProgramEditor&>();
     ProgramEditor editor(program);
@@ -290,7 +341,7 @@ auto PassRunner::runProgramPass(PassID id, Program& program, ProgramAnalyses& an
 template<typename Functor>
 auto PassRunner::runProgramPassWithoutEditor(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor, BodiesAreChanged bodiesAreChanged) -> std::invoke_result_t<Functor>
 {
-    auto timer = beginProgramPass(id, program);
+    auto timer = beginProgramPass(id, program, MayChangeBodies::Yes);
     if (!timer)
         return std::invoke_result_t<Functor>();
     analyses.willChangeBodies(bodiesAreChanged);

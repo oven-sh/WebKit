@@ -1,0 +1,162 @@
+# A double read out of a float view is kept as ImpureDouble, and so is what arithmetic makes of it and the block parameter that takes it. A store into a float view takes it as it is.
+# What an operator makes of an operand that may be undefined is kept as DoubleWithPayload. What it makes of numbers is a Double.
+# Where each run of the read is followed by a place that makes the one NaN of what is computed from it, the read makes the one NaN and all of it is kept as Double.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="scaleElement" parameters=[{type=Float64Array}, {type=i32}, {type=number}] results=[{type=undefined}] {
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v1, v4 typedArrayType=10 level=Proven [isInsideView]
+    v6 = Mul v5, v2 form=Numbers
+    PutTypedArrayElement v0, v1, v6, v4 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b3(v6)
+  b2():
+    v8 = Add v2, v2 form=Numbers
+    Jump -> next b3(v8)
+  b3(v9: number):
+    v10 = Negate v9 form=Numbers
+    v11 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    PutTypedArrayElement v0, v1, v10, v12 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b5()
+  b5():
+    v14 = Undefined
+    Return v14
+}
+# CHECK-LABEL: function f0 name="scaleElement"
+# CHECK: v5: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v6: number @ImpureDouble = Mul v5, v2 form=Numbers
+# CHECK: v8: number @Double = Add v2, v2 form=Numbers
+# CHECK: b3(v9: number @ImpureDouble):
+# CHECK-NEXT: v10: number @ImpureDouble = Negate v9 form=Numbers
+# CODE-LABEL: f0:
+# CODE-NOT: operation
+
+function f1 name="sumWithNumberOrUndefined" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = Add v0, v1 form=Numbers
+    v3 = Mul v2, v0 form=Numbers
+    Return v3
+}
+# CHECK-LABEL: function f1 name="sumWithNumberOrUndefined"
+# CHECK: v2: number @DoubleWithPayload = Add v0, v1 form=Numbers
+# CHECK-NEXT: v3: number @DoubleWithPayload = Mul v2, v0 form=Numbers
+
+function f2 name="quotientOfNumbers" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    v2 = Div v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f2 name="quotientOfNumbers"
+# CHECK: v2: number @Double = Div v0, v1 form=Numbers
+
+function f3 name="scaledElement" parameters=[{type=Float64Array}, {type=i32}, {type=number}] results=[{type=number}] {
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v1, v4 typedArrayType=10 level=Proven [isInsideView]
+    v6 = Mul v5, v2 form=Numbers
+    PutTypedArrayElement v0, v1, v6, v4 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b3(v6)
+  b2():
+    v8 = Add v2, v2 form=Numbers
+    Jump -> next b3(v8)
+  b3(v9: number):
+    v10 = Negate v9 form=Numbers
+    Return v10
+}
+# CHECK-LABEL: function f3 name="scaledElement"
+# CHECK: v5: number @Double = GetTypedArrayElement
+# CHECK-NEXT: v6: number @Double = Mul v5, v2 form=Numbers
+# CHECK: b3(v9: number @Double):
+# CHECK-NEXT: v10: number @Double = Negate v9 form=Numbers
+
+function f4 name="negatedElementOfEither" parameters=[{type=Float64Array}, {type=Float64Array}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+    v4 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v4 -> taken b1(| 0), notTaken b6()
+  b1(v5):
+    v6 = IsInsideView v1, v2 typedArrayType=10
+    TestAndBranch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7):
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v8 = GetTypedArrayElement v0, v2, v5 typedArrayType=10 level=Proven [isInsideView]
+    v9 = Negate v8 form=Numbers
+    Jump -> next b5(v9)
+  b4():
+    v10 = GetTypedArrayElement v1, v2, v7 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b5(v10)
+  b5(v11: number):
+    Return v11
+  b6():
+    v12 = Undefined
+    Return v12
+}
+# CHECK-LABEL: function f4 name="negatedElementOfEither"
+# CHECK: v8: number @Double = GetTypedArrayElement
+# CHECK-NEXT: v9: number @Double = Negate v8 form=Numbers
+# CHECK: v10: number @Double = GetTypedArrayElement
+
+function f5 name="productOfElements" parameters=[{type=Float64Array}, {type=i32}, {type=i32}] results=[{type=number}] {
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = GetTypedArrayElement v0, v1, v4 typedArrayType=10 level=Proven [isInsideView]
+    v8 = GetTypedArrayElement v0, v2, v6 typedArrayType=10 level=Proven [isInsideView]
+    v9 = Mul v7, v8 form=Numbers
+    Return v9
+  b3():
+    v10 = Double number=0.5
+    Return v10
+}
+# CHECK-LABEL: function f5 name="productOfElements"
+# CHECK: v7: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v8: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v9: number @ImpureDouble = Mul v7, v8 form=Numbers
+
+function f6 name="copiedElement" parameters=[{type=Float64Array}, {type=Float64Array}, {type=i32}] results=[{type=anything}] {
+    v3 = IsInsideView v0, v2 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v2, v4 typedArrayType=10 level=Proven [isInsideView]
+    v6 = IsInsideView v1, v2 typedArrayType=10
+    TestAndBranch v6 -> taken b2(| 0), notTaken b3(v5)
+  b2(v7):
+    PutTypedArrayElement v1, v2, v5, v7 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b4()
+  b3(v9: anything):
+    Return v9
+  b4():
+    v10 = Undefined
+    Return v10
+}
+# CHECK-LABEL: function f6 name="copiedElement"
+# CHECK: v5: number @ImpureDouble = GetTypedArrayElement
+
+function f7 name="sumOfElements" parameters=[{type=Float64Array}, {type=i32}] results=[{type=number}] {
+    v2 = Double number=0.5
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4: number, v5: i32):
+    LoopHint
+    v7 = IsInsideView v0, v5 typedArrayType=10
+    TestAndBranch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = GetTypedArrayElement v0, v5, v8 typedArrayType=10 level=Proven [isInsideView]
+    v10 = Add v4, v9 form=Numbers
+    Jump -> next b1(v10, v1)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f7 name="sumOfElements"
+# CODE-LABEL: f7:
+# CHECK: b1(v4: number @ImpureDouble,
+# CHECK: v9: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v10: number @ImpureDouble = Add v4, v9 form=Numbers

@@ -142,9 +142,10 @@ static bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow,
     if (!flow || effectRuleOf(call.opcode) != EffectRule::Call || maySuspend(call.opcode) || call.operandUses(operandIndex).containsAny(callingUses))
         return false;
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return false;
-    return std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+    return std::ranges::all_of(functions->value(), [&](FunctionID callee) {
         std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
         return entryParameter && flow->mayTakeFrameArray(callee, *entryParameter);
     });
@@ -323,50 +324,57 @@ bool mayReturnOperand(Opcode opcode)
     return false;
 }
 
-static bool hasSourceOfUnspecifiedValues(FunctionAnalyses& analyses)
-{
-    const OpcodeSet& opcodes = analyses.opcodesOfValues();
-    return opcodes.contains(Opcode::Unspecified) || opcodes.contains(Opcode::ResultAt);
-}
-
-static bool isSourceOfUnspecifiedValues(const Function& function, const Value& value)
+bool isUnspecifiedAtDefinition(const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::Unspecified)
         return true;
     return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
 }
 
-static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+bool isValidatedWhereLookedAt(const Function& function, const Value& value)
+{
+    return isUnspecifiedAtDefinition(function, value) || (value.opcode == Opcode::GetModuleVariable && value.isValidatedWhereLookedAt());
+}
+
+// False: a parameter of a block that has been emptied, so no edge says what it is handed.
+static bool forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
     const Function& function = analyses.function();
     const Value& value = function.at(id);
     if (value.opcode != Opcode::Parameter) {
         forEachReturnedOperand(function, value, functor);
-        return;
+        return true;
     }
 
     BlockID block = analyses.useLists().blockOf(id);
+    if (!block)
+        return false;
     uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
     for (Edge edge : analyses.cfg().incomingEdges(block)) {
         if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
             functor(passed);
     }
+    return true;
 }
 
 UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
     : m_analyses(analyses)
-    , m_hasSource(hasSourceOfUnspecifiedValues(analyses))
+    , m_hasSource(analyses.opcodesOfValues().intersects(OpcodeSet { Opcode::Unspecified, Opcode::ResultAt }))
 {
+    analyses.willFollowValuesThroughParameters();
     if (m_hasSource)
         m_isSpecified.ensureSize(analyses.function().values.size());
 }
 
 bool UnspecifiedValues::mayContain(ValueID start)
 {
+    m_analyses.willFollowValuesThroughParameters();
+    const Function& function = m_analyses.function();
+    if (m_analyses.program().typeOf(function, start).mayBeUnspecified())
+        return true;
     if (!m_hasSource)
         return false;
 
-    const Function& function = m_analyses.function();
     m_visited.shrink(0);
     Vector<ValueID, 8> worklist { start };
     while (!worklist.isEmpty()) {
@@ -374,14 +382,14 @@ bool UnspecifiedValues::mayContain(ValueID start)
         if (m_isSpecified.quickSet(id.index()))
             continue;
         m_visited.append(id);
-        if (isSourceOfUnspecifiedValues(function, function.at(id))) {
+        bool isFollowed = !isUnspecifiedAtDefinition(function, function.at(id)) && forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
+            worklist.append(source);
+        });
+        if (!isFollowed) {
             for (ValueID visited : m_visited)
                 m_isSpecified.quickClear(visited.index());
             return true;
         }
-        forEachValueHandedOn(m_analyses, id, [&](ValueID source) {
-            worklist.append(source);
-        });
     }
     return false;
 }
@@ -494,13 +502,14 @@ static OperandSummary summarizePublishedParameter(const Program& program, const 
 static OperandSummary summarizeCallOperand(const Program& program, const FlowResults& flow, const Value& call, uint32_t operandIndex)
 {
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions || maySuspend(call.opcode))
         return { };
 
     OperandUses declaredUses = operandUsesOf(call.opcode, operandIndex);
     bool isCalledValue = declaredUses.containsAny(callingUses);
     OperandSummary summary { isCalledValue ? declaredUses : OperandUses { OperandUse::Inspects }, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : functions->value()) {
         const Function& callee = program.at(id);
         if (!isCalledValue) {
             summary = joinOf(summary, summarizePublishedParameter(program, flow, call, id, entryParameterOf(callee, call, operandIndex)));
@@ -626,7 +635,7 @@ bool mayLeakCapture(const Program& program, const FlowResults* flow, const Value
     if (!flow)
         return true;
     OperandUses leakingUses = usesLeakingFramePointers;
-    if (holdsOnlyHeapValues(program, flow, program.at(closure.function()).captures[captureIndex].type))
+    if (holdsOnlyHeapValues(program, flow, program.provenTypeOf(program.at(closure.function()).captures[captureIndex])))
         leakingUses = leakingUses - usesLeakingContents;
     return flow->framePointerSummary(closure.function(), captureIndex).uses.containsAny(leakingUses);
 }

@@ -408,7 +408,9 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
 #
 # With HARDENING_FLAGS jsc must import what the stack protector and _FORTIFY_SOURCE call. It is read off jsc because the
-# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet.
+# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet. That jsc imports a checked function says
+# little: one caller is enough. So jsc must also hold no copy of glibc's always-inline wrappers (memcpy.inline, ...): a
+# wrapper that was not inlined cannot see the size of the destination, and calls the plain function.
 #
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
@@ -487,6 +489,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
         grep -qx __stack_chk_fail /tmp/chk || { echo "error: jsc has no stack protector" >&2; exit 1; }; \
         llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q 'Type:.*DYN' || { echo "error: jsc is not position-independent" >&2; exit 1; }; \
         grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
+        ! llvm-nm --defined-only $WEBKIT_OUT_DIR/bin/jsc | grep -E ' [a-z_0-9]+\.inline(\.llvm\.[0-9]+)?$' || { echo "error: these _FORTIFY_SOURCE wrappers were not inlined, so they check nothing" >&2; exit 1; }; \
     fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \

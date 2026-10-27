@@ -16,22 +16,22 @@ function f0 name="goodStoreIntoAnotherAllocation" parameters=[{type=number}, {ty
 }
 function f1 name="badStoreIntoTheSameAllocation" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
-    v3 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
     PutSlot v2, v2, v1 key="y" receivers=[L0] level=Proven
-    Return v3
+    v4 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v4
 }
 function f2 name="badStoreIntoEitherAllocation" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
-    v5 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v3)
   b2():
     Jump -> next b3(v4)
-  b3(v6: L0):
-    PutSlot v6, -, v1 key="y" receivers=[L0] level=Proven
-    Return v5
+  b3(v5: L0):
+    PutSlot v5, -, v1 key="y" receivers=[L0] level=Proven
+    v7 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v7
 }
 function f3 name="goodStoreIntoAnObjectFromOutside" parameters=[{type=number}, {type=undefined|number}, {type=L0}] results=[{type=number}] {
     PutSlot v2, -, v1 key="y" receivers=[L0] level=Proven
@@ -43,7 +43,7 @@ function f4 name="badStoreIntoWhatIsReadFromWhereTheAllocationWasStored" paramet
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PutSlot v2, -, v3 key="inner" receivers=[L1] level=Proven
     v5 = GetSlot v2 key="inner" receivers=[L1] level=Proven
-    v6 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
     PutSlot v5, -, v1 key="y" receivers=[L0] level=Proven
-    Return v6
+    v7 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v7
 }

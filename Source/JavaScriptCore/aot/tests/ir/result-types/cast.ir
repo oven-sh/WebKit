@@ -13,7 +13,7 @@ module m0 path="main.js" displayPath="main.js"
 typesite w0 kind=Assertion
 function f0 name="c" parameters=[{type=i32}, {type=anything}, {type=Array<i32>}] results=[{type=undefined}] {
     v3 = Upcast v0 castType=number
-    v4 = Check v1 castType=string site=w0
+    v4 = Check v1 expectedType=string site=w0
     v5 = Upcast v2 castType=Array<number>
     v6 = Unspecified valueType=undefined|number|absent
     v7 = CheckInitialized v6 name="x"

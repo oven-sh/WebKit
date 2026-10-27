@@ -864,6 +864,30 @@ static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
     AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; elsewhere[9] === 9"_s) == jsBoolean(true));
 }
 
+static void testOneWalkCoversEveryPrototypeThatCanChange()
+{
+    Realms realms;
+    JSGlobalObject* locked = realms.locked();
+
+    JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
+    JSObject* elsewhere = realms.object(locked, "var other = { }; var elsewhere = Object.create(other); elsewhere[0] = 1; elsewhere"_s);
+    realms.evaluate(locked, "var alone = { }; Object.create(alone); Object.defineProperty(alone, 3, { set(value) { } })"_s);
+    AOT_TEST_CHECK(!hasSlowPutArrayStorage(elsewhere->indexingType()));
+
+    realms.evaluate(locked, "var watched = { }; var heir = Object.create(watched); heir[0] = 1; Object.defineProperty(watched, 3, { set(value) { } })"_s);
+    AOT_TEST_CHECK(!locked->isHavingABadTime());
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(elsewhere->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(realms.object(locked, "var later = Object.create({ }); later[0] = 1; later"_s)->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(realms.object(locked, "class List extends Array { }; var list = new List(1, 2); list"_s)->indexingType()));
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(realms.object(locked, "var moved = Object.setPrototypeOf([1, 2], { }); moved"_s)->indexingType()));
+    AOT_TEST_CHECK(hasInt32(ordinary->indexingType()));
+    AOT_TEST_CHECK(hasInt32(realms.array(locked, "[1, 2].slice()"_s)->indexingType()));
+    AOT_TEST_CHECK(!hasSlowPutArrayStorage(realms.object(locked, "({ 0: 1 })"_s)->indexingType()));
+    AOT_TEST_CHECK(realms.evaluate(locked, "var log = []; for (let prototype of [other, Object.getPrototypeOf(later), List.prototype, Object.getPrototypeOf(moved)]) Object.defineProperty(prototype, 5, { set(value) { log.push(value); } }); elsewhere[5] = 1; later[5] = 2; list[5] = 3; moved[5] = 4; log.join() === '1,2,3,4'"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(locked, "var parent = [1, 2]; var child = Object.create(parent); var above = { }; Object.setPrototypeOf(parent, above); Object.defineProperty(above, 5, { set(value) { log.push(value); } }); parent[5] = 5; child[5] = 6; log.join() === '1,2,3,4,5,6'"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(!hasSlowPutArrayStorage(realms.object(realms.plain(), "var apart = Object.create({ }); apart[0] = 1; apart"_s)->indexingType()));
+}
+
 static void testPristineArrayCachedTransitions()
 {
     Realms realms;
@@ -1047,6 +1071,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/transitions-of-pristine-arrays"_s, testPristineArrayTransitions },
         { "locked-realm/index-accessor-in-a-realm-that-a-prototype-inherits-from"_s, testIndexAccessorInRealmThatPrototypeInheritsFrom },
         { "locked-realm/typed-arrays-intercept-indexed-stores-after-an-index-accessor-on-a-prototype"_s, testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype },
+        { "locked-realm/one-walk-covers-every-prototype-that-can-change"_s, testOneWalkCoversEveryPrototypeThatCanChange },
         { "locked-realm/cached-transitions-of-pristine-arrays"_s, testPristineArrayCachedTransitions },
         { "locked-realm/start-up-locks-objects"_s, withoutBuiltins<testStartUpLocksObjects> },
         { "locked-realm/start-up-creates-no-class"_s, withoutBuiltins<testStartUpCreatesNoClass> },

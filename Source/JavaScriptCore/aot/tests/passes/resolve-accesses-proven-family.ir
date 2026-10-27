@@ -65,24 +65,10 @@ function f2 name="expected-family" parameters=[{type=L0|L1|L2|L3 flags=[IsExpect
 # COPY-NOT: = PropGet
 # COPY-NOT: frequency=Rare
 }
+# TESTS-LABEL: function f3 name="field-of-one-member"
+# COPY-LABEL: function f3 name="field-of-one-member"
 
-# A primitive, a host object or an ordinary object may be converted to the type as well, so that the type proves no layout
-function f3 name="family-with-members-without-a-layout" parameters=[{type=L0|L1|L2|nolayout}] results=[{type=anything}] {
-    v1 = PropGet v0 key="x"
-    Return v1
-}
-# CHECK-LABEL: function f3 name="family-with-members-without-a-layout"
-# CHECK-NEXT: b0(v0: L0|L1|L2|nolayout):
-# CHECK-NEXT: = PropGet v0 key="x"
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
-# TESTS-LABEL: function f3 name="family-with-members-without-a-layout"
-# TESTS-NEXT: b0(v0: L0|L1|L2|nolayout):
-# TESTS-NEXT: = TypeTest v0 testedType=L0|L1|L2
-# TESTS: v1: number = GetSlot {{*}} key="x" receivers=[L0, L1, L2] level=Expected
-# COPY-LABEL: function f3 name="family-with-members-without-a-layout"
-
-function f4 name="field-of-one-member" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+function f3 name="field-of-one-member" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
     v1 = PropGet v0 key="radius"
     Return v1
 # CHECK-NEXT: b0(v0: L0|L1|L2|L3):

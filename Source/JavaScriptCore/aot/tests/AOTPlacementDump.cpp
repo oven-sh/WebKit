@@ -253,11 +253,11 @@ private:
         const LayoutSet& set = m_program.at(id);
         CommaPrinter blank(" "_s);
         m_out.print("{"_s);
-        for (LayoutID member : set.members) {
+        for (LayoutID member : set.written()) {
             m_out.print(blank);
             m_printer.print(member);
         }
-        if (!set.isComplete)
+        if (!set.listsEveryLayout())
             m_out.print(blank, ".."_s);
         m_out.print("}"_s);
     }

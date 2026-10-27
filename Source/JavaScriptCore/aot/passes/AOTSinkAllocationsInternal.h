@@ -10,6 +10,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFreshResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTLiveness.h"
 #include "AOTSinkAllocations.h"
@@ -84,8 +85,10 @@ struct ObjectState {
     Vector<TypeID, 1> assumedTypes;
     bool lacksFieldsOnSomeWay { false };
     bool isMissingOnSomeWay { false };
+    // The same of an object that is a cell on the other ways: what stands for the cell may be an Unspecified value.
+    bool isCellMissingOnSomeWay { false };
 
-    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false }; }
+    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false, false }; }
 
     bool hasCell() const;
     bool isCell() const { return variants.size() == 1 && variants[0].shape == cellShape; }
@@ -214,9 +217,15 @@ struct SinkingPolicy {
     ReturnedObjects returnedObjects { ReturnedObjects::AreBuilt };
     bool recordsLosses { true };
     bool leavesWhenNoAllocationPays { false };
+    // In a field whose slot has room for them. The parts of a result and of an argument have the types of the fields alone.
+    bool followsUndefinedAndNullInFields { false };
     // Ascending: what addTracesOfFruitlessAllocations() has listed behind earlier analyses of the function. Allocations with such a number are not followed again.
     const Vector<uint64_t>* tracesOfFruitlessAllocations { nullptr };
 };
+
+// One rule for whatever puts a value into a field: a store, a copy out of the field of another object, and the look ahead that says which stores will fold.
+enum class Admission : uint8_t { Refused, IsOfFieldType, TakesRoomBesideFieldType };
+Admission admissionOf(const AllocationSinking&, const VirtualObjectDescription&, const VirtualField&, FieldContents stored);
 
 struct BuildCause {
     std::optional<Opcode> opcode;
@@ -382,7 +391,7 @@ private:
     Function& m_function;
     BlockID m_originalBlock;
     std::optional<Target> m_originalHandler;
-    BlockFrequency m_frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     bool m_handlerArgumentsAreStale { false };
 };
 
@@ -461,6 +470,7 @@ public:
     bool storesByNameWaitIn(BlockID) const;
     // The object has to be built where no store by name may stand. It is built where the store stands instead, in the rare arm, as an object that takes no such value always was.
     void refuseUnprovenValues(VirtualObjectID);
+    void didStoreUndefinedOrNull(VirtualObjectID, uint32_t field);
     const SinkingState* headOf(BlockID) const;
     // What can be said of the state at a head without making one for a block that is entered with nothing.
     bool isReached(BlockID block) const { return isEnteredWithNothing(block) || headOf(block); }
@@ -645,7 +655,7 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
-bool buildsItsOperands(const Program&, const Value& user);
+bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed
 

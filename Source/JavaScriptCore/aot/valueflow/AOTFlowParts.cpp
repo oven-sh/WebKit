@@ -27,13 +27,17 @@ BuiltinSlotID indexedElementSlotOf(const BuiltinTable& builtins, BuiltinClassID 
     return { };
 }
 
-BuiltinID prototypeOfFunctionObject(const Function& function)
+BuiltinClassID classOfFunctionObject(const Function& function)
 {
     bool isAsync = function.has(FunctionFlags::IsAsync);
-    BuiltinClassID builtinClass = isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
     if (function.has(FunctionFlags::IsGenerator))
-        builtinClass = isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
-    return BuiltinTable::singleton().at(builtinClass).prototype;
+        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
+    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
+}
+
+BuiltinID prototypeOfFunctionObject(const Function& function)
+{
+    return BuiltinTable::singleton().at(classOfFunctionObject(function)).prototype;
 }
 
 bool hasPrototypeProperty(const Program& program, const Function& function)

@@ -13,6 +13,7 @@
 #include "AOTStubRegisters.h"
 #include "JSString.h"
 #include <algorithm>
+#include <bit>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
@@ -21,15 +22,12 @@ void loadSubstringBaseAndOffset(StubAssembler& jit, GPRReg string, GPRReg base, 
 {
     using CompactFibers = JSRopeString::CompactFibers;
     RELEASE_ASSERT(noOverlap(string, base, offset));
-    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16, "load32 and load16 read the two parts of fiber 1");
-    jit.load16(Address(string, JSRopeString::offsetOfFiber2()), offset);
-    jit.load32(Address(string, JSRopeString::offsetOfFiber1Lower()), base);
-#if CPU(ARM64)
-    jit.orLeftShift64(base, offset, TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), base);
-#else
-    jit.lshift64(TrustedImm32(CompactFibers::widthOfFiber1LowerInLengthWord), offset);
-    jit.or64(offset, base);
-#endif
+    // The six bytes of fiber 1 end a word that begins two bytes in front of them, inside the length.
+    constexpr int32_t bytesInFrontOfFiber1 = sizeof(uint64_t) - 6;
+    static_assert(CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16 && JSRopeString::offsetOfFiber2() == JSRopeString::offsetOfFiber1Lower() + 4);
+    static_assert(std::endian::native == std::endian::little && JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1 >= JSRopeString::offsetOfLength());
+    jit.load64(Address(string, JSRopeString::offsetOfFiber1Lower() - bytesInFrontOfFiber1), base);
+    jit.urshift64(TrustedImm32(8 * bytesInFrontOfFiber1), base);
     jit.load64(Address(string, JSRopeString::offsetOfFiber2()), offset);
     jit.urshift64(TrustedImm32(CompactFibers::shiftOfFiber2InUpperWord), offset);
 }
@@ -64,6 +62,16 @@ void loadSubstringCharacters(StubAssembler& jit, GPRReg string, GPRReg impl, GPR
     jit.lshift64(TrustedImm32(1), characters);
     is8Bit.link(&jit);
     jit.addPtr(Address(impl, StringImpl::dataOffset()), characters);
+}
+
+void load8BitCharactersOfSubstring(StubAssembler& jit, GPRReg string, GPRReg fiber, GPRReg offset, JumpList& isOther)
+{
+    isOther.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    loadSubstringBaseAndOffset(jit, string, fiber, offset);
+    jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+    isOther.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.addPtr(offset, fiber);
 }
 
 static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, GPRReg word)

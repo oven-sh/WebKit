@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAssignmentPlans.h"
 #include "AOTChainDependents.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
@@ -17,12 +18,14 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTPropertyCaches.h"
 #include "AOTPropertyListCache.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
@@ -80,14 +83,26 @@ struct OrderedKey {
     unsigned attributes;
 };
 
-static bool extraPropertiesNeedGenericPath(JSObject* extra)
+static bool extraPropertiesNeedGenericPath(JSObject* extra, Elements elements = Elements::NeedGenericPath)
 {
     Structure* structure = extra->structure();
     return extra->type() != FinalObjectType
-        || JSC::hasIndexedProperties(extra->indexingType())
+        || (elements == Elements::AreLeftOut ? extra->canHaveExistingOwnIndexedGetterSetterProperties() : JSC::hasIndexedProperties(extra->indexingType()))
         || structure->hasAnyKindOfGetterSetterProperties()
         || structure->isUncacheableDictionary()
         || extra->hasNonReifiedStaticProperties();
+}
+
+// A walk hands out values, a store that asks nobody writes them, and neither runs code. So they are not for an object that is asked to prepare itself first.
+static bool hasFieldPreparedBeforeLookups(VM& vm, const Object& typed)
+{
+    const LayoutData& layout = typed.layout();
+    if (!layout.hasFieldsWithSymbolKeys)
+        return false;
+    RuntimeLayoutTable& layouts = typed.state().objects->layouts;
+    return std::ranges::any_of(layout.fields(), [&](const FieldData& field) {
+        return layouts.hasSymbolKey(field) && typed.isInSlot(field) && isPreparedBeforeLookups(vm, layouts.nameOf(vm, field));
+    });
 }
 
 static Result visitFields(const Object& typed, Filter filter, const Visitor& visitor)
@@ -136,12 +151,11 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
     validateKeyListing(vm, typed);
     State& state = typed.state();
     Structure* extraStructure = extra->structure();
-    Vector<OrderedKey, 16> positioned;
-    Vector<OrderedKey, 16> unpositioned;
+    Vector<OrderedKey, 16> extraKeys;
     extraStructure->forEachProperty(vm, [&](const auto& entry) {
         UniquedStringImpl* name = entry.key();
         if (!PropertyName(name).isPrivateName() && !typed.fieldNamed(state, name))
-            (typed.hasPositionAmongKeys(name) ? positioned : unpositioned).append(OrderedKey { name, nullptr, entry.offset(), entry.attributes() });
+            extraKeys.append(OrderedKey { name, nullptr, entry.offset(), entry.attributes() });
         return true;
     });
 
@@ -149,7 +163,7 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
     std::span fields = layout.fields();
     Object::KeyOrderStorage storage;
     Vector<OrderedKey, 32> ordered;
-    size_t nextPositioned = Object::forEachPositionedKey(typed.keyOrder(state, storage), layout.numberOfFields, positioned.size(), [&](uint16_t index) {
+    size_t nextExtraKey = Object::forEachPositionedKey(typed.keyOrder(state, storage), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
         const FieldData& field = fields[index];
         if (!state.objects->layouts.hasStringKey(field) && !state.objects->layouts.hasSymbolKey(field))
             return;
@@ -163,10 +177,9 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
         if (isValidOffset(offset))
             ordered.append(OrderedKey { name, nullptr, offset, extraAttributes });
     }, [&](size_t ordinal) {
-        ordered.append(positioned[ordinal]);
+        ordered.append(extraKeys[ordinal]);
     });
-    ordered.append(positioned.span().subspan(nextPositioned));
-    ordered.appendVector(unpositioned);
+    ordered.append(extraKeys.span().subspan(nextExtraKey));
     return ordered;
 }
 
@@ -264,7 +277,7 @@ bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to)
 Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor& visitor)
 {
     Object* typed = compiledObjectOrNull(object);
-    if (!typed)
+    if (!typed || (filter == Filter::StringsAndSymbols && hasFieldPreparedBeforeLookups(vm, *typed)))
         return Result::NeedsGenericPath;
     JSObject* extra = typed->extraProperties();
     if (!extra)
@@ -276,10 +289,10 @@ Result forEachOwnProperty(VM& vm, JSObject* object, Filter filter, const Visitor
     return visitKeysInOrder(vm, *typed, extra, filter, visitor);
 }
 
-Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor)
+Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visitor, Elements elements)
 {
     Object* typed = compiledObjectOrNull(object);
-    if (!typed)
+    if (!typed || hasFieldPreparedBeforeLookups(vm, *typed))
         return Result::NeedsGenericPath;
     bool isStopped = false;
     JSObject* extra = typed->extraProperties();
@@ -309,8 +322,10 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         });
         return isStopped ? Result::Stopped : Result::Completed;
     }
-    if (extraPropertiesNeedGenericPath(extra))
+    if (extraPropertiesNeedGenericPath(extra, elements))
         return Result::NeedsGenericPath;
+    if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
+        return *result;
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
 }
 
@@ -320,6 +335,12 @@ bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)
     PropertyNameArrayBuilder keys(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Exclude);
     return keys.size();
+}
+
+void prepareHoldersBeforeLookupsUnder(JSGlobalObject* globalObject, Symbol* symbol, JSObject* function)
+{
+    if (Instance* instance = Instance::of(globalObject))
+        instance->state->propertyCaches->prepareHoldersBeforeLookupsUnder(symbol, function);
 }
 
 void materializeLazyProperties(VM& vm, JSObject* object)
@@ -394,7 +415,7 @@ Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& valu
     const Object& typed = *uncheckedDowncast<Object>(object);
     State& state = typed.state();
     if (const FieldData* field = typed.fieldNamed(state, name)) {
-        if (field->isPrivate() || field->isAccessor()) [[unlikely]]
+        if (field->isPrivate() || field->isAccessor() || isPreparedBeforeLookups(*state.instance.vm, name)) [[unlikely]]
             return Presence::Unknown;
         value = typed.readInline(*field);
         if (!value) [[unlikely]]
@@ -412,9 +433,16 @@ void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsig
     uncheckedDowncast<Object>(object)->putDirectFromNativeCode(vm, name, value, attributes);
 }
 
+void prepareForFreeze(JSObject* object)
+{
+    ASSERT(isCompiledObject(object));
+    prepareForWalk(object->structure()->realm(), object);
+}
+
 void setIntegrity(VM& vm, JSObject* object, Integrity level)
 {
     ASSERT(isCompiledObject(object));
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     uncheckedDowncast<Object>(object)->setIntegrity(object->structure()->realm(), objectIntegrity(level));
     scope.assertNoException();
@@ -428,10 +456,79 @@ Presence testIntegrity(JSObject* object, Integrity level)
     return typed->testIntegrity(typed->vm(), objectIntegrity(level)) ? Presence::Present : Presence::Absent;
 }
 
+static bool hasOnlyWritableDataProperties(VM& vm, const Object& object)
+{
+    if (hasFieldPreparedBeforeLookups(vm, object))
+        return false;
+    for (const FieldData& field : object.layout().fields()) {
+        bool interceptsStores = field.isAccessor() || object.attributesOf(field) & PropertyAttribute::ReadOnly;
+        if (interceptsStores && object.isInSlot(field))
+            return false;
+    }
+    JSObject* extra = object.extraProperties();
+    return !extra || !extra->structure()->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+}
+
+bool wouldPerformFastPut(VM& vm, JSObject* target)
+{
+    if (!Instance::of(target->realm()))
+        return false;
+    for (JSObject* object = target;;) {
+        if (object != target)
+            materializeLazyProperties(vm, object);
+        Structure* structure = object->structure();
+        if (Object* compiled = compiledObjectOrNull(object)) {
+            if (!hasOnlyWritableDataProperties(vm, *compiled))
+                return false;
+        } else if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->typeInfo().overridesGetPrototype() || (object == target ? structure->mayHaveImmutableProperties() : structure->typeInfo().overridesPut()))
+            return false;
+        JSValue above = object->getPrototypeDirect();
+        if (above.isNull())
+            break;
+        object = asObject(above);
+    }
+    return isCompiledObject(target) ? testIntegrity(target, Integrity::NonExtensible) == Presence::Absent : target->isStructureExtensible();
+}
+
+static bool tryAssignInOrderOfCreation(VM& vm, Object& target, JSObject* source)
+{
+    if (source == &target || !isCompiledObject(source))
+        return false;
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    EnsureStillAliveScope sourceScope(source);
+    Result result = forEachOwnPropertyAsCreated(vm, source, [&](const OwnProperty& own) {
+        if (own.attributes & PropertyAttribute::DontEnum)
+            return IterationStatus::Continue;
+        if (own.name == vm.propertyNames->underscoreProto.impl() || parseIndex(*own.name))
+            return IterationStatus::Done;
+        names.append(own.name);
+        values.appendWithCrashOnOverflow(own.value);
+        return IterationStatus::Continue;
+    }, Elements::AreLeftOut);
+    if (result != Result::Completed || !wouldPerformFastPut(vm, &target))
+        return false;
+    JSObject* holder = objectHoldingIndexedProperties(source);
+    if (holder && holder->canHaveExistingOwnIndexedProperties()) {
+        JSObject* elementsOfTarget = objectHoldingIndexedProperties(&target);
+        if (target.anyObjectInChainMayInterceptIndexedAccesses() || (elementsOfTarget && elementsOfTarget->canHaveExistingOwnIndexedGetterSetterProperties()))
+            return false;
+        DeferTerminationForAWhile deferTermination(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSGlobalObject* realm = target.structure()->realm();
+        holder->forEachOwnIndexedProperty<>([&](unsigned index, JSValue value) {
+            Object::putByIndex(&target, realm, index, value, true);
+            scope.assertNoException();
+            return IterationStatus::Continue;
+        });
+    }
+    return storePropertiesInOrder(vm, target, names.mutableSpan(), { values.data(), values.size() });
+}
+
 bool tryAssign(VM& vm, JSObject* compiledTarget, JSObject* source)
 {
     Object* typed = compiledObjectOrNull(compiledTarget);
-    return typed && typed->tryAssignPropertiesOf(vm, source);
+    return typed && (typed->tryAssignPropertiesOf(vm, source) || tryAssignInOrderOfCreation(vm, *typed, source));
 }
 
 void didBecomePrototype(VM& vm, JSObject* object)

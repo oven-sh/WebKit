@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowRulesHeap.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
@@ -27,7 +28,7 @@ ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource 
 static ValueFlowName writtenNameOf(const Program& program, StringID text)
 {
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = text });
-    return key ? ValueFlowName::property(*key) : unknownKeyName;
+    return key ? ValueFlowName::property(program, *key) : unknownKeyName;
 }
 
 void connect(ValueFlowRuleContext& context, const ValueFlowSources& sources, ValueFlowNodeID target)
@@ -144,21 +145,6 @@ static bool isEvaluatedWithImporter(ValueFlowRuleContext& context, const ModuleR
     return context.isReached(program.at(request.target).body) || exportsUsedNameAgain(context, request.target);
 }
 
-static bool hasExportTable(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::Data:
-        return true;
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool mayHaveExportsNobodyLists(const Module& module)
 {
     if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None)
@@ -180,6 +166,9 @@ ValueFlowSources exportedValueOf(ValueFlowRuleContext& context, const ModuleExpo
         return namespaceOf(context, entry.module, entry.phase);
     case ModuleExportKind::Indirect:
         useModule(context, entry.module);
+        // The run time reads the name on the namespace object of a module of the program.
+        if (context.program().at(entry.module).kind != ModuleKind::External)
+            connect(context, namespaceOf(context, entry.module), ValueFlowProgramNodes::escaped());
         return unknownSources(context, sourceOfWhatLoaderMakes(context.program().at(entry.module)));
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -195,7 +184,7 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
     ClimbingSet all = objects;
     ClimbingSet last = objects;
     for (;;) {
-        last = context.restrict(context.valueOf(context.read(last, copiedFromName)), context.universe().knownObjects());
+        last = context.restrict(context.valueOf(context.readWhatWasWritten(last, copiedFromName)), context.universe().knownObjects());
         bool findsNewSource = false;
         context.forEachMember(last, [&](ValueFlowObjectID source) {
             findsNewSource |= !context.contains(all, source);
@@ -209,19 +198,19 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
 static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueFlowName valueName = key ? ValueFlowName::property(*key) : everyPropertyName;
-    ValueFlowName getterName = key ? ValueFlowName::getter(*key) : everyGetterName;
+    ValueFlowName valueName = key ? ValueFlowName::property(context.program(), *key) : everyPropertyName;
+    ValueFlowName getterName = key ? ValueFlowName::getter(context.program(), *key) : everyGetterName;
     ClimbingSet receivers = context.restrict(values, universe.knownObjects());
     ClimbingSet holders = withSourcesOfCopies(context, receivers);
 
     OwnProperties properties;
-    properties.held = sourcesOf(context.read(holders, valueName));
-    ClimbingSet getters = context.valueOf(context.read(holders, getterName));
+    properties.held = sourcesOf(context.readWhatWasWritten(holders, valueName));
+    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName));
     auto readWhatIsStoredThrough = [&](ValueSetID placeholder, ValueFlowNodeID covered) {
         if (!context.holdsAnyOf(holders, covered))
             return;
-        properties.held.nodes.append(context.read(ClimbingSet(placeholder), valueName));
-        getters = context.unite(getters, context.valueOf(context.read(ClimbingSet(placeholder), getterName)));
+        properties.held.nodes.append(context.readWhatWasWritten(ClimbingSet(placeholder), valueName));
+        getters = context.unite(getters, context.valueOf(context.readWhatWasWritten(ClimbingSet(placeholder), getterName)));
     };
     readWhatIsStoredThrough(universe.unknownObjectAlone(), ValueFlowProgramNodes::escaped());
     readWhatIsStoredThrough(universe.untrackedObjectAlone(), ValueFlowProgramNodes::lost());
@@ -254,6 +243,12 @@ static ValueFlowSources ownPropertyOf(ValueFlowRuleContext& context, ClimbingSet
     return properties.held;
 }
 
+// The loader lists every own name of what a file exports, enumerable or not.
+static void listOwnPropertiesNobodyWrote(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key, ValueFlowNodeID target)
+{
+    readOwnPropertiesNobodyWrote(context, withSourcesOfCopies(context, context.restrict(values, context.universe().knownObjects())), key, target);
+}
+
 static ValueFlowSources moduleExportsValueOf(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
@@ -284,7 +279,7 @@ static ValueFlowSources defaultExportOf(ValueFlowRuleContext& context, ModuleID 
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
-    if (!hasExportTable(module.kind))
+    if (!hasExportTableOf(module.kind))
         return moduleExportsValueOf(context, id);
     if (const ModuleExport* entry = findExport(module, program.stringOf(BuiltinNames::defaultKeyword)))
         return exportedValueOf(context, *entry);
@@ -298,6 +293,18 @@ static ValueFlowSources runtimeNamespaceOf(ValueFlowRuleContext& context, Runtim
     if (BuiltinID namespaceObject = context.program().builtins().namespaceOf(runtimeModule))
         return sourcesOf(only(context, context.universe().objectOf(namespaceObject)));
     return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+}
+
+// The run time has one namespace object for a file: that of the module that stands for the file where ES modules name what they import from it, or the file's own.
+static ValueFlowSources namespaceOfFile(ValueFlowRuleContext& context, ModuleID file)
+{
+    const Program& program = context.program();
+    ValueFlowSources sources = namespaceOf(context, file);
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (commonJsModuleCapturedBy(program, program.modules[index]) == file)
+            append(context, sources, namespaceOf(context, ModuleID(index)));
+    }
+    return sources;
 }
 
 ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
@@ -317,8 +324,13 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
     }
 
     switch (module.requireResult) {
-    case RequireResult::ModuleExports:
-        return moduleExportsValueOf(context, id);
+    case RequireResult::ModuleExports: {
+        ValueFlowSources sources = moduleExportsValueOf(context, id);
+        // Where the file threw and nobody got the error, the loader answers with what it has of the file.
+        if (module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns))
+            append(context, sources, namespaceOfFile(context, id));
+        return sources;
+    }
     case RequireResult::DefaultExport:
         return defaultExportOf(context, id);
     case RequireResult::Namespace: {
@@ -366,11 +378,20 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     for (uint32_t index = 0; index < module.exports.size(); ++index) {
         const ModuleExport& entry = module.exports[index];
         PropertyKeyID key = module.namespaceLayout ? program.at(module.namespaceLayout).fields[index].key : PropertyKeyID();
-        ValueFlowNodeID location = context.written(namespaceObject, key ? ValueFlowName::property(key) : writtenNameOf(program, entry.name));
+        ValueFlowNodeID location = context.written(namespaceObject, key ? ValueFlowName::property(program, key) : writtenNameOf(program, entry.name));
         switch (entry.kind) {
         case ModuleExportKind::Variable:
-        case ModuleExportKind::Indirect:
             connect(context, exportedValueOf(context, entry), location);
+            break;
+        case ModuleExportKind::Indirect:
+            if (program.at(entry.module).kind == ModuleKind::External) {
+                connect(context, exportedValueOf(context, entry), location);
+                break;
+            }
+            useModule(context, entry.module);
+            context.add(ValueFlowProgramNodes::escaped(), only(context, universe.namespaceOf(entry.module)));
+            namespacesInside.append(entry.module);
+            context.add(location, unknownValue(context, sourceOfWhatLoaderMakes(program.at(entry.module))));
             break;
         case ModuleExportKind::Namespace: {
             if (program.at(entry.module).kind == ModuleKind::External) {
@@ -416,6 +437,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         ClimbingSet values = valueOf(context, value);
         context.add(holdersOfNames, context.restrict(values, universe.knownObjects()));
         connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+        listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
     if (module.kind == ModuleKind::Runtime) {
@@ -675,27 +697,9 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         if (isDefaultExport && !mayCaptureDefaultMember(module.exportRule))
             continue;
         context.add(variable, context.universe().undefinedValue());
-        connect(context, ownPropertyOf(context, values, program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name })), variable);
-    }
-}
-
-bool isModuleOperation(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::Builtin:
-    case Opcode::ModuleNamespace:
-    case Opcode::ImportModule:
-    case Opcode::RequireModule:
-    case Opcode::EvaluateModule:
-    case Opcode::ImportDynamic:
-    case Opcode::RequireDynamic:
-    case Opcode::RequireBuiltinModule:
-    case Opcode::ResolveDynamic:
-    case Opcode::DirectEval:
-    case Opcode::NativeBinding:
-        return true;
-    default:
-        return false;
+        std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
+        connect(context, ownPropertyOf(context, values, key), variable);
+        listOwnPropertiesNobodyWrote(context, values, key, variable);
     }
 }
 
@@ -704,6 +708,10 @@ static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleCont
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
     connect(context, requiredValueOf(context, module), statement.result);
+    const BuiltinTable& builtins = context.program().builtins();
+    RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
+    if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
+        context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 
@@ -782,6 +790,19 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
         context.add(statement.thrown, unknown);
 }
 
+static void forEachFormInImage(const Program& program, ModuleID outside, NOESCAPE const Invocable<void(ModuleID)> auto& functor)
+{
+    if (program.at(outside).kind != ModuleKind::External)
+        return;
+    std::span<const uint8_t> path = program.string(program.at(outside).path);
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        std::span<const uint8_t> pathOfForm = program.string(module.path);
+        if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
+            functor(ModuleID(index));
+    }
+}
+
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -789,7 +810,12 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
 
     switch (statement.opcode) {
     case Opcode::Builtin:
-        requireModule(statement, context, compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())));
+        if (ModuleID module = compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())))
+            requireModule(statement, context, module);
+        else if (statement.result) {
+            context.add(statement.result, only(context, context.universe().objectOf(operation.builtin())));
+            context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
+        }
         return;
     case Opcode::ModuleNamespace:
         noteRequest(context, statement.function, operation.module());
@@ -797,13 +823,21 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         connect(context, namespaceOf(context, operation.module(), operation.phase()), statement.result);
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
-    case Opcode::ImportModule:
-        noteRequest(context, statement.function, operation.module());
-        evaluateModule(context, operation.module());
-        context.connect(context.lookup(valueOf(context, namespaceOf(context, operation.module())), awaitedValueName), settledValueOfPromiseAt(statement, context));
-        connect(context, evaluationErrorsOf(context, operation.module()), reasonOfPromiseAt(statement, context));
-        connect(context, evaluationErrorsOf(context, operation.module()), ValueFlowProgramNodes::escaped());
+    case Opcode::ImportModule: {
+        escapeOperands(statement, context);
+        auto import = [&](ModuleID module) {
+            noteRequest(context, statement.function, module);
+            evaluateModule(context, module);
+            context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
+            connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
+            connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
+        };
+        import(operation.module());
+        // The attributes say as what a module outside of the image is loaded, and the image may hold it as that.
+        if (!context.operandsOf(statement).empty())
+            forEachFormInImage(program, operation.module(), import);
         break;
+    }
     case Opcode::RequireModule:
         requireModule(statement, context, operation.module());
         return;

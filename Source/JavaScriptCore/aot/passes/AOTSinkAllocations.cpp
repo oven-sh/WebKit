@@ -247,6 +247,13 @@ bool AllocationSinking::mayBeListOfNumbers(VirtualObjectID object) const
     });
 }
 
+// The reads that were followed before are asked again whether their types take such a value.
+void AllocationSinking::didStoreUndefinedOrNull(VirtualObjectID object, uint32_t field)
+{
+    if (familyOf(object).addFieldThatMayHoldUndefinedOrNull(field))
+        m_mustSolveAgain = true;
+}
+
 void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID mergeBlock)
 {
     Candidate& candidate = at(object);
@@ -264,7 +271,7 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
 
-    SinkingPolicy policy { .leavesWhenNoAllocationPays = true };
+    SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true };
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -732,8 +739,8 @@ Vector<Edge, 2> AllocationSinking::collectCellEdges(VirtualObjectID object, Bloc
         if (!entering)
             continue;
         // What may be a cell on a way that seldom runs is built there.
-        BlockFrequency frequency = m_function.at(edge.from).frequency;
-        bool isRarer = frequency != m_function.at(merge).frequency && rarerOf(frequency, m_function.at(merge).frequency) == frequency;
+        Expected<BlockFrequency> frequency = m_function.at(edge.from).frequency;
+        bool isRarer = isRarerThan(frequency, m_function.at(merge).frequency).predicted();
         if (entering->isCell() || (isRarer && entering->hasCell()))
             cellEdges.append(edge);
         else
@@ -821,7 +828,7 @@ void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> r
 // A way that seldom runs and makes the object counts the same, where it is a read or a test behind the meeting that wants the cell.
 bool AllocationSinking::meetsObjectMadeOnAnotherWay(const Candidate& join) const
 {
-    if (join.isLeftOut || m_function.at(join.block).frequency != BlockFrequency::Normal)
+    if (join.isLeftOut || m_function.at(join.block).frequency.predicted() != BlockFrequency::Normal)
         return false;
     bool isMadeOnEveryPath = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
         return candidate.family == join.family && allocatesOnEveryPath(candidate);
@@ -835,7 +842,7 @@ bool AllocationSinking::meetsObjectMadeOnAnotherWay(const Candidate& join) const
         ValueID incoming = valuePassedOn(m_function, edge, parameterIndex);
         if (!incoming)
             return false;
-        return (isBuiltForRead && m_function.at(edge.from).frequency != BlockFrequency::Normal) || m_function.at(sameObjectThroughCasts(m_function, incoming)).opcode == Opcode::ResultAt;
+        return (isBuiltForRead && m_function.at(edge.from).frequency.predicted() != BlockFrequency::Normal) || m_function.at(sameObjectThroughCasts(m_function, incoming)).opcode == Opcode::ResultAt;
     });
 }
 
@@ -845,13 +852,14 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
 {
     Value list = function.at(function.at(point.block).values[point.index]);
     TypeID typeOfList = list.type;
-    Type numbers = typeOfNumbersIn(arrayStorageAtAllocation(program, program.at(typeOfList)));
+    ArrayStorage storage = arrayStorageAtAllocation(program, program.at(typeOfList));
+    Type numbers = typeOfNumbersIn(storage);
     IRBuilder::Expansion expansion = builder.beginExpansion(point);
     BlockID holdsOtherValue;
 
     Vector<ValueID, 4> elements;
     for (ValueID element : list.elementsOperands()) {
-        if (program.typeOf(function, element).isSubsetOf(numbers, program)) {
+        if (fitsStorageOfLiteral(storage, program.typeOf(function, element))) {
             elements.append(element);
             continue;
         }
@@ -866,13 +874,13 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
     Value listOfNumbers = list;
     listOfNumbers.setContents(builder.types().intern(program.at(list.contents()).intersectWith(numbers, builder.types())));
     listOfNumbers.setElementsOperands(elements.span());
-    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), typeOfList)));
+    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), Proven::byConstruction(typeOfList))));
 
     if (!holdsOtherValue)
         return;
     builder.moveToEndOf(holdsOtherValue);
     list.setContents(TypeTable::anything);
-    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), typeOfList)) });
+    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), Proven::byConstruction(typeOfList))) });
 }
 
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
@@ -888,6 +896,13 @@ bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
         if (list.opcode != Opcode::NewArray || location.placement != ValuePlacement::InBlock)
             continue;
         if (list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
+            continue;
+        // Nothing is left to ask where every element is such a number and the list says so: the same list would be written again.
+        ArrayStorage storage = arrayStorageAtAllocation(m_program, m_program.at(list.type));
+        bool isListOfNumbersAlready = fitsStorageOfLiteral(storage, m_program.at(list.contents())) && std::ranges::all_of(list.elementsOperands(), [&](ValueID element) {
+            return fitsStorageOfLiteral(storage, m_program.typeOf(m_function, element));
+        });
+        if (isListOfNumbersAlready)
             continue;
         // Only an allocation is a guard of what it makes.
         bool isGuard = std::ranges::any_of(m_analyses.useLists().usesOf(literal), [&](const Use& use) {

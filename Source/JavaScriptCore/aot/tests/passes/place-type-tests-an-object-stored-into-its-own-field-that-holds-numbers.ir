@@ -1,4 +1,4 @@
-# An unknown value is stored into its own field. It is expected to be the one layout that has such a field, and that field holds numbers: no value passes both tests, so the store behind them stands in a block that nothing enters, with a receiver of type never
+# An unknown value is stored into its own field. It is expected to be the one layout that has such a field, and that field holds numbers: no value passes both tests, so the store gets no tests and stays by name
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot check=VerifyEachPass
 # RUN: pipeline PlaceTypeTests
@@ -21,10 +21,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="mark" parameters=[{type=anything}] results=[{type=anything}] {
     PropSet v0, v0 key="self"
     Return v0
-# CHECK: = TypeTest v0 testedType=L0
-# CHECK: ([[nothing]]: never):
-# CHECK-NEXT: PutSlot [[nothing]], -, [[nothing]] key="self" receivers=[L0] level=Expected
+# CHECK-NOT: = TypeTest
 # CHECK: PropSet v0, v0 key="self"
-# CHECK: ([[table]]: L0):
-# CHECK-NEXT: : false = TypeTest [[table]] testedType=int
+# CHECK-NOT: PutSlot
 }

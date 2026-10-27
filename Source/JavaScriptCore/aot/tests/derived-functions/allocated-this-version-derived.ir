@@ -17,7 +17,7 @@ function f0 name="main" results=[{type=undefined}] {
 function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0|L1|L2|L3|L4
+    v4 = AssumeType v3 provenType=L0|L1|L2|L3|L4
     PropSet v4, v1 key="x"
     Return v4
 }
@@ -46,7 +46,7 @@ function f5 name="Unlinked" kind=DerivedConstructor flags=[HasNewTarget, TakesCa
 function f6 name="Cached" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=undefined|object}] results=[{type=object}] constructedClass=L5 {
     v2 = GetConstructPrototype v0 layout=L5
     v3 = NewObject v2 layout=L5
-    v4 = AssumeType v3 castType=L5|L6
+    v4 = AssumeType v3 provenType=L5|L6
     v5 = TypeTest v1 testedType=object
     Branch v5 -> taken b1(| 0), notTaken b2()
   b1(v6):
@@ -94,7 +94,7 @@ function f7 name="BelowCached" kind=DerivedConstructor flags=[HasNewTarget, Take
 # CHECK-NEXT: Return [[relinkableUndefined]]
 # CHECK-NEXT: [[startsOver]]() frequency=Rare:
 # CHECK-NEXT: [[constructed]]:{{*}}= CallDirect [[relinkableCallee]], [[relinkableNewTarget]], [[relinkableX]] function=f4 [isConstruction]
-# CHECK-NEXT: Return [[constructed]]
+# CHECK-NEXT: ReturnCall [[constructed]] requirement=Allowed
 
 # CHECK: function [[unlinkedVersion]] name="Unlinked" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
 # CHECK-NOT: CallDirect

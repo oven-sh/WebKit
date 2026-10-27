@@ -68,6 +68,9 @@ export const roleEnumNames: ReadonlyMap<string, string> = new Map([
 ]);
 export const idKindsWithRoles: ReadonlySet<string> = new Set(roleEnumNames.keys());
 
+export const typeHolders = ["ExpectedType", "ProvenType"] as const;
+export type TypeHolder = (typeof typeHolders)[number];
+
 export const primitiveWords = ["Undefined", "Null", "False", "True", "Number", "String", "Symbol", "BigInt"] as const;
 export type PrimitiveWord = (typeof primitiveWords)[number];
 
@@ -181,6 +184,8 @@ export interface SchemaRecord {
   readonly isCustomEngine: boolean;
   readonly isCustomText: boolean;
   readonly isExtendedEngine: boolean;
+  // The struct stands in AOT<name>.h with the same fields, and what is generated for it is its friend.
+  readonly isHandwrittenStruct: boolean;
   readonly fields: readonly Field[];
   readonly wireFields: readonly Field[];
   readonly wireWords: number;
@@ -190,6 +195,48 @@ export interface SchemaRecord {
   readonly hasEngineFields: boolean;
   readonly isPayload: boolean;
   readonly file: SchemaFile;
+  readonly location: Location;
+}
+
+export type PackedKind =
+  | { readonly tag: "Bool" | "CodeOffset" | "Signed" | "Bytes" }
+  | { readonly tag: "Number"; readonly cppType: "uint32_t" | "uint64_t" }
+  | { readonly tag: "Enum"; readonly type: SchemaEnum }
+  | { readonly tag: "Id" | "ExternalEnum"; readonly cppType: string }
+  | { readonly tag: "Record" | "List"; readonly element: PackedRecord };
+
+export interface PackedField {
+  readonly name: string;
+  readonly kind: PackedKind;
+  readonly shift: number;
+  /** Null: all the bits that the fields in front of it leave. */
+  readonly width: number | null;
+  readonly location: Location;
+}
+
+/** A Bool field of an earlier word, or a Bool column of an enumerator there. */
+export interface PackedCondition {
+  readonly field: PackedField;
+  readonly column: EnumColumn | null;
+  readonly isNegated: boolean;
+}
+
+/** What the bits above the common fields hold goes by one of those fields. */
+export interface PackedArms {
+  readonly condition: PackedField;
+  readonly whenTrue: readonly PackedField[];
+  readonly whenFalse: readonly PackedField[];
+}
+
+export interface PackedWord {
+  readonly fields: readonly PackedField[];
+  readonly arms: PackedArms | null;
+  readonly condition: PackedCondition | null;
+}
+
+export interface PackedRecord {
+  readonly name: string;
+  readonly words: readonly PackedWord[];
   readonly location: Location;
 }
 
@@ -329,6 +376,7 @@ export interface PayloadField {
   readonly tag: "Payload";
   readonly name: string;
   readonly kind: Kind;
+  readonly heldAs: TypeHolder | null;
   readonly payloadKind: Member;
   readonly elementPayloadKind: Member | null;
   readonly isOptional: boolean;
@@ -501,6 +549,7 @@ export interface Schema {
   readonly idKinds: readonly IdKind[];
   readonly externals: readonly External[];
   readonly types: readonly SchemaType[];
+  readonly packedRecords: readonly PackedRecord[];
   readonly lists: readonly ProgramList[];
   readonly heaps: readonly Heap[];
   readonly opaqueKinds: readonly OpaqueKind[];

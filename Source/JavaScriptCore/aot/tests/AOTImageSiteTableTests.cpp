@@ -93,20 +93,22 @@ static void checkCallSites(const TestImage& image, uint32_t function, const Vect
                 inFront = &site;
         }
         std::optional<CallSiteRecord> record = table.callSiteAt(index, offset);
-        if (!inFront || inFront->isConstruct || inFront->isTailCall) {
+        if (!inFront || inFront->isConstruct || inFront->isTailCall || inFront->calledBuiltin) {
             AOT_TEST_CHECK(!record);
             return;
         }
         AOT_TEST_CHECK(record && record->callSite.bits() == inFront->number && record->inlineFrame == inFront->inlineFrame);
-        AOT_TEST_CHECK(!record->isConstruct && !record->isTailCall && !record->firstReadSite);
+        AOT_TEST_CHECK(record->kind == CallSiteKind::Plain && !record->calledBuiltin && !record->firstReadSite);
     };
     for (const ExpectedSite& site : sites) {
         std::optional<CallSiteRecord> record = table.callSiteAt(index, site.returnOffset);
         AOT_TEST_CHECK(record);
         AOT_TEST_CHECK(record->callSite.bits() == site.number);
         AOT_TEST_CHECK(record->inlineFrame == site.inlineFrame);
-        AOT_TEST_CHECK(record->isConstruct == site.isConstruct);
-        AOT_TEST_CHECK(record->isTailCall == site.isTailCall);
+        AOT_TEST_CHECK(record->isConstruct() == site.isConstruct);
+        AOT_TEST_CHECK(record->isTailCall() == site.isTailCall);
+        AOT_TEST_CHECK(record->isInsideCallee() == site.isInsideCallee);
+        AOT_TEST_CHECK(record->calledBuiltin == site.calledBuiltin);
         std::optional<uint32_t> firstReadSite;
         if (record->firstReadSite)
             firstReadSite = record->firstReadSite->bits();
@@ -191,15 +193,24 @@ static void testCallSitesNoStream()
 
 static void testCallSitesFlags()
 {
-    SiteBody body = bodyWithCalls(1, 4);
+    SiteBody body = bodyWithCalls(1, 8);
     Vector<FlaggedSite>& flaggedSites = body.code.sites.flaggedSites;
-    flaggedSites.append(FlaggedSite { 2, SiteFlag::Constructs });
-    flaggedSites.append(FlaggedSite { 3, SiteFlag::IsTailCall });
-    flaggedSites.append(FlaggedSite { 4, { SiteFlag::Constructs, SiteFlag::IsTailCall } });
+    flaggedSites.append(FlaggedSite { 2, CallSiteKind::Construct });
+    flaggedSites.append(FlaggedSite { 3, CallSiteKind::TailCall });
+    flaggedSites.append(FlaggedSite { 4, CallSiteKind::TailConstruct });
+    flaggedSites.append(FlaggedSite { 5, CallSiteKind::InsideCallee });
+    flaggedSites.append(FlaggedSite { 6, CallSiteKind::InsideBuiltin, BuiltinID(0) });
+    flaggedSites.append(FlaggedSite { 7, CallSiteKind::InsideBuiltinCallee, BuiltinID(300) });
     body.sites[1].isConstruct = true;
     body.sites[2].isTailCall = true;
     body.sites[3].isConstruct = true;
     body.sites[3].isTailCall = true;
+    body.sites[4].isTailCall = true;
+    body.sites[4].isInsideCallee = true;
+    body.sites[5].calledBuiltin = BuiltinID(0);
+    body.sites[6].isTailCall = true;
+    body.sites[6].isInsideCallee = true;
+    body.sites[6].calledBuiltin = BuiltinID(300);
     checkBodyCallSites(WTF::move(body));
 }
 
@@ -209,7 +220,7 @@ static void testCallSitesFlagWithoutCode()
     startFramedBody(sketch, 1);
     sketch.addSite();
     sketch.code().sites.numberOfSitesWithoutCode = 1;
-    sketch.code().sites.flaggedSites.append(FlaggedSite { 1, SiteFlag::Constructs });
+    sketch.code().sites.flaggedSites.append(FlaggedSite { 1, CallSiteKind::Construct });
     Vector<ExpectedSite> expected;
     appendCall(sketch, expected, 0);
     AOT_TEST_CHECK(expected[0].number == 2);
@@ -246,9 +257,13 @@ static void checkPositionsOf(const BodiesImage& built, uint32_t function, const 
 {
     uint32_t index = built.image.indexOf(function);
     uint32_t count = static_cast<uint32_t>(positions.size());
-    for (uint32_t k = 0; k < count; ++k)
+    for (uint32_t k = 0; k < count; ++k) {
         AOT_TEST_CHECK(built.table().positionOf(index, CallSiteIndex(k)) == sourcePositionOf(positions[k]));
+        SourcePosition oneColumnInFront { { positions[k].line, positions[k].column - 1 }, positions[k].source };
+        AOT_TEST_CHECK(built.table().positionOf(index, methodReadSite(CallSiteIndex(k), 1)) == oneColumnInFront);
+    }
     AOT_TEST_CHECK(!built.table().positionOf(index, CallSiteIndex(count)));
+    AOT_TEST_CHECK(!built.table().positionOf(index, methodReadSite(CallSiteIndex(count), 1)));
 }
 
 static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built, unsigned frame, const InlineFrameShape& shape, uint32_t callSite)
@@ -507,7 +522,7 @@ static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> ta
         sites.positions = positions;
         for (OwnPosition ofFunctionInFront : { OwnPosition { }, OwnPosition::of(sites), OwnPosition { 0xffffffff, OwnPosition::of(sites).source }, OwnPosition { 7, 0xffffffff }, OwnPosition { 0, 1 } }) {
             Vector<uint8_t> stream;
-            encodePositions(stream, sites, ofFunctionInFront);
+            encodePositions(stream, sites, nullptr, ofFunctionInFront);
             checkPositions(any.table(), 0, stream.span().data(), ofFunctionInFront, positions);
         }
     }
@@ -567,7 +582,7 @@ static void testPositionsEntrySizes()
         SiteDescription sites;
         sites.positions = WTF::move(positions);
         Vector<uint8_t> stream;
-        encodePositions(stream, sites, ofFunctionInFront);
+        encodePositions(stream, sites, nullptr, ofFunctionInFront);
         return stream.size();
     };
     AOT_TEST_CHECK(sizeOfEntry({ positionAt(1000, 5, ModuleID(20000u)) }, { 990, 20001 }) == 3);

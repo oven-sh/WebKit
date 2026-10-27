@@ -110,7 +110,7 @@ static bool countsUpToLengthOfData(FunctionAnalyses& analyses, const NaturalLoop
     });
 }
 
-static bool likelyPathsAlwaysComplete(FunctionAnalyses& analyses, const NaturalLoop& loop)
+static Expected<bool> likelyPathsAlwaysComplete(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
     const Function& function = analyses.function();
     const NaturalLoops& loops = analyses.naturalLoops();
@@ -119,7 +119,7 @@ static bool likelyPathsAlwaysComplete(FunctionAnalyses& analyses, const NaturalL
         if (loops.innerMostLoopOf(id) != &loop)
             return false;
         const Block& block = function.at(id);
-        if (block.frequency == BlockFrequency::Rare)
+        if (block.frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (ValueID value : block.values) {
             if (function.at(value).opcode != Opcode::LoopHint && !analyses.effectsOf(value).onAnyEdge().alwaysCompletes())
@@ -136,10 +136,10 @@ HintEmitter::HintEmitter(CodeGenerator& generator)
 {
 }
 
-bool HintEmitter::endsWithinLengthOfData(BlockID block)
+Expected<bool> HintEmitter::endsWithinLengthOfData(BlockID block)
 {
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    return loop && countsUpToLengthOfData(analyses(), *loop) && likelyPathsAlwaysComplete(analyses(), *loop);
+    return loop && countsUpToLengthOfData(analyses(), *loop) && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
 }
 
 // In a function without handlers an allocation that finds no room throws by itself.
@@ -164,7 +164,7 @@ void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     if (generator().validates())
         emitter<BarrierEmitter>().validateBeforeCollection(value);
-    if (!endsWithinLengthOfData(value.block()) || allocatesWhereErrorsAreCaught(value.block()))
+    if (!endsWithinLengthOfData(value.block()).predicted() || allocatesWhereErrorsAreCaught(value.block()))
         emitPoll(value);
 }
 

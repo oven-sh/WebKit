@@ -32,7 +32,7 @@ struct OverloadQuery {
     BuiltinID builtin;
     BuiltinCallMode mode { BuiltinCallMode::Call };
     const BuiltinOperandTypes& proven;
-    const BuiltinOperandTypes& expected;
+    Expected<const BuiltinOperandTypes&> expected;
 };
 
 struct OverloadMatch {
@@ -59,6 +59,7 @@ struct OperandStep {
 struct BuiltinCallPlan {
     BuiltinMatchState state { BuiltinMatchState::Unknown };
     BuiltinOverloadID overload;
+    BuiltinID function;
     Vector<OperandRequirement, 2> requirements;
     Vector<OperandStep, 4> steps;
     bool hasReceiver { false };

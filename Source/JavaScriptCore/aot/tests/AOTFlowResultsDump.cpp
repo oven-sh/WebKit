@@ -180,7 +180,7 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         printWithLetter(accessSiteLetter, call.site);
         out.print(" -> "_s);
         printer.print(call.callee);
-        out.print(" "_s, nameOf(call.kind), " "_s, std::span(builtinCallbackTimesWords)[static_cast<size_t>(call.times)]);
+        out.print(" "_s, nameOf(call.kind), " "_s, std::span(builtinCallbackTimesWords)[static_cast<size_t>(call.times.predicted())]);
         if (call.isInCycle)
             out.print(" cycle"_s);
         printer.endLine();

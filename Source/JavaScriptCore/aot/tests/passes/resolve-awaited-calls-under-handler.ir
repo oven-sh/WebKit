@@ -61,7 +61,7 @@ function f10 name="oneBlockWithTypedAwait" role=CoroutineBody flags=[IsAsync] pa
 # CHECK-NOT: AwaitBySavingFrame
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
 # CHECK-NEXT: [[awaited]]: anything = AwaitCallBySavingFrame v1, v0 function=f8 @20
-# CHECK-NEXT: [[number]]: number = AssumeType [[awaited]] castType=number @21
+# CHECK-NEXT: [[number]]: number = AssumeType [[awaited]] provenType=number @21
 # CHECK-NEXT: Jump -> next [[rest]]([[number]])
 # CHECK: [[rest]](v3: number) handler=b2(v0):
 # CHECK-NEXT: v4: number = Negate v3
@@ -131,7 +131,7 @@ function f13 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
 # CHECK-NOT: Upcast
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
 # CHECK-NEXT: [[first]]: anything = AwaitCallBySavingFrame v1, v0 function=f8 @50
-# CHECK-NEXT: [[firstNumber]]: number = AssumeType [[first]] castType=number @51
+# CHECK-NEXT: [[firstNumber]]: number = AssumeType [[first]] provenType=number @51
 # CHECK-NEXT: Jump -> next [[afterFirst]]([[firstNumber]])
 # CHECK: [[afterThird]](v8: number) handler=b2(v0):
 # CHECK-NEXT: v9: number = Add v3, v8
@@ -139,6 +139,6 @@ function f13 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
 # CHECK: [[afterFirst]](v3: number) handler=b2(v0):
 # CHECK-NEXT: v6: anything = AwaitCallBySavingFrame v1, v3 function=f7 @52
 # CHECK-NEXT: [[third]]: anything = AwaitCallBySavingFrame v1, v6 function=f8 @54
-# CHECK-NEXT: [[thirdNumber]]: number = AssumeType [[third]] castType=number @55
+# CHECK-NEXT: [[thirdNumber]]: number = AssumeType [[third]] provenType=number @55
 # CHECK-NEXT: Jump -> next [[afterThird]]([[thirdNumber]])
 }

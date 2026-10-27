@@ -17,6 +17,7 @@
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTLayout.h"
+#include "AOTLedgerFields.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
@@ -39,6 +40,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 inline constexpr Protocols protocolsListingKeys { Protocol::OwnKeys, Protocol::OwnValues, Protocol::ToJSON };
+// Which own keys of an operand the program gets to see, in their order.
+enum class ShownKeys : uint8_t { None, Enumerable, All };
 
 inline constexpr OptionSet<ObjectMutation> mutationsThatReach { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript };
 
@@ -61,12 +64,6 @@ inline LayoutID layoutExpectedAbove(const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);
     return layout.isDerived() ? layout.flow.base : predictedHeritageOf(layout);
-}
-
-inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
-{
-    const LayoutFlow& flow = application.layouts[id.index()].flow;
-    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
 }
 
 using SetsByNumber = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -206,18 +203,27 @@ class LayoutsOfObjects {
 public:
     LayoutsOfObjects(const ValueFlowResultInputs&, ValueFlowHeapView&);
 
+    // Each layout once.
     void forEachLayoutOf(ValueFlowObjectID object, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        forEachLayoutOfEach([&](const auto& visit) {
-            visit(object);
-        }, functor);
+        LayoutID named = namedLayoutOf(object);
+        if (!named)
+            return;
+        functor(named);
+        auto selected = m_selectedLayouts.find(object.index());
+        if (selected == m_selectedLayouts.end())
+            return;
+        for (LayoutID other : m_listsOfSelectedLayouts[selected->value.list]) {
+            if (other != named)
+                functor(other);
+        }
+        forEachLayoutIn(SharedLists { selected->value.everyEscapedClass, selected->value.everyLostClass }, functor);
     }
 
+    // A layout may come more than once.
     void forEachLayoutOfMembers(ValueSetID objects, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        forEachLayoutOfEach([&](const auto& visit) {
-            m_inputs.sets().forEachMember(objects, visit);
-        }, functor);
+        forEachLayoutIn(forEachLayoutListedForMembers(objects, functor), functor);
     }
 
     struct SharedLists {
@@ -225,12 +231,41 @@ public:
         bool everyLostClass { false };
     };
 
+    // A layout may come more than once. A list that many members share is walked once.
     SharedLists forEachLayoutListedForMembers(ValueSetID objects, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        return forEachListedLayoutOfEach([&](const auto& visit) {
-            m_inputs.sets().forEachMember(objects, visit);
-        }, functor);
+        Vector<uint32_t, 4> lists;
+        SharedLists shared = forEachLayoutNamedByMembers(objects, lists, functor);
+        for (uint32_t list : lists) {
+            for (LayoutID layout : m_listsOfSelectedLayouts[list])
+                functor(layout);
+        }
+        return shared;
     }
+
+    // What each member names by itself, which may come more than once, and the lists that the members select from, each once.
+    SharedLists forEachLayoutNamedByMembers(ValueSetID objects, Vector<uint32_t, 4>& lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
+    {
+        SharedLists shared;
+        m_inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+            LayoutID named = namedLayoutOf(object);
+            if (!named)
+                return;
+            functor(named);
+            auto selected = m_selectedLayouts.find(object.index());
+            if (selected == m_selectedLayouts.end())
+                return;
+            if (lists.isEmpty() || lists.last() != selected->value.list)
+                lists.append(selected->value.list);
+            shared.everyEscapedClass |= selected->value.everyEscapedClass;
+            shared.everyLostClass |= selected->value.everyLostClass;
+        });
+        AOT::sort(lists);
+        removeRepeatedElements(lists);
+        return shared;
+    }
+
+    std::span<const LayoutID> listOfSelectedLayouts(uint32_t list) const LIFETIME_BOUND { return m_listsOfSelectedLayouts[list].span(); }
 
     std::span<const LayoutID> escapedClasses() const LIFETIME_BOUND { return m_escapedClasses.span(); }
     std::span<const LayoutID> lostClasses() const LIFETIME_BOUND { return m_lostClasses.span(); }
@@ -239,33 +274,13 @@ public:
 
 private:
     struct SelectedLayouts {
-        Vector<LayoutID, 2> listed;
+        uint32_t list { 0 };
         bool everyEscapedClass { false };
         bool everyLostClass { false };
     };
 
-    SharedLists forEachListedLayoutOfEach(NOESCAPE const auto& forEachObject, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
+    void forEachLayoutIn(SharedLists lists, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
-        SharedLists lists;
-        forEachObject([&](ValueFlowObjectID object) {
-            LayoutID layout = namedLayoutOf(object);
-            if (!layout)
-                return;
-            functor(layout);
-            auto selected = m_selectedLayouts.find(object.index());
-            if (selected == m_selectedLayouts.end())
-                return;
-            for (LayoutID other : selected->value.listed)
-                functor(other);
-            lists.everyEscapedClass |= selected->value.everyEscapedClass;
-            lists.everyLostClass |= selected->value.everyLostClass;
-        });
-        return lists;
-    }
-
-    void forEachLayoutOfEach(NOESCAPE const auto& forEachObject, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
-    {
-        SharedLists lists = forEachListedLayoutOfEach(forEachObject, functor);
         if (lists.everyEscapedClass) {
             for (LayoutID layout : m_escapedClasses)
                 functor(layout);
@@ -281,6 +296,8 @@ private:
 
     const ValueFlowResultInputs& m_inputs;
     HashMap<uint32_t, SelectedLayouts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_selectedLayouts;
+    // The classes whose prototype objects an allocation may be given, in order: one list for all the allocations that may be given the same ones.
+    Vector<Vector<LayoutID>> m_listsOfSelectedLayouts;
     Vector<LayoutID> m_escapedClasses;
     Vector<LayoutID> m_lostClasses;
     Vector<ValueSetID> m_objectsOfLayout;
@@ -291,14 +308,15 @@ struct StoredUnderKey {
     ValueSetID valueFromOperations { ValueSets::nothing };
     ValueSetID getters { ValueSets::nothing };
     ValueSetID setters { ValueSets::nothing };
-    bool isStoredAfterCreation { false };
-    bool mayBeAccessor { false };
+    bool isStoredAfterCreation : 1 { false };
+    bool mayBeAccessor : 1 { false };
+    bool isGivenValueByOperation : 1 { false };
+    bool isGivenValueByDefinition : 1 { false };
+    bool isNamedByOperation : 1 { false };
+    bool isStoredByConstructor : 1 { false };
+    bool mayBeOtherThanIntegers : 1 { false };
     uint8_t accessorForms { 0 };
-    bool isGivenValueByOperation { false };
-    bool isGivenValueByDefinition { false };
-    bool isNamedByOperation { false };
-    bool isStoredByConstructor { false };
-    bool mayBeOtherThanIntegers { false };
+    OptionSet<Actor> writers;
     Range integers { Range::empty() };
 
     ValueFlowNumbers numbers() const { return { mayBeOtherThanIntegers, integers }; }
@@ -388,6 +406,8 @@ struct AccessorForms {
     }
 };
 
+inline constexpr uint64_t noCopyLeavingOutKeys = UINT64_MAX;
+
 struct StoresIntoObjects {
     StoresUnderKeys underKey;
     ValueSetID underUnknownKey { ValueSets::nothing };
@@ -396,10 +416,14 @@ struct StoresIntoObjects {
     bool getsAccessorUnderUnknownKey { false };
     bool getsCopiedProperties { false };
     bool getsCopyWithoutComputedKey { false };
+    // `const { secret, ...visible } = record`: the names that every copy into such an object leaves out.
+    std::optional<Vector<PropertyKeyID, 2>> keysLeftOutOfEveryCopy;
     ValueSetID valueFromOperationsUnderUnknownKey { ValueSets::nothing };
     bool isGivenValueByOperationUnderUnknownKey { false };
     ValueSetID gettersUnderUnknownKey { ValueSets::nothing };
     uint8_t formsOfAccessorsUnderUnknownKey { 0 };
+    // Who wrote under a name that nobody lists: an unknown key, an accessor under one, a copy.
+    OptionSet<Actor> writersUnderNamesNobodyLists;
 
     bool getsNameNobodyLists() const { return underUnknownKey != ValueSets::nothing || isStoredUnderIndex || getsAccessorUnderUnknownKey || getsCopiedProperties; }
 };
@@ -411,6 +435,9 @@ struct Writer {
     LayoutSetID familyOfReceiver;
 };
 
+// A store through a placeholder reaches the objects of a layout that escaped or were lost, and none that the analysis still follows.
+enum class ObjectsOfLayout : uint8_t { All, Followed };
+
 class StoresByLayout {
 public:
     StoresByLayout(const ValueFlowResultInputs&, const FlowResultTables&, ValueFlowHeapView&, const LayoutsOfObjects&);
@@ -418,11 +445,12 @@ public:
 
     ValueSetID storedUnder(LayoutID layout, PropertyKeyID key) { return storedUnder(m_heap.maker(), layout, key); }
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
-    ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID) const;
+    ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
-    bool getsCopiedProperties(LayoutID) const;
+    OptionSet<Actor> writersSeenUnder(LayoutID, PropertyKeyID) const;
+    bool getsCopiedProperties(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool getsNameNobodyLists(LayoutID) const;
-    Vector<PropertyKeyID> keysStoredInto(LayoutID) const;
+    Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     Vector<PropertyKeyID> keysStoredIntoKnownObjects(LayoutID) const;
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
@@ -434,12 +462,13 @@ public:
             || (m_isEscapedClass.quickGet(layout.index()) && !m_keysIntoEveryEscapedClass.isEmpty())
             || (m_isLostClass.quickGet(layout.index()) && !m_keysIntoEveryLostClass.isEmpty());
     }
-    bool mayGetAccessorUnder(LayoutID, PropertyKeyID) const;
+    bool mayGetAccessorUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
+    void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
     std::span<const PropertyKeyID> keysReadFrom(LayoutID layout) const LIFETIME_BOUND { return m_keysReadFrom[layout.index()].span(); }
 
     bool hasEscapedObject(LayoutID layout) const { return m_hasEscapedObject.quickGet(layout.index()); }
@@ -485,12 +514,14 @@ private:
         bool isWrittenByCallOfBuiltin;
         bool definesValue;
         bool leavesOutComputedKey;
+        uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
+        OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
 
         ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
-        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData }; }
+        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys }; }
         uint32_t hashOfGroup() const
         {
             uint64_t hash = (static_cast<uint64_t>(payload) << 32 | set) * 0x9e3779b97f4a7c15ull;
@@ -526,7 +557,14 @@ private:
     LayoutSetID familyOfReceiverOf(const ValueFlowStatement&) const;
     void listWrites();
     void forEachWriteAmong(std::span<const uint32_t>, NOESCAPE const Invocable<void(const Writer&, const ValueFlowNodeKey&, ValueSetID value)> auto&) const;
-    ObjectsOfSet findObjectsOf(ValueSetID) const;
+    // `layouts` of a set whose members select from lists, in its parts: the lists, and what the members name that is in none of them.
+    struct PartsOfLayouts {
+        uint32_t position { 0 };
+        Vector<LayoutID> named;
+        Vector<uint32_t, 4> lists;
+    };
+
+    ObjectsOfSet findObjectsOf(ValueSetID, PartsOfLayouts* = nullptr) const;
     std::optional<uint32_t> positionOfSetLookedAt(ValueSetID) const;
     const ObjectsOfSet& objectsOfSetOfWrite(ValueSetID) const;
     void forEachLayoutListedAmong(const ObjectsOfSet&, const Writer&, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
@@ -540,7 +578,16 @@ private:
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
     ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;
     void noteWrites();
-    void noteWritesInto(ValueSetMaker&, LayoutID, const WritesThroughSet&);
+    void noteWritesInto(ValueSetMaker&, StoresIntoObjects&, LayoutID, const WritesThroughSet&);
+    static void noteWriters(StoresIntoObjects&, const WritesThroughSet&);
+    std::span<const uint32_t> sharedStoresOf(LayoutID layout) const LIFETIME_BOUND
+    {
+        if (m_firstSharedStoresOfLayout.isEmpty())
+            return { };
+        uint32_t first = m_firstSharedStoresOfLayout[layout.index()];
+        return m_sharedStoresOfLayouts.subspan(first, m_firstSharedStoresOfLayout[layout.index() + 1] - first);
+    }
+    void forEachTableOfKnownObjects(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
     void noteNamesStoredThroughDeclaredReceivers();
     using AccessesByKeyAndLayout = HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
@@ -550,9 +597,13 @@ private:
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
     void noteCodeWithoutSolve(const Function&);
-    std::optional<Vector<LayoutID, 4>> layoutsCopiedOnto(LayoutID);
+    struct CopiedObjects {
+        ValueSetID objects;
+        Vector<LayoutID, 4> layouts;
+    };
+    std::optional<CopiedObjects> objectsCopiedOnto(LayoutID);
     void followCopiedProperties();
-    void forEachSourceOf(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
+    void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 
     const ValueFlowResultInputs& m_inputs;
     ValueFlowHeapView& m_heap;
@@ -565,6 +616,12 @@ private:
     Vector<ObjectsOfSet> m_objectsOfOtherSets;
     HashedIndex m_positionOfSetLookedAt;
     Vector<StoresIntoObjects> m_storesOfLayout;
+    // What is stored under keys through sets that reach many layouts together, once for all of them: the objects of a layout hold what its own table says and what these say.
+    Vector<StoresIntoObjects> m_storesSharedByLayouts;
+    Vector<Vector<PropertyKeyID>> m_keysOfSharedStores;
+    Vector<Vector<PropertyKeyID>> m_keysNamedInSharedStores;
+    Vector<uint32_t> m_firstSharedStoresOfLayout;
+    Vector<uint32_t> m_sharedStoresOfLayouts;
     Vector<Vector<LayoutID>> m_layoutsExpectedDirectlyBelow;
     HashMap<uint32_t, Vector<LayoutID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsAdmittedBy;
     Lock m_lockOfLayoutsAdmittedBy;
@@ -601,6 +658,9 @@ public:
 
     bool mayBeEnumerated(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_enumerated); }
     ValueSetID objectsThatMayBeEnumerated() const { return m_enumerated; }
+    ValueSetID objectsWithAllKeysShown() const { return m_withAllKeysShown; }
+    ValueSetID objectsWithEnumerableKeysShown() const { return m_withEnumerableKeysShown; }
+    bool mayBeExportedByCommonJSModule(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_exportedByCommonJSModules); }
     bool mayBeObservedUnder(ValueSetID objects, PropertyKeyID) const;
     bool mayBeCalledUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_calledUnderKey, key.index())); }
     bool mayBeAccessedUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_accessedUnderKey, key.index())); }
@@ -615,12 +675,17 @@ private:
 
     struct Notes {
         UnionOfSets enumerated;
+        UnionOfSets withAllKeysShown;
+        UnionOfSets withEnumerableKeysShown;
+        UnionOfSets walkedForEnumerableKeys;
         UnionOfSets observedUnderAnyKey;
         PartsByNumber observedUnderKey;
         PartsByNumber startsOfTestsUnderKey;
         PartsByNumber calledUnderKey;
         PartsByNumber accessedUnderKey;
         PartsByNumber receiversOfReads;
+        FunctionID functionThatHandsOn;
+        ValueSetID builtinObjectsHandedOn { ValueSets::nothing };
     };
 
     struct Noter {
@@ -628,6 +693,19 @@ private:
         ValueSetMaker& maker;
     };
 
+    bool isFullyKnown(ValueSetID objects) const;
+    struct WrittenOperands {
+        FunctionID function;
+        std::span<const ValueID> values;
+        std::span<const ValueFlowOperand> operands;
+    };
+
+    BuiltinID builtinWrittenAs(const Function&, ValueID) const;
+    ValueSetID builtinObjectsHandedOnBy(Noter, FunctionID) const;
+    ValueSetID builtinObjectsWrittenAt(Noter, const WrittenOperands&) const;
+    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, const WrittenOperands&, bool goesOnToPrototypes = false) const;
+    void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
+    ValueSetID followKnownPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);
@@ -661,6 +739,8 @@ private:
         bool areToldApart { false };
         bool enumeratesAnything { false };
         Vector<BuiltinOperand, 4> enumerated;
+        Vector<BuiltinOperand, 2> withAllKeysShown;
+        Vector<BuiltinOperand, 2> withEnumerableKeysShown;
         Vector<BuiltinOperand, 4> observedUnderAnyKey;
         Vector<TestUnderName, 4> testsUnderNames;
         Vector<TestUnderOperand, 2> testsUnderOperands;
@@ -699,6 +779,9 @@ private:
     const ValueFlowResultInputs& m_inputs;
     const ValueFlowHeapView& m_heap;
     ValueSetID m_enumerated { ValueSets::nothing };
+    ValueSetID m_withAllKeysShown { ValueSets::nothing };
+    ValueSetID m_withEnumerableKeysShown { ValueSets::nothing };
+    ValueSetID m_exportedByCommonJSModules { ValueSets::nothing };
     ValueSetID m_observedUnderAnyKey { ValueSets::nothing };
     SetsByNumber m_observedUnderKey;
     SetsByNumber m_calledUnderKey;
@@ -724,6 +807,7 @@ struct ValueFlowUsesOfHeap {
     UsesOfObjects uses;
     std::optional<LayoutsOfObjects> layoutsOfObjects;
     std::optional<StoresByLayout> stores;
+    std::optional<LedgerOfFields> ledgerOfFields;
 };
 
 using ValueFlowBuiltinApplicationOnWorkerFunctor = ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>;
@@ -780,10 +864,10 @@ void StoresByLayout::forEachWriteAmong(std::span<const uint32_t> writes, NOESCAP
             writer.isAllocation = resultRuleOf(statement.opcode) == ResultRule::Allocation || statement.opcode == Opcode::Data;
         if (family) {
             writer.familyOfReceiver = LayoutSetID(family - 1);
-            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).members.span();
+            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).completeMembers().value();
         }
         for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
-            functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.valueOf(solver.firstOfMadeNodesAt(writes[first])));
+            functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.possibleValuesOf(solver.firstOfMadeNodesAt(writes[first])));
     }
 }
 
@@ -852,14 +936,23 @@ void StoresByLayout::forEachLayoutListedAmong(const ObjectsOfSet& objects, const
     }
 }
 
-void StoresByLayout::forEachSourceOf(LayoutID layout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
+void StoresByLayout::forEachTableOfKnownObjects(LayoutID layout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
 {
     functor(m_storesOfLayout[layout.index()]);
+    for (uint32_t table : sharedStoresOf(layout))
+        functor(m_storesSharedByLayouts[table]);
+}
+
+void StoresByLayout::forEachSourceOf(LayoutID layout, ObjectsOfLayout objects, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
+{
+    forEachTableOfKnownObjects(layout, functor);
     functor(m_storesIntoEveryObject);
     if (m_isEscapedClass.quickGet(layout.index()))
         functor(m_storesIntoEveryEscapedClass);
     if (m_isLostClass.quickGet(layout.index()))
         functor(m_storesIntoEveryLostClass);
+    if (objects == ObjectsOfLayout::Followed)
+        return;
     if (m_hasEscapedObject.quickGet(layout.index()))
         functor(m_storesThroughUnknownObject);
     if (m_hasLostObject.quickGet(layout.index()))

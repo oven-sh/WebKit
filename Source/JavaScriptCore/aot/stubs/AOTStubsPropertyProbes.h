@@ -22,6 +22,7 @@ inline constexpr StubRegister slotNameRegister = stubImmediateRegister;
 inline constexpr StubRegister storedValueByIdRegister = StubRegister::A1;
 inline constexpr StubRegister keyCellRegister = StubRegister::A1;
 inline constexpr StubRegister storedValueByValRegister = StubRegister::A2;
+inline constexpr StubRegister valueStoredThroughProxyRegister = StubRegister::T10;
 #if CPU(X86_64)
 inline constexpr StubRegister readSiteCacheRegister = StubRegister::A1;
 inline constexpr StubRegister storeSiteCacheRegister = StubRegister::A2;
@@ -221,7 +222,8 @@ void findInPropertyTable(StubAssembler&, const ObjectLookupRegisters&, JumpList&
 void locateFieldOfObject(StubAssembler&, const ObjectLookupRegisters&, ObjectLookupName, JumpList& hasNoField, JumpList& isUnknown);
 // Where receiver itself has the property as a plain value that may be written, puts value in its place and returns, and nothing is filed.
 // spare is a register that nobody reads once the store cannot fail. With one, and the name given by its uid, a dictionary is also given a name that it lacks, where neither its table nor its storage has to grow.
-void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot, GPRReg spare = InvalidGPRReg);
+// willReplaceValue: what to do in front of the store to a property that the table of object has listed. The registers are as for willReturnValue.
+void replaceOwnValueAndReturn(StubAssembler&, SlotOperation, const ObjectLookupRegisters&, ObjectLookupName, GPRReg value, JumpList& cannot, GPRReg spare = InvalidGPRReg, const ScopedLambda<void()>* willReplaceValue = nullptr);
 // What the objects answer is never filed, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
 void countMissOfPair(StubAssembler&, GPRReg structureID, GPRReg uid, GPRReg counter, JumpList& isDueForFiling);
 

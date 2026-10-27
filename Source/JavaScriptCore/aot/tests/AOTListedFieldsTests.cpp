@@ -18,6 +18,7 @@
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "TopExceptionScope.h"
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

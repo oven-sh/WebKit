@@ -29,7 +29,7 @@ function f0 name="intoVariable" parameters=[{type=anything}] results=[{type=anyt
     v2 = Integer integer=2
     v3 = Add v1, v2
     Return v3
-# CHECK: [[stored]]: undefined|null|number = Check v0 castType=undefined|null|number site=w0
+# CHECK: [[stored]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w0
 # CHECK: : number = Add [[stored]],
 }
 function f1 name="parameter" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
@@ -43,7 +43,7 @@ function f2 name="fromCompiler" parameters=[{type=anything}, {type=Array<number>
     Return v2
 }
 # CHECK-LABEL: function f2 name="fromCompiler" {{*}}parameters=[{type=anything}, {type=Array<number> site=w7 flags=[IsFromCompiler]}]
-# CHECK: : number = Check v0 castType=number
+# CHECK: : number = Check v0 expectedType=number
 function f3 name="valueInside" results=[{type=anything}] {
     v0 = Integer integer=2
     v1 = Convert v0 declared={type=undefined|null|number site=w0}
@@ -59,7 +59,7 @@ function f4 name="fieldRead" parameters=[{type=undefined|null|L0 site=w5}] resul
 # CHECK-LABEL: function f4 name="fieldRead" {{*}}parameters=[{type=undefined|null|L0 site=w5}]
 # CHECK: b0(v0: undefined|null|L0):
 # CHECK-NEXT: [[read]]: anything {{*}}= PropGet v0 key="x"
-# CHECK-NEXT: : undefined|null|number = Check [[read]] castType=undefined|null|number site=w2
+# CHECK-NEXT: : undefined|null|number = Check [[read]] expectedType=undefined|null|number site=w2
 function f5 name="contentsRead" results=[{type=anything}] {
     v0 = NewArray contents=number holes=[]
     v1 = Integer integer=0
@@ -67,7 +67,7 @@ function f5 name="contentsRead" results=[{type=anything}] {
     v3 = Convert v2 declared={type=undefined|null|number site=w3} illTypedCause=ContainerWriterUnseen
     Return v3
 # CHECK: [[element]]: anything {{*}}= ElemGet v0, v1
-# CHECK-NEXT: : undefined|null|number {{*}}= Check [[element]] castType=undefined|null|number site=w3
+# CHECK-NEXT: : undefined|null|number {{*}}= Check [[element]] expectedType=undefined|null|number site=w3
 }
 function f6 name="tailCall" parameters=[{type=anything}] results=[{type=undefined|null|number site=w4}] {
     v1 = Call v0

@@ -39,10 +39,9 @@ public:
 
     bool forget(DeclaredType& declared) const
     {
-        if (!declared.flags.contains(PositionFlags::IsExpected) || !declared.type || !m_isLong[declared.type.index()])
+        if (!declared.isExpected() || !declared.written() || !m_isLong[declared.written().index()])
             return false;
-        declared.type = m_types.provenTypeOf(declared);
-        declared.flags.remove(PositionFlags::IsExpected);
+        declared.establish(m_types.provenTypeOf(declared));
         return true;
     }
 

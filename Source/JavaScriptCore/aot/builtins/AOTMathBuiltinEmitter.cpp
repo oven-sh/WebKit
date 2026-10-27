@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentationRules.h"
@@ -187,7 +188,15 @@ void MathBuiltinEmitter::generateMathSign(const InlineCall& call)
     ValueID argument = call.argument(0);
     if (!areIntegers(m_function, call)) {
         Number x = numberOperand(argument);
-        finish(call, select(greaterThan(x, number(0)), number(1), select(lessThan(x, number(0)), number(-1), x)));
+        finish(call, selectByBranch<Number>(greaterThan(x, number(0)), [&] {
+            return number(1);
+        }, [&] {
+            return selectByBranch<Number>(lessThan(x, number(0)), [&] {
+                return number(-1);
+            }, [&] {
+                return emitter<ConversionEmitter>().purified(x);
+            });
+        }));
         return;
     }
     Integer x = integerOperand(argument);

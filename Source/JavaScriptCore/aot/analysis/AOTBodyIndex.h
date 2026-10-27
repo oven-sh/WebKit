@@ -9,6 +9,7 @@
 
 #include "AOTIR.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -116,6 +117,75 @@ struct BodyContents {
 };
 
 BodyContents contentsOf(const Function&);
+bool hasNeverResult(const Value&);
+
+// What contentsOf() answers, kept by counting: only what the change log names is read again.
+class CountedContents {
+    WTF_MAKE_NONCOPYABLE(CountedContents);
+public:
+    CountedContents() = default;
+
+    // A short body is read anew sooner than its counts are kept.
+    static bool paysFor(const Function& function) { return function.values.size() >= fewestValuesOfCountedBody; }
+
+    const BodyContents& bringUpToDate(const Function&, const ChangeLog&);
+
+private:
+    AOT_CLASS_THRESHOLD(size_t, fewestValuesOfCountedBody, 64);
+    // The room of a list that has grown stays behind until the body is counted anew.
+    AOT_CLASS_THRESHOLD(size_t, mostPlacesInListsForEachValue, 4);
+    static constexpr uint16_t hasNeverResultBit = 1 << 15;
+    static constexpr uint16_t isNotListed = std::numeric_limits<uint16_t>::max();
+    static_assert(numberOfEnumerators<Opcode> < hasNeverResultBit);
+
+    struct CountedBlock {
+        uint32_t firstValue { 0 };
+        uint32_t numberOfValues { 0 };
+        uint32_t capacity { 0 };
+        TerminatorKind terminator { };
+        OptionSet<BodyTrait> traits;
+        bool isCounted { false };
+        bool isPending { false };
+    };
+
+    template<size_t size> struct Counts {
+        void add(unsigned index)
+        {
+            if (!counts[index]++)
+                words[index / 64] |= 1ull << (index % 64);
+        }
+        void remove(unsigned index)
+        {
+            if (!--counts[index])
+                words[index / 64] &= ~(1ull << (index % 64));
+        }
+
+        std::array<uint32_t, size> counts { };
+        std::array<uint64_t, (size + 63) / 64> words { };
+    };
+
+    void countAnew(const Function&);
+    void countWhatChanged(const Function&, const ChangeLog&);
+    void addWord(uint16_t);
+    void removeWord(uint16_t);
+    void addValuesOf(const Function&, uint32_t blockIndex);
+    void removeValuesOf(CountedBlock&);
+    void countEndOf(const Function&, uint32_t blockIndex);
+
+    bool m_hasReadBody { false };
+    bool m_isCounted { false };
+    ChangeLog::Cursor m_endOfLog;
+    // The parameters and the listed values of each block, as they were counted.
+    Vector<ValueID> m_listedValues;
+    Vector<CountedBlock> m_blocks;
+    // The opcode that a listed value was counted with, and whether its result was of the type never.
+    Vector<uint16_t> m_wordOfValue;
+    Counts<numberOfEnumerators<Opcode>> m_opcodes;
+    Counts<numberOfEnumerators<TerminatorKind>> m_terminators;
+    Counts<8> m_traits;
+    uint32_t m_numberOfNeverValues { 0 };
+    BodyContents m_contents;
+};
 
 struct RowOfBody {
     OpcodeSet opcodes;
@@ -140,7 +210,7 @@ struct RecordFacts {
         , role(function.role)
         , kind(function.kind)
         , creatorKind(function.creator.kind())
-        , numberOfResults(static_cast<uint8_t>(std::min<size_t>(function.results.size(), UINT8_MAX)))
+        , numberOfResults(static_cast<uint8_t>(std::min<size_t>(function.results.size(), 127)))
         , hasBody(function.hasBody())
     {
     }
@@ -158,8 +228,8 @@ struct RecordFacts {
     FunctionRole role { FunctionRole::Source };
     FunctionKind kind { FunctionKind::Plain };
     CreatorRecord::Kind creatorKind { CreatorRecord::Kind::None };
-    uint8_t numberOfResults { 0 };
-    bool hasBody { false };
+    uint8_t numberOfResults : 7 { 0 };
+    uint8_t hasBody : 1 { false };
 };
 static_assert(sizeof(RecordFacts) <= 8);
 

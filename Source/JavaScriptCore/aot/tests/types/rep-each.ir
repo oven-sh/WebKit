@@ -2,10 +2,10 @@
 # FORM: Prepared
 # RUN: rep
 # CHECK: t0: rep Boolean slot Boolean cells no legal [Boolean, JSValue]
-# CHECK-NEXT: t1: rep Int32 slot Uint8 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t2: rep Int32 slot Int16 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t3: rep Int64 slot Int64 cells no legal [Int64, Double, OptionalInt64, OptionalDouble, JSValue]
-# CHECK-NEXT: t4: rep Double slot Double cells no legal [Double, OptionalDouble, JSValue]
+# CHECK-NEXT: t1: rep Int32 slot Uint8 cells no legal [Int32, Int64, Double, DoubleWithPayload, ImpureDouble, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t2: rep Int32 slot Int16 cells no legal [Int32, Int64, Double, DoubleWithPayload, ImpureDouble, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t3: rep Int64 slot Int64 cells no legal [Int64, Double, DoubleWithPayload, ImpureDouble, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t4: rep Double slot Double cells no legal [Double, DoubleWithPayload, ImpureDouble, OptionalDouble, JSValue]
 # CHECK-NEXT: t5: rep OptionalInt64 slot OptionalInt64 cells no legal [OptionalInt64, OptionalDouble, JSValue]
 # CHECK-NEXT: t6: rep OptionalDouble slot OptionalDouble cells no legal [OptionalDouble, JSValue]
 # CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue, LiteralString]
@@ -21,6 +21,8 @@
 # CHECK-NEXT: Int32: i32
 # CHECK-NEXT: Int64: int
 # CHECK-NEXT: Double: number
+# CHECK-NEXT: DoubleWithPayload: number
+# CHECK-NEXT: ImpureDouble: number
 # CHECK-NEXT: OptionalInt64: undefined|null|int|absent
 # CHECK-NEXT: OptionalDouble: undefined|null|number|absent
 # CHECK-NEXT: Cell: string|symbol|bigint|object

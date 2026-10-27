@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTExpected.h"
 #include "AOTID.h"
+#include "AOTNaturalLoops.h"
 #include "AOTPerFunction.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -40,9 +42,9 @@ enum class HeatClass : uint8_t {
     Hot,
 };
 
-constexpr bool isHot(HeatClass heatClass) { return heatClass == HeatClass::Hot; }
+constexpr Expected<bool> isHot(Expected<HeatClass> heatClass) { return heatClass == HeatClass::Hot; }
 
-constexpr bool isCold(HeatClass heatClass) { return heatClass == HeatClass::Cold || heatClass == HeatClass::RunsOnce; }
+constexpr Expected<bool> isCold(Expected<HeatClass> heatClass) { return heatClass.predicted() == HeatClass::Cold || heatClass.predicted() == HeatClass::RunsOnce; }
 
 ASCIILiteral nameOf(HeatClass);
 
@@ -54,7 +56,6 @@ inline constexpr unsigned callersOfFunctionThatRunsOften = 4;
 inline constexpr double activationsOfFunctionThatRunsOften = 100;
 inline constexpr uint8_t percentileOfFunctionThatRunsOften = 90;
 inline constexpr uint8_t percentileOfOtherFunctions = 10;
-AOT_THRESHOLD(unsigned, warmCodeLimitsInVeryLargeProgram, 4);
 AOT_THRESHOLD(double, minWeightOfCallToFollow, 0.01);
 AOT_THRESHOLD(double, minWeightOfCallNearBusyCode, 0.25);
 // Behind two branches in a loop a call weighs 2.25 or more. Two calls in a row weigh 2.
@@ -63,6 +64,8 @@ AOT_THRESHOLD(double, minWeightOfNearlyCertainCall, 0.5);
 AOT_THRESHOLD(unsigned, maxCallersOfCompactFunction, 1);
 AOT_THRESHOLD(unsigned, minMassPerValueWithHeavyLoop, 3);
 AOT_THRESHOLD(uint32_t, maxSizeOfSmallFunction, 32);
+// About what the call and the return of a function cost.
+AOT_THRESHOLD(uint32_t, maxSizeOfHelper, 16);
 
 } // namespace HeatModel
 
@@ -87,36 +90,36 @@ class Heat {
 public:
     Heat() = default;
 
-    double activationsOf(const Program&, FunctionID) const;
+    Expected<double> activationsOf(const Program&, FunctionID) const;
     // For weighing places of the whole program against each other. The classes of a very large program do not come from it.
-    double estimatedActivationsOf(const Program&, FunctionID) const;
+    Expected<double> estimatedActivationsOf(const Program&, FunctionID) const;
     // The activations of the functions that allocate the layout, once for each place that does.
-    double allocationsOf(LayoutID) const;
+    Expected<double> allocationsOf(LayoutID) const;
     // Whether a function of the module allocates the layout. The literals of many modules may share one layout, which names only the first of them as its module.
-    bool isAllocatedIn(LayoutID, ModuleID) const;
+    Expected<bool> isAllocatedIn(LayoutID, ModuleID) const;
     // Whether some store, definition or literal of the program puts a value of the layout under the name. Only values whose type lists a few layouts count.
-    bool isStoredUnder(LayoutID, PropertyKeyID) const;
-    HeatClass of(const Program&, FunctionID) const;
+    Expected<bool> isStoredUnder(LayoutID, PropertyKeyID) const;
+    Expected<HeatClass> of(const Program&, FunctionID) const;
     // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run.
-    bool isCompact(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCompact; }
-    // There the classes are read off the structure of the program, and only there are functions compact.
+    Expected<bool> isCompact(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCompact; }
+    // There the classes are read off the structure of the program.
     bool isOfVeryLargeProgram() const { return m_valuesInAllFunctions; }
     // False where HeatFor::Preparation has left something out.
     bool hasWeights() const { return m_hasWeights; }
     // Whether some block of the function is neither cold nor runs once.
-    bool hasWarmCode(const Program&, FunctionID) const;
-    uint8_t percentileOf(const Program&, FunctionID) const;
-    HeatClass classOf(double heat) const;
-    HeatClass classOf(const Program& program, FunctionID id, double frequencyInFunction) const { return classOf(program, id, activationsOf(program, id), frequencyInFunction); }
-    HeatClass classOf(const Program&, FunctionID, double activations, double frequencyInFunction) const;
+    Expected<bool> hasWarmCode(const Program&, FunctionID) const;
+    Expected<uint8_t> percentileOf(const Program&, FunctionID) const;
+    Expected<HeatClass> classOf(Expected<double> heat) const;
+    Expected<HeatClass> classOf(const Program& program, FunctionID id, Expected<double> frequencyInFunction) const { return classOf(program, id, activationsOf(program, id), frequencyInFunction); }
+    Expected<HeatClass> classOf(const Program&, FunctionID, Expected<double> activations, Expected<double> frequencyInFunction) const;
     // Whether code of this heat fits MaxHotCodeValues beside all that is hotter. In a program smaller than that, all code does.
-    bool isAmongHottestCode(double heat) const { return !m_thresholds || heat >= m_thresholds->coldestOfHottestCode; }
+    Expected<bool> isAmongHottestCode(Expected<double> heat) const { return !m_thresholds || heat.predicted() >= m_thresholds->coldestOfHottestCode; }
     // For a block that runs so many times for each time that its function is entered.
-    double leastHeatOfFastCode(const Program&, FunctionID, double frequencyInFunction) const;
-    bool callsInLoopsAreHot() const { return m_thresholds && m_thresholds->callsInLoopsAreHot; }
+    Expected<double> leastHeatOfFastCode(const Program&, FunctionID, Expected<double> frequencyInFunction) const;
+    Expected<bool> callsInLoopsAreHot() const { return m_thresholds && m_thresholds->callsInLoopsAreHot; }
     // Whether code of this heat is cold only because it does not fit MaxWarmCodeValues. Such code is expected to run.
-    bool isColdByLimitAlone(double heat) const { return m_thresholds && heat >= m_thresholds->coldWithoutLimit && heat < m_thresholds->cold; }
-    std::span<const FunctionID> hottestFirst() const LIFETIME_BOUND { return m_hottestFirst.span(); }
+    Expected<bool> isColdByLimitAlone(Expected<double> heat) const { return m_thresholds && heat.predicted() >= m_thresholds->coldWithoutLimit && heat.predicted() < m_thresholds->cold; }
+    Expected<std::span<const FunctionID>> hottestFirst() const LIFETIME_BOUND { return m_hottestFirst.span(); }
 
     void dump(PrintStream&, const Program&) const;
 
@@ -132,12 +135,15 @@ private:
         bool isCompact { false };
         bool isCalledInLoop { false };
         bool isCalledPerEvent { false };
+        double rank { 0 };
     };
 
     PerFunction<Entry> m_entries;
     bool m_hasWeights { true };
+    bool m_hotIsByRank { false };
     std::optional<HeatThresholds> m_thresholds;
     std::optional<HeatClass> m_classOfEverything;
+    std::optional<uint32_t> m_seedOfShuffledHeat;
     uint64_t m_valuesInCompactFunctions { 0 };
     uint64_t m_valuesInAllFunctions { 0 };
     Vector<FunctionID> m_hottestFirst;
@@ -151,11 +157,12 @@ private:
 // summariesFromFlow is the result of createSummariesFromFlow() for the current program.
 Heat estimateHeat(const Program&, const CallGraph&, const FlowResults&, BuildContext&, const EffectSummaries* summariesFromFlow = nullptr, const BodyReferences* = nullptr, const BodyWeights* kept = nullptr, BodyWeights* made = nullptr, HeatFor = HeatFor::Everything);
 
-HeatClass heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
+Expected<HeatClass> heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
 
 // By how often the code of the function is taken to run for its size.
-bool isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
-HeatClass heatClassOf(FunctionPassContext&, BlockID);
+Expected<bool> isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
+Expected<HeatClass> heatClassOf(FunctionPassContext&, BlockID);
+Expected<bool> isHotLoop(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -32,7 +32,7 @@ function f3 name="resultIsUsed" parameters=[{type=number}] results=[{type=number
 # CHECK-NEXT: v2: number = Mul v1, v1
 # CHECK-NOT: ReturnCall
 # CHECK: [[call3]]: anything = CallDirect {{*}} function=f0
-# CHECK-NEXT: [[cast3]]: number = AssumeType [[call3]] castType=number
+# CHECK-NEXT: [[cast3]]: number = AssumeType [[call3]] provenType=number
 # CHECK-NEXT: Jump -> next [[after3]]([[cast3]])
 # CHECK-NOT: ReturnCall
 
@@ -47,7 +47,7 @@ function f4 name="resultIsReturned" parameters=[{type=number}] results=[{type=nu
 # CHECK-NEXT: Return v1
 # CHECK-NOT: ReturnCall
 # CHECK: [[call4]]: anything = CallDirect {{*}} function=f0
-# CHECK-NEXT: [[cast4]]: number = AssumeType [[call4]] castType=number
+# CHECK-NEXT: [[cast4]]: number = AssumeType [[call4]] provenType=number
 # CHECK-NEXT: Jump -> next [[after4]]([[cast4]])
 # CHECK-NOT: ReturnCall
 
@@ -67,7 +67,7 @@ function f5 name="siteUnderHandler" parameters=[{type=number}] results=[{type=an
 # CHECK: () handler=b1():
 # CHECK-NEXT: = Mul v0, v0
 # CHECK-NEXT: [[call5]]: anything = CallDirect {{*}} function=f0
-# CHECK-NEXT: [[cast5]]: number = AssumeType [[call5]] castType=number
+# CHECK-NEXT: [[cast5]]: number = AssumeType [[call5]] provenType=number
 # CHECK-NEXT: Jump -> next [[after5]]([[cast5]])
 # CHECK-NOT: ReturnCall
 

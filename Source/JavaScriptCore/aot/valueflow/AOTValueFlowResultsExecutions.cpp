@@ -27,7 +27,7 @@ static void forEachFunctionEnteredBy(const Program& program, const FlowBodyUpdat
     if (!PayloadWord::callees(value.opcode))
         return;
     if (const FlowCallStamp* stamp = findByValue(update.calls.span(), id, &FlowCallStamp::value)) {
-        for (FunctionID callee : program.at(stamp->callees).functions)
+        for (FunctionID callee : program.at(stamp->callees).followed().value())
             functor(callee);
     }
 }
@@ -44,7 +44,7 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
             for (const FlowCallStamp& stamp : application.bodies[index].calls) {
                 if (!PayloadWord::callees(function.at(stamp.value).opcode))
                     continue;
-                for (FunctionID callee : program.at(stamp.callees).functions)
+                for (FunctionID callee : program.at(stamp.callees).followed().value())
                     AtomicRef(counts[callee.index()]).fetch_add(1, std::memory_order_relaxed);
             }
             return;
@@ -58,21 +58,6 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
         }
     });
     return counts;
-}
-
-static bool isEvaluatedAtMostOnce(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& inputs, const FlowApplication& application, ValueSetMaker& maker, const FlowIndirectCall& call)
@@ -93,11 +78,11 @@ static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& input
     static_assert(!OperandIndex::Call::callee && OperandIndex::Call::thisValue == 1);
     constexpr size_t firstArgument = 2;
     std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(*statement);
-    const CalleeSet& callees = inputs.program.at(stamp->callees);
-    if (!callees.isComplete)
+    std::optional<ProvenValue<Callees>> callees = inputs.program.at(stamp->callees).all();
+    if (!callees)
         return false;
     ValueSetID called = ValueSets::nothing;
-    for (BuiltinID builtin : callees.builtins) {
+    for (BuiltinID builtin : callees->value().builtins) {
         for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
             std::optional<BuiltinOperand> operand = operandCalledBy(overload);
             if (!operand)
@@ -105,7 +90,7 @@ static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& input
             size_t index = operand->isReceiver() ? OperandIndex::Call::thisValue : firstArgument + operand->argumentIndex();
             if (index >= operands.size())
                 return false;
-            called = maker.unite(called, inputs.valueOf(maker, operands[index]));
+            called = maker.unite(called, inputs.possibleValuesOf(maker, operands[index]));
         }
     }
 
@@ -143,7 +128,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             continue;
         ValueFlowObjectID closure = inputs.universe().closureOf(body);
         bool onlyLoaderEnters = !numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure);
-        if (onlyLoaderEnters && isEvaluatedAtMostOnce(module.kind))
+        if (onlyLoaderEnters && isEvaluatedAtMostOnceOf(module.kind))
             runsAtMostOnce(body);
     }
 
@@ -164,7 +149,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             }
         }
         for (const FlowIndirectCall& call : std::ranges::equal_range(indirectCalls, caller, { }, &FlowIndirectCall::caller)) {
-            if (call.kind != FlowIndirectCallKind::BuiltinCallback || call.times != BuiltinCallbackTimes::Once || call.isInCycle)
+            if (call.kind != FlowIndirectCallKind::BuiltinCallback || call.times.predicted() != BuiltinCallbackTimes::Once || call.isInCycle)
                 continue;
             FunctionID callee = call.callee;
             ValueFlowObjectID closure = inputs.universe().closureOf(callee);

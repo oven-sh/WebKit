@@ -46,8 +46,10 @@ struct RecordedSite {
     friend bool operator==(const RecordedSite&, const RecordedSite&) = default;
 
     Origin origin;
-    bool constructs { false };
-    bool isTailCall { false };
+    CallSiteKind kind { CallSiteKind::Plain };
+    BuiltinID calledBuiltin { };
+    // The function has made the function object that it calls here itself and has handed it to nobody.
+    bool callsOwnFunctionObject { false };
 };
 
 struct SiteRecords {
@@ -150,7 +152,7 @@ struct CodeRecords {
     CodeGenerationTotals& totals;
     // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
     BitVector operationsWithCompressedOperand;
-    StackSlots slotsOfFrameCells;
+    SlotsOfCells slotsOfFrameCells;
     // Only with --aot-check=MovedLoads.
     GuardTests guardTests;
     bool hasBirthsOfFrameCells { false };

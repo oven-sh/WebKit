@@ -440,6 +440,7 @@ private:
         case Typed::Opcode::GetModuleVariable:
             return valuesOf(value.variable());
         case Typed::Opcode::Upcast:
+        case Typed::Opcode::Expect:
         case Typed::Opcode::AssumeType:
         case Typed::Opcode::CheckInitialized:
         case Typed::Opcode::FlattenString:
@@ -632,7 +633,7 @@ private:
 
     static ValueID throughCasts(const Typed::Function& function, ValueID id)
     {
-        while (function.at(id).opcode == Typed::Opcode::Upcast || function.at(id).opcode == Typed::Opcode::AssumeType)
+        while (Typed::isCastThatProvesNothing(function.at(id).opcode) || function.at(id).opcode == Typed::Opcode::AssumeType)
             id = function.at(id).valueOperand();
         return id;
     }
@@ -1081,6 +1082,7 @@ private:
         const Typed::Value& value = function.at(environment);
         switch (value.opcode) {
         case Typed::Opcode::Upcast:
+        case Typed::Opcode::Expect:
         case Typed::Opcode::AssumeType:
         case Typed::Opcode::CheckInitialized:
         case Typed::Opcode::RequireObjectCoercible:
@@ -1278,12 +1280,12 @@ private:
         }
         if ((value.opcode != Typed::Opcode::Call && value.opcode != Typed::Opcode::CallMethod) || !value.callees())
             return;
-        const Typed::CalleeSet& callees = m_program.at(value.callees());
-        if (!callees.isComplete || !callees.functions.isEmpty() || callees.builtins.size() != 1)
+        std::optional<Typed::ProvenValue<Typed::Callees>> callees = m_program.at(value.callees()).all();
+        if (!callees || !callees->value().functions.empty() || callees->value().builtins.size() != 1)
             return;
         const BuiltinTable& table = m_program.builtins();
         ValueID receiver = value.opcode == Typed::Opcode::Call ? value.thisValueOperand() : value.receiverOperand();
-        for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(callees.builtins[0]))) {
+        for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(callees->value().builtins[0]))) {
             if (table.at(overload).mode == BuiltinCallMode::Call)
                 functor(Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, value.argumentsOperands() });
         }

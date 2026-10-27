@@ -238,11 +238,12 @@ function formatDirectFunctionBinding({ overload, directEntry }: DirectFunctionEn
   ]);
 }
 
-function formatNativeFunctionBinding(id: string, pointer: string, { length }: ModelNativeFunction): string {
+function formatNativeFunctionBinding(id: string, pointer: string, { length, name }: ModelNativeFunction): string {
   return formatAggregate([
     ["builtin", id],
     ["function", pointer],
     ["length", formatUnlessZero(length)],
+    ["name", name === null ? null : `${JSON.stringify(name)}_s`],
   ]);
 }
 

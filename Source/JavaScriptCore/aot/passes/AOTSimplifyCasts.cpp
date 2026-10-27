@@ -10,6 +10,8 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
+#include "AOTObservableOperations.h"
+#include "AOTPredictedValues.h"
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTTypePropagation.h"
@@ -46,6 +48,9 @@ struct CastSimplification : Rewrite {
         unsigned changed = static_cast<unsigned>(moveCastsToEdges());
         for (;;) {
             changed += removeCasts();
+            // What has gone may have been the last way from a check to such a claim.
+            while (std::exchange(hasTakenValuesFromBehindChecksInThisTurn, false) && hasKeptClaimThatNoCheckHolds())
+                changed += removeCasts();
             // removeCasts() judges each cast by what it leaves behind, so it finds nothing more until removeRepeatedCasts() has changed something.
             unsigned repeated = removeRepeatedCasts();
             if (!repeated) {
@@ -71,7 +76,9 @@ struct CastSimplification : Rewrite {
             return std::nullopt;
 
         ValueID parameter = cast.operand(0);
-        if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.castType()))
+        if (saysMoreThanTypeOnCredit(cast, parameter))
+            return std::nullopt;
+        if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.provenType()))
             return std::nullopt;
         size_t parameterIndex = block.parameters.find(parameter);
         if (parameterIndex == notFound || parameterIndex >= numberOfSharedExplicitParameters(function, cfg, id))
@@ -123,27 +130,34 @@ struct CastSimplification : Rewrite {
             if (!canMoveCast(cfg, candidate))
                 continue;
             const Value cast = at(candidate.cast);
+            bool joinSaysLessThanCast = false;
             builder().setOrigin(cast.origin());
             for (Edge edge : cfg.incomingEdges(candidate.block)) {
                 ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
                 ValueID passed = analyses.definitionThroughUpcasts(argument);
                 if (edgeNeedsCast(candidate, edge)) {
                     if (candidate.hasTest)
-                        builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.castType()));
+                        builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.typeNamedByCast()));
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // A check that nothing on its edge passes has the whole type that it asks for.
+                    joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
                 }
                 didChangeEdge |= passed != argument;
                 argument = passed;
             }
+            if (joinSaysLessThanCast)
+                edit(candidate.cast, ValueEdit::Definition).becomeAssumeType(cast.operand(0), Proven::byRulesBehindChecks(cast.type));
             movedParameters.append(cast.operand(0));
         }
         if (movedParameters.isEmpty())
             return 0;
+        mayHaveTakenValuesFromBehindChecks = true;
 
         builder().applyInsertions();
+        predicted.reset();
         // The arguments of the edges were written past the builder.
         analyses.didChangeValues();
         // A join may widen, so the cast at the head stays until the type of its parameter is inside it.
@@ -159,8 +173,8 @@ struct CastSimplification : Rewrite {
 
     bool expectsNarrowerTypeThan(const Value& cast, ValueID operand)
     {
-        TypeID expected = cast.expected();
-        if (!expected || expected == at(operand).expected())
+        TypeID expected = cast.expected().predicted();
+        if (!expected || expected == at(operand).expected().predicted())
             return false;
         return !typeOf(operand).isSubsetOf(program.at(expected), program);
     }
@@ -180,12 +194,16 @@ struct CastSimplification : Rewrite {
             builder().eraseValues(block, indexes);
         substitution.apply(function, &analyses);
         analyses.didChangeValues();
+        predicted.reset();
         return changed;
     }
 
     unsigned removeCasts()
     {
         unsigned changed = 0;
+        holdsRepeatableCast = false;
+        claimsBehindChecks.shrink(0);
+        claimsKeptBehindChecks.shrink(0);
         for (BlockID block : blocks()) {
             const BlockValues& values = at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
@@ -203,7 +221,7 @@ struct CastSimplification : Rewrite {
         ValueID operand = substitution.resolve(cast.operand(0));
 
         ValueID narrowest = operand;
-        while (cast.opcode != Opcode::Upcast && at(narrowest).opcode == Opcode::Upcast) {
+        while (!isCastThatProvesNothing(cast.opcode) && isCastThatProvesNothing(at(narrowest).opcode)) {
             ValueID inner = substitution.resolve(at(narrowest).operand(0));
             if (expectsNarrowerTypeThan(at(narrowest), inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(narrowest)))
                 break;
@@ -213,17 +231,86 @@ struct CastSimplification : Rewrite {
         if (changed)
             edit(id, ValueEdit::Definition).setOperand(0, narrowest);
         operand = narrowest;
-        if (!typeOf(operand).isSubsetOf(typeOf(id), program))
+        if (!typeOf(operand).isSubsetOf(typeOf(id), program)) {
+            noteCastThatStays(id);
             return changed;
+        }
+        if (saysMoreThanTypeOnCredit(cast, operand)) {
+            claimsKeptBehindChecks.append(id);
+            return changed;
+        }
+        if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            noteCastThatStays(id);
+            return changed;
+        }
+        // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
+        bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
         if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
             substitution.replace(id, operand);
             eraseValue(block, index);
         } else if (repeatableCasts.contains(cast.opcode))
             becomeUpcast(function, id, operand);
-        else
+        else {
+            noteCastThatStays(id);
             return changed;
+        }
+        hasTakenValuesFromBehindChecksInThisTurn |= standsBehindMoreChecksThanOperand;
+        mayHaveTakenValuesFromBehindChecks |= standsBehindMoreChecksThanOperand;
         return changed + 1;
+    }
+
+    // Nothing else makes one more turn find what the last one has left.
+    bool hasKeptClaimThatNoCheckHolds()
+    {
+        return std::ranges::any_of(claimsKeptBehindChecks, [&](ValueID claim) {
+            return !isBehindCheck(at(claim).operand(0));
+        });
+    }
+
+    void noteCastThatStays(ValueID id)
+    {
+        const Value& cast = at(id);
+        holdsRepeatableCast |= repeatableCasts.contains(cast.opcode);
+        if (cast.opcode == Opcode::AssumeType && cast.isBehindChecks())
+            claimsBehindChecks.append(id);
+    }
+
+    // What is assumed in every version says more than a type that is owed to a check: the check may go.
+    bool saysMoreThanTypeOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode == Opcode::AssumeType && !cast.isBehindChecks() && isBehindCheck(operand);
+    }
+
+    // What the language asks of a value it asks in every version of the function. A type that is owed to a check answers in the typed version alone, so the test stays until the function has its generic version.
+    bool isTestOfLanguageAnsweredOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand);
+    }
+
+    bool isBehindCheck(ValueID value)
+    {
+        return marksOfChecks() && predicted->isBehindCheck(value);
+    }
+
+    const PredictedValues* marksOfChecks()
+    {
+        if (!hasChecks) {
+            hasChecks = context.opcodesWhereRunBegins ? context.opcodesWhereRunBegins->contains(Opcode::Check)
+                : std::ranges::any_of(function.values, [](const Value& candidate) { return candidate.opcode == Opcode::Check; });
+        }
+        if (!*hasChecks)
+            return nullptr;
+        if (!predicted)
+            predicted.emplace(function, analyses.cfg(), PredictedValues::Options { .holdsCheck = true });
+        return &*predicted;
+    }
+
+    // A check that the type of its operand answers is gone.
+    void settleProofs()
+    {
+        if (mayHaveTakenValuesFromBehindChecks && !claimsBehindChecks.isEmpty())
+            settleProofsBehindAnsweredChecks(function, claimsBehindChecks.span(), marksOfChecks());
     }
 
     std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
@@ -258,7 +345,7 @@ struct CastSimplification : Rewrite {
         ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
-        if (!program.expectedOrTypeOf(function, cast).isSubsetOf(program.expectedOrTypeOf(function, current), program))
+        if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
             return 0;
         Value& user = edit(id, ValueEdit::Definition);
         user.setOperand(operandIndex, cast);
@@ -267,17 +354,13 @@ struct CastSimplification : Rewrite {
             user.setOperand(operandIndex, current);
             return 0;
         }
+        mayHaveTakenValuesFromBehindChecks = true;
         return 1;
     }
 
     unsigned removeRepeatedCasts()
     {
-        bool hasRepeatableCast = std::ranges::any_of(blocks(), [&](BlockID block) {
-            return std::ranges::any_of(at(block).values, [&](ValueID id) {
-                return repeatableCasts.contains(at(id).opcode);
-            });
-        });
-        if (!hasRepeatableCast)
+        if (!holdsRepeatableCast)
             return 0;
 
         // Of a block that adds casts or bindings, or hides some. Any other block leaves the tables as they are.
@@ -370,15 +453,13 @@ struct CastSimplification : Rewrite {
                     continue;
                 if (ValueID earlier = passed.get(keyOf(id))) {
                     substitution.replace(id, earlier);
+                    mayHaveTakenValuesFromBehindChecks |= opcode == Opcode::Check;
+                    explainOperationThatGoes(function, id, InPlaceOfOperation::AnEarlierOneThatCompleted);
                     eraseValue(block, index);
                     ++changed;
                 } else if (wasPastDeadZone && opcode == Opcode::CheckInitialized) {
                     Value& test = edit(id);
-                    ValueID operand = test.valueOperand();
-                    TypeID type = test.type;
-                    test.become(Opcode::AssumeType);
-                    test.setValueOperand(operand);
-                    test.setCastType(type);
+                    test.becomeAssumeType(test.valueOperand(), Proven::byConstruction(TypeTable::anything));
                     ++changed;
                 } else {
                     // A cast of what an earlier cast has let through asks only for what that one left open, and the next round removes it where that is nothing.
@@ -401,6 +482,16 @@ struct CastSimplification : Rewrite {
     }
 
     ValueSubstitution substitution { function };
+    bool hasTakenValuesFromBehindChecksInThisTurn { false };
+    // A check has gone, or a cast that read something else beside what it let through, or an operation has got another operand than a cast of the one that it had.
+    bool mayHaveTakenValuesFromBehindChecks { false };
+    // The pass makes no check.
+    std::optional<bool> hasChecks;
+    std::optional<PredictedValues> predicted;
+    // Of the casts that the last removeCasts() has left.
+    bool holdsRepeatableCast { false };
+    Vector<ValueID, 8> claimsBehindChecks;
+    Vector<ValueID, 8> claimsKeptBehindChecks;
     Vector<std::pair<BlockID, BitVector>, 4> erasedValues;
 };
 
@@ -408,8 +499,10 @@ struct CastSimplification : Rewrite {
 
 PassOutcome simplifyCasts(FunctionPassContext& context)
 {
-    if (!CastSimplification(context).run())
+    CastSimplification simplification(context);
+    if (!simplification.run())
         return PassOutcome::Unchanged;
+    simplification.settleProofs();
     // Every step drops what its edits have made stale, so what is held at the end was made behind the last edit.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;

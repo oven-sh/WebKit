@@ -1,0 +1,50 @@
+# Two lists say the same contents; the element of one is a fraction, that of the other is anything. Each is built again from an element of its own type
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="choose" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="listsThatMeet" parameters=[{type=boolean}, {type=fractional}, {type=anything}] results=[{type=Array<fractional>}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v1 contents=fractional
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray v2 contents=fractional
+    Jump -> next b3(v4)
+  b3(v5: Array<fractional>):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f0 name="listsThatMeet" module=m0 role=ResultWrapper
+# CHECK: [[call]]:{{*}}= CallDirect v0, v1, v2 function=
+# CHECK: [[fraction]]: fractional = ResultAt [[call]] index=1
+# CHECK-NEXT: [[other]]: anything = ResultAt [[call]] index=2
+# CHECK: = NewArray [[fraction]] contents=fractional
+# CHECK: = NewArray [[other]] contents=fractional
+
+function f1 name="listsThatAreReturnedApart" parameters=[{type=boolean}, {type=fractional}, {type=anything}] results=[{type=Array<fractional>}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v1 contents=fractional
+    Return v3
+  b2():
+    v4 = NewArray v2 contents=fractional
+    Return v4
+}
+# CHECK-LABEL: function f1 name="listsThatAreReturnedApart" module=m0 role=ResultWrapper
+# CHECK: [[call]]:{{*}}= CallDirect v0, v1, v2 function=
+# CHECK: [[fraction]]: fractional = ResultAt [[call]] index=1
+# CHECK-NEXT: [[other]]: anything = ResultAt [[call]] index=2
+# CHECK: = NewArray [[fraction]] contents=fractional
+# CHECK: = NewArray [[other]] contents=fractional
+
+function f2 name="callsBoth" parameters=[{type=boolean}, {type=fractional}, {type=anything}] results=[{type=undefined}] {
+    v3 = CallDirect v0, v1, v2 function=f0
+    v4 = CallDirect v0, v1, v2 function=f1
+    v5 = Undefined
+    Return v5
+}

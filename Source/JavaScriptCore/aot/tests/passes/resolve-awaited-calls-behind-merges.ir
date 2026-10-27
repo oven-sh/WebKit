@@ -408,14 +408,14 @@ function f40 name="checkBetween" role=CoroutineBody flags=[IsAsync] parameters=[
   b2():
     Jump -> next b3(v1)
   b3(v4):
-    v5 = Check v4 castType=Promise
+    v5 = Check v4 expectedType=Promise
     v6 = AwaitBySavingFrame v5, v2
     v7 = ReturnAsyncResult v2, v6
     Return v7
 # CHECK-NOT: AwaitCallBySavingFrame
 # CHECK: v3: Promise = CallDirect v1 function=f1
 # CHECK: b3(v4: anything):
-# CHECK-NEXT: v5: Promise = Check v4 castType=Promise
+# CHECK-NEXT: v5: Promise = Check v4 expectedType=Promise
 # CHECK-NEXT: v6: anything = AwaitBySavingFrame v5, v2
 # CHECK-NOT: AwaitCallBySavingFrame
 }

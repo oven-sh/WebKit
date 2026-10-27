@@ -12,6 +12,7 @@
 #include "AOTCallSiteCache.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCall.h"
+#include "AOTCompiledCaller.h"
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionTables.h"
@@ -42,7 +43,9 @@
 #include "Interpreter.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
+#include "JSFunction.h"
 #include "LLIntThunks.h"
+#include "ObjectPrototype.h"
 #include "OwedOutOfMemoryError.h"
 #include "ProtoCallFrameInlines.h"
 #include "ProxyObject.h"
@@ -58,8 +61,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
-
-static constexpr unsigned argumentsCalleeAttributes = PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor;
 
 struct ArgumentsObjectSource {
     uint32_t count;
@@ -93,25 +94,10 @@ static bool canReadRestQuickly(const ArgumentsObjectSource& source)
     return (hasContiguous(type) || hasInt32(type)) && !containsHole(source.rest->butterfly()->contiguous().data(), restLength);
 }
 
-// The first object of a realm gets its two properties one by one, which creates the Structures that are looked up here.
-static const UnmappedArgumentsShape* findShapeOfUnmappedArguments(Instance* instance)
+// The object adds `callee` and Symbol.iterator to itself when they are first listed or changed. Until then it asks its callee whether the code is strict.
+static JSFunction* calleeOfStrictCode(JSGlobalObject* globalObject)
 {
-    State& state = *instance->state;
-    UnmappedArgumentsShape& shape = state.builtinFamilies->unmappedArguments;
-    Structure* initialStructure = instance->globalObject->clonedArgumentsStructure();
-    if (shape.initialStructure == initialStructure) [[likely]]
-        return &shape;
-
-    VM& vm = *instance->vm;
-    UnmappedArgumentsShape found { initialStructure, nullptr, invalidOffset, invalidOffset };
-    found.structure = Structure::addPropertyTransitionToExistingStructure(initialStructure, vm.propertyNames->callee, argumentsCalleeAttributes, found.offsetOfCallee);
-    if (found.structure)
-        found.structure = Structure::addPropertyTransitionToExistingStructure(found.structure, vm.propertyNames->iteratorSymbol, static_cast<unsigned>(PropertyAttribute::DontEnum), found.offsetOfIterator);
-    if (!found.structure)
-        return nullptr;
-    state.immortalCells->add(found.structure);
-    shape = found;
-    return &shape;
+    return globalObject->arrayProtoValuesFunction();
 }
 
 static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const ArgumentsObjectSource& source)
@@ -120,15 +106,10 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
     JSGlobalObject* globalObject = instance->globalObject;
     if (!canReadRestQuickly(source))
         return nullptr;
-    const UnmappedArgumentsShape* shape = findShapeOfUnmappedArguments(instance);
-    if (!shape)
-        return nullptr;
-    Structure* structure = shape->structure;
+    Structure* structure = globalObject->clonedArgumentsStructure();
     if (!hasContiguous(structure->indexingType()) || structure->mayInterceptIndexedAccesses() || structure->storedPrototypeObject()->needsSlowPutIndexing())
         return nullptr;
-    JSValue callee = globalObject->throwTypeErrorArgumentsCalleeGetterSetter();
-    JSValue iterator = globalObject->arrayProtoValuesFunction();
-    ClonedArguments* result = ClonedArguments::createEmpty(vm, nullptr, structure, nullptr, source.count, nullptr);
+    ClonedArguments* result = ClonedArguments::createEmpty(vm, nullptr, structure, calleeOfStrictCode(globalObject), source.count, nullptr);
     if (!result)
         return nullptr;
 
@@ -140,8 +121,6 @@ static ClonedArguments* tryCreateArgumentsFast(Instance* instance, const Argumen
         for (uint32_t i = 0; i < restLength; ++i)
             elements.atUnsafe(source.numberInFrame + i).setWithoutWriteBarrier(rest[i].get());
     }
-    result->putDirectOffset(vm, shape->offsetOfCallee, callee);
-    result->putDirectOffset(vm, shape->offsetOfIterator, iterator);
     return result;
 }
 
@@ -152,7 +131,7 @@ static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (ClonedArguments* result = tryCreateArgumentsFast(instance, source))
         return result;
-    ClonedArguments* result = ClonedArguments::createEmpty(vm, globalObject, globalObject->clonedArgumentsStructure(), nullptr, source.count, nullptr);
+    ClonedArguments* result = ClonedArguments::createEmpty(vm, globalObject, globalObject->clonedArgumentsStructure(), calleeOfStrictCode(globalObject), source.count, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!result) {
         throwOutOfMemoryError(globalObject, scope);
@@ -164,8 +143,6 @@ static ClonedArguments* createArguments(Instance* instance, const ArgumentsObjec
         result->putDirectIndex(globalObject, i, value);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    result->putDirectAccessor(globalObject, vm.propertyNames->callee, globalObject->throwTypeErrorArgumentsCalleeGetterSetter(), argumentsCalleeAttributes);
-    result->putDirect(vm, vm.propertyNames->iteratorSymbol, globalObject->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     return result;
 }
 
@@ -279,7 +256,13 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
-        throwException(globalObject, scope, isParent ? createNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
+        StringView name = isParent ? StringView() : nameOfCalleeAtCallSite(vm);
+        if (auto* function = dynamicDowncast<JSFunction>(callee); function && function->isHostFunction()) {
+            scope.release();
+            throwNotAConstructorErrorInFrameOf(globalObject, function, name);
+            return { };
+        }
+        throwException(globalObject, scope, isParent ? createNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, name));
         return { };
     }
     if (auto* errorConstructor = isParent ? dynamicDowncast<ErrorConstructor>(callee) : nullptr; errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
@@ -341,10 +324,31 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
     // ProxyObject::createStructure().
     if (!(proxy->inlineTypeFlags() & ImplementsDefaultHasInstance))
         return isEngines;
+    // As forwardProxyCallToTarget(): the target is called in place of the proxy, and no frame stands for the proxy.
+    if (JSObject* forwardedTo = proxy->callTargetIfKnownToHaveNoApplyTrap()) {
+        while (auto* next = dynamicDowncast<ProxyObject>(forwardedTo)) {
+            JSObject* targetOfNext = next->callTargetIfKnownToHaveNoApplyTrap();
+            if (!targetOfNext)
+                break;
+            forwardedTo = targetOfNext;
+        }
+        return makeUGPRPair(0, std::bit_cast<UCPURegister>(forwardedTo));
+    }
     JSObject* target = proxy->target();
     JSObject* handler = asObject(handlerValue);
     JSGlobalObject* globalObject = instance->globalObject;
     const Identifier& name = vm.aotState().runtimeTable->nameOfApplyTrap(vm);
+    // The lookup has run no code of the program, so this one runs none. The proxy remembers the answer, as in performProxyCall(), which it only can below Object.prototype.
+    auto callTargetAndRemember = [&] {
+        if (handler->getPrototypeDirect().inherits<ObjectPrototype>()) {
+            // How many proxies of a chain remember after a call that ran out of stack depends on the frames between them: they are performProxyCall()'s.
+            if (target->type() == ProxyObjectType)
+                return isEngines;
+            CallData callData;
+            proxy->getHandlerTrap(globalObject, handler, callData, name, ProxyObject::HandlerTrap::Apply);
+        }
+        return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+    };
     JSValue trap = Object::tryGetOwnDataProperty(vm, handler, name);
     if (!trap) {
         PropertySlot slot(handler, PropertySlot::InternalMethodType::VMInquiry, &vm);
@@ -352,13 +356,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Insta
         if (vm.exceptionForInspection() || slot.isTaintedByOpaqueObject()) [[unlikely]]
             return isEngines;
         if (!isPresent)
-            return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+            return callTargetAndRemember();
         if (!slot.isValue())
             return isEngines;
         trap = slot.getValue(globalObject, name);
     }
     if (trap.isUndefinedOrNull())
-        return makeUGPRPair(std::bit_cast<UCPURegister>(target), 0);
+        return callTargetAndRemember();
     if (!trap.isCell())
         return isEngines;
     JSType typeOfTrap = trap.asCell()->type();
@@ -389,7 +393,7 @@ static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
 {
     AOT_THRESHOLD(uint32_t, maxLengthCopied, 64);
     VM& vm = *instance->vm;
-    if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->state->builtinFamilies->unmappedArguments.structure)
+    if (!arrayLike.isCell() || arrayLike.asCell()->structure() != instance->globalObject->clonedArgumentsStructure())
         return nullptr;
     JSObject* arguments = asObject(arrayLike);
     if (!hasContiguous(arguments->indexingType()))
@@ -465,18 +469,51 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
-static StringView nameOfCalleeAtCallSite(VM& vm)
+static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite)
 {
-    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
-    if (!frames || frames->isAtEnd())
-        return { };
-    std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(frames->callSite().address) - sizeOfNearCall);
+    std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(callSite.address) - sizeOfNearCall);
     if (!site || site->kind != FaultSiteKind::NullCheck)
         return { };
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
     if (static_cast<ThrowKind>(word.kind) != ThrowKind::NotAFunction)
         return { };
     return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.narrowA()));
+}
+
+static StringView nameOfCalleeAtCallSite(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
+}
+
+StringView instanceofExpressionOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
+}
+
+StringView nameOfConstructorThatRunsOnTop(VM& vm)
+{
+    CallFrame* constructorFrame = vm.topCallFrame;
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    if (!constructorFrame || !entryFrame || isTopFrameCompiled(vm))
+        return { };
+    CallFrame* calleeOfCompiledCode = constructorFrame;
+    if (constructorFrame->callerFrameOrEntryFrame() == entryFrame) {
+        VMEntryRecord* record = vmEntryRecord(entryFrame);
+        calleeOfCompiledCode = record->prevTopCallFrame();
+        entryFrame = record->prevTopEntryFrame();
+        if (!calleeOfCompiledCode)
+            return { };
+    }
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, calleeOfCompiledCode, entryFrame);
+    if (!frames || frames->isAtEnd() || !frames->callSite().site.isConstruct())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
 }
 
 static JSValue calleeOfDecodedReference(Instance* instance, EncodedJSValue callee)
@@ -547,10 +584,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             rethrownException = uncheckedDowncast<Exception>(thrown.asCell());
     }
     bool isTermination = exception && vm.isTerminationException(exception);
-    std::optional<CompiledFrameIterator> frames = isTermination ? std::nullopt : findCompiledCallers(vm, *instance, callFrame);
-    CompiledUnwindResult found { CompiledUnwindStatus::LeftCompiledCode, { } };
-    if (frames) [[likely]]
-        found = unwindCompiledFrames(vm, *frames, *vmEntryRecord(vm.topEntryFrame), false);
+    CompiledUnwindResult found = isTermination ? CompiledUnwindResult { } : unwindRun(vm, { callFrame->rawReturnPC(), stackPointerOfCaller(callFrame), callFrame->callerFrame(), callFrame }, vm.topEntryFrame, *vmEntryRecord(vm.topEntryFrame), false);
     bool isHandled = found.status == CompiledUnwindStatus::FoundHandler;
     RELEASE_ASSERT(!isHandled || found.handler.code);
     bool takesException = found.handler.kind == CompiledHandlerKind::Finally;
@@ -560,8 +594,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
         return handlerCodeAndFrame;
     }
+    bool clearsDeadStack = false;
     if (isHandled && vm.heap.cage().hasDeadStackToClear()) [[unlikely]] {
-        ExceptionWords& wordsOfHandler = frames->instance()->runtime.exceptions;
+        clearsDeadStack = true;
+        ExceptionWords& wordsOfHandler = found.instance->runtime.exceptions;
         uintptr_t bytes = std::bit_cast<uintptr_t>(wordsOfHandler.stackPointerOfHandler) - std::bit_cast<uintptr_t>(vm.heap.cage().takeLowestAddressOfDeadStack(vm));
         wordsOfHandler.bytesOfDeadStackBelowHandler = static_cast<uint32_t>(std::min<uintptr_t>(bytes, std::numeric_limits<uint32_t>::max()) & ~static_cast<uintptr_t>(sizeof(void*) - 1));
         // The landing pad finds the value without a call, which would leave its frame behind on the cleared stack.
@@ -572,15 +608,34 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             return handlerCodeAndFrame;
         }
     }
-    bool stackIsUnobserved = !exception && !rethrownException && isHandled && !needsException && (!takesException || isCaughtByCompiledCode(vm, *frames));
     if (isHandled && (exception || !(takesException || needsException))) [[likely]]
         return handlerCodeAndFrame;
+    bool stackIsUnobserved = false;
+    if (!exception && !rethrownException) {
+        if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+            if (uint64_t kept = instance->state->keptByCleanup)
+                rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
+        }
+        if (rethrownException)
+            exceptions.thrownValue = JSValue::encode(rethrownException);
+        if (isHandled && !needsException) {
+            if (rethrownException)
+                return handlerCodeAndFrame;
+            stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
+            // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
+            if (stackIsUnobserved && !clearsDeadStack)
+                return handlerCodeAndFrame;
+        }
+    }
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecord);
     if (!exception) {
         JSValue thrown = JSValue::decode(std::exchange(exceptions.thrownValue, 0));
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStack)));
+        auto action = Exception::StackCaptureAction::DoNotCaptureStack;
+        if (!stackIsUnobserved && !rethrownException)
+            action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, found.hasLeftRun ? &found : nullptr);
+        Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             exceptions.thrownValue = JSValue::encode(thrownException);

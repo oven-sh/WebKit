@@ -18,19 +18,18 @@ class BuildContext;
 namespace Typed {
 
 class FlowResults;
-class CFG;
-class UseLists;
-
-// The values that the generic version of the function computes anew: the checks, and whatever takes one of them. There the type of such a value says nothing.
-BitVector computeTaintedValues(const Function&, const UseLists&, std::span<const ValueID> checks);
-// The same values, for whoever has no use lists: to make them costs ten times what it costs to walk the body in the order in which the marks are handed on.
-BitVector computeTaintedValues(const Function&, const CFG&, std::span<const ValueID> checks);
 
 // Flow gives a position back where it sees no value outside the type arrive.
 enum class TaintedPositionsRun : uint8_t { BeforeFlow, AfterFlow };
 void guardTaintedPositions(Program&, BuildContext&, TaintedPositionsRun);
 void guardTaintedPositionsAfterFlow(Program&, const FlowResults&, BuildContext&);
-bool mayReturnTaintedValue(const Program&, FunctionID, BuildContext&);
+// The types of the fields are only expected from here on. guardTaintedPositionsAfterFlow() puts the checks at their reads.
+void expectFields(Program&, std::span<const FieldReference>, BuildContext&);
+// The body is typed without its checks where it stands, and is left as it was.
+bool mayReturnTaintedValue(const Program&, FunctionID, Function& body, BuildContext&);
+bool mayTurnValueAway(const Program&, const Function&, const Value& check);
+// A type that holds any object names no layout: code that has it proven reads the object by name, as code that knows nothing does. A second version for the values that it turns away stands beside the same code.
+bool changesCodeWhereProven(const Type& checked);
 
 } } } // namespace JSC::AOT::Typed
 

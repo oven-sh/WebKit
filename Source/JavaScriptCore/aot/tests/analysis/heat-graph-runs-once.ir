@@ -1,6 +1,7 @@
 # Unknown code does not call what flow proves to run at most once: a module body that calls unknown code is on no cycle with it and has one activation, and so has what it calls once
 # FORM: AsRead
 # RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -35,10 +36,18 @@ function f3 name="calledInLoop" results=[{type=undefined}] {
 }
 # CHECK: f0 size 14 mass 49.000000: f1*1.000000 f2*1.000000 f3*10.000000 unknown*
 # CHECK: host: f0*1.000000 f4*1.000000
-# CHECK-NEXT: unknown: f2*0.500000 f4*0.500000
+# CHECK-NEXT: unknown:
 # CHECK-NEXT: activations:
 # CHECK-NEXT: f0 1.000000
 # CHECK-NEXT: f1 1.000000
 # CHECK-NEXT: f2 [[activationsOfEscapedFunction]]
 # CHECK-NEXT: f3 10.000000
 # CHECK-NEXT: f4 [[activationsOfEscapedFunction]]
+# CLASSES: host: f0*1.000000 f4*10.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:
+# CLASSES-NEXT: f0 1.000000
+# CLASSES-NEXT: f1 1.000000
+# CLASSES-NEXT: f2 1.000000
+# CLASSES-NEXT: f3 10.000000
+# CLASSES-NEXT: f4 10.000000

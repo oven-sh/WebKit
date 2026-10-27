@@ -92,6 +92,7 @@ struct AOTHeaps final : B3::AbstractHeapRepository {
     void appendHeaps(const Typed::LocationMasks&, B3HeapList&) const;
     void appendHeapsWrittenByCollection(B3HeapList&) const;
     bool mayCollect(const B3::Effects&) const;
+    B3::HeapRange rangeWrittenByWhateverMayCollect() const;
     // Memory outside the heap that a cell owns. A pointer into it keeps nothing alive.
     bool isFreedWithOwner(const B3::HeapRange&) const;
     static bool mayConvertCells(const Typed::Effects& effectsOfCall);

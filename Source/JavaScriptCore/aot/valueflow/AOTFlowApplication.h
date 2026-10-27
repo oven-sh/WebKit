@@ -39,6 +39,13 @@ struct FlowFieldUpdate {
     bool undefinedAtStartIsNeverRead { false };
 };
 
+// An allocation lists, for a field, a value that may lie outside the type of the field. Nothing tests it there.
+struct FlowListedValue {
+    uint32_t field { 0 };
+    FunctionID function;
+    ValueID allocation;
+};
+
 struct FlowAppendedField {
     PropertyKeyID key;
     FlowPositionUpdate position;
@@ -51,6 +58,7 @@ struct FlowLayoutUpdate {
     ClassFlow classFlow;
     Vector<FlowFieldUpdate> fields;
     Vector<FlowAppendedField> appendedFields;
+    Vector<FlowListedValue> valuesListedWithOtherTypes;
     Vector<Vector<PropertyKeyID>> literalKeyOrders;
     bool objectsAreDictionaries { false };
     bool objectsArePrototypesOfCreatedObjects { false };
@@ -66,11 +74,14 @@ struct FlowSignatureUpdate {
     Vector<FlowPositionUpdate> entryParameters;
     Vector<FlowPositionUpdate, 1> results;
     OptionSet<FunctionCapabilities> provenCapabilities;
+    PropertyKeyID keyThatNamesFunction;
 };
 
 struct FlowValueProof {
     ValueID value;
     TypeID type;
+    // The type is what flow holds of the value, and flow follows what a check turns away. Otherwise it was cut out of the type of the value as read, which may be owed to a check.
+    bool holdsInEveryVersion { false };
 };
 
 struct FlowClaimUpdate {
@@ -78,6 +89,8 @@ struct FlowClaimUpdate {
     bool isRedundant { false };
     TypeID arriving;
     bool mayFail { false };
+    // Of an answer: see FlowValueProof.
+    bool holdsInEveryVersion { false };
 };
 
 struct FlowAccessStamp {
@@ -100,6 +113,7 @@ struct FlowAllocationStamp {
     AllocationSiteID site;
     AllocationClassID allocationClass;
     TypeID elements;
+    bool elementsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
 };
 
@@ -113,9 +127,15 @@ struct FlowDefinedValue {
     Value value;
 };
 
+struct FlowMemberKey {
+    ValueID definition;
+    PropertyKeyID key;
+};
+
 struct FlowBodyUpdate {
     Vector<FlowValueProof> proofs;
     Vector<ValueID> readsAfterInitialization;
+    Vector<ValueID> opensOfUndecidedStorage;
     Vector<FlowClaimUpdate> claims;
     Vector<FlowAccessStamp> accesses;
     Vector<FlowCallStamp> calls;
@@ -123,6 +143,8 @@ struct FlowBodyUpdate {
     Vector<FlowAllocationStamp> allocations;
     Vector<FlowSymbolConstant> symbolConstants;
     Vector<FlowDefinedValue> definedValues;
+    Vector<FlowMemberKey> keysOfMembers;
+    Vector<ValueID> namesTakenFromOneKey;
 };
 
 template<typename Entry, typename Member>

@@ -2,7 +2,7 @@
 # A number is no object, and a call that may run any code is not judged
 # FORM: Placed
 # RUN: generate-code calls
-# OPTIONS: validate
+# OPTIONS: validate heat=OnlyLoopsAreHot
 # CHECK-LABEL: f0: size=
 # CHECK: operation operationAOTCompareOperandWithPhotograph x2
 # CHECK: operation operationAOTPhotographOperand x2

@@ -79,6 +79,10 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         return false;
     case Slot::Kind::Value:
     case Slot::Kind::Uncacheable:
@@ -282,7 +286,7 @@ void generateStoreSlot(StubAssembler& jit)
             loadIdentifier(jit, name, uid, miss);
         }
         slot.loadFirstPayloadWord(jit, accessorIndex);
-        callCustomSetterAndReturn(jit, receiver, value, accessorIndex, uid);
+        callCustomSetterAndReturn(jit, receiver, value, accessorIndex, uid, origin == SlotOrigin::ByVal ? std::optional<GPRReg>(name) : std::nullopt);
         break;
     }
     case Slot::Kind::Field:
@@ -522,6 +526,14 @@ void generateStoreSlot(StubAssembler& jit)
         break;
     }
     case Slot::Kind::Uncacheable:
+        if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && traits.operation != SlotOperation::Define && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal)) {
+            static_assert(valueStoredThroughProxyRegister == StubRegister::T10);
+            uncached.append(jit.branchTest64(CCallHelpers::Zero, operands.payload));
+            jit.move(value, T10);
+            jit.move(TrustedImm32(traits.operation == SlotOperation::StoreStrict), T14);
+            jit.jumpToStub(throughProxy(TrapOfProxy::Set));
+            break;
+        }
         uncached.append(jit.jump());
         break;
     case Slot::Kind::Empty:
@@ -538,6 +550,10 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         RELEASE_ASSERT(!hasStoreArm(traits, slot.kind()));
         miss.append(jit.jump());
         break;

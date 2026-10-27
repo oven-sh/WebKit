@@ -1822,6 +1822,20 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
     }
 }
 
+#if ASSERT_ENABLED
+// An object that has elements when it becomes a prototype keeps the storage it has. What it is taken for counts for the objects
+// below it; a store into a hole of its own asks the objects above it.
+static bool storeIntoHoleNeedsSlowPutIndexing(const JSObject* object)
+{
+    if (!JSGlobalObject::isTakenToInterceptIndexedAccesses(object))
+        return object->needsSlowPutIndexing();
+    if (object->structure()->mayInterceptIndexedAccesses())
+        return true;
+    JSObject* prototype = object->getPrototypeDirect().getObject();
+    return prototype && prototype->needsSlowPutIndexing();
+}
+#endif
+
 ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
     // Compiled code asks for this before it stores elements in place. An object with immutable properties keeps the storage it has:
@@ -1845,22 +1859,22 @@ ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
         
     case ALL_UNDECIDED_INDEXING_TYPES:
         ASSERT(!indexingShouldBeSparse());
-        ASSERT(!needsSlowPutIndexing());
+        ASSERT(!storeIntoHoleNeedsSlowPutIndexing(this));
         return convertUndecidedToArrayStorage(vm);
         
     case ALL_INT32_INDEXING_TYPES:
         ASSERT(!indexingShouldBeSparse());
-        ASSERT(!needsSlowPutIndexing());
+        ASSERT(!storeIntoHoleNeedsSlowPutIndexing(this));
         return convertInt32ToArrayStorage(vm);
         
     case ALL_DOUBLE_INDEXING_TYPES:
         ASSERT(!indexingShouldBeSparse());
-        ASSERT(!needsSlowPutIndexing());
+        ASSERT(!storeIntoHoleNeedsSlowPutIndexing(this));
         return convertDoubleToArrayStorage(vm);
         
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         ASSERT(!indexingShouldBeSparse());
-        ASSERT(!needsSlowPutIndexing());
+        ASSERT(!storeIntoHoleNeedsSlowPutIndexing(this));
         return convertContiguousToArrayStorage(vm);
         
     default:
@@ -1987,9 +2001,8 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         return;
 
     // Realm is always non-nullptr since realmless Structure's objects (e.g. WasmGC Struct) cannot call setPrototypeDirect.
-    if (mayBePrototype()) {
-        if (!chainAlreadyMayInterceptIndexedAccesses)
-            realm()->haveABadTime(vm, this);
+    if (mayBePrototype() && !chainAlreadyMayInterceptIndexedAccesses) {
+        realm()->haveABadTime(vm, this);
         return;
     }
 
@@ -2081,6 +2094,14 @@ bool JSObject::setPrototype(VM&, JSGlobalObject* globalObject, JSValue prototype
     return methodTable()->setPrototype(this, globalObject, prototype, shouldThrowIfCantSet);
 }
 
+// llint_aot_op_new_object may have made a compiled object of the literal's first members.
+static bool defineAccessorOfLiteral(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+    if (object->structure()->isCompiledStructure()) [[unlikely]]
+        return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+    return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+}
+
 bool JSObject::putGetter(JSGlobalObject* globalObject, PropertyName propertyName, JSValue getter, unsigned attributes)
 {
     PropertyDescriptor descriptor;
@@ -2092,7 +2113,7 @@ bool JSObject::putGetter(JSGlobalObject* globalObject, PropertyName propertyName
     if (!(attributes & PropertyAttribute::DontEnum))
         descriptor.setEnumerable(true);
 
-    return defineOwnProperty(this, globalObject, propertyName, descriptor, true);
+    return defineAccessorOfLiteral(this, globalObject, propertyName, descriptor);
 }
 
 bool JSObject::putSetter(JSGlobalObject* globalObject, PropertyName propertyName, JSValue setter, unsigned attributes)
@@ -2106,7 +2127,7 @@ bool JSObject::putSetter(JSGlobalObject* globalObject, PropertyName propertyName
     if (!(attributes & PropertyAttribute::DontEnum))
         descriptor.setEnumerable(true);
 
-    return defineOwnProperty(this, globalObject, propertyName, descriptor, true);
+    return defineAccessorOfLiteral(this, globalObject, propertyName, descriptor);
 }
 
 bool JSObject::putDirectAccessor(JSGlobalObject* globalObject, PropertyName propertyName, GetterSetter* accessor, unsigned attributes)
@@ -2136,13 +2157,17 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
     }
 #endif
 
+#if ASSERT_ENABLED
+    bool hadProperty = isValidOffset(structure()->get(vm, propertyName));
+#endif
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
     // (Refused, for an object with immutable properties: nothing was put, so there is nothing to record on the Structure.)
     if (!result) [[unlikely]]
         return false;
 
-    ASSERT(slot.type() == PutPropertySlot::NewProperty);
+    // The slot says nothing about an addition that no cache may keep (setStructureForAddedProperty()).
+    ASSERT(!hadProperty);
 
     Structure* structure = this->structure();
     if (attributes & PropertyAttribute::ReadOnly)
@@ -2180,6 +2205,16 @@ ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName propertyNa
     }
     AOT::PropertyWalk::putDirect(vm, this, propertyName, value, attributes);
     return { };
+}
+
+ASCIILiteral JSObject::putDirectToCompiledClosure(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes, PutPropertySlot& slot)
+{
+    slot.disableCaching();
+    AOT::PropertyWalk::willPutDirectOnClosure(vm, this, propertyName.uid());
+    ASCIILiteral error = putDirectInternal<PutModeDefineOwnPropertyWithoutClosureHooks>(vm, propertyName, value, attributes, slot);
+    if (error.isNull())
+        AOT::PropertyWalk::didPutDirectOnClosure(vm, this, propertyName.uid());
+    return error;
 }
 #endif
 
@@ -4598,7 +4633,7 @@ JSValue JSObject::getMethod(JSGlobalObject* globalObject, CallData& callData, co
 bool JSObject::anyObjectInChainMayInterceptIndexedAccesses() const
 {
     for (const JSObject* current = this; ;) {
-        if (current->structure()->mayInterceptIndexedAccesses() || current->hasFrozenElementsInPlace())
+        if (current->structure()->mayInterceptIndexedAccesses() || current->hasFrozenElementsInPlace() || JSGlobalObject::isTakenToInterceptIndexedAccesses(current))
             return true;
         if (isTypedArrayType(current->type())) [[unlikely]] {
             auto* globalObject = realmMayBeNull();

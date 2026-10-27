@@ -421,7 +421,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     }
 #endif
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode() && AOT::refusesToInterpret(*this)) [[unlikely]] {
+    if (vm.hasCompiledCode() && AOT::refusesToInterpret(scope->realm(), *this)) [[unlikely]] {
         throwScope.release();
         AOT::throwLibraryFunctionNotCompiled(scope->realm(), *this);
         return;

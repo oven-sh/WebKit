@@ -10,6 +10,7 @@
 #include "AOTInstance.h"
 #include "AOTProgramTables.h"
 #include "AOTStubHelpers.h"
+#include <bit>
 
 namespace JSC { namespace AOT {
 
@@ -38,6 +39,20 @@ inline void loadKindOfClosureFunction(StubAssembler& jit, GPRReg function, GPRRe
     ASSERT(noOverlap(function, kind));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.closureFunctionKindsOrigin)), kind);
     jit.load16(BaseIndex(kind, function, CCallHelpers::TimesTwo), kind);
+}
+
+inline uint32_t slimFunctionKindBit()
+{
+    FunctionKindData kind { };
+    kind.isSlim = 1;
+    return std::bit_cast<uint16_t>(kind);
+}
+
+inline uint32_t asyncFunctionKindBit()
+{
+    FunctionKindData kind { };
+    kind.isAsync = 1;
+    return std::bit_cast<uint16_t>(kind);
 }
 
 } } // namespace JSC::AOT

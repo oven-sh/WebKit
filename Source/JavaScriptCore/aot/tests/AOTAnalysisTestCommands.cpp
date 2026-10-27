@@ -11,6 +11,7 @@
 #include "AOTCallGraph.h"
 #include "AOTEffectsDescription.h"
 #include "AOTFlowApply.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTHeatGraph.h"
 #include "AOTIRPrinter.h"
 #include "AOTRecordUsers.h"
@@ -120,6 +121,9 @@ static bool beginRewrite(CommandWords& words, Session& session)
     if (!words.finish())
         return false;
     computeAnalyses(session.analyses, allAnalyses);
+    // Behind a change of few blocks, use lists read only the blocks that have changed.
+    session.analyses.didChangeBlock(entryBlock);
+    computeAnalyses(session.analyses, allAnalyses);
     return true;
 }
 
@@ -217,7 +221,7 @@ static Vector<Vector<ValueID>> parseVariables(CommandWords& words, const Functio
     return words.parseAll("variable"_s, listParser(parseDefinition));
 }
 
-static void repairVariables(Session& session, const Vector<Vector<ValueID>>& variables, RegionCloner* cloner = nullptr)
+static void repairVariables(Session& session, const Vector<Vector<ValueID>>& variables, RegionCloner* cloner = nullptr, ValueID askedAboutFirst = { })
 {
     ValueSubstitution substitution(session.function);
     for (const Vector<ValueID>& definitions : variables) {
@@ -234,6 +238,8 @@ static void repairVariables(Session& session, const Vector<Vector<ValueID>>& var
     }
     if (cloner)
         cloner->addVariablesTo(repair, session.analyses);
+    if (askedAboutFirst)
+        mayBeUnspecified(session.analyses, askedAboutFirst);
     repair.run();
 }
 
@@ -243,6 +249,8 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
     Vector<BlockID> region = words.parseRequired("region"_s, listParser(blockParser(function)));
     auto entersRegion = [&](Edge edge) { return region.contains(targetOf(function, edge).block); };
     Vector<Edge> redirectedEdges = words.parseAll("redirect"_s, filterParser(edgeParser(function), entersRegion));
+    Vector<Edge> edgesIntoCopy = words.parseAll("enter"_s, edgeParser(function));
+    auto standIns = words.parseAll("standIn"_s, pairParser(':', valueParser(function), valueParser(function)));
     Vector<Vector<ValueID>> variables = parseVariables(words, function);
 
     rewriteAndPrint(context, words, session, [&] {
@@ -256,11 +264,15 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
             return false;
 
         RegionCloner cloner(session.builder, function);
+        for (auto [value, standIn] : standIns)
+            cloner.mapValue(value, standIn);
         cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
         for (Edge edge : redirectedEdges) {
             if (entersRegion(edge))
                 session.builder.redirectEdge(edge, cloner.cloneOf(targetOf(function, edge).block), Arguments(targetOf(function, edge).arguments));
         }
+        for (Edge edge : edgesIntoCopy)
+            session.builder.redirectEdge(edge, cloner.cloneOf(region.first()), { });
         if (variables.isEmpty())
             cloner.repairSSA(session.analyses);
         else
@@ -279,7 +291,7 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
     outlined.kind = origin.kind;
     outlined.role = FunctionRole::OutlinedBody;
     outlined.flags = origin.flags & OptionSet<FunctionFlags> { FunctionFlags::IsSloppy, FunctionFlags::IsChecked, FunctionFlags::IsHiddenInStackTraces };
-    outlined.thisType = DeclaredType { .type = TypeTable::anything };
+    outlined.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     outlined.results = origin.results;
     outlined.capabilities = initialCapabilitiesOf(outlined);
     outlined.inlineFrames = origin.inlineFrames;
@@ -289,7 +301,7 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
     BlockID entry = builder.addBlock();
     auto addEntryParameterLike = [&](ValueID inOrigin) {
         const Value& value = origin.at(inOrigin);
-        outlined.parameters.append(DeclaredType { .type = value.type });
+        outlined.parameters.append(DeclaredType(Proven::byPosition(value.type)));
         ValueID parameter = builder.addParameter(entry, value.type);
         outlined.edit(parameter).setExpected(value.expected());
         return parameter;
@@ -373,10 +385,11 @@ static void repairSSA(TestCommandContext& context, CommandWords& words, Session&
     const Function& function = session.function;
     auto redirects = words.parseAll("redirect"_s, pairParser(':', edgeParser(function), edgeTargetParser(function)));
     Vector<Vector<ValueID>> variables = parseVariables(words, function);
+    ValueID askedAboutFirst = words.parseOptional("asksFirst"_s, valueParser(function)).value_or(ValueID());
     rewriteAndPrint(context, words, session, [&] {
         for (auto [edge, target] : redirects)
             session.builder.redirectEdge(edge, target, { });
-        repairVariables(session, variables);
+        repairVariables(session, variables, nullptr, askedAboutFirst);
     });
 }
 
@@ -447,6 +460,18 @@ static void substituteValues(TestCommandContext& context, CommandWords& words, S
     bool printsFrequencies = words.parseFlag("frequencies"_s);
     rewriteAndPrint(context, words, session, [&] { substitution.apply(session.function, &session.analyses); });
     if (printsFrequencies && !words.hasFailed())
+        session.analyses.blockFrequencies().dump(context.out, session.function);
+}
+
+static void recordFrequency(TestCommandContext& context, CommandWords& words, Session& session)
+{
+    BlockID block = words.parseRequired("block"_s, blockParser(session.function));
+    BlockFrequency frequency = words.parseRequired("frequency"_s, parseEnum<BlockFrequency>);
+    rewriteAndPrint(context, words, session, [&] {
+        session.function.edit(block, BlockEdit::Rest).frequency = frequency;
+        session.analyses.invalidate(FunctionAnalysis::Frequencies);
+    });
+    if (!words.hasFailed())
         session.analyses.blockFrequencies().dump(context.out, session.function);
 }
 
@@ -571,6 +596,7 @@ static void runHeatGraph(TestCommandContext& context)
     Program& program = *context.program;
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
+    bool printsClasses = words.parseFlag("classes"_s);
     if (!words.finish())
         return;
 
@@ -580,13 +606,22 @@ static void runHeatGraph(TestCommandContext& context)
     const EffectSummaries& effects = preparation.effects ? *preparation.effects : unknownEffects;
 
     CallGraph callGraph = buildCallGraph(program, flow, context.build);
-    HeatGraph graph = buildHeatGraph(program, callGraph, flow, effects, context.build);
+    HeatGraph graphOfClasses;
+    HeatGraph graphOfRanks = buildHeatGraph(program, callGraph, flow, effects, context.build, nullptr, nullptr, nullptr, printsClasses ? &graphOfClasses : nullptr);
+    HeatGraph& graph = printsClasses ? graphOfClasses : graphOfRanks;
     graph.dump(context.out);
     Vector<double> activations = estimateActivations(graph);
     context.out.println("activations:");
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (program.functions[index].hasBody())
             context.out.printf("f%u %.6f\n", index, activations[index]);
+    }
+    if (!printsClasses)
+        return;
+    context.out.println("entries per event:");
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (double entries = graph.entriesPerEventOf(FunctionID(index)))
+            context.out.printf("f%u %.6f\n", index, entries);
     }
 }
 
@@ -648,6 +683,7 @@ std::span<const TestCommand> analysisTestCommands()
         { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, ProgramAsRead::TypedAndVerified },
         { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, ProgramAsRead::TypedAndVerified },
         { "substitute"_s, IRForm::Prepared, runOnFunction<substituteValues>, ProgramAsRead::TypedAndVerified },
+        { "record-frequency"_s, IRForm::Prepared, runOnFunction<recordFrequency>, ProgramAsRead::TypedAndVerified },
         { "invalidate"_s, IRForm::Prepared, runOnFunction<invalidateAnalyses>, ProgramAsRead::TypedAndVerified },
         { "add-parameter"_s, IRForm::Prepared, runOnFunction<addParameters>, ProgramAsRead::TypedAndVerified },
         { "branch-with-proof"_s, IRForm::Prepared, runOnFunction<branchWithProof>, ProgramAsRead::TypedAndVerified },

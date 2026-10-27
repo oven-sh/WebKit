@@ -12,10 +12,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName promiseValue = nameOf(BuiltinSlots::PromiseValue);
-static constexpr ValueFlowName promiseReason = nameOf(BuiltinSlots::PromiseReason);
-static constexpr ValueFlowName resolvedPromises = ValueFlowName::of(ValueFlowNameKind::ResolvedPromises);
-static constexpr ValueFlowName rejectedPromises = ValueFlowName::of(ValueFlowNameKind::RejectedPromises);
+static constexpr ValueFlowCellName promiseValue = nameOf(BuiltinSlots::PromiseValue);
+static constexpr ValueFlowCellName promiseReason = nameOf(BuiltinSlots::PromiseReason);
+static constexpr ValueFlowCellName resolvedPromises { ValueFlowNameKind::ResolvedPromises };
+static constexpr ValueFlowCellName rejectedPromises { ValueFlowNameKind::RejectedPromises };
 
 void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFlowNodeID reason)
 {
@@ -26,12 +26,30 @@ void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFl
     context.add(reason, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
 
-void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, ClimbingSet values)
+// Bun has no `then`, so it settles a promise and comes out of `await` as it went in. Beside the unknown object only the node of the operand lists it.
+ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext& context, const ValueFlowOperand& operand)
 {
-    ValueFlowNodeID settledWith = context.lookup(values, awaitedValueName);
+    if (!operand.node)
+        return { };
+    ClimbingSet listed = context.valueWithin(only(context, ValueFlowUniverse::markOfNamedBun()), operand.node);
+    if (holdsSomething(context, listed) || mayBeUnknownObject(context, context.valueOf(operand)))
+        listed = context.unite(listed, context.valueWithin(only(context, context.universe().objectOf(Builtins::Bun)), operand.node));
+    return holdsSomething(context, listed) ? context.holding(listed) : ValueFlowNodeID();
+}
+
+void connectAwaitedValue(ValueFlowRuleContext& context, const ValueFlowOperand& operand, ValueFlowNodeID target)
+{
+    context.connect(context.lookup(context.valueOf(operand), awaitedValueName), target);
+    if (ValueFlowNodeID listedBun = findNodeOfListedBun(context, operand))
+        context.connect(listedBun, target);
+}
+
+void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, const ValueFlowOperand& operand)
+{
     forEachNodeOfSlotWrittenThrough(context, promises, promiseValue, [&](ValueFlowNodeID held) {
-        context.connect(settledWith, held);
+        connectAwaitedValue(context, operand, held);
     });
+    ClimbingSet values = context.valueOf(operand);
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         adoptRejectionOf(context, values, held);
     });
@@ -47,10 +65,12 @@ void rejectPromises(ValueFlowRuleContext& context, ClimbingSet promises, const V
 
 void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    ClimbingSet values = context.valueOf(context.operandsOf(statement)[0]);
-    ValueFlowNodeID awaited = context.lookup(values, awaitedValueName);
+    const ValueFlowOperand& operand = context.operandsOf(statement)[0];
+    ClimbingSet values = context.valueOf(operand);
     if (statement.result)
-        context.connect(awaited, statement.result);
+        connectAwaitedValue(context, operand, statement.result);
+    else
+        context.lookup(values, awaitedValueName);
     if (!statement.thrown)
         return;
     context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
@@ -67,15 +87,15 @@ static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promis
     ClimbingSet untrackedObject(context.universe().untrackedObjectAlone());
     PropertyKeyID then = context.program().keyOf(BuiltinNames::then);
     for (ValueFlowName name : { ValueFlowName::property(then), ValueFlowName::getter(then), ValueFlowName::of(ValueFlowNameKind::CopiedFrom) }) {
-        if (holdsSomething(context, context.valueOf(context.read(promises, name))))
+        if (holdsSomething(context, context.valueOf(context.readWhatWasWritten(promises, name))))
             return true;
-        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.read(untrackedObject, name))))
+        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.readWhatWasWritten(untrackedObject, name))))
             return true;
     }
     ValueSetID otherPrototypes = ValueSets::complement(context.maker().of(context.universe().objectOf(Builtins::PromisePrototype)));
-    if (context.meet(context.valueOf(context.read(promises, prototypeLinkName)), otherPrototypes))
+    if (context.meet(context.valueOf(context.readWhatWasWritten(promises, prototypeLinkName)), otherPrototypes))
         return true;
-    return mayBeUntracked && context.meet(context.valueOf(context.read(untrackedObject, prototypeLinkName)), otherPrototypes);
+    return mayBeUntracked && context.meet(context.valueOf(context.readWhatWasWritten(untrackedObject, prototypeLinkName)), otherPrototypes);
 }
 
 static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, ClimbingSet instances)
@@ -90,7 +110,7 @@ static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, Cl
     return ClimbingSet(context.maker().of(finding.span()));
 }
 
-static ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, ClimbingSet values)
+ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, ClimbingSet values)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueSetID otherClasses = ValueSets::complement(context.maker().of(universe.builtinTables().objectStandingFor(BuiltinClasses::Promise)));
@@ -197,7 +217,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall& ca
     }
     for (const ValueFlowOperand& operand : passed) {
         if (holdsSomething(context, resolved))
-            resolvePromises(context, resolved, context.valueOf(operand));
+            resolvePromises(context, resolved, operand);
         if (holdsSomething(context, rejected))
             rejectPromises(context, rejected, operand);
     }
@@ -208,7 +228,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall& ca
 void letNativeCodeSettlePromises(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     ValueSetID passedByNativeCode = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
-    auto settle = [&](ValueFlowName settledPromises, ValueFlowName slot) {
+    auto settle = [&](ValueFlowCellName settledPromises, ValueFlowCellName slot) {
         forEachNodeOfSlotWrittenThrough(context, context.valueOf(context.read(escaped, settledPromises)), slot, [&](ValueFlowNodeID held) {
             context.add(held, passedByNativeCode);
         });
@@ -235,7 +255,7 @@ void runPromiseOperation(const ValueFlowStatement& statement, ValueFlowRuleConte
         ClimbingSet promises = context.restrict(context.valueOf(operands[0]), universe.objects());
         context.mark(promises, ObjectMutation::StoreAfterCreation);
         if (statement.opcode == Opcode::ResolvePromise)
-            resolvePromises(context, promises, context.valueOf(operands[1]));
+            resolvePromises(context, promises, operands[1]);
         else
             rejectPromises(context, promises, operands[1]);
         return;

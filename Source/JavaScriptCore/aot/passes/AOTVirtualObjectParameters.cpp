@@ -19,6 +19,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
+#include "AOTPredictedValues.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
@@ -42,6 +43,8 @@ struct FreshArgument {
 struct Promotion {
     FunctionID id;
     uint32_t parameter { 0 };
+    // The body takes the parameter as it is. The wrapper holds the ways to a return that never touch it.
+    bool keepsParameter { false };
     Function split;
     Function body;
     BlockID head;
@@ -99,6 +102,7 @@ private:
     std::optional<Aliases> findAliases(ValueID parameter);
     std::optional<EarlyBlocks> findEarlyBlocks(const Aliases&, const Subject&);
     std::optional<Promotion> tryPromote(uint32_t parameter);
+    std::optional<Promotion> trySplitBehindEarlyReturn(uint32_t parameter);
 
     const AnalysisContext m_context;
     const Function& m_function;
@@ -109,8 +113,6 @@ private:
 } // anonymous namespace
 
 static constexpr OpcodeSet objectTests { Opcode::ToBoolean, Opcode::TypeTest, Opcode::ShapeTest, Opcode::IsSlotFilled, Opcode::PropHas, Opcode::PropHasOwn };
-static constexpr OptionSet<FunctionCapabilities> capabilitiesClonesInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
-
 static_assert((evaluatedTests | objectTests) == evaluatedTests);
 static_assert(evaluatedTests.contains(Opcode::StrictEq));
 
@@ -144,7 +146,7 @@ void FreshArgumentCollector::visitCall(const Value& call)
 
     const Program& program = m_context.program;
     CalleeList callees = calleesOfCall(program, call);
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : callees.seen().predicted().functions) {
         const Function& callee = program.at(id);
         for (uint32_t operandIndex : freshOperands) {
             std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex);
@@ -192,12 +194,20 @@ static Vector<BitVector> findFreshParameters(const Program& program, const Optim
     Vector<BitVector> freshParameters(count);
     for (const FreshArgument& argument : freshArguments)
         freshParameters[argument.callee.index()].set(argument.parameter);
+    // Every call makes a list for a rest parameter.
+    for (unsigned index = 0; index < count; ++index) {
+        const Function& function = program.functions[index];
+        if (function.has(FunctionFlags::HasRestParameter))
+            freshParameters[index].set(function.parameters.size() - 1);
+    }
     return freshParameters;
 }
 
+static constexpr OptionSet<FunctionFlags> flagsOfParametersNeverTakenApart { FunctionFlags::HasRestParameter, FunctionFlags::IsSloppy };
+
 static bool mayPromoteParameters(const Function& function)
 {
-    constexpr OptionSet<FunctionFlags> excludedFlags { FunctionFlags::HasRestParameter, FunctionFlags::IsSloppy, FunctionFlags::TakesCallee, FunctionFlags::HasNewTarget };
+    constexpr OptionSet<FunctionFlags> excludedFlags { FunctionFlags::TakesCallee, FunctionFlags::HasNewTarget };
     if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
         return false;
     if (function.results.size() != 1 || function.constructedClass || function.hasAny(excludedFlags) || function.isHiddenInStackTraces())
@@ -508,8 +518,10 @@ static std::optional<Vector<ValueID, 6>> findPromotedValues(FunctionAnalyses& an
     }
     promoted.append(function.at(body.head).parameters.span());
 
+    // The body is typed with the types of what it is handed, and a parameter outlives the checks of the caller.
+    PredictedValues predicted(function, analyses.cfg());
     for (ValueID id : promoted) {
-        if (!program.typeOf(function, id).isJavaScriptValue())
+        if (!program.typeOf(function, id).isJavaScriptValue() || predicted.isBehindCheck(id))
             return std::nullopt;
     }
     if (analyses.context().build.exceeds(LimitID::MaxPromotedParameters, promoted.size(), subject))
@@ -517,11 +529,12 @@ static std::optional<Vector<ValueID, 6>> findPromotedValues(FunctionAnalyses& an
     return promoted;
 }
 
-static DeclaredType promotedParameterType(const Value& value)
+static DeclaredType promotedParameterType(const Function& function, const PredictedValues& predicted, ValueID id)
 {
-    if (value.expected() && value.type == TypeTable::anything)
-        return { .type = value.expected(), .flags = PositionFlags::IsExpected };
-    return { .type = value.type };
+    const Value& value = function.at(id);
+    if (value.expected().predicted() && value.type == TypeTable::anything)
+        return DeclaredType(value.expected());
+    return DeclaredType(*Proven::byRules(predicted, id, value.type).inEveryVersion());
 }
 
 static Function createBodySignature(const Promotion& promotion)
@@ -545,9 +558,13 @@ static Function createBodySignature(const Promotion& promotion)
     body.derivation.source = promotion.id;
     body.inlineFrames = function.inlineFrames;
 
-    body.parameters.removeAt(promotion.parameter);
+    // Whoever calls the body hands it the list as one argument among the others.
+    body.flags.remove(FunctionFlags::HasRestParameter);
+    if (!promotion.keepsParameter)
+        body.parameters.removeAt(promotion.parameter);
+    PredictedValues predicted(function, CFG(function));
     for (ValueID id : promotion.promoted)
-        body.parameters.append(promotedParameterType(function.at(id)));
+        body.parameters.append(promotedParameterType(function, predicted, id));
     return body;
 }
 
@@ -571,7 +588,7 @@ static Function createBody(const AnalysisContext& context, TypeArena& types, con
     auto copyEntryParameter = [&](uint32_t index) {
         cloner.mapValue(entryParameters[index], addEntryParameterLike(entryParameters[index], index));
     };
-    uint32_t aggregate = split.firstParameterIndex() + promotion.parameter;
+    std::optional<uint32_t> aggregate = promotion.keepsParameter ? std::nullopt : std::optional<uint32_t>(split.firstParameterIndex() + promotion.parameter);
     std::optional<unsigned> hiddenRest = split.hiddenRestParameterIndex();
     for (uint32_t index = 0; index < entryParameters.size(); ++index) {
         if (index != aggregate && index != hiddenRest)
@@ -630,10 +647,135 @@ std::optional<Promotion> ParameterPromoter::tryPromote(uint32_t parameter)
     return promotion;
 }
 
+// What the start allocates for the body alone, the body allocates.
+static void moveAllocationsToBody(FunctionAnalyses& analyses, const BitVector& startBlocks, BlockID head, Function& split)
+{
+    const Function& function = analyses.function();
+    auto isUsedByBodyAlone = [&](ValueID id) {
+        if (interpretedOf(function.at(id).opcode) != Interpretation::Allocation)
+            return false;
+        const Effects& effects = analyses.effectsOf(id).normal;
+        if (!effects.isRemovableWhenUnused() || !effects.reads.restrictedTo(orderedHeaps).isEmpty())
+            return false;
+        return std::ranges::all_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+            return analyses.dominators().dominates(head, use.block);
+        });
+    };
+
+    Vector<ValueID, 2> moved;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (!startBlocks.get(block.index()) || std::ranges::none_of(function.at(block).values, isUsedByBodyAlone))
+            continue;
+        BlockValues& values = split.edit(block, BlockEdit::Values).values;
+        for (uint32_t index = 0; index < values.size();) {
+            if (!isUsedByBodyAlone(values[index])) {
+                ++index;
+                continue;
+            }
+            moved.append(values[index]);
+            values.removeAt(index);
+        }
+    }
+    if (!moved.isEmpty())
+        split.edit(head, BlockEdit::Values).values.insertVector(0, moved);
+}
+
+// The caller allocates the argument for the call. Once the wrapper is copied into the caller, the allocation sinks to the call of the body.
+std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(uint32_t parameter)
+{
+    ValueID argument = m_function.at(entryBlock).parameters[m_function.firstParameterIndex() + parameter];
+    Subject subject = m_analyses.subject(argument);
+    std::span<const Use> uses = m_analyses.useLists().usesOf(argument);
+    if (uses.empty())
+        return std::nullopt;
+
+    const CFG& cfg = m_analyses.cfg();
+    Dominators& dominators = m_analyses.dominators();
+    BlockID firstUse = uses.front().block;
+    for (const Use& use : uses)
+        firstUse = dominators.nearestCommonDominator(firstUse, use.block);
+
+    // Each of these blocks lies on every way to a use. The further down the function is cut, the more the start holds.
+    Vector<BlockID, 8> cuts;
+    for (BlockID block = firstUse; block != entryBlock; block = dominators.idom(block))
+        cuts.append(block);
+
+    const BlockCycles& cycles = m_analyses.blockCycles();
+    uint64_t limit = m_context.build.limit(LimitID::MaxParameterWrapperValues);
+    BlockID head;
+    Vector<BlockID, 8> start;
+    unsigned mostEarlyReturns = 0;
+    bool isTooLarge = false;
+    for (BlockID cut : cuts | std::views::reverse) {
+        Vector<BlockID, 8> reached { entryBlock };
+        uint64_t size = 0;
+        unsigned earlyReturns = 0;
+        bool canBeStart = true;
+        for (unsigned next = 0; next < reached.size() && canBeStart; ++next) {
+            const Block& block = m_function.at(reached[next]);
+            size += block.values.size() + 1;
+            isTooLarge = size > limit;
+            canBeStart = !isTooLarge && !cycles.isInCycle(reached[next]) && !block.handler;
+            earlyReturns += returnsToCaller(block.terminator.kind) && block.frequency.predicted() == BlockFrequency::Normal;
+            for (BlockID successor : cfg.successors(reached[next])) {
+                if (successor != cut && !reached.contains(successor))
+                    reached.append(successor);
+            }
+        }
+        if (!canBeStart)
+            break;
+        // The smallest start among those with the most ways out.
+        if (earlyReturns > mostEarlyReturns) {
+            mostEarlyReturns = earlyReturns;
+            head = cut;
+            start = WTF::move(reached);
+        }
+    }
+    if (!head) {
+        if (isTooLarge)
+            m_context.build.exceeds(LimitID::MaxParameterWrapperValues, limit + 1, subject);
+        return std::nullopt;
+    }
+    BitVector startBlocks(m_function.blocks.size());
+    for (BlockID block : start)
+        startBlocks.quickSet(block.index());
+
+    // A block that both parts reach stays in the wrapper and is copied into the body.
+    BitVector isInBody = cfg.blocksReachableFrom(head, { });
+    BodyRegion region { head, { } };
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (isInBody.get(block.index()))
+            region.blocks.append(block);
+    }
+
+    Promotion promotion;
+    promotion.id = m_context.id;
+    promotion.parameter = parameter;
+    promotion.keepsParameter = true;
+    promotion.split = m_function;
+    promotion.callOrigin = { m_function.position, 0 };
+    promotion.head = head;
+    moveAllocationsToBody(m_analyses, startBlocks, head, promotion.split);
+
+    FunctionAnalyses analyses(m_context, promotion.split);
+    auto promoted = findPromotedValues(analyses, region, { }, subject);
+    if (!promoted)
+        return std::nullopt;
+    promotion.promoted = WTF::move(*promoted);
+    promotion.body = createBody(m_context, m_types, promotion, region);
+    return promotion;
+}
+
 std::optional<Promotion> ParameterPromoter::run(const BitVector& freshParameters)
 {
+    if (!m_function.hasAny(flagsOfParametersNeverTakenApart)) {
+        for (size_t parameter : freshParameters) {
+            if (auto promotion = tryPromote(parameter))
+                return promotion;
+        }
+    }
     for (size_t parameter : freshParameters) {
-        if (auto promotion = tryPromote(parameter))
+        if (auto promotion = trySplitBehindEarlyReturn(parameter))
             return promotion;
     }
     return std::nullopt;
@@ -676,7 +818,7 @@ static void emitReturnOfBodyCall(IRBuilder& builder, FunctionID body, ValueID ca
 }
 
 // A read in the wrapper may throw, or run a getter or a trap. A stack that is captured there shows the function: the wrapper is hidden, so all it does but the call of the body lies in a frame of the body.
-static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
+static void showOperationsInFrameOfBody(const Program& program, TypeArena& types, Function& wrapper, FunctionID body)
 {
     auto isCallOfBody = [&](ValueID id) {
         const Value& value = wrapper.at(id);
@@ -709,6 +851,24 @@ static void showOperationsInFrameOfBody(Function& wrapper, FunctionID body)
         if (block.terminator.kind != TerminatorKind::ReturnCall || !isCallOfBody(block.terminator.callOperand()))
             ++block.terminator.inlineFrame;
     }
+
+    ValueID entered;
+    for (const Block& block : wrapper.blocks) {
+        for (ValueID id : block.values) {
+            if (!takesFactOfEntry(program, wrapper.at(id), false))
+                continue;
+            if (!entered) {
+                Value fact = IRBuilder::make(Opcode::Entered);
+                fact.setFunction(body);
+                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
+                fact.setOrigin(wrapper.at(id).origin());
+                entered = wrapper.add(WTF::move(fact));
+            }
+            wrapper.edit(id).setFactOperand(entered);
+        }
+    }
+    if (entered)
+        wrapper.edit(entryBlock, BlockEdit::Values).values.insert(0, entered);
 }
 
 static void convertToWrapper(const AnalysisContext& context, TypeArena& types, Promotion& promotion, FunctionID body)
@@ -724,7 +884,8 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
         return index ? entryParameters[*index] : ValueID();
     };
     Vector<ValueID, 8> arguments(entryParameters.subspan(wrapper.firstParameterIndex(), wrapper.parameters.size()));
-    arguments.removeAt(promotion.parameter);
+    if (!promotion.keepsParameter)
+        arguments.removeAt(promotion.parameter);
     arguments.appendVector(promotion.promoted);
 
     IRBuilder builder(context, wrapper, types);
@@ -744,10 +905,10 @@ static void convertToWrapper(const AnalysisContext& context, TypeArena& types, P
 
     wrapper.role = FunctionRole::ParameterWrapper;
     wrapper.creator = CreatorRecord::ParameterWrapper { body, promotion.parameter };
-    wrapper.capabilities = (initialCapabilitiesOf(wrapper) - capabilitiesClonesInherit) | (wrapper.capabilities & capabilitiesClonesInherit);
+    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, wrapper.capabilities);
     compactFunction(wrapper);
     moveToExactBuffer(wrapper.storageOfBlocks());
-    showOperationsInFrameOfBody(wrapper, body);
+    showOperationsInFrameOfBody(context.program, types, wrapper, body);
 }
 
 static void replaceWithWrappers(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, Vector<Promotion>& promotions)

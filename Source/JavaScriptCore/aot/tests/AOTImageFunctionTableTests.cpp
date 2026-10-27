@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompiledFrame.h"
 #include "AOTFunctionTable.h"
 #include "AOTFunctionTables.h"
 #include "AOTImageTestSupport.h"
@@ -255,6 +256,30 @@ static void testManyFrameShapes()
         AOT_TEST_CHECK(image.image->frameOf(image.indexOf(function)).frameSizeInBytes() == function * stackAlignmentBytes());
 }
 
+static void testSlotsAboveFrameRecord()
+{
+    TestBuild build(4);
+    Vector<CompiledCode> code = bodies(plainBody(1, 48), plainBody(2, 48), plainBody(3, 512));
+    code[1].frame.bytesAboveFrameRecord = 32;
+    code[2].frame.bytesAboveFrameRecord = ImageFrame::maxUnitsAboveFrameRecord * stackAlignmentBytes();
+    TestImage image = build.build(WTF::move(code));
+    const Image& loaded = *image.image;
+    const ImageFrame& below = loaded.frameOf(image.indexOf(1));
+    const ImageFrame& above = loaded.frameOf(image.indexOf(2));
+    const ImageFrame& most = loaded.frameOf(image.indexOf(3));
+
+    AOT_TEST_CHECK(&below != &above);
+    AOT_TEST_CHECK(!below.bytesAboveFrameRecord() && !bytesAboveReturnAddressOf(below));
+    AOT_TEST_CHECK(above.bytesAboveFrameRecord() == 32 && bytesAboveReturnAddressOf(above) == 32);
+    AOT_TEST_CHECK(most.bytesAboveFrameRecord() == ImageFrame::maxUnitsAboveFrameRecord * stackAlignmentBytes());
+    for (const ImageFrame* frame : { &below, &above, &most })
+        AOT_TEST_CHECK(frame->hasFrameRecord() && !frame->startOfCalleeSaves() && !frame->liesBelowSpilledArguments() && !frame->isEmpty());
+    AOT_TEST_CHECK(above.frameSizeInBytes() == 48);
+
+    auto* record = std::bit_cast<CallFrame*>(uintptr_t { 0x1000 });
+    AOT_TEST_CHECK(std::bit_cast<uintptr_t>(stackPointerOfCaller(record, bytesAboveReturnAddressOf(above))) == 0x1000 + sizeof(CallerFrameAndPC) + 32);
+}
+
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
 {
     CodeSketch sketch = sketchWithSite(function, 16);
@@ -384,16 +409,50 @@ static void checkFrameAtFaultingAccesses(unsigned sizeOfAccess)
     uint32_t returnOffsetBeforeFrame = accessBeforeFrame + sizeOfNearCall;
     uint32_t returnOffsetInFrame = lastAccessInFrame + sizeOfNearCall;
 
-    AOT_TEST_CHECK(loaded.hasFrameAt(index, returnOffsetBeforeFrame - 1));
+    AOT_TEST_CHECK(!loaded.hasFrameAt(index, accessBeforeFrame));
     AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(index, returnOffsetBeforeFrame));
-    AOT_TEST_CHECK(!loaded.hasFrameAt(index, returnOffsetInFrame - 1));
+    AOT_TEST_CHECK(loaded.hasFrameAt(index, lastAccessInFrame));
     AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffsetInFrame));
+}
+
+// The access is the only site of the function, and the frame ends behind it. The function in front has another frame.
+static void checkFrameOfLoneFaultingAccess(unsigned sizeOfAccess)
+{
+    Vector<uint32_t> returnOffsets;
+    CompiledCode other = bodyWithEpilogues(1, returnOffsets);
+    other.frame.frameSizeInBytes = 48;
+
+    CodeSketch sketch(2);
+    uint32_t begin = sketch.pinnedBytes(1);
+    uint32_t access = sketch.pinnedBytes(sizeOfAccess);
+    uint32_t end = sketch.pinnedBytes(1);
+    sketch.end();
+    sketch.code().frame.frameSizeInBytes = 16;
+    sketch.code().frame.hasFrameRecord = false;
+    sketch.code().frame.frameRanges.append(CodeRange { begin + 1, end });
+    sketch.code().sites.faultingAccesses.append(FaultingAccess { access, sketch.addSite(), { 1 } });
+
+    TestBuild build(3);
+    TestImage image = build.build(bodies(WTF::move(other), sketch.take()));
+    const Image& loaded = *image.image;
+    uint32_t index = image.indexOf(2);
+    uint32_t returnOffset = access + sizeOfNearCall;
+
+    AOT_TEST_CHECK(loaded.frameOf(image.indexOf(1)).frameSizeInBytes() == 48);
+    AOT_TEST_CHECK(loaded.hasFrameAt(index, access));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffset));
+    for (const ImageFrame& frame : { loaded.frameOf(index), loaded.frameAtReturnOffset(index, returnOffset), loaded.returnSiteInfoAt(index, returnOffset).frame }) {
+        AOT_TEST_CHECK(frame.frameSizeInBytes() == 16);
+        AOT_TEST_CHECK(!frame.hasFrameRecord());
+    }
 }
 
 static void testFrameAtFaultingAccesses()
 {
-    for (unsigned sizeOfAccess : { 2u, 3u, 4u })
+    for (unsigned sizeOfAccess : { 2u, 3u, 4u }) {
         checkFrameAtFaultingAccesses(sizeOfAccess);
+        checkFrameOfLoneFaultingAccess(sizeOfAccess);
+    }
 }
 #endif
 
@@ -444,12 +503,12 @@ static void testGranules()
     Vector<EntryAlias> aliases;
     CodeIndex index(functions.span());
     Vector<uint32_t> zeroOffsets(FillWith { }, numberOfBodies, 0);
-    Vector<Vector<uint8_t>> noCallSites(numberOfBodies);
+    Vector<OptionSet<ImageFunctionFlag>> noSideTables(numberOfBodies);
     Vector<uint8_t> tableBytes = build.encodeTables();
     auto& programTables = *reinterpret_cast<const ProgramTables*>(tableBytes.span().data());
     for (unsigned shift : { minCodeGranuleShift, maxCodeGranuleShift }) {
         layout.codeGranuleShift = shift;
-        FunctionTableInputs inputs { functions, aliases, layout, index, noCallSites.span(), zeroOffsets.span(), programTables, true };
+        FunctionTableInputs inputs { functions, aliases, layout, index, noSideTables.span(), zeroOffsets.span(), programTables, true };
         checkGranules(encodeFunctionTables(inputs, build.context()), layout);
     }
 }
@@ -578,6 +637,7 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/inner-entries-of-folded-bodies"_s, testInnerEntriesOfFoldedBodies },
         { "image/functions/records"_s, testRecords },
         { "image/functions/many-frame-shapes"_s, testManyFrameShapes },
+        { "image/functions/slots-above-frame-record"_s, testSlotsAboveFrameRecord },
         { "image/functions/frame-maps"_s, testFrameMaps },
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
         { "image/functions/frame-ranges-name-no-epilogue"_s, testFrameRangesNameNoEpilogue },

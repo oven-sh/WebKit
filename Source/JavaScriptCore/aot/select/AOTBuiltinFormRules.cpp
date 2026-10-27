@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLayout.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "JSBoundFunction.h"
 #include <algorithm>
@@ -52,7 +53,7 @@ static bool hasObjectPart(const Type* type)
 static bool isInRareBlock(const InlineBuiltinSite& site)
 {
     BlockID block = site.context.analyses().useLists().blockOf(site.call);
-    return site.context.function().at(block).frequency == BlockFrequency::Rare;
+    return site.context.function().at(block).frequency.predicted() == BlockFrequency::Rare;
 }
 
 InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinSite& site)
@@ -98,9 +99,13 @@ static bool canFreezeInPlace(const InlineBuiltinSite& site)
     const Program& program = site.context.program();
     std::span<const LayoutID> members = membersOf(program, *object);
     // A module namespace object cannot be frozen: its exports stay writable, and the attempt throws.
+    // The run time asks an object that has a field under a symbol of the library to prepare itself before its fields close: PropertyCaches::prepareHoldersBeforeLookupsUnder().
     bool areOrdinaryObjects = std::ranges::all_of(members, [&](LayoutID member) {
-        LayoutKind kind = program.at(member).kind;
-        return (kind == LayoutKind::Record || kind == LayoutKind::Instance) && !builtinBaseClassOf(program, member);
+        const Layout& layout = program.at(member);
+        bool isAskedFirst = std::ranges::any_of(layout.fields, [&](const auto& field) {
+            return field.key && isSymbolCreatedByLibrary(program, field.key);
+        });
+        return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance) && !isAskedFirst && !builtinBaseClassOf(program, member);
     });
     return !members.empty() && areOrdinaryObjects && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
 }
@@ -145,6 +150,9 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
         return callIf(site, site.arguments().size() > 1 + JSBoundFunction::maxEmbeddedArgs || !receiverTypeOf(site).mayBeFunction(), InlineForm::TwoWay);
     case InlineBuiltin::ReflectApply:
         return callIf(site, site.arguments().size() != 3, InlineForm::TwoWay);
+    case InlineBuiltin::ReflectConstruct:
+        // Bytecode constructs in place only where the call is written so. Every other call has a frame of the host function.
+        return callIf(site, !site.value().isDoneInPlace() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
         return InlineForm::Whole;
     default:

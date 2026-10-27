@@ -18,7 +18,7 @@ function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=n
 }
 function f2 name="apply" flags=[IsChecked] parameters=[{type=undefined|null|f0|f1 site=w0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|f0|f1, v1: anything):
-    v2 = Check v0 castType=undefined|null|f0|f1 site=w0
+    v2 = Check v0 expectedType=undefined|null|f0|f1 site=w0
     v3 = Call v2, -, v1
 # REPEAT: i = 3..14
     v%(i+1) = Add v%(i), v1

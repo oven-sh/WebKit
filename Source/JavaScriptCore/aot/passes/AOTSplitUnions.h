@@ -35,11 +35,7 @@ void forEachValueSite(FunctionAnalyses& analyses, const Function& function, cons
 }
 
 // The operations for which isNamedAccess() or elementAccessOf() answers. SplitUnions looks at no other.
-inline constexpr OpcodeSet accessesByNameOrKey {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
-};
+inline constexpr OpcodeSet accessesByNameOrKey = namedAccesses | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas };
 
 void checkRewrite(FunctionPassContext&, const ValueSite&, const ReplacedEffects&);
 
@@ -70,8 +66,8 @@ public:
     IRBuilder& builder() { return m_builder; }
     Function& function() { return m_builder.function(); }
     const Value& original() const LIFETIME_BOUND { return m_original; }
-    BlockFrequency frequency() const { return m_frequency; }
-    bool isTailCall() const { return m_tailCall || (FlagMask::isDemotedTailCall(m_original.opcode) && m_original.isDemotedTailCall()); }
+    Expected<BlockFrequency> frequency() const { return m_frequency; }
+    bool isTailCall() const { return m_tailCall || m_original.isTailCall; }
     bool isRequiredTailCall() const { return m_tailCall && m_tailCall->requirement() == TailCallRequirement::Required; }
 
     void addReplaced(const Value&);
@@ -91,7 +87,7 @@ private:
     IRBuilder& m_builder;
     ValueSite m_site;
     Value m_original;
-    BlockFrequency m_frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     IRBuilder::Expansion m_expansion;
     std::optional<Terminator> m_tailCall;
     Vector<BlockID, 2> m_continuationPredecessors;
@@ -103,14 +99,14 @@ private:
 
 struct SplitArm {
     TypeID testedType;
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
 };
 
 struct ValueSplit {
     ValueID value;
     Vector<SplitArm, 4> arms;
     bool hasRest { true };
-    BlockFrequency restFrequency { BlockFrequency::Unlikely };
+    Expected<BlockFrequency> restFrequency { BlockFrequency::Unlikely };
 };
 
 using EmitSplitArm = ScopedLambda<void(uint32_t armIndex, ValueID narrowedValue)>;

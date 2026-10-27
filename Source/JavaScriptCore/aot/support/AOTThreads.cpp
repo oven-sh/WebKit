@@ -10,6 +10,7 @@
 
 #include "AOTCurrentWork.h"
 #include "AOTPhaseTimes.h"
+#include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <array>
@@ -23,6 +24,7 @@
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/ParkingLot.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StackAllocation.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Threading.h>
@@ -31,6 +33,7 @@
 namespace JSC { namespace AOT {
 
 static thread_local TaskPriority t_currentPriority = TaskPriority::Foreground;
+static thread_local bool t_isInsideLoop = false;
 static thread_local unsigned t_parallelRegionDepth = 0;
 static thread_local Seconds t_parallelRegionStart;
 static thread_local Seconds t_parallelRegionCPUTime;
@@ -38,6 +41,11 @@ static thread_local Seconds t_parallelRegionCPUTime;
 TaskPriority ParallelLoops::currentPriority()
 {
     return t_currentPriority;
+}
+
+bool ParallelLoops::isInsideLoop()
+{
+    return t_isInsideLoop;
 }
 
 ParallelRegionScope::ParallelRegionScope()
@@ -515,14 +523,15 @@ private:
 
 void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
 {
-    Thread::create("AOT build"_s, [&] {
+    startBuildThread("AOT build"_s, [&] {
         functor();
-    }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->waitForCompletion();
+    })->waitForCompletion();
 }
 
 void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
 {
     if (count < 2 || loops.width() == 1) {
+        SetForScope isInsideLoop(t_isInsideLoop, t_isInsideLoop || count > 1);
         for (unsigned index = 0; index < count; ++index)
             functor(index, 0);
         return;
@@ -542,6 +551,7 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE
     SharedWork::run(loops, maxWorkers - 1, [&](Participant participant) {
         unsigned worker = canYield ? workerNumbers->take() : numberOfWorkers.fetch_add(1, std::memory_order_relaxed);
         RELEASE_ASSERT(worker < maxWorkers);
+        SetForScope isInsideLoop(t_isInsideLoop, true);
         unsigned run = 1;
         for (unsigned first = next.load(std::memory_order_relaxed); first < count;) {
             if (canYield && participant == Participant::Helper && loops.shouldYield(priority)) {

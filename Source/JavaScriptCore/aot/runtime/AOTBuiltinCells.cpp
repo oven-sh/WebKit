@@ -393,15 +393,16 @@ void BuiltinCells::forgetValuesNamed(UniquedStringImpl* key)
     }
 }
 
-bool BuiltinCells::awaitCreation(uint32_t number)
+bool BuiltinCells::awaitCreation(uint32_t number, AwaitedOrigin origin)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(m_tables.builtinCells()[number], table);
     RELEASE_ASSERT(key);
     const Builtin& member = table.at(key->builtin());
-    if (key->kind() != BuiltinCellKey::Kind::Object || member.origin != BuiltinOrigin::Host || !member.holder || !member.name)
+    if (key->kind() != BuiltinCellKey::Kind::Object || (origin == AwaitedOrigin::Host && member.origin != BuiltinOrigin::Host) || !member.holder || !member.name)
         return false;
-    JSCell* holderCell = findObject(member.holder);
+    // A realm need not have every holder of the language, and asking for the cell of one that it lacks ends the process.
+    JSCell* holderCell = origin == AwaitedOrigin::Host ? findObject(member.holder) : find(BuiltinCellKey::object(member.holder)).value_or(nullptr);
     JSObject* holder = holderCell ? holderCell->getObject() : nullptr;
     if (!holder)
         return false;
@@ -546,6 +547,9 @@ void BuiltinCells::fillCellsOfEngine()
         std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(keys[number], table);
         RELEASE_ASSERT(key);
         if (table.at(key->builtin()).origin == BuiltinOrigin::Host || findModuleWithNamespace(table, rootOf(table, key->builtin())))
+            continue;
+        // The first read of such a member decides where it stands among the keys of its holder.
+        if (awaitCreation(number, AwaitedOrigin::Any))
             continue;
         // Where any code may run, cells are listed that nothing compiled asks for and that the realm does not have: the setter of Map[Symbol.species].
         if (find(*key))

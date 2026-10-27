@@ -299,7 +299,7 @@ void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call
 
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
-    chooseStubThatCallsValue(conventionCall, countOperand);
+    chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
     tailCallByConvention(value, conventionCall);
 }
 
@@ -340,7 +340,7 @@ bool ControlEmitter::leavesAnotherWayUnlessPromised(const TerminatorContext& ter
         Operand operand = result;
         emitter<CallEmitter>().returnValues(terminator, { &operand, 1 });
     };
-    if (m_function.at(terminator.block()).frequency == BlockFrequency::Normal) {
+    if (m_function.at(terminator.block()).frequency.predicted() == BlockFrequency::Normal) {
         testAndReturn(in<Boxed>(value), m_function.at(value).type);
         return true;
     }

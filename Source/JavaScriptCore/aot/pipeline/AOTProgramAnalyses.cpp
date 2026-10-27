@@ -238,12 +238,13 @@ void ProgramAnalyses::computeEffectsBesideOtherResults(const FlowResults& flow, 
         EffectSummarizer summarizer(m_program, flow, m_runner.build(), *m_bodySummaries, EffectSummarizer::Witnesses::Omitted);
         m_effectsAreUpToDate = m_runner.runAnalysisInTwoSteps(PassID::ComputeEffectSummaries, m_program, [&] {
             summarizer.bringSeedUpToDate(*m_effects);
-            m_seedOfUpdateUnderWay = &m_bodySummaries->seed();
+            m_seedOfUpdateUnderWay = &m_bodySummaries->lendSeed();
         }, [&] {
             summarizer.finishUpdate(*m_effects);
             return true;
         }, computeOtherResults);
-        m_seedOfUpdateUnderWay = nullptr;
+        if (std::exchange(m_seedOfUpdateUnderWay, nullptr))
+            m_bodySummaries->takeSeedBack();
         return;
     }
 

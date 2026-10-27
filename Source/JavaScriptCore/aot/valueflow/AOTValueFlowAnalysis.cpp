@@ -13,7 +13,9 @@
 #include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowWidenedSolve.h"
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -335,25 +337,25 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
     };
     visitAll(collectInParallel<TypeID>(loops, program.layouts.size(), [&](unsigned index, Vector<TypeID>& found) {
         for (const Field& field : program.layouts[index].fields)
-            found.append(field.declared.type);
+            found.append(field.declared.written());
     }));
     for (const Variable& variable : program.variables)
-        visit(variable.declared.type);
+        visit(variable.declared.written());
     visitAll(collectInParallel<TypeID>(loops, program.functions.size(), [&](unsigned functionIndex, Vector<TypeID>& found) {
         const Function& function = program.functions[functionIndex];
         for (uint32_t index = 0; index < function.numberOfEntryParameters(); ++index) {
             if (const DeclaredType* declared = function.declaredEntryParameter(index))
-                found.append(declared->type);
+                found.append(declared->written());
         }
         for (const DeclaredType& result : function.results)
-            found.append(result.type);
+            found.append(result.written());
     }));
     while (!worklist.isEmpty()) {
         const Type& type = program.types.at(worklist.takeLast());
         for (StringID literal : type.stringLiterals)
             program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal });
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 visit(contents);
         }
     }
@@ -440,7 +442,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -468,6 +470,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
+        .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
@@ -478,12 +481,35 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     if (!m_instancedFunctions->isEmpty())
         m_input.instancedFunctions = m_instancedFunctions.get();
     times.didFinish("solve: instanced functions"_s);
+    Vector<UnseenCodeRecord> unseenCodeOfProgramAsItIs;
+    if (build.options().widensFlow) [[unlikely]] {
+        m_inputAsItIs = m_input;
+        m_inputAsItIs.remembersWhoLoggedEachEdge = true;
+        m_inputAsItIs.isAskedHowValuesCame = true;
+        m_inputAsItIs.leavesOutWhatIsCovered = false;
+        m_solver = makeUnique<ValueFlowSolver>(m_inputAsItIs, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
+        if (m_solver->solve()) {
+            unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
+            m_solverOfProgramAsItIs = WTF::move(m_solver);
+            m_input.seedOfWidening = build.recordedOptions().layoutSeed;
+        }
+        times.didFinish("solve: the program as it is"_s);
+    }
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
+    if (build.options().logging.logsPhaseTimes) {
+        ValueFlowBytesByTable bytes;
+        m_bodies.addBytesTo(bytes);
+        bytes.dump("all of the bodies"_s);
+    }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
+    if (m_solverOfProgramAsItIs && m_hasResult) [[unlikely]] {
+        reportWhatIsFoundOnlyFromLess(*this, unseenCodeOfProgramAsItIs.span(), build);
+        times.didFinish("solve: the two solves compared"_s);
+    }
 }
 
 ValueFlowSolution::~ValueFlowSolution() = default;
@@ -508,11 +534,11 @@ void ValueSetMakerPool::giveBack(ValueSetMaker& maker)
     m_idleMakers.append(&maker);
 }
 
-ValueSetID ValueFlowSolution::valueOf(const ValueFlowOperand& operand)
+ValueSetID ValueFlowSolution::possibleValuesOf(const ValueFlowOperand& operand)
 {
     ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
     if (operand.node)
-        value = m_maker.unite(value, m_solver->valueOf(operand.node));
+        value = m_maker.unite(value, m_solver->possibleValuesOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, *m_solver, m_maker);
 }
 

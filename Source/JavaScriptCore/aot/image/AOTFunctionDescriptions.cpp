@@ -126,9 +126,9 @@ static String roleWord(const Program& program, FunctionID id)
 
 static char heatLetter(const Program& program, const Heat& heat, FunctionID id)
 {
-    if (heat.isCompact(program, id))
+    if (heat.isCompact(program, id).predicted())
         return 'k';
-    switch (heat.of(program, id)) {
+    switch (heat.of(program, id).predicted()) {
     case HeatClass::Unknown:
         return 'u';
     case HeatClass::RunsOnce:

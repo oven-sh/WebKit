@@ -113,7 +113,7 @@ module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="f" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Convert v0 declared={type=number site=w0} illTypedCause=Assertion @1001
     v2 = Convert v0 declared={type=string flags=[IsExpected]} @1002
-    v3 = Check v0 castType=number site=w0 @1003
+    v3 = Check v0 expectedType=number site=w0 @1003
     Return v1 @2000
 }
 entry module=m0

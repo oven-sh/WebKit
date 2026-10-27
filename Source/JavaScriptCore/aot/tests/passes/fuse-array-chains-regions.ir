@@ -9,8 +9,8 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
 runtimefunction id=33 function=f1
 runtimefunction id=65 function=f2
-runtimefunction id=131090 function=f0
-function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+runtimefunction id=131091 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v6 = Undefined
     Return v6
 }
@@ -45,11 +45,11 @@ function f5 name="insideTry" parameters=[{type=Array<number, proven, pristine[St
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f4
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Jump -> next b1()
   b1():
     Return v8
@@ -63,7 +63,7 @@ function f5 name="insideTry" parameters=[{type=Array<number, proven, pristine[St
 # CHECK: [[zero5]]: 0 = Integer
 # CHECK-NEXT: [[none5]]: undefined = Undefined
 # CHECK-NEXT: [[fused5]]: anything = CallDirect v0, [[zero5]], [[none5]], v1, [[none5]], v5, [[none5]] function=[[filterMapToArray]]
-# CHECK-NEXT: v8: Array<number> = AssumeType [[fused5]] castType=Array<number>
+# CHECK-NEXT: v8: Array<number> = AssumeType [[fused5]] provenType=Array<number>
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -76,11 +76,11 @@ function f6 name="insideLoop" parameters=[{type=Array<number, proven, pristine[S
     v3 = NewClosure function=f3
     v4 = NewArray contents=anything
     v5 = CallDirect v0, v3, v4 function=f1
-    v6 = AssumeType v5 castType=Array<number>
+    v6 = AssumeType v5 provenType=Array<number>
     v7 = NewClosure function=f4
     v8 = NewArray contents=anything
     v9 = CallDirect v6, v7, v8 function=f2
-    v10 = AssumeType v9 castType=Array<number>
+    v10 = AssumeType v9 provenType=Array<number>
     v11 = Call v1, -, v10
     v12 = ToBoolean v11
     Branch v12 -> taken b1(), notTaken b2()
@@ -100,19 +100,19 @@ function f7 name="twoChainsInOneBlock" parameters=[{type=Array<number, proven, p
     v2 = NewClosure function=f3
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f1
-    v5 = AssumeType v4 castType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number>
     v6 = NewClosure function=f4
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f2
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     v10 = NewClosure function=f3
     v11 = NewArray contents=anything
     v12 = CallDirect v1, v10, v11 function=f1
-    v13 = AssumeType v12 castType=Array<number>
+    v13 = AssumeType v12 provenType=Array<number>
     v14 = NewClosure function=f4
     v15 = NewArray contents=anything
     v16 = CallDirect v13, v14, v15 function=f2
-    v17 = AssumeType v16 castType=Array<number>
+    v17 = AssumeType v16 provenType=Array<number>
     v18 = NewArray v9, v17 contents=anything
     Return v18
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
@@ -135,21 +135,21 @@ function f8 name="chainFeedsChain" parameters=[{type=Array<number, proven, prist
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f4
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
-    v8 = AssumeType v7 castType=Array<number>
-    v9 = AssumeType v8 castType=Array<number, proven, pristine[Storage, Names]>
+    v8 = AssumeType v7 provenType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number, proven, pristine[Storage, Names]>
     PutModuleVariable v9 variable=g0
     v11 = NewClosure function=f3
     v12 = NewArray contents=anything
     v13 = CallDirect v9, v11, v12 function=f1
-    v14 = AssumeType v13 castType=Array<number>
+    v14 = AssumeType v13 provenType=Array<number>
     v15 = NewClosure function=f4
     v16 = NewArray contents=anything
     v17 = CallDirect v14, v15, v16 function=f2
-    v18 = AssumeType v17 castType=Array<number>
+    v18 = AssumeType v17 provenType=Array<number>
     Return v18
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -173,12 +173,12 @@ function f9 name="castsBetweenLinks" parameters=[{type=Array<number, proven, pri
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = Upcast v4 castType=undefined|Array<number>
     v6 = NewClosure function=f4
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f2
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     Return v9
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
@@ -195,12 +195,12 @@ function f10 name="castUsedTwice" parameters=[{type=Array<number, proven, pristi
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = Upcast v4 castType=undefined|Array<number>
     v6 = NewClosure function=f4
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f2
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     PutModuleVariable v5 variable=g0
     Return v9
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1

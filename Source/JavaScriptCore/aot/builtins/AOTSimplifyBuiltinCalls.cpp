@@ -89,11 +89,11 @@ void replaceKeepingType(FunctionPassContext& context, ValueID original, Value&& 
     if (context.build.options().verifiesProgram)
         replaced.add({ context.program, context.inputs.effects }, function, value);
 
-    TypeID expected = value.expected();
+    TypeID expected = value.expected().predicted();
     rewritten.setOrigin(value.origin());
     value = WTF::move(rewritten);
     value.type = resultTypeOf(context.program, function, value, context.types);
-    value.setExpected(narrowExpectedType(context.program, context.types, expected, value.type));
+    value.setExpected(ExpectedType(narrowExpectedType(context.program, context.types, expected, value.type)));
     checkRewrite(context, ValueSite { block, 0, original }, replaced);
 }
 
@@ -244,9 +244,14 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
 {
     if (!type.layouts)
         return false;
-    return std::ranges::any_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return std::ranges::any_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return mayBeMadeByBuiltinConstructor(program, layout);
     });
+}
+
+static bool mayBeProxy(const Type& type)
+{
+    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy);
 }
 
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
@@ -320,6 +325,7 @@ namespace {
 struct BuiltinOwnPropertyTest {
     ValueID object;
     PropertyKeyID key;
+    BuiltinID builtin;
 };
 
 } // anonymous namespace
@@ -344,16 +350,17 @@ static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassCon
     if (!object || !keyOperand)
         return std::nullopt;
 
-    PropertyKeyID key = internKey(context.types, constantKeyOf(program, program.typeOf(context.function, keyOperand)));
+    PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(context.function, value), program.typeOf(context.function, keyOperand)));
     if (!key)
         return std::nullopt;
-    return BuiltinOwnPropertyTest { object, key };
+    return BuiltinOwnPropertyTest { object, key, program.builtins().canonicalID(overload->builtin) };
 }
 
-static Value makeOwnPropertyTest(const Value& call, ValueID object, PropertyKeyID key)
+static Value makeOwnPropertyTest(const Value& call, ValueID object, const BuiltinOwnPropertyTest& found)
 {
     Value test = IRBuilder::make(Opcode::PropHasOwn, { object });
-    test.setKey(key);
+    test.setKey(found.key);
+    test.setCalledBuiltin(found.builtin);
     test.setAccessSite(call.accessSite());
     return test;
 }
@@ -363,7 +370,7 @@ static std::optional<Value> simplifyOwnPropertyTest(FunctionPassContext& context
     std::optional<BuiltinOwnPropertyTest> found = findOwnPropertyTest(context, value);
     if (!found || !context.program.typeOf(context.function, found->object).isObject())
         return std::nullopt;
-    Value test = makeOwnPropertyTest(value, found->object, found->key);
+    Value test = makeOwnPropertyTest(value, found->object, *found);
     if (!keepsEffectsOf(context, value, test))
         return std::nullopt;
     return test;
@@ -388,8 +395,10 @@ static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (auto& [site, test] : tests) {
         builder.setOrigin(function.at(site.value).origin());
-        ValueID object = builder.insertBefore(site.point(), IRBuilder::make(Opcode::ToObject, { test.object }));
-        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test.key));
+        Value conversion = IRBuilder::make(Opcode::ToObject, { test.object });
+        conversion.setCalledBuiltin(test.builtin);
+        ValueID object = builder.insertBefore(site.point(), WTF::move(conversion));
+        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test));
     }
     builder.applyInsertions();
     context.analyses.didChangeValues();
@@ -449,7 +458,8 @@ static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID
     if (operand.anyObject)
         return KnownBoolean::Unknown;
     if (operand.layouts) {
-        bool areRecords = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
+        auto all = program.at(operand.layouts).all();
+        bool areRecords = all && std::ranges::all_of(*all, [&](LayoutID layout) {
             return program.at(layout).kind == LayoutKind::Record;
         });
         if (!areRecords)
@@ -475,7 +485,8 @@ static bool isOfNoClassOfHost(const Program& program, const Type& operand)
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
         return false;
     if (operand.layouts) {
-        bool areMadeByProgram = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
+        auto all = program.at(operand.layouts).all();
+        bool areMadeByProgram = all && std::ranges::all_of(*all, [&](LayoutID layout) {
             return program.at(layout).kind == LayoutKind::Record || !mayBeMadeByBuiltinConstructor(program, layout);
         });
         if (!areMadeByProgram)
@@ -516,9 +527,8 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     // Number(value) and ToNumber differ only for a BigInt.
     if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
         return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
-    if (overload->builtin == Builtins::ArrayIsArray && !operand.anyObject && !operand.findClassPart(BuiltinClasses::Proxy) && !mayBeMadeByBuiltinConstructor(context.program, operand)) {
+    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
-    }
 
     KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
     if (answer == KnownBoolean::Unknown)
@@ -541,7 +551,7 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
         Type views = Type::builtinClass(BuiltinClasses::DataView);
         for (uint32_t index = 0; index < table.classCount(); ++index) {
             BuiltinClassID builtinClass(index);
-            if (table.at(builtinClass).origin == BuiltinOrigin::Engine && table.at(builtinClass).typedArrayType != NotTypedArray)
+            if (table.typedArrayClassOf(builtinClass) == builtinClass)
                 views = views.unionWith(Type::builtinClass(builtinClass), context.types);
         }
         return makeTypeTest(arguments[0], context.types.intern(WTF::move(views)));
@@ -670,7 +680,7 @@ static BuiltinOverloadID findFormTakingParts(FunctionPassContext& context, const
             continue;
         if (!resultTypeOfBuiltinCall(typing, { .overload = overload, .operands = operands }, 0).isSubsetOf(context.types.at(call.type), context.program))
             return { };
-        if (!effectsOfOverload(effectContext, overload, nullptr, operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
+        if (!effectsOfOverload(effectContext, overload, TypeID(), operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
             return { };
         return overload;
     }
@@ -745,7 +755,6 @@ static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const Bu
     for (const CallWithLiteralParts& match : matches) {
         const Value& call = function.at(match.call.value);
         Value rewritten = makeBuiltinCall(match.form, BuiltinCallForm::Whole, { { }, match.arguments }, { call.expectedResult(), call.accessSite(), call.allocationSite() });
-        rewritten.setIsDemotedTailCall(call.isDemotedTailCall());
         replaceKeepingType(context, match.call.value, WTF::move(rewritten));
     }
     context.analyses.didChangeValues();
@@ -761,6 +770,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     };
     if (hasSitesIn(SiteList::SimplifiedIntrinsics))
         rewrites += simplifyIntrinsics(context);
+    if (hasSitesIn(SiteList::TemplateObjects))
+        rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))
         rewrites += takeConstantListsApart(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListCalls)) {

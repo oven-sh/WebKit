@@ -73,7 +73,7 @@ static bool isPrintedBefore(const StringTable& strings, const PropertyKey& a, co
         return a.kind < b.kind;
     if (auto order = compareSpans(bytesOf(strings, a.text), bytesOf(strings, b.text)); order != 0)
         return order < 0;
-    return std::tie(a.symbol, a.module, a.position) < std::tie(b.symbol, b.module, b.position);
+    return std::tie(a.symbol, a.module, a.callNumber) < std::tie(b.symbol, b.module, b.callNumber);
 }
 
 static bool isPrintedBefore(const StringTable& strings, RegExpLiteralInType a, RegExpLiteralInType b)
@@ -156,7 +156,8 @@ void IRPrinter::print(PropertyKeyID id)
         print(key.text);
         return;
     case PropertyKeyKind::EnginePrivateName:
-        m_out.print("@"_s);
+    case PropertyKeyKind::ModulePrivateName:
+        m_out.print(key.kind == PropertyKeyKind::ModulePrivateName ? "@#"_s : "@"_s);
         print(key.text);
         return;
     case PropertyKeyKind::PrivateName:
@@ -186,8 +187,8 @@ void IRPrinter::print(PropertyKeyID id)
         m_out.print("@"_s);
         print(key.module);
         m_out.print(":"_s);
-        if (key.position)
-            print(*key.position);
+        if (key.callNumber)
+            print(*key.callNumber);
         else
             m_out.print("-"_s);
         return;
@@ -227,6 +228,8 @@ void IRPrinter::printType(const Type& type)
     }
     if (type.primitives & Primitive::Absent)
         m_out.print(bar, "absent"_s);
+    if (type.primitives & Primitive::Unspecified)
+        m_out.print(bar, "unspecified"_s);
 
     printStringLiterals(type, bar);
     printSymbolLiterals(type, bar);
@@ -335,12 +338,10 @@ void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
         printInvalid("layoutset"_s, type.layouts.index());
     } else if (type.layouts) {
         const LayoutSet& set = types.at(type.layouts);
-        visitInPrintedOrder(m_program, set.members.span(), [&](LayoutID layout) {
+        visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID layout) {
             m_out.print(bar);
             print(layout);
         });
-        if (set.hasMembersWithoutLayout)
-            m_out.print(bar, "nolayout"_s);
     }
     if (type.environment) {
         m_out.print(bar, "env "_s);
@@ -365,7 +366,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     unsigned numberOfContents = builtins.contains(part.builtinClass) ? builtins.numberOfSlotsInType(part.builtinClass) : 0;
     bool hasKnownContents = false;
     for (unsigned index = 0; index < numberOfContents; ++index)
-        hasKnownContents |= part.contentsAt(index) != TypeTable::anything;
+        hasKnownContents |= part.writtenContentsAt(index) != TypeTable::anything;
 
     Vector<RegExpLiteralInType, 4> literals;
     if (part.builtinClass == BuiltinClasses::RegExp)
@@ -379,7 +380,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     CommaPrinter comma;
     for (unsigned index = 0; index < numberOfContents; ++index) {
         m_out.print(comma);
-        print(part.contentsAt(index));
+        print(part.writtenContentsAt(index));
     }
     if (printsEngineParts) {
         AOT::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
@@ -418,13 +419,11 @@ void IRPrinter::print(LayoutSetID id)
     const LayoutSet& set = m_program.at(id);
     m_out.print("["_s);
     CommaPrinter comma;
-    visitInPrintedOrder(m_program, set.members.span(), [&](LayoutID member) {
+    visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID member) {
         m_out.print(comma);
         print(member);
     });
-    if (set.hasMembersWithoutLayout)
-        m_out.print(comma, "nolayout"_s);
-    if (!set.isComplete)
+    if (!set.listsEveryLayout())
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);
 }
@@ -443,16 +442,16 @@ void IRPrinter::print(CalleeSetID id)
     const CalleeSet& set = m_program.at(id);
     m_out.print("["_s);
     CommaPrinter comma;
-    for (FunctionID function : set.functions) {
+    for (FunctionID function : set.written().functions) {
         m_out.print(comma);
         print(function);
     }
-    for (BuiltinID builtin : set.builtins) {
+    for (BuiltinID builtin : set.written().builtins) {
         m_out.print(comma, "builtin("_s);
         print(builtin);
         m_out.print(")"_s);
     }
-    if (!set.isComplete)
+    if (!set.listsEveryCallee())
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);
 }

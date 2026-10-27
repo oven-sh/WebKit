@@ -101,7 +101,7 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
 
     PlacedArguments placed = placeArguments(function, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    CallOptions options { .constructs = value->isConstruction(), .isTailCall = value->isDemotedTailCall(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
+    CallOptions options { .constructs = value->isConstruction(), .callsOwnFunctionObject = value->callsOwnFunctionObject(), .hasLandingOfMisfit = generator().calleeTestsResultOf(value) };
     B3::PatchpointValue* call = emitCall(value, CallTarget::function(function, placed.entry), placed, locations.results.span(), options);
     if (options.hasLandingOfMisfit) {
         meetLandingOfMisfit(value, call);

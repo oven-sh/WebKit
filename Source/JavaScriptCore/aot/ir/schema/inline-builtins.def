@@ -37,6 +37,7 @@ inline MapIterator(IterationKind) SetIterator(IterationKind) ; Allocates reads(C
 
 inline PromiseResolve ; asOverload ; family PromiseBuiltin
 inline PromiseThen PromiseCatch ; asOverload ; family PromiseBuiltin ; optionalSlowPath
+inline DataViewByteLength ; reads(TypedArrayStorage) ; family BufferBuiltin
 inline DataViewGet(TypedArrayType) ; Allocates reads(TypedArrayStorage, TypedArrayElements) throws ; family BufferBuiltin
 inline DataViewSet(TypedArrayType) ; reads(TypedArrayStorage) writes(TypedArrayElements) throws ; family BufferBuiltin
 inline Atomics(AtomicsOperation) ; Allocates reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) throws ; family BufferBuiltin
@@ -50,7 +51,7 @@ inline DateGetField(DateField, TimeZone) DateToISOString ; asOverload ; family D
 inline DateNow ; reads(ExternalState) writes(ExternalState) ; family DateBuiltin ; optionalSlowPath
 inline DateGetTime DateGetMilliseconds ; reads(InternalFields) ; family DateBuiltin ; optionalSlowPath
 inline DateSetTime ; writes(InternalFields) ; family DateBuiltin ; optionalSlowPath
-inline FunctionBind ReflectApply ; asOverload ; family FunctionBuiltin
+inline FunctionBind ReflectApply ReflectConstruct ; asOverload ; family FunctionBuiltin
 inline FunctionApply ; asOverload ; family FunctionBuiltin ; optionalSlowPath
 inline FieldsOfDirectEntry ; asOverload ; family FunctionBuiltin ; optionalSlowPath ; formOnly
 

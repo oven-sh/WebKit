@@ -13,7 +13,7 @@ function f0 name="number" module=m1 parameters=[{type=number}] results=[{type=i3
     Return v1
 }
 # CHECK-LABEL: function f0
-# CHECK: Check v0 castType=i32
+# CHECK: Check v0 expectedType=i32
 # CHECK-NOT: Convert
 function f1 name="constant" module=m1 results=[{type=anything}] {
     v0 = Double number=1.5

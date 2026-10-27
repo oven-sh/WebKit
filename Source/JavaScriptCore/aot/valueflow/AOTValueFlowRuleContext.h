@@ -92,17 +92,26 @@ public:
     }
     bool contains(ClimbingSet set, ValueFlowObjectID member) const { return sets().contains(set.m_set, member); }
     bool holdsOneMember(ClimbingSet set) const { return !!sets().onlyMember(set.m_set); }
+    bool holdsMoreMembersThan(ClimbingSet set, uint32_t number) const { return !ValueSets::isComplement(set.m_set) && sets().size(set.m_set) > number; }
+    bool holdsAllOf(ClimbingSet set, ClimbingSet members) const { return sets().isSubset(members.m_set, set.m_set); }
+    void appendPartsWithChainsOfTheirOwn(ClimbingSet set, Vector<ValueSetID>& parts) { m_maker.appendParts(set.m_set, parts); }
     bool meet(ClimbingSet first, ClimbingSet second) const { return m_maker.meet(first.m_set, second.m_set); }
     bool meet(ClimbingSet set, ValueSetID constant) const { return m_maker.meet(set.m_set, constant); }
     ClimbingSet unite(ClimbingSet first, ClimbingSet second) { return ClimbingSet(m_maker.unite(first.m_set, second.m_set)); }
+    ValueSetID withMembersOf(ValueSetID constant, ClimbingSet set) { return m_maker.unite(constant, set.m_set); }
     ClimbingSet restrict(ClimbingSet set, ValueSetID mask) { return ClimbingSet(m_maker.intersect(set.m_set, mask)); }
 
     const ValueSets& sets() const { return m_maker.sets(); }
     ValueSetMaker& maker() { return m_maker; }
 
-    ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
+    ValueFlowNodeID read(ClimbingSet objects, ValueFlowCellName cell) { return readWhatWasWritten(objects, static_cast<ValueFlowName>(cell)); }
+    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowName);
+    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowCellName) = delete;
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
+    ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
+    bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;
     bool usesGeneralRulesOnly() const;
     ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName);
     bool runsCodeThatRecordsDescribe() const;
@@ -155,6 +164,7 @@ public:
     RefusedCode refusedCode() const;
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;
+    bool isSabotaged(Sabotage) const;
 
     static ValueSetID throughMaskOf(const ValueFlowOperand&, ValueSetID value, const ValueFlowSolver&, ValueSetMaker&);
     static ValueSetID valueShownToRules(const ValueFlowOperand&, const ValueFlowSolver&, ValueSetMaker&);
@@ -175,6 +185,7 @@ private:
     ValueFlowNodeID notPlain();
     ValueFlowNodeID writtenUnderUnknownKey();
     ValueFlowNodeID rareWriteNode(ValueFlowRareWrite);
+    ClimbingSet objectsThatMayHoldSomethingUnder(ValueFlowName, ClimbingSet objects);
     ValueFlowNodeID mutationNode(ObjectMutation);
     void logMadeNodesAskedFor(const ValueFlowNodeKey&, uint32_t madeNodes);
     void addObjectsOfProgram(ValueFlowNodeID, ClimbingSet objects);
@@ -228,6 +239,7 @@ private:
     size_t m_firstEdgeOfRun { 0 };
     size_t m_firstNodeReadOfRun { 0 };
     size_t m_firstNodeAskedWhetherEmptyOfRun { 0 };
+    size_t m_firstNameWatchedOfRun { 0 };
     std::array<ValueSetID, numberOfSetsRememberedByThread> m_rememberedByThread { ValueSets::nothing, ValueSets::nothing, ValueSets::nothing };
     std::optional<ValueFlowUnknownSource> m_unknownSource;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constantsOfThisTurn;

@@ -422,13 +422,23 @@ bool BuiltinTable::isSameOrSubclassOf(BuiltinClassID builtinClass, BuiltinClassI
     return false;
 }
 
+// The test for an instance of the class compares the type of the cell, and the type of the cell says how wide an element is.
+TypedArrayType BuiltinTable::typedArrayTypeOf(BuiltinClassID builtinClass) const
+{
+    if (!builtinClass || !isTypedArrayType(at(builtinClass).type))
+        return NotTypedArray;
+    return JSC::typedArrayType(at(builtinClass).type);
+}
+
 BuiltinClassID BuiltinTable::typedArrayClassOf(BuiltinClassID builtinClass) const
 {
-    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
-        if (at(current).typedArrayType != NotTypedArray)
-            return current;
-    }
-    return { };
+    TypedArrayType type = typedArrayTypeOf(builtinClass);
+    if (type == NotTypedArray)
+        return { };
+    BuiltinClassID highest = builtinClass;
+    while (typedArrayTypeOf(at(highest).parent) == type)
+        highest = at(highest).parent;
+    return highest;
 }
 
 template<typename Predicate>
@@ -521,6 +531,19 @@ bool BuiltinTable::isHostFunctionOfEngine(BuiltinID id) const
     });
 }
 
+bool BuiltinTable::isNativeFunction(BuiltinID id) const
+{
+    if (isHostFunctionOfEngine(id))
+        return true;
+    const Builtin& entry = at(id);
+    if (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method)
+        return false;
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && overload.callee == BuiltinCallee::HostFunction;
+    });
+}
+
 bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
 {
     const Builtin& entry = at(id);
@@ -595,13 +618,25 @@ const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
     return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
 }
 
-bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
+bool BuiltinTable::letsInUnseenCodeWhenCalled(BuiltinID id) const
 {
     constexpr OptionSet<BuiltinFlag> flagsOfEvents { BuiltinFlag::EvaluatesText, BuiltinFlag::LoadsModuleByName, BuiltinFlag::RunsUnseenCode };
     const BuiltinUnseenCode* row = unseenCodeOf(id);
     if (row && row->condition && row->condition->hasProperty)
         return false;
     return at(id).flags.containsAny(flagsOfEvents) || row;
+}
+
+bool BuiltinTable::letsInUnseenCode(BuiltinID id) const
+{
+    if (letsInUnseenCodeWhenCalled(id))
+        return true;
+    // createRequire() returns a require function.
+    return std::ranges::any_of(overloadsOf(id), [&](const BuiltinOverload& overload) {
+        return std::ranges::any_of(at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
+            return part.kind == BuiltinTypePartKind::Builtin && letsInUnseenCodeWhenCalled(canonicalID(part.builtin));
+        });
+    });
 }
 
 const BuiltinForms* BuiltinTable::formsOf(BuiltinID id) const

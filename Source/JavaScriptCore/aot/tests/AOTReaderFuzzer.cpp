@@ -57,7 +57,7 @@ struct Fuzzer {
     InputKind chooseInputKind(WeakRandom&) const;
     Input createInput(uint32_t seed) const;
     Input createDamagedProgram(WeakRandom&) const;
-    bool printsSameTextAfterParsing(const Program&) const;
+    bool parsesToSameText(const String&) const;
     std::optional<ASCIILiteral> checkInput(const Input&);
     void reportFailure(ASCIILiteral label, uint32_t number, ASCIILiteral violation);
 
@@ -437,19 +437,18 @@ Input Fuzzer::createDamagedProgram(WeakRandom& random) const
     return input;
 }
 
-bool Fuzzer::printsSameTextAfterParsing(const Program& program) const
+static String printWireFields(const Program& program)
 {
     StringPrintStream text;
     printProgram(text, program, PrintedFields::WireOnly);
-    String firstText = text.toString();
+    return text.toString();
+}
 
+bool Fuzzer::parsesToSameText(const String& text) const
+{
     BuildContext build(wire);
-    std::unique_ptr<Program> parsed = parseProgram(firstText, IRForm::AsRead, build);
-    if (!parsed)
-        return false;
-    StringPrintStream secondText;
-    printProgram(secondText, *parsed, PrintedFields::WireOnly);
-    return firstText == secondText.toString();
+    std::unique_ptr<Program> parsed = parseProgram(text, IRForm::AsRead, build);
+    return parsed && printWireFields(*parsed) == text;
 }
 
 std::optional<ASCIILiteral> Fuzzer::checkInput(const Input& input)
@@ -465,13 +464,15 @@ std::optional<ASCIILiteral> Fuzzer::checkInput(const Input& input)
     BuildContext build(wire);
     Diagnostics& diagnostics = build.diagnostics();
     std::unique_ptr<Program> program = readInput(input, build);
+    // A text numbers its values in the order in which they stand, and the passes of the read stage add and remove values.
+    String textAsRead = program ? printWireFields(*program) : String();
     if (!program) {
         if (!diagnostics.hasErrors())
             addViolation("rejected without a diagnostic"_s);
     } else if (!runReadStage(*program, build)) {
         if (!diagnostics.hasErrors())
             addViolation("does not verify, without a diagnostic"_s);
-    } else if (!printsSameTextAfterParsing(*program))
+    } else if (!parsesToSameText(textAsRead))
         addViolation("the printed text does not parse to the same text"_s);
 
     diagnostics.finish(program.get());

@@ -32,6 +32,17 @@ BufferBuiltinEmitter::BufferBuiltinEmitter(CodeGenerator& generator)
 {
 }
 
+void BufferBuiltinEmitter::generateDataViewByteLength(const InlineCall& call)
+{
+    ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();
+    CellPointer view = cellOperand(call.receiver());
+    missUnless(call, views.hasFixedLength(view));
+    // A view of a detached buffer has no bytes, and the getter throws.
+    Integer length = views.lengthOf(view);
+    missUnless(call, isNotZero(length));
+    finish(call, length, Range { 1, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
+}
+
 void BufferBuiltinEmitter::generateDataViewGet(const InlineCall& call)
 {
     TypedArrayType elements = call.parameter<TypedArrayType>(0);
@@ -181,6 +192,8 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
     }
     if (isBigInt(elements))
         return newBigInt(context, element.as<Integer>(), elements == TypeBigInt64);
+    if (isFloat(elements))
+        return ImpureNumber(element.value);
     return element;
 }
 

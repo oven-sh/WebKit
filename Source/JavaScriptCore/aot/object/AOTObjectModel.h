@@ -58,17 +58,11 @@ public:
     bool shapeHasType(const RuntimeType&, uint32_t shape) const;
     // Only the engine stores a brand. What it stores is a class token, which is no JavaScript value, so no type describes it.
     bool fieldAccepts(const FieldData& field, JSValue value) const { return field.isBrand() || valueHasType(typeOf(field), value); }
-    // A slot holds undefined or null wherever it has a marker for it, whatever the type of its field says.
     bool slotAdmits(const FieldData& field, JSValue value) const
     {
         if (field.isAccessor())
             return false;
-        if (fieldAccepts(field, value))
-            return true;
-        if (field.keepsStateOfBirth)
-            return false;
-        SlotTraits traits = traitsOf(field.slot.representation());
-        return (value.isUndefined() && traits.hasUndefined) || (value.isNull() && traits.hasNull);
+        return fieldAccepts(field, value) || (field.slotHoldsUndefinedAndNull && value.isUndefinedOrNull());
     }
     std::optional<AcceptedValue> accept(const FieldData&, JSValue) const;
     bool passes(const ShapeTestData& test, uint32_t shape) const { return m_tables.passes(test, shape); }
@@ -76,12 +70,15 @@ public:
 
     bool hasSymbolKey(const FieldData&) const;
     bool hasStringKey(const FieldData&) const;
-    bool hasPositionAmongKeys(const LayoutData&, UniquedStringImpl*) const;
     bool mayBeAbsent(const FieldData&) const;
     bool everyObjectHadRemovedField(const LayoutData&) const;
     // What an object of the layout holds behind its header when Object::create() has made it and nothing is stored yet: the same bytes every time. Kept for whoever makes such objects again and again.
     struct BodyAtBirth {
-        Vector<uint8_t> bytes;
+        std::span<const uint8_t> span() const { return cell.span().subspan(sizeof(JSCell), size); }
+
+        // The cell in whole chunks of sixteen bytes, with zeros for its header and behind its last byte.
+        Vector<uint8_t> cell;
+        size_t size { 0 };
         bool isBornUnfinished { false };
     };
     const BodyAtBirth* bodyAtBirthIfKnown(const LayoutData& layout) const
@@ -89,7 +86,13 @@ public:
         auto found = m_bodiesAtBirth.find(layout.index + 1);
         return found == m_bodiesAtBirth.end() ? nullptr : &found->value;
     }
-    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished) { m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { Vector<uint8_t>(bytes), isBornUnfinished }); }
+    void rememberBodyAtBirth(const LayoutData& layout, std::span<const uint8_t> bytes, bool isBornUnfinished)
+    {
+        Vector<uint8_t> cell;
+        cell.fill(0, WTF::roundUpToMultipleOf<16>(sizeof(JSCell) + bytes.size()));
+        memcpySpan(cell.mutableSpan().subspan(sizeof(JSCell)), bytes);
+        m_bodiesAtBirth.add(layout.index + 1, BodyAtBirth { WTF::move(cell), bytes.size(), isBornUnfinished });
+    }
     void didReadAbsentField(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
     {
         if (!m_tables.removedFields().empty()) [[unlikely]]
@@ -170,7 +173,7 @@ private:
         FreeList freeList { 0 };
     };
 
-    AllocationSiteRecord emptyAllocationSiteRecord() { return { .header = 0, .orderAndShapeWords = 0, .allocator = &m_allocatorWithoutRoom, .unused = 0 }; }
+    AllocationSiteRecord emptyAllocationSiteRecord() { return { .header = 0, .orderAndShapeWords = 0, .allocator = &m_allocatorWithoutRoom, .prototype = 0 }; }
 
     std::span<uint32_t> usualStructureIDs() const { return { m_structures, m_tables.firstEnvironmentShape }; }
     std::span<AllocationSiteRecord> allocationSiteRecords() const;

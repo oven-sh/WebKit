@@ -31,11 +31,15 @@ public:
     Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
+    JSCell* untakenNameProperty() const { return m_untakenNameProperty; }
     Structure* boundClosureStructure(VM&, FunctionID);
     Structure* asyncBoundFunctionStructure() const { return m_asyncBoundFunctionStructure; }
     void setAsyncBoundFunctionStructure(Structure*);
     // The first lookup of `prototype`, the first construction and the guards of a constructor function each give the closure another Structure. None of them changes what any other name finds.
     void didGivePrototypePropertyTo(VM&, JSObject* closure);
+
+    // A region is what the collector visits of the table once one of its cells was written.
+    static constexpr unsigned regionShift = 8;
 
     JSCell* closure(VM&, FunctionID);
     JSCell* closureIfCreated(FunctionID) const;
@@ -58,18 +62,17 @@ private:
     void createStructures(VM&);
     void didCreateClosureFor(FunctionID, JSCell*);
 
-    static constexpr unsigned regionShift = 8;
-
     State& m_state;
     const ProgramTables& m_tables;
     RememberedSlotSet m_writtenRegions;
     Structure* m_closureStructures[numberOfClosureStructures] { };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
-    Structure* m_reifiedSlimClosureStructures[2][3] { };
+    Structure* m_reifiedSlimClosureStructures[2][3][2] { };
     Structure* m_boundClosureStructures[2] { };
     Structure* m_asyncBoundFunctionStructure { nullptr };
     RefPtr<PrivateSymbolImpl> m_functionIndexPrivateName;
     JSCell* m_uncreatedPrototypeProperty { nullptr };
+    JSCell* m_untakenNameProperty { nullptr };
     JSObject* m_calleeOfModuleBodies { nullptr };
 };
 

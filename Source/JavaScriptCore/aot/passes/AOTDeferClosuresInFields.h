@@ -16,9 +16,10 @@ class BuildContext;
 namespace Typed {
 
 class FunctionAnalyses;
+class Heat;
 class ProgramEditor;
 
-void deferClosuresInFields(ProgramEditor&, BuildContext&);
+void deferClosuresInFields(ProgramEditor&, const Heat&, BuildContext&);
 
 // Whether the closure that an allocation's list or a store in `block` gives a field of `object` is one that the pass can leave unmade: a pass that would take the closure away from the allocation asks.
 bool canLeaveClosureUnmade(FunctionAnalyses&, BlockID, ValueID object, ValueID given);

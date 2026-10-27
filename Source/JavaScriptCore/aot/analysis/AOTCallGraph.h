@@ -35,7 +35,6 @@ class FlowResults;
 struct EffectDescription;
 
 enum class CallerSet : uint8_t { Unknown, Complete };
-enum class CalleeSetState : uint8_t { Unknown, Complete };
 enum class EntrySet : uint8_t { Unknown, DirectCallers };
 enum class CallSiteSet : uint8_t { Unknown, Complete };
 enum class Recursion : uint8_t { Unknown, NotRecursive };
@@ -44,7 +43,12 @@ class CallGraph {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CallGraph);
 public:
     unsigned numberOfFunctions() const { return m_directCallSites.size(); }
+    // What the operations of the body name or list. Beside them the body may run code that nobody knows: allCalleesOf() says where it does not.
     std::span<const FunctionID> calleesOf(FunctionID function) const LIFETIME_BOUND { return m_callees.of(function); }
+    std::optional<ProvenValue<std::span<const FunctionID>>> allCalleesOf(FunctionID function) const LIFETIME_BOUND
+    {
+        return m_hasCompleteCalleeSet.get(function.index()) ? std::optional(Proven::byClosedSet(calleesOf(function))) : std::nullopt;
+    }
     std::span<const FunctionID> callersOf(FunctionID function) const LIFETIME_BOUND { return m_callers.of(function); }
     unsigned numberOfDirectCallSites(FunctionID function) const { return function.index() < m_directCallSites.size() ? m_directCallSites[function.index()] : 0; }
     unsigned numberOfCallSites(FunctionID function) const { return function.index() < m_callSites.size() ? m_callSites[function.index()] : 0; }
@@ -53,7 +57,6 @@ public:
     std::span<const FunctionID> functionsCalledByUnknownCode() const LIFETIME_BOUND { return m_calledByUnknownCode.span(); }
 
     CallerSet callerSet(FunctionID function) const { return m_hasCompleteCallerSet.get(function.index()) ? CallerSet::Complete : CallerSet::Unknown; }
-    CalleeSetState calleeSet(FunctionID function) const { return m_hasCompleteCalleeSet.get(function.index()) ? CalleeSetState::Complete : CalleeSetState::Unknown; }
     EntrySet entrySet(FunctionID function) const { return m_hasOnlyDirectCallers.get(function.index()) ? EntrySet::DirectCallers : EntrySet::Unknown; }
     CallSiteSet callSiteSet(FunctionID function) const { return m_hasCompleteCallSiteSet.get(function.index()) ? CallSiteSet::Complete : CallSiteSet::Unknown; }
     bool isExpectedByCode(FunctionID function) const { return m_isExpectedByCode.get(function.index()); }
@@ -291,7 +294,7 @@ void forEachFunctionReferenceAmong(const Program& program, const Function& funct
     AOT::sort(calleeSets);
     removeRepeatedElements(calleeSets);
     for (CalleeSetID set : calleeSets) {
-        for (FunctionID callee : program.at(set).functions)
+        for (FunctionID callee : program.at(set).written().functions)
             functor(callee, FunctionReferenceKind::Dispatch);
     }
 

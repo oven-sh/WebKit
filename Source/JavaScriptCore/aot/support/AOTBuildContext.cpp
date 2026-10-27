@@ -36,15 +36,21 @@ class BuildContext::DeferredDestroyer {
 public:
     DeferredDestroyer() = default;
 
+    // Without a thread the value dies here.
     void enqueue(std::unique_ptr<DeferredValue> value)
     {
         Locker locker { m_lock };
-        m_queue.append(WTF::move(value));
         if (!m_thread) {
-            m_thread = Thread::create("AOT destroyer"_s, [this] {
+            m_thread = Thread::tryCreate("AOT destroyer"_s, [this] {
                 destroyQueuedValues();
             });
         }
+        if (!m_thread) [[unlikely]] {
+            locker.unlockEarly();
+            value = nullptr;
+            return;
+        }
+        m_queue.append(WTF::move(value));
         m_condition.notifyOne();
     }
 

@@ -52,6 +52,10 @@ public:
     bool isSpill() const { return m_kind == StackSlotKind::Spill; }
     unsigned index() const { return m_index; }
 
+    // Of a locked slot: nothing reads behind a suspension what was written in front of it.
+    void setIsDeadAtSuspensions(bool isDeadAtSuspensions) { m_isDeadAtSuspensions = isDeadAtSuspensions; }
+    bool isDeadAtSuspensions() const { return m_isDeadAtSuspensions; }
+
     void ensureSize(uint64_t requestedSize)
     {
         ASSERT(!m_offsetFromFP);
@@ -93,6 +97,7 @@ private:
     
     uint32_t m_byteSize { 0 };
     StackSlotKind m_kind { StackSlotKind::Locked };
+    bool m_isDeadAtSuspensions { false };
     unsigned m_index { UINT_MAX };
     intptr_t m_offsetFromFP { 0 };
 };

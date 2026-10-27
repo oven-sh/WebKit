@@ -29,7 +29,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static Witness witnessAt(const Function& function, FunctionID id, ValueID value)
 {
-    return { id.index(), value.index(), function.locationOf(value) };
+    return { id.index(), value.index(), function.writtenLocationOf(value) };
 }
 
 static void keepEarlierPlace(Witness& current, const Witness& candidate)
@@ -124,7 +124,7 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
             const Value& operation = function.at(statement.site);
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
             if (statement.result)
-                noteBuiltinsIn(solver.valueOf(statement.result), statement.site);
+                noteBuiltinsIn(solver.seenValuesOf(statement.result), statement.site);
             for (uint32_t position = 0; position < operands.size(); ++position) {
                 if (!operands[position].constant)
                     continue;
@@ -135,8 +135,8 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
             Witness witness = witnessAt(function, id, statement.site);
             switch (statement.opcode) {
             case Opcode::ElemGet:
-                if (!isInLibrary && sets.contains(inputs.valueOf(maker, operands[*OperandPosition::object(statement.opcode)]), ValueFlowUniverse::unknownObject())
-                    && sets.contains(inputs.valueOf(maker, operands[*OperandPosition::property(statement.opcode)]), ValueFlowUniverse::primitive(PrimitiveSet::String)))
+                if (!isInLibrary && sets.contains(inputs.possibleValuesOf(maker, operands[*OperandPosition::object(statement.opcode)]), ValueFlowUniverse::unknownObject())
+                    && sets.contains(inputs.possibleValuesOf(maker, operands[*OperandPosition::property(statement.opcode)]), ValueFlowUniverse::primitive(PrimitiveSet::String)))
                     found.append({ Kind::ReadUnderKeyNobodyKnows, 0, witness });
                 break;
             case Opcode::CallDirect:
@@ -318,7 +318,7 @@ ValueFlowNamedBuiltins::ValueFlowNamedBuiltins(const ValueFlowResultInputs& inpu
         return !ValueSets::isComplement(set) && sets.contains(set, object);
     };
     auto holds = [&](const ValueFlowOperand& operand, ValueFlowObjectID object) {
-        return (operand.constant && lists(operand.constant, object)) || (operand.node && lists(solver.valueOf(operand.node), object));
+        return (operand.constant && lists(operand.constant, object)) || (operand.node && lists(solver.possibleValuesOf(operand.node), object));
     };
     auto mayBeAnyObject = [&](ValueSetID set) {
         return sets.contains(set, ValueFlowUniverse::unknownObject()) || sets.contains(set, ValueFlowUniverse::untrackedObject());
@@ -327,11 +327,11 @@ ValueFlowNamedBuiltins::ValueFlowNamedBuiltins(const ValueFlowResultInputs& inpu
         return mayBeAnyObject(set) || sets.contains(set, ValueFlowUniverse::primitive(PrimitiveSet::String));
     };
     auto isKeyKnown = [&](const ValueFlowOperand& operand) {
-        return !(operand.constant && mayBeAnyKey(operand.constant)) && !(operand.node && mayBeAnyKey(solver.valueOf(operand.node)));
+        return !(operand.constant && mayBeAnyKey(operand.constant)) && !(operand.node && mayBeAnyKey(solver.possibleValuesOf(operand.node)));
     };
     auto setsOf = [&](const ValueFlowOperand& operand) {
         uint64_t constant = operand.constant ? operand.constant.index() : ValueSets::nothing.index();
-        uint64_t arriving = operand.node ? solver.valueOf(operand.node).index() : ValueSets::nothing.index();
+        uint64_t arriving = operand.node ? solver.possibleValuesOf(operand.node).index() : ValueSets::nothing.index();
         return constant << 32 | arriving;
     };
     auto mayAnswer = [&](ValueSetID answers, BuiltinID candidate) {
@@ -355,7 +355,7 @@ ValueFlowNamedBuiltins::ValueFlowNamedBuiltins(const ValueFlowResultInputs& inpu
     auto findNamesIn = [&](uint32_t index, NamesFoundByWorker& found) {
         found.named.ensureSize(builtins.builtinCount());
         auto noteReadUnder = [&](std::span<const BuiltinID> list, ValueFlowNodeID result) {
-            ValueSetID answers = solver.valueOf(result);
+            ValueSetID answers = solver.possibleValuesOf(result);
             for (BuiltinID candidate : list) {
                 if (mayAnswer(answers, candidate))
                     found.named.quickSet(candidate.index());
@@ -765,7 +765,7 @@ Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs
     // An unknown value may be any path that escaped, for example the result of a method called on an unknown receiver.
     ValueSetID escapedPaths = ValueSets::nothing;
     if (getsUnknownValue)
-        escapedPaths = maker.intersect(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()), universe.embeddedFilePaths());
+        escapedPaths = maker.intersect(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), universe.embeddedFilePaths());
     Vector<FlowWorkerEntry> entries;
     inputs.sets().forEachMember(maker.unite(followed, escapedPaths), [&](ValueFlowObjectID key) {
         bool isFollowed = inputs.sets().contains(followed, key);

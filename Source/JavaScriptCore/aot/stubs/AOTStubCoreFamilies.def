@@ -21,7 +21,7 @@ v(RejectInFrame, EnteredByRuntime, (Plain, BelowSpilledArguments), FormAxis, 0, 
 // AOTStubsPolls.cpp
 v(PollAtPrologue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtPrologue)
 v(PollAtLoop, EnteredByRuntime, (), CallerFrameAxis, 0, 0, X86_64Only, X86_64Only, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollAtLoop)
-v(PollBeforeEntering, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
+v(PollBeforeEntering, InternalEntry, (Plain, FunctionObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, PollBeforeEntering)
 
 // AOTStubsBarriers.cpp
 v(WriteBarrier, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), WriteBarrier)
@@ -29,6 +29,8 @@ v(RememberElement, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Nev
 
 // AOTStubsAllocation.cpp
 v(AllocateCell, CalledByCode, (Header, HeaderAndWords, HeaderAndZeros, HeaderAndWordsAndZeros), FormAxis | CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), AllocateCell)
+v(AllocateInstance, CalledByCode, (), CountAxis, 0, 5, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState), AllocateInstance)
+v(AllocateInstanceOutOfLine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateInstanceOutOfLine)
 v(CopyObject, CalledByCode, (), CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, ShapeWords, OrderWords, AllocatorState) | writes(AllocatorState), CopyObject)
 v(AllocateExtension, CalledByCode, (), CountAxis, 1, 16, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, AllocatorState) | writes(ObjectFields, AllocatorState), AllocateExtension)
 v(AllocateExtensionSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateExtensionSlow)
@@ -74,6 +76,7 @@ v(GetByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, May
 v(GetByValAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(PutByVal, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(PutByValAtIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
+v(StoreElementOfCompiledObject, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StoreElementOfCompiledObject)
 v(GetByValExpecting, CalledByCode, (Int32Array, Uint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
 v(GetByValAtIndexExpecting, CalledByCode, (Int32Array, Uint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
 v(PutByValExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, SloppyInt32Array, SloppyUint8Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)

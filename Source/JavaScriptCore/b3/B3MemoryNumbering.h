@@ -7,6 +7,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3BasicBlock.h"
 #include "B3HeapSet.h"
 #include "B3MovedLoadCheck.h"
 #include "B3Limits.h"
@@ -68,6 +69,9 @@ private:
         unsigned id { noID };
         BasicBlock* owner { nullptr };
         BasicBlock* epochOwner { nullptr };
+        // Where the state with the id `keptID` stands among the states that blocks end in. Every copy of a state that is kept says so.
+        unsigned keptID { noID };
+        unsigned keptNumber { 0 };
         RecordedWrites recordedWrites;
 
         void beginEpoch(BasicBlock* block)
@@ -125,6 +129,8 @@ private:
     void recordLoopWrites();
     bool inheritStateFromBeforeLoop(BasicBlock* header, MemoryState&);
     bool mergeSameEpochStates(BasicBlock*, MemoryState& merged);
+    bool hasStateAtTail(BasicBlock* block) const { return block->index() < m_stateNumberAtTail.size(); }
+    const MemoryState& stateAtTail(BasicBlock* block) const LIFETIME_BOUND { return m_statesAtTails[hasStateAtTail(block) ? m_stateNumberAtTail[block->index()] : 0]; }
     void didWriteMemory(const HeapSet&, Origin);
     unsigned heapEpoch(unsigned heap);
     ValueKey keyForLoad(Kind, Type, MemoryValue*);
@@ -142,7 +148,9 @@ private:
     BasicBlock* m_block { nullptr };
     MemoryState m_memoryState;
     unsigned m_lastMemoryStateID { noID };
-    Vector<MemoryState> m_memoryStateAtTail;
+    // A block that writes nothing ends in the state it began in, so blocks share the states they end in. State 0 is that of a block not visited yet.
+    Vector<unsigned> m_stateNumberAtTail;
+    Vector<MemoryState> m_statesAtTails;
     Vector<LoopWrites> m_loopWrites;
     LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_values;
     LayeredHashMap<PureCallKey, Value*, PureCallKeyHash> m_pureCalls;

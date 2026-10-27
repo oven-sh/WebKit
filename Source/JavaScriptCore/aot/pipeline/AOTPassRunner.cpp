@@ -20,6 +20,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTInt32Conversions.h"
+#include "AOTObservableOperations.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramPasses.h"
@@ -43,6 +44,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -76,6 +78,7 @@ struct PassesByContent {
 
 // A pass without a row may have something to do in any body.
 static constexpr TriggersOfPass triggersOfPasses[] {
+    { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ReadScope } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::CheckRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
     { PassID::AddGenericVersion, { .opcodes = { Opcode::Check, Opcode::Construct, Opcode::CallBuiltin } } },
@@ -93,11 +96,12 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::InlineCalls, { .opcodes = { Opcode::CallDirect } } },
     { PassID::SimplifyCasts, { .opcodes = simplifiableCasts } },
     { PassID::SinkAllocations, { .opcodes = opcodesInterpretedAs(Interpretation::Allocation) } },
-    { PassID::EliminateRedundantReads, { .opcodes = opcodesReadingAccessedHeaps } },
+    { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
     { PassID::SeparateUnlikelyLoopPaths, { .opcodes = { Opcode::LoopHint } } },
     { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveDeadCountedLoops, { .opcodes = { Opcode::LoopHint } } },
+    { PassID::UnrollShortLoops, { .opcodes = { Opcode::LoopHint } } },
     { PassID::FuseArrayChains, { .opcodes = arrayMethodCallOpcodes } },
     { PassID::FuseGeneratorLoops, { .opcodes = { Opcode::NewGenerator } }, { { .opcodes = { Opcode::StepGenerator } } } },
     { PassID::StartGeneratorsAtFirstStep, { .opcodes = { Opcode::NewGenerator } } },
@@ -113,7 +117,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
-    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | simplifiedIntrinsics | constantListUserOpcodes } } },
+    { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListUserOpcodes } } },
     { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },
@@ -155,6 +159,8 @@ static constexpr PassesByContent passesByContent = [] {
     }
     return result;
 }();
+
+static_assert(!passesByContent.always.contains(PassID::SimplifyCasts));
 
 bool hasTriggers(PassID id)
 {
@@ -200,6 +206,56 @@ static size_t findFixpointEnd(std::span<const ScheduleStep> steps, size_t begin)
         }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+auto PassRunner::stepsInsideStepsOf(FunctionSchedule schedule) -> std::span<const StepsInside>
+{
+    using Table = std::array<Vector<StepsInside>, numberOfFunctionSchedules>;
+    static const NeverDestroyed<Table> table = [] {
+        Table result;
+        auto fill = [&](auto& fill, FunctionSchedule filled) -> void {
+            Vector<StepsInside>& rows = result[static_cast<unsigned>(filled)];
+            std::span<const ScheduleStep> steps = stepsOf(filled);
+            if (rows.size() == steps.size())
+                return;
+            rows.fill(StepsInside { }, steps.size());
+            // From the last step to the first: a fixpoint finds the rows of the steps that it holds.
+            for (size_t index = steps.size(); index--;) {
+                StepsInside& row = rows[index];
+                switch (steps[index].kind) {
+                case ScheduleStep::Kind::RunPass:
+                    row.passes.set(static_cast<unsigned>(steps[index].pass));
+                    row.mayBeLeftOutAtRest = !steps[index].isBehindRounds;
+                    break;
+                case ScheduleStep::Kind::RunSchedule: {
+                    fill(fill, steps[index].schedule);
+                    std::span<const StepsInside> included = result[static_cast<unsigned>(steps[index].schedule)].span();
+                    row.mayBeLeftOutAtRest = true;
+                    for (const StepsInside& inside : included.first(included.size() - !steps[index].compacts)) {
+                        row.passes.merge(inside.passes);
+                        row.mayBeLeftOutAtRest &= inside.mayBeLeftOutAtRest;
+                    }
+                    break;
+                }
+                case ScheduleStep::Kind::BeginFixpoint:
+                    row.numberOfStepsToEnd = findFixpointEnd(steps, index) - index;
+                    row.mayBeLeftOutAtRest = true;
+                    for (size_t inside = index + 1; inside < index + row.numberOfStepsToEnd; ++inside) {
+                        row.passes.merge(rows[inside].passes);
+                        row.mayBeLeftOutAtRest &= rows[inside].mayBeLeftOutAtRest;
+                    }
+                    break;
+                case ScheduleStep::Kind::EndFixpoint:
+                    row.mayBeLeftOutAtRest = true;
+                    break;
+                }
+            }
+        };
+        for (unsigned schedule = 0; schedule < numberOfFunctionSchedules; ++schedule)
+            fill(fill, static_cast<FunctionSchedule>(schedule));
+        return result;
+    }();
+    return table.get()[static_cast<unsigned>(schedule)].span();
 }
 
 static void invalidateAnalyses(FunctionAnalyses& analyses, InvalidatedAnalyses invalidated, AnalysisSet kept)
@@ -278,6 +334,11 @@ PassRunner::PassRunner(BuildContext& build, std::optional<PassID> stopAfter)
     , m_stopAfter(stopAfter)
     , m_isStopped(build.diagnostics().hasErrors())
 {
+    m_everyFixpointMayTakeRound = true;
+    for (unsigned schedule = 0; schedule < numberOfFunctionSchedules; ++schedule) {
+        for (const ScheduleStep& step : stepsOf(static_cast<FunctionSchedule>(schedule)))
+            m_everyFixpointMayTakeRound &= step.kind != ScheduleStep::Kind::BeginFixpoint || build.limit(step.limit);
+    }
 }
 
 PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context) const
@@ -302,7 +363,7 @@ void PassRunner::prepare(ScheduleRun& run) const
 
 static constexpr PassSet optionalPassesOfGenericVersions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
-    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
@@ -332,15 +393,15 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     run.functionAsRead = context.subject().function;
     CurrentWorkScope workScope(program, run.functionAsRead);
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
-    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
-    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
+    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
+    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
     if (run.optionalPassesOfShortSchedule)
         run.maxRounds = maxRoundsOfShortSchedule;
     if (contents) {
         RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
         run.setContents(*contents, function);
     }
-    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function))) {
+    if (program.form() == IRForm::Prepared && cutCodeBehindNeverValues(context, run.contentsOf(function, context.changes))) {
         run.contents = std::nullopt;
         ++run.numberOfChanges;
     }
@@ -348,7 +409,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     const bool entersTyped = program.form() == IRForm::Prepared && function.hasBody() && function.valuesAreTypedAsDefined();
     if (entersTyped)
         context.pendingTyping.didEnterScheduleTyped(context.changes);
-    runSteps(stepsOf(schedule), context, run, WhatFollows::Nothing);
+    runSteps(stepsOf(schedule), stepsInsideStepsOf(schedule), context, run, WhatFollows::Nothing);
     // The one schedule that does not end by typing what it has changed.
     if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
         runFunctionPass(PassID::RetypeValues, context, run);
@@ -391,6 +452,78 @@ void PassRunner::shrinkChangedFunctionsToFit(Program& program, const ProgramEdit
     });
 }
 
+enum class TakesHandlersAway : bool { No, Yes };
+
+struct OperationsThatPassAnswersFor {
+    PassID pass;
+    InPlaceOfOperation reason;
+    bool isEveryOperation;
+    TakesHandlersAway takesHandlersAway;
+    OpcodeSet opcodes;
+};
+
+// An operation that may throw or run code of the program goes where ObservableOperations says that it does neither, where the pass names its reason at the place (explainOperationThatGoes),
+// where something new that may do the same stands at its place in the source, or where this table has the pass answer for it. Whatever else goes stops a build that verifies each pass.
+static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
+    { PassID::AddGenericVersion, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::ApplyFlowResults, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::CallModules, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::ConvertCountersToIntegers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
+    { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
+    { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
+    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PrivateGet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
+    { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
+    { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
+    { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::GuardTaintedPositions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::ElemGet, Opcode::PropHas } },
+    { PassID::RemoveUnusedParameters, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add } },
+    { PassID::SimplifyCasts, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::RequireObject, Opcode::RequireObjectCoercible } },
+    { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
+};
+
+// A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
+static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
+{
+    const OperationsThatPassAnswersFor* entry = nullptr;
+    for (const OperationsThatPassAnswersFor& candidate : operationsThatPassesAnswerFor) {
+        if (candidate.pass == id)
+            entry = &candidate;
+    }
+    for (const OperationThatWent& operation : operations) {
+        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
+        if (!isAnswered)
+            return describe(operation);
+        if (listenerOutside)
+            listenerOutside->addForOperationThatWent(operation.value, entry->reason);
+    }
+    return { };
+}
+
 PassOutcome PassRunner::updateAnalyses(PassID id, const ProgramEditor& editor, ProgramAnalyses& analyses)
 {
     const PassDescriptor& descriptor = descriptorOf(id);
@@ -409,7 +542,7 @@ void PassRunner::checkFormAndInputs(const PassDescriptor& descriptor, const Prog
     RELEASE_ASSERT(m_availableResults.containsAll(descriptor.inputs));
 }
 
-auto PassRunner::beginProgramPass(PassID id, const Program& program) -> std::optional<PassTimer>
+auto PassRunner::beginProgramPass(PassID id, const Program& program, MayChangeBodies mayChangeBodies) -> std::optional<PassTimer>
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     RELEASE_ASSERT(descriptor.scope == PassScope::Program);
@@ -431,6 +564,13 @@ auto PassRunner::beginProgramPass(PassID id, const Program& program) -> std::opt
     work.setPass(id);
     if (m_build.recordedOptions().sabotage) [[unlikely]]
         stopWhereSabotaged(m_build, std::nullopt, id);
+    if (mayChangeBodies == MayChangeBodies::Yes && m_build.options().verifiesAfterEveryPass) [[unlikely]] {
+        timer.bodiesBefore = std::make_shared<BodiesBeforeProgramPass>();
+        timer.bodiesBefore->functions = program.functions;
+        timer.bodiesBefore->reasons = Vector<ReasonsForOperationsThatWent>(program.functions.size());
+        for (size_t index = 0; index < program.functions.size(); ++index)
+            program.functions[index].setListenerForOperationsThatGo(&timer.bodiesBefore->reasons[index]);
+    }
     return timer;
 }
 
@@ -449,6 +589,20 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
     flushFunctionPassTotals();
 
     didCompute(descriptor.outputs);
+
+    if (timer.bodiesBefore) [[unlikely]] {
+        for (const Function& function : program.functions)
+            function.setListenerForOperationsThatGo(nullptr);
+        EffectSummaries noSummaries;
+        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
+        for (size_t index = 0; index < count && outcome == PassOutcome::Changed; ++index) {
+            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
+            if (problem.isNull())
+                continue;
+            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem });
+            break;
+        }
+    }
 
     if (outcome == PassOutcome::Changed) {
         m_build.resolveFunctionToDump(program);
@@ -526,7 +680,7 @@ void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAP
 
 static bool hasSameWords(const Instruction& a, const Instruction& b)
 {
-    return a.position == b.position && a.inlineFrame == b.inlineFrame && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
+    return a.origin() == b.origin() && a.hasSamePayloadAs(b) && a.numberOfNamedOperands() == b.numberOfNamedOperands() && std::ranges::equal(a.operands(), b.operands());
 }
 
 static OptionSet<ValueEdit> editsBetween(const Value& before, const Value& after)
@@ -534,7 +688,7 @@ static OptionSet<ValueEdit> editsBetween(const Value& before, const Value& after
     OptionSet<ValueEdit> edits;
     if (before.opcode != after.opcode || !hasSameWords(before, after))
         edits.add(ValueEdit::Definition);
-    if (before.type != after.type || before.expected() != after.expected() || before.representation != after.representation)
+    if (before.type != after.type || before.expected().predicted() != after.expected().predicted() || before.representation != after.representation)
         edits.add(ValueEdit::Type);
     return edits;
 }
@@ -562,7 +716,7 @@ static OptionSet<BlockEdit> editsBetween(const Block& before, const Block& after
         if (before.handler)
             compareTargets(*before.handler, *after.handler);
     }
-    if (before.subject != after.subject || before.role != after.role || before.frequency != after.frequency || before.shape != after.shape)
+    if (before.subject != after.subject || before.role != after.role || !before.frequency.isSamePredictionAs(after.frequency) || before.shape != after.shape)
         edits.add(BlockEdit::Rest);
     return edits;
 }
@@ -616,30 +770,32 @@ static uint32_t numberOfRunsThatTimedRunStandsFor(FunctionID function, size_t nu
 
 PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
-    const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
+    const bool verifies = m_build.options().verifiesAfterEveryPass;
 
-    RELEASE_ASSERT(descriptor.scope == PassScope::Function);
     context.changes.settle();
-    const bool reachedFixpoint = std::exchange(run.reachedFixpoint[index], false);
+    const bool reachedFixpoint = run.reachedFixpoint.get(index);
+    run.reachedFixpoint.clear(index);
     if (run.passesThatRan.contains(id) && !run.passesWithWork.get(index)) {
         if (reachedFixpoint || run.passesEnabledByTable.get(index)) {
             // Leave the same state behind as the idle run that this skips.
             ++run.numberOfSkippedRuns;
             run.numberOfValuesWalked += context.function.values.size();
             const bool waits = run.passesThatWait.get(index);
-            if (!waits)
-                verifySkippedFunctionPass(descriptor, context, run);
+            if (verifies && !waits) [[unlikely]]
+                verifySkippedFunctionPass(descriptorOf(id), context, run);
             run.didLookAtFunction(id);
             if (waits)
                 run.passesThatWait.set(index);
         } else if (run.passesBehindChange.get(index)) {
             ++run.numberOfSkippedRuns;
-            if (!run.passesThatWait.get(index))
-                verifySkippedFunctionPass(descriptor, context, run);
+            if (verifies && !run.passesThatWait.get(index)) [[unlikely]]
+                verifySkippedFunctionPass(descriptorOf(id), context, run);
         }
         return PassOutcome::Unchanged;
     }
+    const PassDescriptor& descriptor = descriptorOf(id);
+    RELEASE_ASSERT(descriptor.scope == PassScope::Function);
     if (descriptor.necessity == PassNecessity::Optional && !m_build.isEnabled(id, run.functionAsRead))
         return PassOutcome::Unchanged;
     if (run.optionalPassesOfShortSchedule && descriptor.necessity == PassNecessity::Optional && !run.optionalPassesOfShortSchedule->contains(id))
@@ -647,18 +803,30 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     checkFormAndInputs(descriptor, context.program);
     RELEASE_ASSERT(!descriptor.derivesFunctions || context.inputs.derivedFunctions);
 
-    if (hasTriggers(id) && !run.mayFire(id, context.function)) {
+    if (hasTriggers(id) && !run.mayFire(id, context.function, context.changes)) {
         // All that later runs go by is as it is behind a run that has found nothing to do.
         if (run.notes) [[unlikely]]
             ++run.notes->runsWithoutTrigger[index];
         run.numberOfValuesWalked += context.function.values.size();
-        verifySkippedFunctionPass(descriptor, context, run);
-        run.passesThatRan.add(id);
+        if (verifies) [[unlikely]]
+            verifySkippedFunctionPass(descriptor, context, run);
+        run.didRun(id);
         run.didLookAtFunction(id);
         stopBehind(id, run);
         return PassOutcome::Unchanged;
     }
     return runFunctionPassThatMayFire(id, context, run);
+}
+
+// Until the program is analyzed as a whole, what the passes make of library code is the same in every build. A fuzzer makes millions of builds.
+static bool isVerifiedElsewhere(const FunctionPassContext& context)
+{
+#if ENABLE(FUZZILLI)
+    return context.program.form() == IRForm::AsRead && isLibraryCode(context.program, context.function);
+#else
+    UNUSED_PARAM(context);
+    return false;
+#endif
 }
 
 // Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
@@ -684,16 +852,24 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     context.passesThatCanWait = { };
     context.lookedOnlyNearby = false;
     context.mayDecideTestsAcrossBlocks = run.mayDecideTestsAcrossBlocks;
+    context.opcodesWhereRunBegins = hasTriggers(id) ? &run.contentsOf(context.function, context.changes).opcodes : nullptr;
     if (id == PassID::SimplifyControlFlow)
         run.mayDecideTestsAcrossBlocks = false;
     std::optional<Function> functionBeforeRun;
     ChangeLog::Cursor logBeforeRun;
-    if (m_build.options().verifiesAfterEveryPass) [[unlikely]]
+    if (m_build.options().verifiesAfterEveryPass && !isVerifiedElsewhere(context)) [[unlikely]]
         functionBeforeRun.emplace(context.function);
     if (functionBeforeRun || isTimed) [[unlikely]]
         logBeforeRun = context.changes.end();
+    std::optional<ReasonsForOperationsThatWent> reasons;
+    if (functionBeforeRun) [[unlikely]] {
+        reasons.emplace(context.function.listenerForOperationsThatGo());
+        context.function.setListenerForOperationsThatGo(&*reasons);
+    }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
+    if (reasons) [[unlikely]]
+        context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
         if (problem.isNull())
             return;
@@ -702,8 +878,11 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     };
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
         stopWhereThereIsOne(findValueListedWrongly(context.function));
-    if (functionBeforeRun) [[unlikely]]
+    if (functionBeforeRun) [[unlikely]] {
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
+        if (outcome == PassOutcome::Changed)
+            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
+    }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
             m_functionPassTotals[index].needlessDrops.fetch_add(1, std::memory_order_relaxed);
@@ -728,19 +907,19 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         m_functionPassTotals[index].valuesAdded.fetch_add(static_cast<int64_t>(context.function.values.size()) - static_cast<int64_t>(numberOfValuesBefore), std::memory_order_relaxed);
     }
 
-    run.passesThatRan.add(id);
+    run.didRun(id);
     run.didLookAtFunction(id);
-    run.reachedFixpoint[index] = outcome == PassOutcome::Changed && context.reachedFixpoint;
+    run.reachedFixpoint.set(index, outcome == PassOutcome::Changed && context.reachedFixpoint);
     if (outcome == PassOutcome::Changed) {
         invalidateAnalyses(context.analyses, descriptor.invalidatedAnalyses, context.keptAnalyses);
         if (run.notes && !context.keptAnalyses.isEmpty()) [[unlikely]]
             ++run.notes->runsThatKeptAnalyses[index];
         run.contents = std::nullopt;
         run.didChange(id, context.passesLeftIdle, context.passesThatCanWait);
-        if (run.reachedFixpoint[index])
+        if (run.reachedFixpoint.get(index))
             run.didLookAtFunction(id);
         const bool mayLeaveCodeBehindNeverValues = !passesThatLeaveNoCodeBehindNeverValues.contains(id);
-        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && (mayLeaveCodeBehindNeverValues || m_build.options().verifiesAfterEveryPass) && cutCodeBehindNeverValues(context, run.contentsOf(context.function))) {
+        if (descriptor.produces.value_or(context.program.form()) == IRForm::Prepared && !descriptor.isVerifiedAfterNextPass && (mayLeaveCodeBehindNeverValues || m_build.options().verifiesAfterEveryPass) && cutCodeBehindNeverValues(context, run.contentsOf(context.function, context.changes))) {
             RELEASE_ASSERT(mayLeaveCodeBehindNeverValues);
             run.contents = std::nullopt;
             run.didChange(PassID::None);
@@ -768,7 +947,7 @@ void PassRunner::stopBehind(PassID id, ScheduleRun& run) const
 
 void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, FunctionPassContext& context, ScheduleRun& run) const
 {
-    if (!m_build.options().verifiesAfterEveryPass) [[likely]]
+    if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
     IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
@@ -789,7 +968,8 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         }
     }
     if (errors.isEmpty()) {
-        context.analyses.verifyCached();
+        if (!context.analyses.verifyCached())
+            run.isStopped = true;
         return;
     }
 
@@ -827,14 +1007,14 @@ static String describeFirstDifference(const Function& function, const Function& 
     for (size_t index = 0; index < function.values.size(); ++index) {
         const Value& before = function.values[index];
         const Value& after = changed.values[index];
-        if (before.opcode == after.opcode && before.type == after.type && before.expected() == after.expected())
+        if (before.opcode == after.opcode && before.type == after.type && before.expected().predicted() == after.expected().predicted())
             continue;
         out.print("; v", index, " (", nameOf(before.opcode), ")");
         if (before.opcode != after.opcode)
             out.print(" becomes ", nameOf(after.opcode));
         if (before.type != after.type)
             out.print(" gets another type");
-        if (before.expected() != after.expected())
+        if (before.expected().predicted() != after.expected().predicted())
             out.print(" is expected to be of another type");
         break;
     }
@@ -844,7 +1024,7 @@ static String describeFirstDifference(const Function& function, const Function& 
 // The table says that the pass finds nothing to do here. A run on a copy shows whether that is true.
 void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, const FunctionPassContext& context, ScheduleRun& run) const
 {
-    if (!m_build.options().verifiesAfterEveryPass) [[likely]]
+    if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
     Function copy(context.function);
     FunctionAnalyses analyses(context.analyses.context(), copy);
@@ -860,8 +1040,11 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
     run.isStopped = true;
 }
 
-void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
+void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const StepsInside> stepsInside, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
 {
+    auto doNothing = [&](const StepsInside& inside) {
+        return m_everyFixpointMayTakeRound && inside.mayBeLeftOutAtRest && run.areAtRest(inside.passes);
+    };
     for (size_t index = 0; index < steps.size() && !run.isStopped; ++index) {
         const ScheduleStep& step = steps[index];
         WhatFollows whatFollowsStep = index + 1 == steps.size() ? whatFollows : WhatFollows::MoreSteps;
@@ -880,14 +1063,16 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
             context.isBehindRounds = false;
             break;
         case ScheduleStep::Kind::RunSchedule: {
+            if (doNothing(stepsInside[index]))
+                break;
             std::span<const ScheduleStep> included = stepsOf(step.schedule);
             if (!step.compacts)
                 included = included.first(included.size() - 1);
-            runSteps(included, context, run, whatFollowsStep);
+            runSteps(included, stepsInsideStepsOf(step.schedule).first(included.size()), context, run, whatFollowsStep);
             break;
         }
         case ScheduleStep::Kind::BeginFixpoint: {
-            size_t end = findFixpointEnd(steps, index);
+            size_t end = index + stepsInside[index].numberOfStepsToEnd;
             std::span<const ScheduleStep> body = steps.subspan(index + 1, end - index - 1);
             const uint64_t maxRounds = m_build.limit(step.limit);
             bool wasInRounds = std::exchange(context.isInRounds, true);
@@ -903,8 +1088,10 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassConte
                         m_build.gaveUp(LimitID::MaxOptimizationWork, context.subject());
                     break;
                 }
+                if (doNothing(stepsInside[index]))
+                    break;
                 uint32_t numberOfChangesBefore = run.numberOfChanges;
-                runSteps(body, context, run);
+                runSteps(body, stepsInside.subspan(index + 1, end - index - 1), context, run);
                 if (run.numberOfChanges == numberOfChangesBefore || run.isStopped)
                     break;
             }

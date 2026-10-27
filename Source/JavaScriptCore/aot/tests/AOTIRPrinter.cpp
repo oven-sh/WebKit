@@ -111,11 +111,29 @@ static std::optional<InvalidPart> findInvalidStorage(const Instruction& instruct
 static void printOrigin(IRPrinter& printer, const Instruction& instruction)
 {
     uint32_t inlineFrame = printer.printsEngineFields() ? instruction.inlineFrame : 0;
-    if (!instruction.hasPosition() && !inlineFrame)
+    bool isTailCall = printer.printsEngineFields() && instruction.isTailCall;
+    bool isPartOfConstruction = printer.printsEngineFields() && instruction.isPartOfConstruction;
+    if (!instruction.hasPosition() && !inlineFrame && !isTailCall && !isPartOfConstruction)
         return;
     printer.out().print(" @"_s, instruction.hasPosition() ? instruction.position : 0u);
     if (inlineFrame)
         printer.out().print(":"_s, inlineFrame);
+    if (isTailCall)
+        printer.out().print(" tail"_s);
+    if (isPartOfConstruction)
+        printer.out().print(" constructs"_s);
+}
+
+static const ConstructionStart* findStartOfConstruction(const Program& program, const Function& function, const Value& value)
+{
+    if (!value.isPartOfConstruction)
+        return nullptr;
+    // A program that was only read keeps them with its functions.
+    for (const ConstructionStart& construction : function.constructionStarts) {
+        if (construction.reported == value.position)
+            return &construction;
+    }
+    return program.findConstructionReportedAt(function.module, value.position);
 }
 
 template<typename IDType>
@@ -368,8 +386,8 @@ void IRPrinter::printBlockHead(const Function& function, BlockID id, const Block
         field("role"_s, block.role);
     if (block.subject)
         field("subject"_s, block.subject);
-    if (block.frequency != BlockFrequency::Normal)
-        field("frequency"_s, block.frequency);
+    if (block.frequency.predicted() != BlockFrequency::Normal)
+        field("frequency"_s, block.frequency.predicted());
     if (block.handler) {
         beginField("handler"_s);
         printTarget({ }, *block.handler);
@@ -423,6 +441,14 @@ void IRPrinter::printValue(const Function& function, ValueID id)
         m_out.print("]"_s);
     }
     printOrigin(*this, value);
+    if (auto written = function.writtenPositionOf(id))
+        m_out.print(" @"_s, *written);
+    else if (const ConstructionStart* construction = printsEngineFields() ? nullptr : findStartOfConstruction(m_program, function, value)) {
+        m_out.print(" @"_s, construction->start);
+        // The word stands behind a pair of positions.
+        if (construction->isForCallers && value.hasPosition())
+            m_out.print(" callers"_s);
+    }
 }
 
 void IRPrinter::printEngineValueFields(const Value& value)
@@ -433,9 +459,9 @@ void IRPrinter::printEngineValueFields(const Value& value)
         m_out.print(": "_s);
         print(value.type);
     }
-    if (value.expected()) {
+    if (value.expected().predicted()) {
         m_out.print(" ~ "_s);
-        print(value.expected());
+        print(value.expected().predicted());
     }
     if (value.representation != Representation::Unchosen) {
         m_out.print(" @"_s);
@@ -642,13 +668,11 @@ void IRPrinter::print(RuntimeFunctionID id)
 static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
 {
     CommaPrinter bar("|"_s);
-    for (LayoutID member : layouts.members) {
+    for (LayoutID member : layouts.written()) {
         printer.out().print(bar);
         printer.print(member);
     }
-    if (layouts.hasMembersWithoutLayout)
-        printer.out().print(bar, "nolayout"_s);
-    if (!layouts.isComplete)
+    if (!layouts.listsEveryLayout())
         printer.out().print(bar, "?"_s);
 }
 

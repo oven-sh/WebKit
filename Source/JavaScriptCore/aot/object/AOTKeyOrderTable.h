@@ -61,7 +61,7 @@ public:
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
 
     // Neither lists an order with an extra key or with a field that is anything but a writable, enumerable, configurable data property.
-    JSCellButterfly* keysInOrder(VM&, const LayoutData&, uint32_t orderWord);
+    JSCellButterfly* keysInOrder(VM&, const LayoutData&, uint32_t orderWord, KeyListKind = KeyListKind::Strings);
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
     void setEnumerator(VM&, const LayoutData&, uint32_t orderWord, JSPropertyNameEnumerator*, StructureChain* prototypeChain);

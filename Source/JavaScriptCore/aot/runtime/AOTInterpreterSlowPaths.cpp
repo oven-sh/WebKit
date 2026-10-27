@@ -152,6 +152,10 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Uncacheable:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -10,7 +10,7 @@ variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefi
 
 function f0 name="bothElementsAreAsked" parameters=[{type=undefined|i32}, {type=undefined|i32}] results=[{type=anything}] {
     v2 = NewArray v0, v1 contents=undefined|i32
-    v3 = AssumeType v2 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v3 = AssumeType v2 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=1
     v5 = HasArrayStorage v3 arrayStorage=Int32
     Branch v5 -> taken b1(| 0), notTaken b3()
@@ -34,12 +34,12 @@ function f0 name="bothElementsAreAsked" parameters=[{type=undefined|i32}, {type=
 # TWICE-NOT: contents=i32
 # TWICE-NOT: HasArrayStorage
 # TWICE-NOT: GetArrayElement
-# TWICE: = AssumeType {{*}} castType=i32
+# TWICE: = AssumeType {{*}} provenType=i32
 }
 
 function f1 name="onlyTheElementThatMayBeSomethingElseIsAsked" parameters=[{type=number}, {type=undefined|number}] results=[{type=anything}] {
     v2 = NewArray v0, v1 contents=undefined|number
-    v3 = AssumeType v2 castType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
+    v3 = AssumeType v2 provenType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=0
     v5 = HasArrayStorage v3 arrayStorage=Double
     Branch v5 -> taken b1(| 0), notTaken b2()
@@ -77,7 +77,7 @@ function f2 name="listThatIsItsOwnGuardStaysOne" parameters=[{type=undefined|i32
 
 function f3 name="listThatIsBuiltBeforeItIsAskedStaysOne" parameters=[{type=undefined|i32}, {type=undefined|i32}, {type=i32}] results=[{type=anything}] {
     v3 = NewArray v0, v1 contents=undefined|i32
-    v4 = AssumeType v3 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v4 = AssumeType v3 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     PutModuleVariable v4 variable=g0
     v6 = HasArrayStorage v4 arrayStorage=Int32
     Branch v6 -> taken b1(| 0), notTaken b2()
@@ -95,7 +95,7 @@ function f3 name="listThatIsBuiltBeforeItIsAskedStaysOne" parameters=[{type=unde
 
 function f4 name="noElementIsAskedWhereEachIsANumber" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
     v2 = NewArray v0, v1 contents=undefined|i32
-    v3 = AssumeType v2 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v3 = AssumeType v2 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=1
     v5 = HasArrayStorage v3 arrayStorage=Int32
     Branch v5 -> taken b1(| 0), notTaken b2()
@@ -121,7 +121,7 @@ function f5 name="noElementIsAskedWhereOneMayBeUnspecified" parameters=[{type=bo
     Jump -> next b2(v4, v5)
   b2(v6: undefined|i32, v7: i32):
     v8 = NewArray v6 contents=undefined|i32
-    v9 = AssumeType v8 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v9 = AssumeType v8 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     v10 = Integer integer=2
     v11 = BitAnd v7, v10
     v12 = ToBoolean v11

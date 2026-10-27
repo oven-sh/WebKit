@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFamilyTables.h"
 #include "AOTSort.h"
@@ -69,6 +70,36 @@ void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
     });
 }
 
+void Program::collectConstructionStarts()
+{
+    m_constructionStartsOfModules.grow(modules.size());
+    for (Function& function : functions) {
+        if (function.constructionStarts.isEmpty())
+            continue;
+        if (function.module && function.module.index() < modules.size())
+            m_constructionStartsOfModules[function.module.index()].appendVector(function.constructionStarts);
+        function.constructionStarts = { };
+    }
+    for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
+        std::ranges::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
+        auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
+        starts.shrink(starts.size() - repeated.size());
+        starts.shrinkToFit();
+    }
+}
+
+const ConstructionStart* Program::findConstructionReportedAt(ModuleID id, uint32_t position) const
+{
+    if (!id || id.index() >= m_constructionStartsOfModules.size())
+        return nullptr;
+    const Vector<ConstructionStart>& starts = m_constructionStartsOfModules[id.index()];
+    auto found = std::ranges::lower_bound(starts, position, { }, &ConstructionStart::reported);
+    if (found == starts.end() || found->reported != position)
+        return nullptr;
+    return &*found;
+}
+
 void Program::recordCountsAsRead()
 {
     m_countsAsRead = { static_cast<unsigned>(functions.size()), static_cast<unsigned>(layouts.size()) };
@@ -95,6 +126,7 @@ BuiltinName Program::builtinNameOf(PropertyKeyID id) const
         }
         return { };
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:
         return { };
@@ -114,6 +146,7 @@ NameClass Program::nameClassOf(PropertyKeyID id) const
     case PropertyKeyKind::Text:
         return strings.nameClass(key.text);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:
@@ -264,21 +297,40 @@ void Program::indexNames(const ParallelLoops& loops)
         return std::pair { holder.key, holder.layout };
     };
 
+    // A class that has taken over the fields of the class above it names them all itself, and so on up a row of classes: whoever has listed its fields finds no new name among those above.
+    Vector<uint8_t> namesEveryFieldAbove;
+    namesEveryFieldAbove.fill(0, layouts.size());
+    forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
+        const Layout& layout = layouts[index];
+        LayoutID base = expectedBaseOf(layout);
+        namesEveryFieldAbove[index] = base && std::ranges::all_of(at(base).fields, [&](const Field& field) {
+            return !field.key || layout.findField(field.key);
+        });
+    });
+
     Vector<Holder> holders = collectInParallel<Holder>(loops, layouts.size(), [&](unsigned index, Vector<Holder>& found) {
         LayoutID id(index);
         if (at(id).flow.allocation == AllocationState::NeverAllocated || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
             return;
 
         size_t firstOfLayout = found.size();
-        Vector<LayoutID, 8> visitedClasses;
+        // A ring of classes is left once the walk meets a class that it remembers, and it remembers a later one each time it has gone twice as far. What it lists a second time on the way goes again below.
+        LayoutID remembered;
+        size_t steps = 0;
+        size_t stepsToNextRemembered = 1;
         bool inheritsFields = true;
-        for (LayoutID current = id; current && !visitedClasses.contains(current); current = expectedBaseOf(at(current))) {
-            visitedClasses.append(current);
+        bool hasNamedFields = false;
+        for (LayoutID current = id; current && current != remembered; current = expectedBaseOf(at(current))) {
+            if (++steps == stepsToNextRemembered) {
+                remembered = current;
+                stepsToNextRemembered *= 2;
+            }
             const Layout& layout = at(current);
-            for (uint32_t field = 0; inheritsFields && field < layout.fields.size(); ++field) {
+            for (uint32_t field = 0; inheritsFields && !hasNamedFields && field < layout.fields.size(); ++field) {
                 if (PropertyKeyID key = layout.fields[field].key)
                     found.append({ key, id, declarationOf(*this, { current, field }).layout });
             }
+            hasNamedFields = namesEveryFieldAbove[current.index()];
             for (const Vector<ClassMember>* members : { &layout.classFlow.members, &layout.classFlow.namedMembers }) {
                 for (const ClassMember& member : *members) {
                     if (member.key && member.side == ClassSide::Prototype)
@@ -357,7 +409,7 @@ void Program::appendBuiltinLayouts()
             Field field;
             if (builtinField.name)
                 field.key = keyOf(builtinField.name);
-            field.declared.type = arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena));
+            field.declared.establish(Proven::byPosition(arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena))));
             if (!builtinField.isOptional)
                 field.flags.add(FieldFlags::IsRequired);
             layout.fields.append(WTF::move(field));
@@ -385,7 +437,7 @@ static TypeID typeOfExportedNamespace(const Program& program, const ModuleExport
 static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExport& entry, TypeArena& arena)
 {
     DeclaredType declared;
-    declared.type = TypeTable::anything;
+    declared.establish(Proven::byPosition(TypeTable::anything));
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         if (!entry.variable)
@@ -394,7 +446,7 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
         declared.site = { };
         return declared;
     case ModuleExportKind::Namespace:
-        declared.type = typeOfExportedNamespace(program, entry, arena);
+        declared.establish(Proven::byPosition(typeOfExportedNamespace(program, entry, arena)));
         return declared;
     case ModuleExportKind::Indirect:
         return declared;
@@ -631,6 +683,23 @@ ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
     return file.kind == ModuleKind::CommonJs && file.exportsVariable ? first.target : ModuleID();
 }
 
+BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
+{
+    switch (module.kind) {
+    case ModuleKind::CommonJs:
+        return Builtins::PrivateGlobalsRequireCommonJS;
+    case ModuleKind::SourceText:
+        return Builtins::PrivateGlobalsEsmLoadSync;
+    case ModuleKind::RuntimeSource:
+        return Builtins::PrivateGlobalsCreateInternalModuleById;
+    case ModuleKind::Data:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 bool namesWaysToModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
@@ -758,6 +827,7 @@ void ProgramEditor::removeBody(FunctionID id)
     Function& function = at(id);
     function.editAllBlocks().clear();
     function.editAllValues().clear();
+    function.writtenPositions.clear();
     function.inlineFrames.clear();
 }
 
@@ -769,6 +839,18 @@ LayoutID ProgramEditor::addLayout(Layout&& layout)
     m_isChangedLayout.append(static_cast<uint8_t>(0));
     initializeAddedLayout(m_program, id);
     return id;
+}
+
+void ProgramEditor::indexClassesAndNames(const ParallelLoops& loops)
+{
+    m_program.indexClasses();
+    m_program.indexNames(loops);
+}
+
+void ProgramEditor::setDeclaredMembers(LayoutID id, LayoutSetID members)
+{
+    m_program.familyTables().didChangeLayouts();
+    m_program.setDeclaredMembers(id, members);
 }
 
 Layout& ProgramEditor::at(LayoutID id)

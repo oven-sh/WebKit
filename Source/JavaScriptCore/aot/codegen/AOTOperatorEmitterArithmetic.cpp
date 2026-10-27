@@ -23,6 +23,7 @@
 #include <cmath>
 #include <limits>
 #include <type_traits>
+#include <wtf/Atomics.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -64,10 +65,34 @@ static bool isStepByOne(Opcode opcode)
 
 namespace {
 
-class IntegerArithmeticEmitter final : public OperationEmitter {
+class InlineMathEmitter : public OperationEmitter {
+protected:
+    using OperationEmitter::OperationEmitter;
+
+    // An invalid operation produces a NaN with the sign bit set on x86-64 and clear on ARM64. A C library function may pick either.
+    static bool matchesHardwareNaN(double libraryNaN) { return std::signbit(libraryNaN) == isX86_64(); }
+
+    // What the function answers when a program calls it. A C++ compiler that sees the callee and constant operands computes the result itself, and its NaN may have the other sign.
+    template<typename Function>
+    static double resultAtRunTime(Function* function, double left, double right) { return WTF::opaque(function)(left, right); }
+
+    Number callLibraryIfNaN(Number inlineResult, RuntimeOperation function, Number left, Number right)
+    {
+        LBasicBlock isNaN = newBlock();
+        Join<Number> join(m_out);
+        branchUnless(equal(inlineResult, inlineResult), isNaN);
+        join.add(inlineResult);
+
+        m_out.appendTo(isNaN);
+        join.add(callLeaf<Number>(function, { left, right }));
+        return join.finish();
+    }
+};
+
+class IntegerArithmeticEmitter final : public InlineMathEmitter {
 public:
     explicit IntegerArithmeticEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
+        : InlineMathEmitter(generator)
     {
     }
 
@@ -161,7 +186,11 @@ public:
         std::optional<double> constantDivisor = constantNumberOf(divisor.value());
         if (constantDivisor && std::abs(*constantDivisor) == 1) {
             Number fraction = sub(dividend, trunc(dividend));
-            return select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
+            Number result = select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
+            constexpr double infinity = std::numeric_limits<double>::infinity();
+            if (matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, infinity, *constantDivisor)) && matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, -infinity, *constantDivisor)))
+                return result;
+            return callLibraryIfNaN(result, RuntimeOperation::Fmod, dividend, divisor);
         }
         std::optional<int64_t> constantWholeDivisor = constantDivisor ? positiveWholeNumberOf(*constantDivisor) : std::nullopt;
         if (constantDivisor && !constantWholeDivisor)
@@ -246,6 +275,8 @@ private:
         return sub(dividend, mul(quotient, integer(divisor)));
     }
 
+    static double remainderByZero(double dividend) { return AOT::withoutPayload(resultAtRunTime(Math::fmodDouble, dividend, 0)); }
+
     template<typename T>
     Number remainderAsNumber(T whole, T dividend, T divisor, bool mayBeNaN)
     {
@@ -282,7 +313,14 @@ private:
                 isZero.link(&jit);
                 if (mayBeNaN) {
                     CCallHelpers::Jump isNumber = branchOnTest(jit, CCallHelpers::NonZero, divisor);
-                    produce(PNaN);
+                    double ofNegative = remainderByZero(-1);
+                    double ofNonNegative = remainderByZero(1);
+                    if (std::signbit(ofNegative) != std::signbit(ofNonNegative)) {
+                        CCallHelpers::Jump isNonNegative = branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend);
+                        produce(ofNegative);
+                        isNonNegative.link(&jit);
+                    }
+                    produce(ofNonNegative);
                     isNumber.link(&jit);
                 }
                 branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend).linkTo(done, &jit);
@@ -334,10 +372,10 @@ private:
     }
 };
 
-class PowerEmitter final : public OperationEmitter {
+class PowerEmitter final : public InlineMathEmitter {
 public:
     explicit PowerEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
+        : InlineMathEmitter(generator)
     {
     }
 
@@ -361,14 +399,17 @@ private:
             Number magnitude = abs(base);
             Number zero = number(0);
             Number infinity = number(std::numeric_limits<double>::infinity());
-            if (exponent > 0)
-                return select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)));
-            return select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
+            Number result = exponent > 0
+                ? select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)))
+                : select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
+            if (matchesHardwareNaN(resultAtRunTime(operationMathPow, -1, exponent)))
+                return result;
+            return callLibraryIfNaN(result, RuntimeOperation::Pow, base, number(exponent));
         }
         if (!(exponent >= 0 && exponent <= maxExponentForIntegerMathPow) || exponent != std::trunc(exponent))
             return std::nullopt;
         if (exponent == 1)
-            return emitter<ConversionEmitter>().purified(base);
+            return emitter<ConversionEmitter>().withoutPayload(base);
         Number result;
         Number square = base;
         for (unsigned bits = static_cast<unsigned>(exponent); bits; bits >>= 1) {
@@ -443,6 +484,8 @@ Number OperatorEmitter::asNumericOperand(ValueID id)
 {
     switch (representationOf(id)) {
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return in<Number>(id);
     case Representation::OptionalDouble:
         return asNumber(in<OptionalNumber>(id), typeOf(id));
@@ -499,6 +542,8 @@ Operand OperatorEmitter::arithmeticOnIntegers(const ValueContext& value, Arithme
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -525,6 +570,8 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -547,7 +594,7 @@ Operand OperatorEmitter::arithmeticOnCheckedIntegers(const ValueContext& value, 
 std::optional<OperatorEmitter::RemainderLeftToTest> OperatorEmitter::findRemainderLeftToTest(ValueID id)
 {
     const Value& remainder = m_function.at(id);
-    if (remainder.opcode != Opcode::Mod || remainder.form() != OperatorForm::Numbers || representationOf(id) != Representation::Double || generator().validatesOrChecksProofs())
+    if (remainder.opcode != Opcode::Mod || remainder.form() != OperatorForm::Numbers || (representationOf(id) != Representation::Double && !holdsAnyNaN(representationOf(id))) || generator().validatesOrChecksProofs())
         return std::nullopt;
     const Value& divisor = m_function.at(remainder.rightOperand());
     if (divisor.opcode != Opcode::Integer || divisor.integer() < 2 || divisor.integer() > std::numeric_limits<int32_t>::max())

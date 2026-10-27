@@ -1,0 +1,53 @@
+# Rows of the image's tables. `packed` says once what a row holds and how it lies in bytes: the generator writes the struct, append() and read().
+# A word is a number of variable length. Its fields lie from the lowest bit up, and the last may take all that is left. ';' begins the next word.
+# `if`: the word is there only then. List: how many, then the rows. Bytes: how many, then the bytes. CodeOffset: in units of codeOffsetUnit.
+# Signed: small in either direction is short. [n]: in n bits. `if c { .. } else { .. }`: what the rest of the word holds goes by a bit of it. `unless`: `if` the other way round.
+
+# What a site with code says beyond where it is. Of a first read only the number is read. A site inside a callee lies behind a tail call.
+enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool) {
+    | engine
+    Plain(false, false, false, false, false)
+    Construct(false, true, false, false, false)
+    TailCall(false, false, true, false, false)
+    TailConstruct(false, true, true, false, false)
+    FirstRead(true, false, false, false, false)
+    InsideBuiltin(false, false, false, false, true)
+    InsideCallee(false, false, true, true, false)
+    InsideBuiltinCallee(false, false, true, true, true)
+}
+
+packed PrologueCheckRow { callOffset: CodeOffset ; resumeOffset: CodeOffset }
+packed CallSiteHead {
+    hasInlineFrames: Bool hasPrologueChecks: Bool numberOfSites: UInt64
+    ; prologueChecks: List<PrologueCheckRow> if hasPrologueChecks
+    ; numberOfSitesWithoutCode: UInt64
+    ; numberOfInlineFrames: UInt64 if hasInlineFrames
+    ; inlineFrames: Bytes if hasInlineFrames
+}
+packed InlineFrameRow { isTailCall: Bool isConstruct: Bool parent: UInt32 ; function: Function }
+# The frame applies until the next site with details. The kind applies to this site only.
+packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
+packed CallSiteRow { hasDetails: Bool distance: CodeOffset ; details: CallSiteDetails if hasDetails }
+
+# Sites in a row with one handler. The first lies `sitesSkipped` behind the end of the row in front.
+packed HandlerRow { sitesSkipped: UInt32 ; furtherSites: UInt32 ; type: HandlerType[2] targetChange: Signed }
+
+# The line counts from the function in front, unless that one is in another source.
+packed PositionsHead {
+    followsInlineFrames: Bool hasCheckpoints: Bool size: UInt64
+    ; isInOtherSource: Bool lineChange: Signed
+    ; sourceChange: Signed if isInOtherSource
+    ; column: UInt32
+    ; count: UInt64 if hasCheckpoints
+}
+
+# A site on the line of the site in front says how far the column moves. Any other says how far the line moves, and its column.
+packed PositionRow {
+    isOnSameLine: Bool if isOnSameLine { columnChange: Signed } else { isInOtherSource: Bool lineChange: Signed }
+    ; source: UInt32 if isInOtherSource
+    ; column: UInt32 unless isOnSameLine
+}
+# Where the expression of a site that constructs starts, counted back from the site. It stands in front of the site's row, behind a zero, which begins no row.
+packed ConstructionStartRow { isOnSameLine: Bool if isOnSameLine { columnsBack: UInt32 } else { linesBack: UInt32 } ; column: UInt32 unless isOnSameLine }
+
+packed FaultStep { isFrameless: Bool isLoopPoll: Bool distance: UInt32 }

@@ -12,9 +12,11 @@
 #include "AOTStringBuilderWords.h"
 #include "AOTVector.h"
 #include "JSString.h"
+#include "StackManager.h"
 #include <array>
 #include <optional>
 #include <span>
+#include <wtf/HashSet.h>
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringImpl.h>
@@ -22,6 +24,40 @@
 namespace JSC { namespace AOT {
 
 struct Instance;
+
+// An object or an array that compiled code is writing as JSON. The record is in the frame of that code, and holds what that code puts back when it has written the holder.
+struct JSONHolderRecord {
+    JSONHolderRecord* outer;
+    EncodedJSValue holder;
+};
+
+// Finds an object that is written as JSON inside itself, for a writer that keeps no list of what it is inside of.
+// The text of such an object has no end, so the buffer of its writer grows again and again. Each time the writer shows as many of the objects that follow as cost little beside the copy.
+class WatchedJSONLevels {
+public:
+    bool isWatching() const { return m_numberOfLevelsLeft; }
+    bool isWatchingAfterGrowthTo(size_t numberOfCharacters);
+    void stop() { m_numberOfLevelsLeft = 0; }
+    void forgetLevels();
+    // False: the holder is inside itself. Nothing says when a holder has been written: a frame at the same address or above it does.
+    bool enter(EncodedJSValue holder, void* frame);
+
+private:
+    struct Level {
+        void* frame;
+        EncodedJSValue holder;
+    };
+
+    // What has been shown since the watch began and is not written yet, the outermost first.
+    struct Levels {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Levels);
+        Vector<Level, 16> path;
+        UncheckedKeyHashSet<EncodedJSValue> holders;
+    };
+
+    uint32_t m_numberOfLevelsLeft { 0 };
+    std::unique_ptr<Levels> m_levels;
+};
 
 class StringBuilderStorage final : public JSCell {
 public:
@@ -81,6 +117,10 @@ public:
 
     uint32_t length() const { return m_position + m_lengthOutsideBuffer; }
     void rollBack(uint32_t length);
+    const JSONHolderRecord* jsonHolders() const { return m_jsonHolders; }
+    static bool hasRepeatedHolder(const JSONHolderRecord* innermost);
+    // False: the holder is being written inside itself, or the stack has no room for more.
+    bool enterWatchedLevel(EncodedJSValue holder, void* frame);
     uint32_t minLengthAppendedByReference() const { return m_limits.minLengthAppendedByReference; }
 
     enum class StringUse : uint8_t {
@@ -99,10 +139,12 @@ public:
     static constexpr ptrdiff_t offsetOfPosition() { return OBJECT_OFFSETOF(StringBuilderStorage, m_position); }
     static constexpr ptrdiff_t offsetOfLimit() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limit); }
     static constexpr ptrdiff_t offsetOfLengthOutsideBuffer() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOutsideBuffer); }
+    static constexpr ptrdiff_t offsetOfJSONHolders() { return OBJECT_OFFSETOF(StringBuilderStorage, m_jsonHolders); }
     static constexpr ptrdiff_t offsetOfNextFree() { return OBJECT_OFFSETOF(StringBuilderStorage, m_nextFree); }
     static constexpr ptrdiff_t offsetOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lastString); }
     static constexpr ptrdiff_t offsetOfLengthOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOfLastString); }
     static constexpr ptrdiff_t offsetOfMinLengthAppendedByReference() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAppendedByReference); }
+    static constexpr ptrdiff_t offsetOfMinLengthAdoptedByFinish() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAdoptedByFinish); }
 
 private:
     friend struct StackStringBuilder;
@@ -130,8 +172,8 @@ private:
         uint32_t maxPooledBuilders;
     };
 
-    StringBuilderStorage(VM&, Structure*);
-    static StringBuilderStorage* create(VM&);
+    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit, StringBuilderWords&);
+    static StringBuilderStorage* create(Instance&);
     void reset();
     void returnToPool(Instance&);
 
@@ -149,7 +191,13 @@ private:
     bool tryEnsureRoom(size_t length, size_t bytesWritten);
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
+    void dropLargeBuffer(size_t longestTextInBuffer);
     bool ensureRoom(JSGlobalObject*, size_t size);
+    void throwOutOfMemory(JSGlobalObject*);
+    static bool holderInTheMiddleRepeats(const JSONHolderRecord* innermost);
+    void watchLevelsAfterGrowth(size_t numberOfCharacters);
+    void setLevelLimit(void*);
+    void stopWatchingLevels();
     bool canGrowBy(size_t added) const;
 
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
@@ -169,6 +217,14 @@ private:
     uint32_t m_limit { 0 };
     uint32_t m_lengthOutsideBuffer { 0 };
     uint32_t m_sharedLength { 0 };
+    // The innermost first. A frame that an exception ends takes nothing off the list: the handler that catches the exception puts back the list of its own frame.
+    JSONHolderRecord* m_jsonHolders { nullptr };
+    WatchedJSONLevels m_watchedLevels;
+    uint32_t m_lengthWhenWatchBegan { 0 };
+    uint32_t m_positionWhenSegmentsWereJoined { 0 };
+    uint32_t m_capacityOfNextBuffer { 0 };
+    StackManager::Mirror& m_levelLimit;
+    StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;
     uint32_t m_lengthOfLastString { 0 };

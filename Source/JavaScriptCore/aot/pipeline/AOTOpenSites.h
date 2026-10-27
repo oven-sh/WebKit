@@ -43,6 +43,7 @@ enum class SiteList : uint8_t {
     Int32Conversions,
     ConstantListSpreads,
     ConstantListCalls,
+    TemplateObjects,
     GlobalNames,
     CallSites,
     Accesses,

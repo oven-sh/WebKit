@@ -112,6 +112,7 @@ class JSObject : public JSCell {
     enum PutMode : uint8_t {
         PutModePut,
         PutModeDefineOwnProperty,
+        PutModeDefineOwnPropertyWithoutClosureHooks,
     };
 
 public:
@@ -684,7 +685,7 @@ public:
     bool canPerformFastPutInlineExcludingProto();
 
     bool mayBePrototype() const;
-    void didAddPropertyWithTransition(VM&, PropertyName);
+    template<bool notifiesCompiledClosure = true> void didAddPropertyWithTransition(VM&, PropertyName);
     void didBecomePrototype(VM&);
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
@@ -851,6 +852,7 @@ private:
     bool hasPrivateBrandAsField(VM&, JSValue brand) const;
     JS_EXPORT_PRIVATE JSValue getDirectFromCompiledObject(VM&, PropertyName, unsigned* attributesOrNull) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes, PutMode, PutPropertySlot&);
+    JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledClosure(VM&, PropertyName, JSValue, unsigned attributes, PutPropertySlot&);
 #endif
 
     JS_EXPORT_PRIVATE NEVER_INLINE ASCIILiteral putDirectToDictionaryWithoutExtensibility(VM&, PropertyName, JSValue, PutPropertySlot&);

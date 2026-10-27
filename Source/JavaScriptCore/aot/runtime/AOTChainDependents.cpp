@@ -26,6 +26,7 @@
 #include "ArrayPrototype.h"
 #include "InlineCacheCompiler.h"
 #include "JSCInlines.h"
+#include "Lookup.h"
 #include "StructureRareDataInlines.h"
 #include <bit>
 #include <wtf/TZoneMallocInlines.h>
@@ -272,6 +273,12 @@ void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
     }
 }
 
+void RuntimeHooks::didStartWatchingReplacements(VM& vm)
+{
+    if (vm.aotState().propertyCaches)
+        vm.aotState().propertyCaches->didStartWatchingReplacements();
+}
+
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);
@@ -499,7 +506,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
 // Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value.
 static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStringImpl* uid, Object& object, ChainWalk& walk)
 {
-    if (object.isInFrame() || PropertyName(uid).isPrivateName())
+    if (object.isInFrame() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies()))
         return stopAt(&object, walk);
     const FieldData* field = object.fieldNamed(object.state(), uid);
     if (field && field->isPrivate())
@@ -537,8 +544,16 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
             walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, *offset, attributes);
     }
-    if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid))
-        return stopAt(object, walk);
+    if (structure->hasNonReifiedStaticProperties()) {
+        if (auto entry = structure->findPropertyHashEntry(uid)) {
+            // A read moves every other kind of entry into the object. A custom accessor or value stays in the table of its class until the object changes.
+            unsigned attributes = entry->value->attributes();
+            if (attributes & (PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyProperty | PropertyAttribute::ConstantInteger) || !(attributes & PropertyAttribute::CustomAccessorOrValue))
+                return stopAt(object, walk);
+            walk.changeableObjects.append(object);
+            return stopAtProperty(walk, object, object, invalidOffset, attributesForStructure(attributes));
+        }
+    }
     bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
     if (canGainProperty || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);

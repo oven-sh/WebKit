@@ -11,14 +11,14 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK: LoopHint
 # CHECK-NOT: FlattenString
 # CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
-# CHECK-NEXT: v11: string = AssumeType v0 castType=string
+# CHECK-NEXT: v11: string = AssumeType v0 provenType=string
 # CHECK-NEXT: v12: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
 # CHECK-NOT: FlattenString
 function f0 name="casts-inside-and-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
-    v5 = AssumeType v0 castType=string
+    v5 = AssumeType v0 provenType=string
     Jump -> next b1(v3, v2)
   b1(v6, v7):
     LoopHint
@@ -26,7 +26,7 @@ function f0 name="casts-inside-and-outside-loop" parameters=[{type=undefined|str
     Branch v9 -> taken b2(), notTaken b3()
   b2():
     v10 = CallBuiltin v5, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
-    v11 = AssumeType v0 castType=string
+    v11 = AssumeType v0 provenType=string
     v12 = CallBuiltin v11, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
     v13 = Add v6, v4
     Jump -> next b1(v13, v12)

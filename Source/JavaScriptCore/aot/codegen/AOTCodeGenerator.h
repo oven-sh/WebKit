@@ -103,9 +103,9 @@ inline ValueID valueOfOrigin(B3::Origin origin)
     return bits ? ValueID(static_cast<uint32_t>(bits - 1)) : ValueID();
 }
 
-constexpr B3::FrequencyClass b3FrequencyClassOf(BlockFrequency frequency)
+constexpr B3::FrequencyClass b3FrequencyClassOf(Expected<BlockFrequency> frequency)
 {
-    switch (frequency) {
+    switch (frequency.predicted()) {
     case BlockFrequency::Normal:
         return B3::FrequencyClass::Normal;
     case BlockFrequency::Unlikely:
@@ -197,6 +197,7 @@ public:
     void failAtLimit(const OperationContext&, LimitID, uint64_t needed);
     bool hasFailed() const { return m_hasFailed; }
     bool mayBeUnspecified(ValueID);
+    bool isValidatedWhereLookedAt(ValueID);
     bool hasTypeOnlyBehindTest(ValueID parameter);
 
     class InitializationScope {
@@ -254,6 +255,7 @@ private:
     void finishProcedure();
 
     void generate(const ValueContext&);
+    void verifyElementGuard(const ValueContext&);
     void defineValue(ValueID, Operand);
     void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, const IncomingOperand&);
@@ -306,6 +308,7 @@ private:
     ValueID m_callWithLandingOfMisfit;
     LandingOfMisfit m_landingOfMisfit;
     std::optional<BitVector> m_unspecifiedValues;
+    std::optional<BitVector> m_valuesValidatedWhereLookedAt;
     std::optional<BitVector> m_parametersTypedOnlyBehindTest;
     Vector<uint32_t> m_numberOfGuardsSeen;
     unsigned m_initializationDepth { 0 };

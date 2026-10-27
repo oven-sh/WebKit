@@ -158,6 +158,7 @@ static JSValue createMatchValue(Instance* instance, RegExpMatchForm form, RegExp
     if (globalObject->isHavingABadTime()) [[unlikely]]
         return createRegExpMatchesArrayForPlainRegExpHavingABadTime(vm, globalObject, subject, result, offsets, numSubpatterns);
     prepareInlineAllocation<JSArray>(instance, InlineAllocation::RegExpMatchesArray, globalObject->regExpMatchesArrayStructure());
+    leaveCellsForRopes(instance);
     return createRegExpMatchesArrayForPlainRegExp(vm, globalObject, subject, result, offsets, numSubpatterns);
 }
 
@@ -355,10 +356,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* insta
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRegExpLiteral);
     RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
-    if (!regExp->isValid()) [[unlikely]] {
-        throwException(globalObject, scope, regExp->errorToThrow(globalObject));
-        OPERATION_RETURN(scope, nullptr);
-    }
+    ASSERT(regExp->isValid());
     if (staticsOffset != noSharedRegExpOffset && !instance->state->statics->at<JSCell*>(staticsOffset))
         setSharedLiteral(vm, instance, staticsOffset, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
     prepareInlineAllocation<RegExpObject>(instance, InlineAllocation::RegExpObject, globalObject->regExpStructure());

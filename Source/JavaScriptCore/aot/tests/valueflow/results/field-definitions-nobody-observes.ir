@@ -179,7 +179,7 @@ function f13 name="note" parameters=[{type=anything}] results=[{type=anything}] 
 }
 # CHECK-LABEL: function f14 name="readNext"
 # CHECK: [[read]]: {{*}} = PropGet {{*}} key="next"
-# CHECK: : L0|L5 = AssumeType [[read]] castType=L0|L5
+# CHECK: : L0|L5 = AssumeType [[read]] provenType=L0|L5
 function f14 name="readNext" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="next"
     v2 = PropGet v1 key="count"

@@ -12,14 +12,14 @@ function f0 name="readsAtCastKey" parameters=[{type=Array<number>}, {type=number
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
   b1():
-    v4 = AssumeType v1 castType=undefined|int|whole
+    v4 = AssumeType v1 provenType=undefined|int|whole
     v5 = ElemGet v0, v4
-    v6 = Check v5 castType=number
+    v6 = Check v5 expectedType=number
     Return v6
   b2():
     Return v2
 # CHECK: = TypeTest v1 testedType=number
-# CHECK: [[key]]: int|whole = AssumeType [[number]] castType=int|whole
+# CHECK: [[key]]: int|whole = AssumeType [[number]] provenType=int|whole
 # CHECK: = GetArrayElement v0, [[key]], {{*}} [keyIsIntegral, isPresent]
 # CHECK: = IsElementPresent v0, [[number]], {{*}} arrayStorage=Double
 }

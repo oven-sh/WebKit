@@ -12,6 +12,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include <array>
 #include <wtf/BitVector.h>
@@ -132,7 +133,7 @@ static BitVector mappedEntryParameters(const Function& callee, const Value& call
     bool isCalledByValue = Value::opcodesWithCallees.contains(call.opcode);
     BitVector mapped(numberOfParameters);
     call.forEachOperand([&](ValueID, uint32_t index) {
-        if (call.operandUses(index).containsAny(callingUses))
+        if (call.operandUses(index).containsAny(callingUses) || isHeldOperand(call, index))
             return;
         std::optional<uint32_t> parameter = isCalledByValue ? entryParameterOf(callee, call, index) : call.variadicOperandIndex(index);
         if (parameter && *parameter < numberOfParameters)
@@ -167,11 +168,12 @@ static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, 
 static EffectsOnEdges callEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& call, const EffectsOnEdges& effects)
 {
     CalleeList callees = calleesThatBoundEffectsOf(context.program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return effects;
     EffectDescription description = describeEffects(context.program, function, call);
     description.functions.clear();
-    for (FunctionID callee : callees.functions)
+    for (FunctionID callee : functions->value())
         description.own.merge(calleeEffectsBeyondOperands(context, callee, call));
     return resolveEffects(context, description);
 }
@@ -186,10 +188,10 @@ static EffectsOnEdges confinedEffectsBeyondOperands(const EffectContext& context
 
 EffectsOnEdges effectsBeyondOperands(const EffectContext& context, const Function& function, const Value& value, const EffectsOnEdges& effects)
 {
+    if (effectRuleOf(value.opcode) == EffectRule::Call)
+        return effects.normal.mayRunOtherCode() ? effects : callEffectsBeyondOperands(context, function, value, effects);
     if (effects.onAnyEdge().mayRunOtherCode())
         return effects;
-    if (effectRuleOf(value.opcode) == EffectRule::Call)
-        return callEffectsBeyondOperands(context, function, value, effects);
     switch (confinementOf(value.opcode)) {
     case OperandConfinement::Unknown:
         return effects;

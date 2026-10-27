@@ -22,9 +22,11 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
 #include "ExceptionHelpers.h"
 #include "InternalFunction.h"
@@ -132,10 +134,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     DeferGC deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
-    Object* allocated = cellArgument<Object>(object, entry);
-    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField);
+    // The stub that looks at the prototype first has allocated nothing.
+    Object* allocated = object ? cellArgument<Object>(object, entry) : uncheckedDowncast<Object>(objects.structures.allocate(vm, allocation));
+    JSObject* result = objects.classes.instanceWithPrototype(vm, allocated, cellArgument<JSObject>(prototype, entry), !!holdsNoField, allocation);
     if (result == allocated)
         objects.structures.predictStructure(vm, allocation, uncheckedDowncast<CompiledStructure>(result->structure()));
     OPERATION_RETURN(scope, result);
@@ -206,6 +210,37 @@ static void addKnownStructure(VM& vm, JSCellButterfly* token, uint32_t field, St
         butterfly->setIndex(vm, first + ClassToken::LocationOfValue, jsNumber(locationOf(value)));
         butterfly->setIndex(vm, first + ClassToken::LocationOfBrand, jsNumber(brand ? locationOf(*brand) : 0));
         butterfly->setIndex(vm, first + ClassToken::StructureNumber, jsNumber(static_cast<int32_t>(structure->id().bits())));
+        return;
+    }
+}
+
+// What compiled code does by itself for the next object of the Structure. The name is the declared one, and the Structure before lacks it and every name that this evaluation has made for itself so far.
+static void rememberDefinition(VM& vm, JSCellButterfly* token, uint32_t field, Structure* before, Structure* after, std::optional<PropertyOffset> brand)
+{
+    JSValue records = token->get(ClassToken::knownStructuresSlot);
+    if (!records || after->previousID() != before || after->transitionKind() != TransitionKind::PropertyAddition)
+        return;
+    PropertyOffset offset = after->transitionOffset();
+    std::optional<uint32_t> newCapacity = capacityOfStorageGrownByStub(vm, before, after, offset);
+    if (!newCapacity)
+        return;
+    int32_t placeOfValue = *newCapacity ? static_cast<int32_t>(*newCapacity << 1 | 1) : locationOf(offset);
+    int32_t placeOfBrand = brand ? locationOf(*brand) : 0;
+    if (placeOfValue != static_cast<int16_t>(placeOfValue) || placeOfBrand != static_cast<int16_t>(placeOfBrand))
+        return;
+    JSCellButterfly* butterfly = uncheckedDowncast<JSCellButterfly>(records.asCell());
+    JSValue number = jsNumber(static_cast<int32_t>(before->id().bits()));
+    for (unsigned definition = 0; definition < ClassToken::definitionsPerField; ++definition) {
+        unsigned first = ClassToken::slotOfDefinition(field, definition);
+        JSValue taken = butterfly->get(first + ClassToken::NumberOfStructureBefore);
+        if (taken == number)
+            return;
+        if (taken)
+            continue;
+        butterfly->setIndex(vm, first + ClassToken::KeptStructureBefore, before);
+        butterfly->setIndex(vm, first + ClassToken::StructureAfter, after);
+        butterfly->setIndex(vm, first + ClassToken::Places, jsNumber(static_cast<int32_t>(static_cast<uint32_t>(placeOfBrand) << 16 | static_cast<uint16_t>(placeOfValue))));
+        butterfly->setIndex(vm, first + ClassToken::NumberOfStructureBefore, number);
         return;
     }
 }
@@ -463,6 +498,23 @@ static bool tryDefineInEmptySlot(VM& vm, State& state, JSObject* base, JSCellBut
     return tryCreateField(vm, state, *object, *field, defined);
 }
 
+// An ordinary object whose Structure has taken the name before. A Structure that leads on by adding a name has not got the name, so nothing is looked up.
+static bool tryDefineByExistingTransition(VM& vm, State& state, JSObject* base, JSCellButterfly* token, uint32_t fieldIndex, JSValue defined)
+{
+    if (compiledObjectOrNull(base) || privateNameIfCreated(token, fieldIndex) || !token->get(ClassToken::knownStructuresSlot) || base->hasFrozenElementsInPlace())
+        return false;
+    const LayoutData& declaringLayout = declaringLayoutOf(state, token);
+    const FieldData& declared = declaredFieldOf(declaringLayout, fieldIndex);
+    // The brand is what makes the object one of the evaluation. Whether an object that has a brand is one is left to the caller.
+    if (declared.isBrand() ? defined != JSValue(token) : !!brandOf(state, declaringLayout, token))
+        return false;
+    Structure* before = base->structure();
+    if (!base->tryPutDirectByExistingTransition(vm, state.objects->layouts.nameOf(vm, declared), defined, static_cast<unsigned>(PropertyAttribute::None)))
+        return false;
+    rememberDefinition(vm, token, fieldIndex, before, base->structure(), std::nullopt);
+    return true;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClassToken, JSCell*, (Instance* instance, uint32_t classIndex))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewClassToken);
@@ -570,7 +622,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
     }
     JSObject* base = objectArgument(object, entry);
     JSValue defined = JSValue::decode(value);
-    if (tryDefineInEmptySlot(vm, state, base, classToken, field, defined)) {
+    if (tryDefineInEmptySlot(vm, state, base, classToken, field, defined) || tryDefineByExistingTransition(vm, state, base, classToken, field, defined)) {
         ensureStillAliveHere(classToken);
         OPERATION_RETURN(scope);
     }
@@ -592,12 +644,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
         // A private name is no property, so a frozen array takes one. The structure of an array whose elements were frozen in place admits nothing more, that of the ordinary frozen form does.
         if (base->hasFrozenElementsInPlace()) [[unlikely]]
             base->moveFrozenElementsToSparseMap(vm);
+        Structure* before = base->structure();
         if (!base->tryPutDirectByExistingTransition(vm, uid, defined, static_cast<unsigned>(PropertyAttribute::None))) [[unlikely]] {
             PutPropertySlot slot(base, true);
             base->definePrivateField(globalObject, uid, defined, slot);
         }
         if (!classToken->get(ClassToken::knownStructuresSlot)) [[unlikely]]
             classToken->setIndex(vm, ClassToken::knownStructuresSlot, JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, ClassToken::slotOfRecord(declaringLayoutOf(state, classToken).numberOfFields, 0)));
+        // A field of a class that has a brand goes under the declared name in the objects of this evaluation alone, which the brand in the object tells.
+        bool needsBrand = !isBrand && location.hasBrand;
+        if (canUseDeclaredName && (!needsBrand || isValidOffset(location.brand.offset)))
+            rememberDefinition(vm, classToken, field, before, base->structure(), needsBrand ? std::optional(location.brand.offset) : std::nullopt);
     }
     ensureStillAliveHere(classToken);
     OPERATION_RETURN(scope);

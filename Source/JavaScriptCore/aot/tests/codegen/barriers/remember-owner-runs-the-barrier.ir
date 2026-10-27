@@ -1,0 +1,14 @@
+# RememberOwner stores nothing and runs the barrier of the object. The store in front of it is marked as covered and gets none.
+# FORM: Selected
+# OPTIONS: disable=pass:RemoveRedundantBarriers
+# RUN: generate-code
+# STATISTIC: BarriersEmitted = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}] flow={members=[L0]}
+function f0 name="rememberOwner" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven [laterBarrierCovers]
+    RememberOwner v0
+    Return
+}

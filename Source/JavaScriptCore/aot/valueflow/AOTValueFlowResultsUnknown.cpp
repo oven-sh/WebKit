@@ -61,7 +61,7 @@ static void fillAccessSites(const Program& program, FlowAccessSiteNumbering& num
     sites.accessSites.grow(numbering.numberOfSites());
     numbering.valueOfSite.grow(numbering.numberOfSites());
     sites.callsOfBoundFunctions.fill(false, numbering.numberOfSites());
-    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+    sites.writtenPositionsOfSites = collectInParallel<WrittenPositionOfSite>(loops, program.functions.size(), [&](unsigned index, Vector<WrittenPositionOfSite>& found) {
         FunctionID id(index);
         const Function& function = program.functions[index];
         forEachAccessSiteValue(function, [&](ValueID value, uint32_t ordinal) {
@@ -70,6 +70,10 @@ static void fillAccessSites(const Program& program, FlowAccessSiteNumbering& num
             sites.accessSites[site.index()] = AccessSite { id, function.locationOf(value), accessKindOf(function.at(value)) };
             sites.callsOfBoundFunctions[site.index()] = PayloadWord::callees(function.at(value).opcode).has_value();
         });
+        for (const WrittenPosition& written : function.writtenPositions) {
+            if (written.value.index() < function.values.size() && hasAccessSite(function.at(written.value).opcode))
+                found.append({ numbering.siteOfValue(id, written.value), written.position });
+        }
     });
 }
 

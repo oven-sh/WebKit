@@ -32,12 +32,12 @@ variable g2 name="kLate" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="one"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     PutModuleVariable v2 variable=g0
-    v4 = Call v0, -, v1 @120
+    v4 = Call v0, -, v1 callNumber=120 @120
     PutModuleVariable v4 variable=g1
     v6 = String string="late"
-    v7 = Call v0, -, v6 @140
+    v7 = Call v0, -, v6 callNumber=140 @140
     PutModuleVariable v7 variable=g2
     v9 = NewClosure function=f1
     v10 = NewClass v9 layout=L0

@@ -14,6 +14,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
+#include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
@@ -123,6 +124,11 @@ JSC_DEFINE_HOST_FUNCTION(callCompiledBuiltin, (JSGlobalObject* globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(constructCompiledBuiltin, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSObject* closure = compiledClosureOfCallee(globalObject, callFrame);
+    // Compiled code of the realm goes to the closure by itself from now on.
+    if (RealmWords& words = Instance::of(globalObject)->realm; !words.functionOfEngineOverCompiledFunction) [[unlikely]] {
+        words.compiledFunctionUnderFunctionOfEngine = closure;
+        words.functionOfEngineOverCompiledFunction = callFrame->jsCallee();
+    }
     return JSValue::encode(JSC::constructAllowingPrimitiveResult(globalObject, closure, JSC::getConstructData(closure), ArgList(callFrame), callFrame->newTarget()));
 }
 
@@ -144,15 +150,20 @@ bool refusesLibraryText()
     return image && !image->admitsLibraryText();
 }
 
+bool refusesLibraryText(JSGlobalObject* realm)
+{
+    return Instance::of(realm) && refusesLibraryText();
+}
+
 static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& executable)
 {
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-bool refusesToInterpret(ScriptExecutable& executable)
+bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!refusesLibraryText() || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+    if (!refusesLibraryText(realm) || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
     return !id || *id >= numberOfBuiltinCodes;
@@ -161,7 +172,7 @@ bool refusesToInterpret(ScriptExecutable& executable)
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    return executable && refusesToInterpret(*executable);
+    return executable && refusesToInterpret(function->realm(), *executable);
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
@@ -202,6 +213,8 @@ void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& ex
     const BuiltinTable& table = BuiltinTable::singleton();
     std::optional<uint32_t> id = builtinFunctionHolding(function);
     Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
+    if (id && std::ranges::contains(table.moduleLoaderFunctions(), RuntimeFunctionID(*id)))
+        names = { "The module loader"_str };
     JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     // Reading an accessor is calling its getter. What it answers may be a number, and a function in the place of a number is a wrong answer: the read is refused.
     bool isGetterOfAccessor = id && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {

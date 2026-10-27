@@ -42,6 +42,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(effectSummariesTests) \
     v(heatGraphTests) \
     v(irProgramTests) \
+    v(ledgerTests) \
     v(resultNodeDeclineTests) \
     v(resultNodeTests) \
     v(typeArenaTests) \
@@ -167,6 +168,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(imageFunctionTableTests) \
     v(imageTextTests) \
     v(inlinedSerializerTests) \
+    v(innerPointerValidationTests) \
     v(instanceKeyOrderTests) \
     v(interpretedStoreUnderCompiledPrototypeTests) \
     v(jsonKeyOrderTests) \
@@ -203,6 +205,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(savedFrameTests) \
     v(sharingModeAndNamespaceTests) \
     v(siteCacheFillTests) \
+    v(sparseElementProgramTests) \
     v(stackCheckTests) \
     v(startupTests) \
     v(staticMembersNamedLikeBuiltinsTests) \
@@ -214,6 +217,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(stubPropertyStoreTests) \
     v(stubRegExpTests) \
     v(stubRuntimeTests) \
+    v(stubScratchRegisterTests) \
     v(stubStringTests) \
     v(stubValueTests) \
     v(stubVectorGrowthTests) \

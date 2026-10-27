@@ -46,7 +46,7 @@ static PropertyKeyID keyReadFromReceiver(const Program& program, const ValueFlow
     return definitionThroughSameValues(function, read.objectOperand()) == definitionThroughSameValues(function, receiver) ? key : PropertyKeyID();
 }
 
-static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees, ValueFlowCallKind kind)
+static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees, ValueFlowCallKind kind, ValueSetID receiversFollowedBehindUnknownObject = ValueSets::nothing)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet builtins = context.restrict(callees, universe.builtinFunctions());
@@ -60,7 +60,9 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
             receivers.groups.append(context.maker().of(kindOfPrimitive));
         });
         for (ValueSetID group : receivers.groups)
-            answers.append(context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(key))));
+            answers.append(context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key))));
+        if (context.contains(all, ValueFlowUniverse::unknownObject()))
+            receivers.rest = context.maker().unite(receivers.rest, receiversFollowedBehindUnknownObject);
     }
     context.forEachMember(builtins, [&](ValueFlowObjectID callee) {
         if (!key) {
@@ -148,15 +150,32 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
         return result;
     }
 
+    constexpr uint64_t builtinObjectsTogether = 2ull << 32;
     for (Member& member : members) {
         if (LayoutID layout = universe.layoutOf(member.object))
             member.group = layout.index();
         else if (BuiltinClassID builtinClass = universe.classOf(member.object))
             member.group = 1ull << 32 | builtinClass.index();
+        else if (universe.builtinOf(member.object))
+            member.group = builtinObjectsTogether;
         else
-            member.group = 2ull << 32 | member.object.index();
+            member.group = 3ull << 32 | member.object.index();
     }
     AOT::stableSort(members, { }, &Member::group);
+    uint64_t numberOfGroups = 0;
+    for (size_t index = 0; index < members.size(); ++index)
+        numberOfGroups += !index || members[index].group != members[index - 1].group;
+    if (numberOfGroups < mostGroups) {
+        uint64_t placesLeft = mostGroups - numberOfGroups;
+        for (Member& member : members) {
+            if (member.group != builtinObjectsTogether)
+                continue;
+            if (!placesLeft--)
+                break;
+            member.group = 4ull << 32 | member.object.index();
+        }
+        AOT::stableSort(members, { }, &Member::group);
+    }
     Vector<ValueFlowObjectID, 64> objects;
     for (size_t first = 0; first < members.size();) {
         bool isRest = result.groups.size() >= mostGroups;
@@ -205,7 +224,7 @@ static ValueSetID objectsAnsweredTo(ValueFlowRuleContext& context, ClimbingSet c
     return context.maker().unite(ValueSets::complement(universe.instancesOfClasses()), context.maker().of(instances.span()));
 }
 
-static bool throwsInsteadOfRunning(const Function& callee, bool isConstruction)
+bool throwsInsteadOfRunning(const Function& callee, bool isConstruction)
 {
     if (isConstruction)
         return callee.constructorForm() == ConstructorForm::NotConstructor;
@@ -273,13 +292,13 @@ static bool takesResultOfEachCallee(ValueFlowRuleContext& context, const ValueFl
     return true;
 }
 
-static constexpr ValueFlowName restArgument(unsigned index)
+static constexpr ValueFlowCellName restArgument(unsigned index)
 {
-    return { ValueFlowNameKind::RestArgument, index };
+    return ValueFlowCellName { ValueFlowNameKind::RestArgument, index };
 }
 
-static constexpr ValueFlowName laterRestArguments = restArgument(numberOfGroupedArguments);
-static constexpr ValueFlowName otherRestArguments = restArgument(numberOfGroupedArguments + 1);
+static constexpr ValueFlowCellName laterRestArguments = restArgument(numberOfGroupedArguments);
+static constexpr ValueFlowCellName otherRestArguments = restArgument(numberOfGroupedArguments + 1);
 
 static ValueID findCallThatAloneTakesRestArray(const Function& function)
 {
@@ -454,9 +473,11 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
 
     ValueFlowObjectID undefinedAndNull[] { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) };
     ValueSetID neverReceivers = context.maker().of(undefinedAndNull);
-    ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(context.valueOf(context.operandsOf(statement)[1]), universe.knownObjects()));
+    const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
+    ClimbingSet all = context.valueOf(receiver);
+    ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.restrict(all, universe.knownObjects()));
     for (ValueSetID group : receivers.groups) {
-        ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(key)));
+        ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key)));
         context.forEachMember(context.restrict(answered, universe.closures()), [&](ValueFlowObjectID closure) {
             if (!context.contains(closures, closure))
                 return;
@@ -474,12 +495,48 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
             }
         });
     }
-    return { ValueSets::complement(context.maker().unite(universe.knownObjects(), neverReceivers)), receivers.rest };
+
+    // Primitives and objects nobody knows go, as a known object does, to the functions that their own lookup answers.
+    ValueSetID others = ValueSets::complement(context.maker().unite(universe.knownObjects(), neverReceivers));
+    ClimbingSet otherReceivers = context.restrict(all, others);
+    if (context.meet(otherReceivers, ValueSets::anything)) {
+        Vector<ValueFlowObjectID, 8> found;
+        context.forEachMember(context.restrict(context.valueOf(context.lookup(otherReceivers, ValueFlowName::property(context.program(), key))), universe.closures()), [&](ValueFlowObjectID closure) {
+            if (!context.contains(closures, closure))
+                return;
+            found.append(closure);
+            FunctionID function = universe.closureFunction(closure);
+            const auto* summary = statement.result && receiver.node ? context.nodes().resultSummaryOf(function) : nullptr;
+            if (!summary || program.at(function).isUnsplitCoroutine() || throwsInsteadOfRunning(program.at(function), false))
+                return;
+            for (const auto& passed : summary->passedParameters) {
+                if (program.at(function).entryParameterKind(passed.entryParameter) == EntryParameter::This)
+                    context.connect(context.masked(context.masked(context.masked(receiver.node, receiver.mask, receiver.maskKind), others), passed.mask, passed.maskKind), statement.result);
+            }
+        });
+        if (!found.isEmpty())
+            passThis(context, statement, receiver, { others, ValueSets::nothing }, context.group(ClimbingSet(context.maker().of(found.span())), ValueFlowCallKind::Call).thisValue);
+    }
+    return { ValueSets::nothing, receivers.rest };
 }
 
-static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID keyReadFromReceiver = { })
 {
-    for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(1))
+    // A member that nobody knows is called on the receivers that find it, or find a function that it stands for. Any other object of the program stays with the callees that it finds.
+    if (keyReadFromReceiver) {
+        const ValueFlowUniverse& universe = context.universe();
+        const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
+        ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), context.restrict(context.valueOf(receiver), objectsOfProgram)));
+        for (ValueSetID group : receivers.groups) {
+            ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), keyReadFromReceiver)));
+            if (context.meet(answered, universe.placeholdersAlone()) || context.holdsAnyOf(context.restrict(answered, universe.callables()), ValueFlowProgramNodes::escaped()))
+                context.add(ValueFlowProgramNodes::escaped(), group);
+        }
+        context.add(ValueFlowProgramNodes::escaped(), receivers.rest);
+        passThis(context, statement, receiver, { ValueSets::complement(objectsOfProgram), ValueSets::nothing }, ValueFlowProgramNodes::escaped());
+    }
+    for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(keyReadFromReceiver ? 2 : 1))
         context.connect(operand, ValueFlowProgramNodes::escaped());
     ValueSetID anything = unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee);
     if (statement.result)
@@ -502,17 +559,17 @@ static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& cont
         return false;
     ClimbingSet chain = context.unite(start, context.restrict(context.valueOf(context.lookup(start, prototypeLinkName)), objectsOfProgram));
     ClimbingSet inHandsOfProgram = context.membersMissingFrom(ValueFlowProgramNodes::escaped(), chain);
-    return context.contains(context.valueOf(context.read(inHandsOfProgram, ValueFlowName::property(key))), ValueFlowUniverse::unknownObject());
+    return context.contains(context.valueOf(context.readWhatWasWritten(inHandsOfProgram, ValueFlowName::property(context.program(), key))), ValueFlowUniverse::unknownObject());
 }
 
-static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key)
+static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID key, bool receiversAreToldApart)
 {
     context.forEachMember(context.restrict(escapedMembersUnder(context, key), context.universe().builtinFunctions()), [&](ValueFlowObjectID member) {
         applyBuiltinFoundThroughUnknownObject(context.universe().builtinOf(member), statement, context);
     });
 
     letUnknownCodeWrite(context);
-    callOperandOfDescribedCall(statement, context);
+    callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID());
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)
@@ -615,8 +672,20 @@ BuiltinID entryNamedByOperations(const Program& program, const Function& functio
     return entry;
 }
 
+static bool mayRefuseDefinition(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    constexpr OptionSet<ObjectMutation> mutations { ObjectMutation::RedefineProperty, ObjectMutation::ChangeIntegrity };
+    const ValueFlowUniverse& universe = context.universe();
+    if (context.meet(objects, universe.placeholdersAlone()) || context.meet(context.markedAmong(objects, mutations), ValueSets::anything) || context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()))
+        return true;
+    if (!context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()))
+        return false;
+    return isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) || context.meet(context.markedAmong(ClimbingSet(universe.unknownObjectAlone()), mutations), ValueSets::anything);
+}
+
 // A field that is declared without a value is defined as undefined. Nobody sees that value as long as super() calls the constructors that the classes name.
-static void observeDefinitionsBehindOtherConstructor(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
+// Where the constructors above show the object to other code, a definition that throws leaves the ones in front of it to be seen.
+static void observeDefinitionsBehindSuper(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const Program& program = context.program();
     LayoutID classLayout = program.at(statement.function).constructedClass;
@@ -631,10 +700,27 @@ static void observeDefinitionsBehindOtherConstructor(const ValueFlowStatement& s
     context.forEachMember(callees, [&](ValueFlowObjectID callee) {
         callsOtherConstructor |= context.universe().closureFunction(callee) != named;
     });
-    if (!callsOtherConstructor)
-        return;
-    for (const auto& entry : definitions)
-        context.add(entry.value, context.universe().undefinedValue());
+    for (const auto& entry : definitions) {
+        auto definesOnObjectThatMayRefuse = [&] {
+            return entry.areObservedWhereObjectRefusesDefinition && mayRefuseDefinition(context, context.valueOf(context.nodes().entryParameter(entry.initializer, *program.at(entry.initializer).thisParameterIndex())));
+        };
+        if (callsOtherConstructor || definesOnObjectThatMayRefuse())
+            context.add(entry.value, context.universe().undefinedValue());
+    }
+}
+
+static bool passesObjectThatLetsInUnseenCode(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    return std::ranges::any_of(context.operandsOf(statement).subspan(1), [&](const ValueFlowOperand& operand) {
+        return listsObjectThatLetsInUnseenCode(context, operand);
+    });
+}
+
+static ClimbingSet builtinFunctionsThatUnknownCalleeStandsFor(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    if (PropertyKeyID key = keyOfMemberCalledOnItsHolder(context.program(), statement))
+        return context.restrict(escapedMembersUnder(context, key), context.universe().builtinTables().heap().functionsThatCallOrBindOperand());
+    return builtinFunctionsListedBesideUnknownObject(context, context.operandsOf(statement)[0].node);
 }
 
 void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -656,12 +742,36 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (context.meet(closures, ValueSets::anything))
             passOperands(context, statement, closures, kind, passKnownReceiversToTheirCallees(context, statement, closures));
     }
-    callListedBuiltins(statement, context, callees, kind);
+    // A promise of the realm answers with the methods of promises, whatever else the callee may be.
+    ClimbingSet listedCallees = callees;
+    if (PropertyKeyID key = context.contains(callees, ValueFlowUniverse::unknownObject()) ? keyReadFromReceiver(context.program(), statement) : PropertyKeyID()) {
+        ClimbingSet all = context.valueOf(context.operandsOf(statement)[1]);
+        ClimbingSet receivers = context.restrict(all, context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Promise), promisesAllocatedByBuiltins(context, all)));
+        if (context.meet(receivers, ValueSets::anything))
+            listedCallees = context.unite(callees, context.valueWithin(ClimbingSet(universe.builtinFunctions()), context.lookup(receivers, ValueFlowName::property(context.program(), key))));
+    }
+    ValueSetID receiversFollowedBehindUnknownObject = ValueSets::nothing;
+    if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
+        ClimbingSet handingOn = builtinFunctionsThatUnknownCalleeStandsFor(statement, context);
+        if (context.meet(handingOn, ValueSets::anything) && passesObjectThatLetsInUnseenCode(statement, context)) {
+            listedCallees = context.unite(listedCallees, handingOn);
+            receiversFollowedBehindUnknownObject = universe.builtinTables().heap().functionsThatCallOrBindOperand();
+        }
+    }
+    callListedBuiltins(statement, context, listedCallees, kind, receiversFollowedBehindUnknownObject);
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {
         const Function& function = context.program().at(statement.function);
         ValueID callee = function.at(statement.site).operand(0);
         BuiltinID named = callee ? entryNamedByOperations(context.program(), function, callee) : BuiltinID();
-        if (named && context.program().builtins().at(named).origin == BuiltinOrigin::Host && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)))
+        const BuiltinTable& builtins = context.program().builtins();
+        // Behind a built-in of the engine only a Bun that the program named is looked for.
+        auto mayHandOnNamedBun = [&] {
+            ClimbingSet mark = only(context, ValueFlowUniverse::markOfNamedBun());
+            return std::ranges::any_of(context.operandsOf(statement).subspan(1), [&](const ValueFlowOperand& operand) {
+                return operand.node && context.holdsAnyOf(mark, operand.node);
+            });
+        };
+        if (named && context.sets().contains(universe.builtinFunctions(), universe.objectOf(named)) && (builtins.at(named).origin == BuiltinOrigin::Host || mayHandOnNamedBun()))
             applyBuiltin(named, kind, statement, context);
     }
     for (ValueFlowObjectID placeholder : { ValueFlowUniverse::untrackedObject(), ValueFlowUniverse::unknownObject() }) {
@@ -673,14 +783,14 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         if (placeholder == ValueFlowUniverse::unknownObject() && isCodeThatRecordsDescribe(context.universe(), statement.function))
             callOperandOfDescribedCall(statement, context);
         else if (keyOfMember)
-            callMemberNobodyKnows(statement, context, keyOfMember);
+            callMemberNobodyKnows(statement, context, keyOfMember, context.meet(callees, enteredClosures));
         else
             passOperands(context, statement, only(context, placeholder), kind, { }, isCodeBehindDeclaredEntries(context.program(), statement.function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value);
     }
 
     bool isSuperConstruct = statement.opcode == Opcode::SuperConstruct || statement.opcode == Opcode::SuperConstructList;
     if (isSuperConstruct)
-        observeDefinitionsBehindOtherConstructor(statement, context, callees);
+        observeDefinitionsBehindSuper(statement, context, callees);
     if (isSuperConstruct && context.contains(callees, ValueFlowUniverse::unknownObject())) {
         ClimbingSet made = only(context, universe.siteObject(statement));
         context.connect(context.lookup(context.valueOf(context.operandsOf(statement)[1]), prototypeProperty(context)), context.written(made, prototypeLinkName));
@@ -898,14 +1008,18 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         if (group.newTarget)
             context.connect(group.newTarget, escaped);
         for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
-            context.connect(group.argument(index), escaped);
-        context.connect(group.laterArguments, escaped);
-        context.connect(group.otherArguments, escaped);
+            carryOut(context, group.argument(index));
+        carryOut(context, group.laterArguments);
+        carryOut(context, group.otherArguments);
         context.add(group.result, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
         context.add(group.thrown, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
     };
-    if (context.contains(key, calleeOfDescribedCall(universe)))
-        return handOperandsToCodeNobodySees();
+    if (context.contains(key, calleeOfDescribedCall(universe))) {
+        handOperandsToCodeNobodySees();
+        key = context.restrict(key, ValueSets::complement(context.maker().of(calleeOfDescribedCall(universe))));
+        if (!context.meet(key, ValueSets::anything))
+            return;
+    }
 
     ClimbingSet listed = context.restrict(key, universe.knownObjects());
     ClimbingSet lost = context.contains(key, ValueFlowUniverse::untrackedObject()) ? context.valueWithin(ClimbingSet(universe.callables()), ValueFlowProgramNodes::lost()) : ClimbingSet();
@@ -916,8 +1030,6 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
         applyEventsOfCall(statement, context, context.unite(isSpelledOut ? context.restrict(listed, universe.builtinFunctions()) : listed, lost));
 
     ClimbingSet callees = context.unite(listed, lost);
-    if (callsUnknownObject)
-        callees = context.unite(callees, context.valueWithin(ClimbingSet(universe.otherCallables()), ValueFlowProgramNodes::escaped()));
     AllocatedInstances allocated;
     ClimbingSet dealtWithOneByOne = callees;
     if (callsUnknownObject || context.contains(key, ValueFlowUniverse::untrackedObject()))
@@ -968,26 +1080,25 @@ void runNewClass(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
     bool isLost = context.holdsAnyOf(constructors, ValueFlowProgramNodes::lost());
     for (const StaticField& field : program.at(operation.layout()).staticFields) {
         ValueFlowNodeID variable = context.nodes().variable(field.variable);
-        context.connect(variable, context.written(constructors, field.key ? ValueFlowName::property(field.key) : ValueFlowName { ValueFlowNameKind::UnknownKey, 0 }));
-        ValueFlowName found = field.key ? ValueFlowName::property(field.key) : ValueFlowName { ValueFlowNameKind::EveryProperty, 0 };
-        context.connect(context.read(withSourcesOfCopies(context, context.restrict(constructors, universe.knownObjects())), found), variable);
+        context.connect(variable, context.written(constructors, field.key ? ValueFlowName::property(program, field.key) : ValueFlowName { ValueFlowNameKind::UnknownKey, 0 }));
+        ValueFlowName found = field.key ? ValueFlowName::property(program, field.key) : ValueFlowName { ValueFlowNameKind::EveryProperty, 0 };
+        context.connect(context.readWhatWasWritten(withSourcesOfCopies(context, context.restrict(constructors, universe.knownObjects())), found), variable);
         if (hasEscaped)
-            context.connect(context.read(ClimbingSet(universe.unknownObjectAlone()), found), variable);
+            context.connect(context.readWhatWasWritten(ClimbingSet(universe.unknownObjectAlone()), found), variable);
         if (isLost)
-            context.connect(context.read(ClimbingSet(universe.untrackedObjectAlone()), found), variable);
+            context.connect(context.readWhatWasWritten(ClimbingSet(universe.untrackedObjectAlone()), found), variable);
     }
 }
 
 static ValueFlowName nameOfMember(const Program& program, MethodKind kind, PropertyKeyID key)
 {
-    bool isIndex = key && program.isIndexLike(key);
     switch (kind) {
     case MethodKind::Method:
-        return !key ? unknownKeyName : isIndex ? elementsName : ValueFlowName::property(key);
+        return key ? ValueFlowName::property(program, key) : unknownKeyName;
     case MethodKind::Getter:
-        return !key || isIndex ? ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey) : ValueFlowName::getter(key);
+        return key ? ValueFlowName::getter(program, key) : ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey);
     case MethodKind::Setter:
-        return !key || isIndex ? ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey) : ValueFlowName::setter(key);
+        return key ? ValueFlowName::setter(program, key) : ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowObjectOperations.h"
@@ -125,7 +126,7 @@ static bool addMemberArm(const PropertyAccessContext& context, const PropertyAcc
 static bool addProvenArms(const PropertyAccessContext& context, const PropertyAccessQuery& query, ProvenAccess& result)
 {
     const ReceiverCandidates& receivers = query.receivers;
-    RELEASE_ASSERT(receivers.predicted.isEmpty() && !receivers.mayBeNullish);
+    RELEASE_ASSERT(receivers.expected.predicted().isEmpty() && !receivers.mayBeNullish);
     if (!receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() > query.maxMembers)
         return false;
     if (receivers.proven.isEmpty())
@@ -148,25 +149,55 @@ static bool definesPropertyOfOrdinaryObject(const Program& program, const Functi
     if (function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject)
         return true;
     const Type& type = program.typeOf(function, access.objectOperand());
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return type.hasOnlyLayouts() && std::ranges::all_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record;
+    });
+}
+
+static bool readsNameOfClosuresWithoutCode(const Program& program, const Type& receiver, PropertyKeyID key)
+{
+    NameClass nameClass = program.nameClassOf(key);
+    if (program.at(key).kind != PropertyKeyKind::Text || (nameClass != NameClass::Ordinary && nameClass != NameClass::ObjectPrototypeMember && nameClass != NameClass::CallOrApply && nameClass != NameClass::Bind))
+        return false;
+    for (BuiltinID above : { Builtins::FunctionPrototype, Builtins::ObjectPrototype }) {
+        BuiltinID member = findOwnMember(program, above, key);
+        if (!listsEveryMemberUnder(program, above, key) || (member && program.builtins().at(member).kind != BuiltinKind::Method))
+            return false;
+        if (!isLockedLocation(program, above, key) || !program.builtins().hasLockedPrototypeLink(above))
+            return false;
+    }
+    Type closures = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
+    if (closures.functions.isEmpty() || closures != closures.withOnlyObjects() || closures.anyObject || closures.anyFunction || closures.layouts || !closures.classes.isEmpty() || !closures.builtins.isEmpty())
+        return false;
+    return std::ranges::all_of(closures.functions, [&](FunctionID closureFunction) {
+        return program.at(closureFunction).has(FunctionCapabilities::ClosuresAreReadWithoutCode);
+    });
+}
+
+// The run time notes such a look, so it is no access that leaves everything as it was.
+static bool looksForNameThatFramesTellOf(const Program& program, const Type& receiver, PropertyKeyID key)
+{
+    return key == program.keyOf(BuiltinNames::name) && std::ranges::any_of(receiver.functions, [&](FunctionID closureFunction) {
+        return program.at(closureFunction).framesTellWhetherNameWasLookedFor();
     });
 }
 
 static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Function& function, const Value& access, PredictedReceivers predictedReceivers = PredictedReceivers::LeftOut)
 {
     std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, function, access, ExpectedClassObjects::Ignored, predictedReceivers);
-    if (!query)
+    if (!query || looksForNameThatFramesTellOf(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
         return ProvenAccess::unknown();
     query->receivers.mayBeNullish = false;
-    query->receivers.predicted.clear();
+    query->receivers.expected = LayoutList();
     query->isOnlyCalled = !query->isPrivate;
     query->usesOnlyPlansWithoutTests = true;
 
     ProvenAccess result;
-    if (!addProvenArms({ program, nullptr }, *query, result)) {
+    if (!addProvenArms({ program, nullptr, !program.propertyAccessCache() }, *query, result)) {
         if (definesPropertyOfOrdinaryObject(program, function, access))
             return { .isComplete = true, .definesOwnProperty = true, .key = query->key };
+        if (query->access == Access::Read && !query->isPrivate && readsNameOfClosuresWithoutCode(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))
+            return { .isComplete = true, .mayFindStoredValue = true, .key = query->key };
         if (query->start != MemberStart::Instance || query->isPrivate || !isLookup(query->access))
             return ProvenAccess::unknown();
         return provenLookupUnderAnyKey(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))));
@@ -553,7 +584,7 @@ ProvenAccess provenStepOf(const Program& program, const Type& receiver, Protocol
     return result;
 }
 
-static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout, SortedSet<TypeID, 8>& types)
+static bool addOwnFields(const Program& program, LayoutID instanceLayout, Vector<const Field*, 8>& fields)
 {
     ReceiverState state = receiverStateOf(program, instanceLayout);
     if (!state.cannot(ObjectMutation::AddProperty) || !state.cannot(ObjectMutation::RedefineProperty))
@@ -566,9 +597,9 @@ static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout,
             const Field& field = layout.fields[index];
             if (field.flags.contains(FieldFlags::IsHidden))
                 continue;
-            if (!field.declared.type || field.declared.flags.contains(PositionFlags::IsExpected) || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
+            if (!field.declared.written() || field.declared.isExpected() || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
                 return false;
-            types.add(field.declared.type);
+            fields.append(&field);
         }
 
         Ancestry ancestry = ancestryOf(layout.kind);
@@ -589,18 +620,18 @@ static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout,
     return false;
 }
 
-std::optional<SortedSet<TypeID, 8>> provenOwnValueTypesOf(const Program& program, const Type& receivers)
+std::optional<Vector<const Field*, 8>> provenOwnFieldsOf(const Program& program, const Type& receivers)
 {
     std::optional<LayoutList> layouts = provenLayoutsOf(program, receivers);
     if (!layouts)
         return std::nullopt;
 
-    SortedSet<TypeID, 8> types;
+    Vector<const Field*, 8> fields;
     for (LayoutID layout : *layouts) {
-        if (!addTypesOfOwnValues(program, layout, types))
+        if (!addOwnFields(program, layout, fields))
             return std::nullopt;
     }
-    return types;
+    return fields;
 }
 
 } } } // namespace JSC::AOT::Typed

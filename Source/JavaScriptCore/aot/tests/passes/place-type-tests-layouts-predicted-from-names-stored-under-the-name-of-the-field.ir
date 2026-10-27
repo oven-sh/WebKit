@@ -1,0 +1,35 @@
+# `holder.worker.run`: three kinds of objects have a member `run`, and two of them keep it in the same slot. The program stores the third under `worker`, so that one is expected.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Timer" module=m0 constructor=f3 fields=[{key="run" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Job" module=m0 constructor=f4 fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Worker" module=m0 constructor=f5 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="readFromWorker" module=m0 parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="worker"
+    v2 = PropGet v1 key="run"
+    Return v2
+# CHECK: = TypeTest v1 testedType=L2 
+}
+
+function f1 name="readFromOther" module=m0 parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="other"
+    v2 = PropGet v1 key="run"
+    Return v2
+# CHECK: = TypeTest v1 testedType=L0|L1 
+}
+
+function f2 name="fill" module=m0 parameters=[{type=object flags=[IsExpected]}, {type=L2}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: L2):
+    PropSet v0, v1 key="worker" mode=Strict
+    Return v1
+}
+
+function f3 name="Timer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="Job" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f5 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2

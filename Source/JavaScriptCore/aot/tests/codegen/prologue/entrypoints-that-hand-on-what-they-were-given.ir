@@ -17,7 +17,7 @@
 # CHECK: function f2 x1
 # CHECK: f9: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: function f3 x1
-# CHECK: statistic FunctionsWithoutFrame 6
+# CHECK: statistic FunctionsWithoutFrame 5
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

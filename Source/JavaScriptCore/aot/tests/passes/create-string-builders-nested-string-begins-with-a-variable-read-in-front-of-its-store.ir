@@ -1,0 +1,75 @@
+# The parts in front of a string that is built inside another are appended where the inner string begins, with its first state. A variable that was read in front of the test that says whether it has been stored may
+# still be empty there, so such an inner string is built by itself
+# FORM: Prepared
+# RUN: pass CreateStringBuilders VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="text" declared={type=string} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="firstStateMayStillBeEmpty" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    v5 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v10 = String string="a "
+    v11 = String string=" b"
+    v12 = Strcat v10, v0, v11
+    Jump -> next b5(v12)
+  b4():
+    Jump -> next b5(v5)
+  b5(v13: string|unspecified):
+    v14 = Entered function=f1
+    v15 = AssumeType v13, v14 provenType=string
+    v16 = String string="<li class="
+    v17 = String string=">"
+    v18 = Strcat v6, v16, v15, v17
+    v19 = Integer integer=1
+    v20 = Add v7, v19
+    Jump -> next b1(v18, v20)
+  b6():
+    Return v6
+}
+# CHECK-LABEL: name="firstStateMayStillBeEmpty"
+# CHECK: b4():
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: b5(v13: string|unspecified):
+
+function f1 name="firstStateIsThere" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    v5 = GetModuleVariable variable=g0
+    Jump -> next b1(v3, v4)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v10 = String string="a "
+    v11 = String string=" b"
+    v12 = Strcat v10, v0, v11
+    Jump -> next b5(v12)
+  b4():
+    Jump -> next b5(v5)
+  b5(v13):
+    v14 = String string="<li class="
+    v15 = String string=">"
+    v16 = Strcat v6, v14, v13, v15
+    v17 = Integer integer=1
+    v18 = Add v7, v17
+    Jump -> next b1(v16, v18)
+  b6():
+    Return v6
+}
+# CHECK-LABEL: name="firstStateIsThere"
+# CHECK: b4():
+# CHECK: StringBuilderAppend v6, {{*}}, v5
+# CHECK: b5(v13: stringbuilder):

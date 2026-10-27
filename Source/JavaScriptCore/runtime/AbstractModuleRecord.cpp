@@ -1617,6 +1617,18 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
         RETURN_IF_EXCEPTION(scope, void());
     }
 #endif
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        compiled->takeStatus();
+        // A CommonJS file that runs is linked. The loader is through with the graph.
+        if (compiled->isRunningCommonJSFile()) {
+            AOT::ModuleLinkingStack stack;
+            scope.release();
+            compiled->innerModuleLinking(globalObject, stack, 0, WTF::move(scriptFetcher));
+            return;
+        }
+    }
+#endif
     if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
         cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
         RETURN_IF_EXCEPTION(scope, void());
@@ -1670,6 +1682,14 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
         return promise;
     };
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        compiled->takeStatus();
+        // Whoever imports a CommonJS file while it runs gets what the file has exported by then.
+        if (compiled->isRunningCommonJSFile())
+            return wrap(jsUndefined());
+    }
+#endif
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
         return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));

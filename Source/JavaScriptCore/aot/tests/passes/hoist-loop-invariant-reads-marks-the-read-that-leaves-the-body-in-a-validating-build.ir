@@ -1,4 +1,5 @@
-# That a variable is stored before it is read may hang on a test in front of the read. A read that leaves a block of the loop which may not run can stand in front of that test, so in a validating build the pass marks it: the check of its type at its new place admits the empty value, and the read that is kept at the old place is checked in full. A read of the header runs whenever the loop does and gets no mark
+# That a variable is stored before it is read may hang on a test in front of the read. A read that leaves a block of the loop which may not run can stand in front of that test, so in a validating build the pass marks it:
+# the check of its type at its new place admits the empty value, and the read that is kept at the old place is checked in full. No pass reads the mark. A read of the header runs whenever the loop does and gets no mark
 # FORM: Prepared
 # OPTIONS: validate
 # RUN: pass HoistLoopInvariantReads
@@ -18,10 +19,10 @@ function f0 name="readInBody" parameters=[{type=anything}, {type=boolean}] resul
   b3():
     Return v0
 # CHECK: b0(
-# CHECK-NEXT: GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: [[ahead]]: number = GetModuleVariable variable=g0 [isValidatedWhereLookedAt]
 # CHECK: b2():
-# CHECK-NOT: mayPrecedeItsStore
-# CHECK: ValidateSameValue
+# CHECK-NEXT: [[kept]]: number = GetModuleVariable variable=g0
+# CHECK-NEXT: ValidateSameValue [[kept]], [[ahead]]
 }
 
 function f1 name="readInHeader" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -35,5 +36,5 @@ function f1 name="readInHeader" parameters=[{type=anything}, {type=boolean}] res
     Return v0
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
-# CHECK-NOT: mayPrecedeItsStore
+# CHECK-NOT: isValidatedWhereLookedAt
 }

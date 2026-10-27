@@ -15,6 +15,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 struct FieldAccess;
+struct PlaceOfStoreThatMayAdd;
 
 // Whether the keys of an object are at a place in an order of the image where the created fields come next, and the order word after them.
 struct KeyOrderStep {
@@ -67,11 +68,11 @@ public:
     // The order word of an object of any of the receivers that has the given one, once the fields are created. Nothing where the image has no such place in an order.
     std::optional<uint32_t> orderWordAfterCreating(uint32_t orderWordBefore, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys) const;
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
-    // Gives the object the order word that it has with the fields, by what is known of a new object or by the step that applies. Otherwise the caller tests the slots.
+    // Gives the object the order word that it has with the fields, by what is known of a new object or by the step that applies. Otherwise the caller tests the slots, and is told of a remembered step that was tested.
     void listCreatedFields(const ValueContext&, CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, const std::optional<StateOfNewObject>&,
-        bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing);
-    // For fields that are missing where no place in an order of the image applies.
-    void takeRememberedKeyOrderStepOr(const ValueContext&, CellPointer, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime);
+        bool isExpectedToCreate, NOESCAPE const Invocable<void(const std::optional<RememberedKeyOrderStep>&)> auto& listIfMissing);
+    // For fields that are missing where no place in an order of the image applies. A step that was tested on the way here is not tested again.
+    void takeRememberedKeyOrderStepOr(const ValueContext&, CellPointer, const std::optional<RememberedKeyOrderStep>& stepThatDoesNotApply, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime);
     // The granule of the slot and those of the stores to the same object that the store leads to: an object that gets one late field tends to get them all.
     uint64_t granuleBitsOfStoresBehind(const ValueContext& store, const FieldAccess&);
 
@@ -79,7 +80,7 @@ private:
     bool flowNamesConstructorOrdersOf(LayoutSetID receivers) const;
     std::optional<RememberedKeyOrderStep> testRememberedKeyOrderStep(const ValueContext&, CellPointer);
     void rememberKeyOrderStep(const ValueContext&, CellPointer, const RememberedKeyOrderStep&);
-    std::optional<uint32_t> numberOfStoreThatMayAdd(ValueID);
+    std::optional<PlaceOfStoreThatMayAdd> placeOfStoreThatMayAdd(ValueID);
     std::optional<StateOfNewObject> stateAtBirth(ValueID allocation) const;
     std::optional<StateOfNewObject> stateOfObjectsThatMeet(BlockID, ValueID parameter);
     bool leavesObjectsAsTheyAre(ValueID);
@@ -139,30 +140,41 @@ void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional
 }
 
 void SlotAccessEmitter::listCreatedFields(const ValueContext& value, CellPointer cell, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys,
-    const std::optional<StateOfNewObject>& newObject, bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing)
+    const std::optional<StateOfNewObject>& newObject, bool isExpectedToCreate, NOESCAPE const Invocable<void(const std::optional<RememberedKeyOrderStep>&)> auto& listIfMissing)
 {
     if (std::optional<uint32_t> orderWordAfter = newObject ? orderWordAfterCreating(newObject->orderWord, receivers, createdKeys) : std::nullopt) {
         storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(*orderWordAfter)));
         return;
     }
     std::optional<KeyOrderStep> stepTestedFirst;
+    std::optional<RememberedKeyOrderStep> remembered;
     if (isExpectedToCreate) {
-        std::optional<RememberedKeyOrderStep> remembered = flowNamesConstructorOrdersOf(receivers) ? std::nullopt : testRememberedKeyOrderStep(value, cell);
+        if (!flowNamesConstructorOrdersOf(receivers))
+            remembered = testRememberedKeyOrderStep(value, cell);
         stepTestedFirst = remembered ? std::optional<KeyOrderStep>(remembered->step) : testLikeliestKeyOrderStep(cell, receivers, createdKeys);
     }
-    takeKeyOrderStepOr(cell, stepTestedFirst, listIfMissing);
+    takeKeyOrderStepOr(cell, stepTestedFirst, [&] {
+        listIfMissing(remembered);
+    });
 }
 
-void SlotAccessEmitter::takeRememberedKeyOrderStepOr(const ValueContext& value, CellPointer cell, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime)
+void SlotAccessEmitter::takeRememberedKeyOrderStepOr(const ValueContext& value, CellPointer cell, const std::optional<RememberedKeyOrderStep>& stepThatDoesNotApply, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime)
 {
+    auto askRuntimeAndRemember = [&](const RememberedKeyOrderStep& remembered) {
+        if (!askRuntime(remembered.placePlusOne))
+            rememberKeyOrderStep(value, cell, remembered);
+    };
+    if (stepThatDoesNotApply) {
+        askRuntimeAndRemember(*stepThatDoesNotApply);
+        return;
+    }
     std::optional<RememberedKeyOrderStep> remembered = testRememberedKeyOrderStep(value, cell);
     if (!remembered) {
         askRuntime(std::nullopt);
         return;
     }
     takeKeyOrderStepOr(cell, std::optional<KeyOrderStep>(remembered->step), [&] {
-        if (!askRuntime(remembered->placePlusOne))
-            rememberKeyOrderStep(value, cell, *remembered);
+        askRuntimeAndRemember(*remembered);
     });
 }
 

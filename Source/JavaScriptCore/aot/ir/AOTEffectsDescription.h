@@ -37,6 +37,9 @@ struct EffectDescription {
     void addFunctions(std::span<const FunctionID>);
     void addSlowPathFunction(FunctionID);
     void addUnknownCode() { callsUnknownCode = true; }
+    void add(const EffectDescription&);
+
+    friend bool operator==(const EffectDescription&, const EffectDescription&) = default;
 };
 
 EffectDescription describeEffects(const Program&, const Function&, const Value&);
@@ -48,6 +51,19 @@ EffectsOnEdges resolveEffects(const EffectContext&, const EffectDescription&);
 bool isRefinedByValue(Opcode, const Effects& bound);
 void describeDeclaredEntry(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 bool hasTextByItself(const Type&);
+uint64_t longestTextOf(const Program&, const Type& primitives);
+
+// The texts of values that one string is made of. A string longer than a string may be is a RangeError.
+class JoinedTexts {
+public:
+    void add(const Program&, const Type&);
+    bool fitInString() const;
+
+private:
+    uint64_t m_longest { 0 };
+    bool m_haveAllTextByThemselves { true };
+};
+
 void describeOperator(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes, const Type& result, EffectDescription&);
 void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
@@ -60,11 +76,12 @@ void describeBound(const Effects& declared, EffectDescription&);
 void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, EffectDescription&);
 void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, const EnteringOperands&, EffectDescription&);
 void describeCallOf(const Program&, BuiltinID, BuiltinCallMode, EffectDescription&);
-void describeOperandsOfCall(const Program&, BuiltinID, BuiltinCallMode, BuiltinCallForm, const Type& receiver, std::span<const TypeID> arguments, EffectDescription&);
-void describeOverload(const Program&, BuiltinOverloadID, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOperandsOfCall(const Program&, BuiltinID, BuiltinCallMode, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOverload(const Program&, BuiltinOverloadID, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
 void describeTypedResult(const Program&, BuiltinOverloadID, ExpectedResultID, EffectDescription&);
 void describeOverload(const Program&, BuiltinOverloadID, const Type& argument, EffectDescription&);
 void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, EffectDescription&);
+void describeOperandCode(const Program&, TypeID operand, const OperandBehavior&, EffectDescription&);
 
 CalleeList calleesOfCall(const Program&, const Value& call);
 CalleeList calleesThatBoundEffectsOf(const Program&, const Value& call);

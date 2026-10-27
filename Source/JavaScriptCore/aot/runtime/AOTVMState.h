@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTVector.h"
+#include <JavaScriptCore/CollectionScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
 #include <wtf/Lock.h>
@@ -16,6 +17,7 @@
 
 namespace JSC {
 
+class CallFrame;
 class Structure;
 class VM;
 
@@ -33,6 +35,17 @@ struct FunctionTables;
 struct Instance;
 struct RuntimeCounters;
 
+// Every live Structure whose objects store elements without asking the objects above them.
+class StructuresWithFastIndexing {
+public:
+    void add(Structure* structure) { m_structures.append(structure); }
+    size_t removeDeadEntries(VM&, CollectionScope);
+    std::span<Structure* const> span() const LIFETIME_BOUND { return m_structures.span(); }
+
+private:
+    Vector<Structure*> m_structures;
+};
+
 struct VMState {
     WTF_MAKE_NONCOPYABLE(VMState);
 public:
@@ -44,7 +57,10 @@ public:
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
 
+    void didChangeInstances() { onlyInstance = instances.size() == 1 ? instances.first() : nullptr; }
+
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
+    static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
@@ -58,6 +74,13 @@ public:
     bool hasCompiledCode { false };
     bool validatesRuntime { false };
     uintptr_t structureIDBase { 0 };
+    Instance* onlyInstance { nullptr };
+    // The frame of the host function that throws because a class was called without `new`, while it makes the error.
+    CallFrame* classCalledWithoutNew { nullptr };
+    // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
+    void* stackPointerOfExceptionTaker { nullptr };
+    // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.
+    void* stackPointerOfImport { nullptr };
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;
@@ -73,6 +96,7 @@ public:
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
+    StructuresWithFastIndexing structuresWithFastIndexing;
     LoopPollPages loopPollPages;
 };
 

@@ -89,7 +89,12 @@ export default b.declarations(
       throws: true,
       runsUnseenCode: b.whenOperandHasProperty("options", "app"),
       uses: {
-        options: [b.retained, b.memberCalled(["fetch"], { times: "PerEvent", this: b.undefined, args: [b.any, b.result], result: "Escapes" })],
+        options: [
+          b.runsTransitively(b.named("fetch", "websocket", "message", "close")),
+          b.memberCalled(["fetch"], { times: "PerEvent", this: b.undefined, args: [b.any, b.result], result: "Escapes" }),
+          b.memberCalled(["websocket", "message"], { times: "PerEvent", this: b.undefined, args: [b.any, b.any], result: "Ignored" }),
+          b.memberCalled(["websocket", "close"], { times: "PerEvent", this: b.undefined, args: [b.any, b.any, b.any], result: "Ignored" }),
+        ],
       },
       implementation: b.hostCall,
     },
@@ -148,4 +153,6 @@ export default b.declarations(
       },
     },
   }),
+  // As in Bun. File says nothing.
+  b.instancesWithoutOwnNames("Buffer", "TextEncoder", "URL", "URLSearchParams"),
 );

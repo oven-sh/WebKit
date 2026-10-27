@@ -81,6 +81,9 @@ public:
     const String& name() const LIFETIME_BOUND { return m_name; }
     JSString* nameJSString(VM&) const;
     unsigned length() const { return m_length; }
+    // The own `name` of the functions says "bound " in front of name(), as that of a bound function says it in front of its target's.
+    bool isNamedAsBound() const { return m_isNamedAsBound; }
+    void setIsNamedAsBound() { m_isNamedAsBound = true; }
 
     const DOMJIT::Signature* signatureFor(CodeSpecializationKind) const;
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
@@ -108,6 +111,7 @@ private:
     uint8_t m_implementationVisibility;
     // For the stubs of compiled code alone. Zero until one of them has looked the function up.
     uint8_t m_indexOfBoxedCall { 0 };
+    bool m_isNamedAsBound { false };
     unsigned m_length { 0 };
 
     String m_name;

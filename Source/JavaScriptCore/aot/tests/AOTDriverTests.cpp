@@ -12,6 +12,7 @@
 #include "AOTChildProcess.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTDiagnostics.h"
+#include "AOTIRParser.h"
 #include "AOTLimits.h"
 #include "AOTNativeTest.h"
 #include "AOTPassID.h"
@@ -709,7 +710,7 @@ static void testRunnerListsPasses()
     AOT_TEST_CHECK(outputs[0].line == 1);
 
     const String& listing = outputs[0].text;
-    AOT_TEST_CHECK(listing.startsWith("CopyClosureFactories Program Optional AsRead..AsRead\nAllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
+    AOT_TEST_CHECK(listing.startsWith("CopyClosureFactories Program Optional AsRead..AsRead\nAllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nListLiveValuesAtSuspensions Function Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nAnalyzeFlow Program Optional AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nApplyFlowResults Program Required AsRead..AsRead -> Prepared\n"_s));
     AOT_TEST_CHECK(listing.contains("\nVerifyProgram Program Required AsRead..Placed\n"_s));
@@ -818,11 +819,40 @@ static void testReaderFuzzerShortRun()
     StringPrintStream out;
     unsigned failureCount = 0;
     runOnBuildThread([&] {
-        failureCount = fuzzReader({ 1, 300, { } }, out);
+        failureCount = fuzzReader({ 1, 10000, { } }, out);
     });
     if (failureCount)
         dataLog(out.toString());
     AOT_TEST_CHECK(!failureCount);
+}
+
+static void testReadStageCountsEntryParametersAheadOfItsPasses()
+{
+    static constexpr ASCIILiteral constructorFunctionWithTags =
+        "module m0 path=\"main.ts\" displayPath=\"main.ts\" body=f0\n"
+        "entry module=m0\n"
+        "layout L0 kind=Instance name=\"NodeObject\" constructor=f1 fields=[{key=\"kind\" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsConstructorFunction]\n"
+        "layout L1 name=\"Node\" fields=[{key=\"kind\" declared={type=undefined|null|string} flags=[IsRequired]}]\n"
+        "layout L2 name=\"Add\" fields=[{key=\"kind\" declared={type=undefined|null|\"add\"} flags=[IsRequired]}, {key=\"left\" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]\n"
+        "layout L3 name=\"Num\" fields=[{key=\"kind\" declared={type=undefined|null|\"num\"} flags=[IsRequired]}, {key=\"value\" declared={type=number} flags=[IsRequired]}] supertypes=[L1]\n"
+        "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+        "    Return\n"
+        "}\n"
+        "function f1 name=\"NodeObject\" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}] results=[{type=anything}] {\n"
+        "    PropSet v0, v1 key=\"kind\" mode=Strict\n"
+        "    Return\n"
+        "}\n"_s;
+
+    runOnBuildThread([&] {
+        BuildContext build(makeDefaultCompileOptions());
+        std::unique_ptr<Program> program = parseProgram(constructorFunctionWithTags, IRForm::AsRead, build);
+        AOT_TEST_CHECK(program && !program->taggedFamilies.isEmpty());
+        program->functions[1].parameters.clear();
+        AOT_TEST_CHECK(!runReadStage(*program, build));
+        build.diagnostics().finish(program.get());
+        auto& errors = build.diagnostics().internalErrors();
+        AOT_TEST_CHECK(errors.size() == 1 && errors[0].kind == InternalErrorKind::EntryParametersMismatch);
+    });
 }
 
 static ChildProcessResult runPrintWire(const TemporaryFile& program, std::initializer_list<ASCIILiteral> otherArguments = { })
@@ -958,6 +988,7 @@ std::span<const NativeTest> driverTests()
         { "program-file/text-becomes-bytes"_s, testProgramTextBecomesBytes },
         { "program-file/printed-diagnostics"_s, testPrintedDiagnostics },
         { "reader-fuzzer/short-run"_s, testReaderFuzzerShortRun },
+        { "read-stage/counts-entry-parameters-ahead-of-its-passes"_s, testReadStageCountsEntryParametersAheadOfItsPasses },
         { "subcommands/print-wire-accepts"_s, testPrintWireAccepts },
         { "subcommands/print-wire-accepts-text"_s, testPrintWireAcceptsText },
         { "subcommands/print-wire-rejects"_s, testPrintWireRejects },

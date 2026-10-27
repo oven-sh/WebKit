@@ -16,7 +16,9 @@
 #include <iterator>
 #include <limits>
 #include <tuple>
+#include <utility>
 #include <wtf/SSACalculator.h>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -98,6 +100,21 @@ SSARepair::SSARepair(IRBuilder& builder, FunctionAnalyses& analyses)
     RELEASE_ASSERT(&builder.function() == &analyses.function());
 }
 
+SSARepair::~SSARepair()
+{
+    setIsPending(false);
+}
+
+void SSARepair::setIsPending(bool isPending)
+{
+    if (std::exchange(m_isPending, isPending) == isPending)
+        return;
+    if (isPending)
+        m_analyses.didBeginRepair();
+    else
+        m_analyses.didEndRepair();
+}
+
 SSARepair::Variable SSARepair::addVariable(ValueID definition)
 {
     Variable variable = m_variables.size();
@@ -113,6 +130,8 @@ void SSARepair::addDefinition(Variable variable, ValueID definition)
     bool wasDefinition = m_isDefinition.set(definition.index());
     RELEASE_ASSERT(!wasDefinition);
     m_variables[variable].values.append(definition);
+    if (m_variables[variable].values.size() > 1)
+        setIsPending(true);
 }
 
 std::optional<SSARepair::Variable> SSARepair::findVariable(ValueID definition) const
@@ -130,6 +149,9 @@ void SSARepair::run()
 {
     RELEASE_ASSERT(!m_didRun);
     RELEASE_ASSERT(m_builder.m_insertions.isEmpty());
+    auto endRepair = makeScopeExit([&] {
+        setIsPending(false);
+    });
     Origin savedOrigin = m_builder.origin();
     separateUsesAsGuards();
     m_didRun = true;
@@ -445,12 +467,12 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         const Program& program = m_analyses.context().program;
         const Value& first = function.at(data.values.first());
         data.type = first.type;
-        TypeID expected = first.expectedOrType();
+        TypeID expected = first.expectedOrType().predicted();
         for (ValueID id : data.values) {
             const Value& value = function.at(id);
             RELEASE_ASSERT(!numberOfResultsOf(program, function, value));
             data.type = m_builder.m_types.unionOf(data.type, value.type);
-            expected = m_builder.m_types.unionOf(expected, value.expectedOrType());
+            expected = m_builder.m_types.unionOf(expected, value.expectedOrType().predicted());
         }
         data.expected = expected == data.type ? TypeID() : expected;
     };
@@ -470,7 +492,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
 
         m_builder.setOrigin(function.at(data.values.first()).origin());
         ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
-        function.edit(parameter, ValueEdit::Type).setExpected(data.expected);
+        function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(data.expected));
         data.definitions.append(Definition { block, headOrder, parameter });
         return parameter;
     });

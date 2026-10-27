@@ -8,9 +8,11 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3EliminateDeadCode.h"
 #include "B3FoldPathConstants.h"
 #include "B3SwitchValue.h"
 #include "B3ThreadJumps.h"
+#include <wtf/StringPrintStream.h>
 
 static Policy policyWithMaxTailSize(unsigned maxSize)
 {
@@ -508,7 +510,7 @@ static void testThreadJumpsSkipsLoopHeader()
 
 static void checkThreadingLimitHits(Procedure& proc, std::optional<Limit> reachedLimit)
 {
-    for (Limit limit : { Limit::MaxThreadedTestCopyCost, Limit::MaxThreadedPathCost, Limit::MaxBlocksOnThreadedPath, Limit::MaxThreadedTestDepth, Limit::MaxPredecessorsForConditionQueries })
+    for (Limit limit : { Limit::MaxThreadedTestCopyCost, Limit::MaxThreadedPathCost, Limit::MaxBlocksOnThreadedPath, Limit::MaxTailsCrossedByCopiedValues, Limit::MaxThreadedTestDepth, Limit::MaxPredecessorsForConditionQueries })
         CHECK_EQ(!!limitHits(proc, limit), limit == reachedLimit);
 }
 
@@ -583,6 +585,81 @@ static void testThreadJumpsStopsAtPathCostLimit()
     constexpr unsigned numberOfAffordableTests = defaultValueOf(Limit::MaxThreadedPathCost) / storesPerTest;
     checkTestChainThreading({ .numberOfTests = numberOfAffordableTests, .storesPerTest = storesPerTest }, numberOfAffordableTests, std::nullopt);
     checkTestChainThreading({ .numberOfTests = numberOfAffordableTests + 1, .storesPerTest = storesPerTest }, numberOfAffordableTests, Limit::MaxThreadedPathCost);
+}
+
+// Every step tests `mode` again behind a join of a likely and a rare predecessor, and computes a value that is read at the end.
+static unsigned numberOfPhisAfterThreadingStepsThatTestOneValue(unsigned numberOfSteps, bool reachesLimit)
+{
+    Procedure proc(policyWithMaxTailSize(1));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    Value* mode = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* bits = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR1);
+    BasicBlock* tail = proc.addBlock();
+    Value* read = graph.phi(tail, Int64);
+    graph.upsilon(root, graph.int64(root, 1), read);
+    graph.jump(root, tail);
+
+    Vector<Value*> results;
+    for (unsigned step = 0; step < numberOfSteps; ++step) {
+        BasicBlock* inMode = proc.addBlock();
+        BasicBlock* outOfMode = proc.addBlock();
+        BasicBlock* likely = proc.addBlock();
+        BasicBlock* rare = proc.addBlock();
+        BasicBlock* rareJoin = proc.addBlock();
+        BasicBlock* nextTail = proc.addBlock();
+        Value* rareRead = graph.phi(rareJoin, Int64);
+        Value* nextRead = graph.phi(nextTail, Int64);
+
+        results.append(graph.make(tail, Add, read, graph.int64(tail, step)));
+        graph.branch(tail, mode, rarely(inMode), FrequentedBlock(outOfMode));
+        graph.branch(outOfMode, graph.make(outOfMode, BitAnd, bits, graph.int64(outOfMode, 1ll << (step % 8))), rarely(rare), FrequentedBlock(likely));
+        graph.upsilon(likely, graph.int64(likely, 2), nextRead);
+        graph.jump(likely, nextTail);
+        graph.upsilon(rare, graph.int64(rare, 3), rareRead);
+        graph.jump(rare, rareJoin);
+        graph.upsilon(inMode, graph.int64(inMode, 5), rareRead);
+        graph.jump(inMode, rareJoin);
+        graph.upsilon(rareJoin, rareRead, nextRead);
+        graph.jump(rareJoin, nextTail);
+        tail = nextTail;
+        read = nextRead;
+    }
+    Value* sum = read;
+    for (Value* result : results)
+        sum = graph.make(tail, Add, sum, result);
+    graph.ret(tail, sum);
+
+    proc.resetReachability();
+    threadJumps(proc);
+    fixSSA(proc);
+    validate(proc);
+    CHECK_EQ(!!limitHits(proc, Limit::MaxTailsCrossedByCopiedValues), reachesLimit);
+    unsigned numberOfPhis = numberOfValues(proc, Phi);
+
+    auto code = compileProc(proc);
+    auto expected = [&](int64_t mode, int64_t bits) {
+        int64_t read = 1;
+        int64_t sum = 0;
+        for (unsigned step = 0; step < numberOfSteps; ++step) {
+            sum += read + step;
+            read = mode ? 5 : (bits & (1ll << (step % 8))) ? 3 : 2;
+        }
+        return sum + read;
+    };
+    for (int64_t mode : { 0, 1 }) {
+        for (int64_t bits : { 0, 1, 36, 255 })
+            CHECK_EQ(invoke<int64_t>(*code, mode, bits), expected(mode, bits));
+    }
+    return numberOfPhis;
+}
+
+static void testThreadJumpsKeepsPhisLinearInStepsThatTestOneValue()
+{
+    numberOfPhisAfterThreadingStepsThatTestOneValue(8, false);
+    unsigned few = numberOfPhisAfterThreadingStepsThatTestOneValue(1000, true);
+    unsigned many = numberOfPhisAfterThreadingStepsThatTestOneValue(2000, true);
+    CHECK(many < few * 5 / 2);
 }
 
 static void testThreadJumpsStopsAtTestDepthLimit()
@@ -768,6 +845,232 @@ static void testFoldPathConstantsFoldsComparisonImpliedByBranch()
             CHECK_EQ(invoke<int64_t>(*code, 100), 1);
             CHECK_EQ(invoke<int64_t>(*code, 99), 3);
             CHECK_EQ(invoke<int64_t>(*code, 50), isImplied ? 3 : 2);
+        }
+    }
+}
+
+static void appendRandomBranchTree(Procedure& proc, unsigned seed)
+{
+    static constexpr B3::Opcode opcodes[] = { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual };
+    static constexpr int64_t constants[] = { std::numeric_limits<int64_t>::min(), -3, 0, 1, 2, 3, 7, std::numeric_limits<int64_t>::max() };
+    constexpr unsigned numberOfBlocks = 400;
+    Graph graph { proc };
+    WeakRandom random(seed);
+    BasicBlock* root = proc.addBlock();
+    Vector<BasicBlock*> unused;
+    for (unsigned i = 1; i < numberOfBlocks; ++i)
+        unused.append(proc.addBlock());
+    for (unsigned i = unused.size(); i > 1; --i)
+        std::swap(unused[i - 1], unused[random.getUint32(i)]);
+    BasicBlock* join = unused.takeLast();
+    graph.ret(join, graph.int64(join, -1));
+
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    Value* operands[] = { arguments[0], arguments[1] };
+    auto makeComparison = [&](BasicBlock* block) {
+        return graph.make(block, opcodes[random.getUint32(std::size(opcodes))], operands[random.getUint32(2)], graph.int64(block, constants[random.getUint32(std::size(constants))]));
+    };
+    Vector<Value*> conditionsInRoot { operands[0] };
+    for (unsigned i = 0; i < 4; ++i)
+        conditionsInRoot.append(makeComparison(root));
+    auto chooseCondition = [&](BasicBlock* block) {
+        return random.getUint32(3) ? makeComparison(block) : conditionsInRoot[random.getUint32(conditionsInRoot.size())];
+    };
+
+    Vector<BasicBlock*> open { root };
+    while (!open.isEmpty()) {
+        BasicBlock* block = open.takeLast();
+        if (unused.size() < 3 || (!open.isEmpty() && !random.getUint32(3))) {
+            Value* sum = graph.int64(block, 0);
+            for (unsigned i = 0; i < 3; ++i) {
+                Value* condition = chooseCondition(block);
+                sum = graph.make(block, Add, graph.make(block, Shl, sum, graph.int32(block, 1)), condition->type() == Int32 ? graph.make(block, ZExt32, condition) : condition);
+            }
+            graph.ret(block, sum);
+            continue;
+        }
+        if (!random.getUint32(8)) {
+            SwitchValue* switchValue = block->appendNew<SwitchValue>(proc, Origin(), operands[0]);
+            for (int64_t caseValue : { 0, 5 }) {
+                open.append(unused.takeLast());
+                switchValue->appendCase(SwitchCase(caseValue, FrequentedBlock(open.last())));
+            }
+            open.append(unused.takeLast());
+            switchValue->setFallThrough(FrequentedBlock(open.last()));
+            continue;
+        }
+        BasicBlock* taken = random.getUint32(8) ? unused.takeLast() : join;
+        BasicBlock* notTaken = unused.takeLast();
+        graph.branch(block, chooseCondition(block), taken, notTaken);
+        if (taken != join)
+            open.append(taken);
+        open.insert(random.getUint32(open.size() + 1), notTaken);
+    }
+    for (BasicBlock* block : unused)
+        graph.ret(block, graph.int64(block, -2));
+    proc.resetReachability();
+    validate(proc);
+}
+
+static String dumpBlocks(Procedure& proc)
+{
+    StringPrintStream out;
+    for (BasicBlock* block : proc)
+        block->deepDump(proc, out);
+    return out.toString();
+}
+
+// Each Phi is needed only by the Upsilon of the next one, and control goes from the last block of the procedure to the second.
+static void testEliminateDeadCodeFollowsLongChainOfPhis()
+{
+    constexpr unsigned chainLength = 60000;
+    Procedure proc;
+    Vector<BasicBlock*> blocks;
+    for (unsigned i = 0; i < chainLength + 1; ++i)
+        blocks.append(proc.addBlock());
+    BasicBlock* block = blocks[0];
+    Value* used = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* unused = used;
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = blocks[chainLength - link];
+        UpsilonValue* usedUpsilon = block->appendNew<UpsilonValue>(proc, Origin(), used);
+        UpsilonValue* unusedUpsilon = block->appendNew<UpsilonValue>(proc, Origin(), unused);
+        block->appendNew<Value>(proc, Jump, Origin());
+        block->setSuccessors(FrequentedBlock(next));
+        used = next->appendNew<Value>(proc, Phi, Int64, Origin());
+        unused = next->appendNew<Value>(proc, Phi, Int64, Origin());
+        usedUpsilon->setPhi(used);
+        unusedUpsilon->setPhi(unused);
+        block = next;
+    }
+    block->appendNew<Value>(proc, Return, Origin(), used);
+    proc.resetReachability();
+
+    CHECK(eliminateDeadCode(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == chainLength);
+    CHECK(upsilonCount == chainLength);
+}
+
+// Each block of a long chain sets the variable and may leave for the one block that reads it.
+static void testFixSSAWithLongChainOfBlocksThatBranchToOneBlock()
+{
+    constexpr unsigned chainLength = 60000;
+    Procedure proc;
+    Variable* variable = proc.addVariable(Int64);
+    BasicBlock* block = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* argument = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = proc.addBlock();
+        Value* sum = block->appendNew<Value>(proc, Add, Origin(), argument, block->appendNew<Const64Value>(proc, Origin(), link));
+        block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, sum);
+        block->appendNew<Value>(proc, Branch, Origin(), sum);
+        block->setSuccessors(FrequentedBlock(next), FrequentedBlock(join));
+        block = next;
+    }
+    block->appendNew<VariableValue>(proc, B3::Set, Origin(), variable, argument);
+    block->appendNew<Value>(proc, Jump, Origin());
+    block->setSuccessors(FrequentedBlock(join));
+    join->appendNew<Value>(proc, Return, Origin(), join->appendNew<VariableValue>(proc, B3::Get, Origin(), variable));
+    proc.resetReachability();
+
+    CHECK(fixSSA(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == 1);
+    CHECK(upsilonCount == chainLength + 1);
+}
+
+// Each block of a long chain may leave for a side block of its own, which goes on to the side block of the next link. A variable of
+// its own carries a value into each side block.
+static void testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn()
+{
+    constexpr unsigned chainLength = 20000;
+    Procedure proc;
+    Vector<Variable*> variables;
+    Vector<BasicBlock*> sideBlocks;
+    for (unsigned link = 0; link < chainLength; ++link) {
+        variables.append(proc.addVariable(Int64));
+        sideBlocks.append(nullptr);
+    }
+    BasicBlock* block = proc.addBlock();
+    for (BasicBlock*& sideBlock : sideBlocks)
+        sideBlock = proc.addBlock();
+    Value* argument = block->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* next = proc.addBlock();
+        Value* sum = block->appendNew<Value>(proc, Add, Origin(), argument, block->appendNew<Const64Value>(proc, Origin(), link));
+        block->appendNew<VariableValue>(proc, B3::Set, Origin(), variables[link], sum);
+        block->appendNew<Value>(proc, Branch, Origin(), sum);
+        block->setSuccessors(FrequentedBlock(next), FrequentedBlock(sideBlocks[link]));
+        block = next;
+
+        BasicBlock* sideBlock = sideBlocks[link];
+        Value* carried = sideBlock->appendNew<VariableValue>(proc, B3::Get, Origin(), variables[link]);
+        if (link + 1 == chainLength) {
+            sideBlock->appendNew<Value>(proc, Return, Origin(), carried);
+            continue;
+        }
+        sideBlock->appendNew<VariableValue>(proc, B3::Set, Origin(), variables[link + 1], carried);
+        sideBlock->appendNew<Value>(proc, Jump, Origin());
+        sideBlock->setSuccessors(FrequentedBlock(sideBlocks[link + 1]));
+    }
+    block->appendNew<Value>(proc, Return, Origin(), argument);
+    proc.resetReachability();
+
+    CHECK(fixSSA(proc));
+    validate(proc);
+    unsigned phiCount = 0;
+    unsigned upsilonCount = 0;
+    for (Value* value : proc.values()) {
+        phiCount += value->opcode() == Phi;
+        upsilonCount += value->opcode() == Upsilon;
+    }
+    CHECK(phiCount == chainLength - 1);
+    CHECK(upsilonCount == 2 * (chainLength - 1));
+}
+
+static void testFoldPathConstantsFindsTheSameInIndexAndList()
+{
+    auto policyWithLimit = [](uint64_t limit) {
+        return policyWith([&](Policy& policy) {
+            policy.optimization.foldsImpliedComparisons = true;
+            policy.limits.set(Limit::MaxPathConstantsScanned, limit);
+        });
+    };
+    for (unsigned seed = 1; seed <= 50; ++seed) {
+        Procedure scanned(policyWithLimit(std::numeric_limits<uint64_t>::max()));
+        appendRandomBranchTree(scanned, seed);
+        foldPathConstants(scanned);
+        validate(scanned);
+        CHECK(!limitHits(scanned, Limit::MaxPathConstantsScanned));
+
+        Procedure indexed(policyWithLimit(0));
+        appendRandomBranchTree(indexed, seed);
+        foldPathConstants(indexed);
+        validate(indexed);
+        CHECK(limitHits(indexed, Limit::MaxPathConstantsScanned));
+        CHECK(dumpBlocks(scanned) == dumpBlocks(indexed));
+
+        Procedure unchanged;
+        appendRandomBranchTree(unchanged, seed);
+        auto foldedCode = compileProc(indexed);
+        auto unchangedCode = compileProc(unchanged);
+        for (int64_t first : { -4, -3, 0, 1, 2, 3, 5, 7, 8 }) {
+            for (int64_t second : { -4, -3, 0, 1, 2, 3, 7, 8 })
+                CHECK_EQ(invoke<int64_t>(*foldedCode, first, second), invoke<int64_t>(*unchangedCode, first, second));
         }
     }
 }
@@ -1006,6 +1309,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testThreadJumpsStopsAtPathLimit());
     RUN(testThreadJumpsStopsAtTestCopyCostLimit());
     RUN(testThreadJumpsStopsAtPathCostLimit());
+    RUN(testThreadJumpsKeepsPhisLinearInStepsThatTestOneValue());
     RUN(testThreadJumpsStopsAtTestDepthLimit());
     RUN(testThreadJumpsStopsAtPredecessorLimit());
     RUN(testThreadJumpsCopiesOnlyIntoLikelyPredecessors());
@@ -1013,6 +1317,10 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testDuplicateTailsUnderDefaultPolicy());
     RUN(testDuplicateTailsSizeFromPolicy());
     RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());
+    RUN(testEliminateDeadCodeFollowsLongChainOfPhis());
+    RUN(testFixSSAWithLongChainOfBlocksThatBranchToOneBlock());
+    RUN(testFixSSAWithLongChainOfBlocksThatBranchToBlocksOfTheirOwn());
+    RUN(testFoldPathConstantsFindsTheSameInIndexAndList());
     RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testFoldPathConstantsFoldsSelect());
     RUN(testFoldPathConstantsKeepsComparisonNotImplied());

@@ -4,6 +4,7 @@ runtime AllocateStorage : void* (uint64_t size) ; RuntimeAllocates
 runtime ArrayUnshift : EncodedJSValue (JSCell* array, EncodedJSValue item) ; unknownCode
 runtime ArrayJoin : JSCell* (JSCell* array, JSCell* separator) ; RuntimeCreatesString
 runtime ArrayJoinOfAnyReceiver : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue separator, JSCell* function) ; unknownCode
+runtime ArrayOfLengthOrElement : JSCell* (EncodedJSValue lengthOrElement) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NumberOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime StringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime ObjectToStringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
@@ -80,6 +81,7 @@ runtime FindSeparators16 : size_t (const char16_t* characters, uint32_t length, 
 runtime StringImplsAreEqual : size_t (void* first, void* second) ; none ; leaf preserveMost
 runtime CompareStringImpls : int64_t (void* first, void* second) ; none ; leaf preserveMost
 runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; none ; leaf preserveMost
+runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; none ; leaf preserveMost
 runtime HashStringImpl : size_t (void* impl) ; none ; leaf preserveMost
 
 runtime FindLongSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted) ; reads(all) writes(RuntimeState)

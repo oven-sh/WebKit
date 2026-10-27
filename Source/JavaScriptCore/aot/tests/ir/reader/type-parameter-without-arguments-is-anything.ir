@@ -84,7 +84,7 @@ function f5 name="requests" parameters=[{type=anything}, {type=anything}] result
 # CHECK: v2 = Convert v0 declared={type=anything} illTypedCause=FromLooseType
 # CHECK-NEXT: v3 = Convert v1 declared={type=L5|L6|L7} illTypedCause=FromLooseType
 # TYPED: b0(v0: anything, v1: anything):
-# TYPED-NEXT: [[checked]]: L5|L6|L7 = Check v1 castType=L5|L6|L7
+# TYPED-NEXT: [[checked]]: L5|L6|L7 = Check v1 expectedType=L5|L6|L7
 # TYPED-NEXT: Return v0
 }
 function f6 name="forward" parameters=[{type=anything}] results=[{type=L2}] {

@@ -66,7 +66,7 @@ function f%(i) name="proven_late%(a)" parameters=[{type=anything}, {type=anythin
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
-    v4 = Check v1 castType=L0
+    v4 = Check v1 expectedType=L0
     PropSet v4, v2 key="late%(a)" mode=Strict
     Return v1
   b2():
@@ -77,7 +77,7 @@ function f7 name="proven_text" parameters=[{type=anything}, {type=anything}, {ty
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
-    v4 = Check v1 castType=L0
+    v4 = Check v1 expectedType=L0
     PropSet v4, v2 key="text" mode=Strict
     Return v1
   b2():
@@ -87,7 +87,7 @@ function f8 name="proven_whole" parameters=[{type=anything}, {type=anything}, {t
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
-    v4 = Check v1 castType=L0
+    v4 = Check v1 expectedType=L0
     PropSet v4, v2 key="whole" mode=Strict
     Return v1
   b2():

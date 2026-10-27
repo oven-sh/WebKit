@@ -98,6 +98,7 @@ public:
     void initializeSlimClosure(FakeSlimClosure& closure, uint64_t word)
     {
         closure.setHeader(idOf(StructureOf::SlimClosure), SlimClosureType);
+        closure.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = OverridesGetCallData;
         closure.at<uint64_t>(offsetOfSlimClosureWord) = word;
     }
 
@@ -180,9 +181,38 @@ static void checkCallOfClosure(Calls& calls, uint64_t closure, unsigned numberOf
     run = calls.runner.runCall(callValueCell(countInKey), closure, thisValue, { firstArgument, secondArgument });
     checkLandedInFunction(run, closure, thisValue, expected);
 
-    run = calls.runner.runCall(callValueWithCount(), closure, thisValue, { firstArgument, secondArgument });
-    checkLandedInFunction(run, closure, thisValue, filled);
+    run = calls.runner.runCall(callValueCellWithoutThis(countInKey), closure, thisValue, { firstArgument, secondArgument });
+    checkLandedInFunction(run, closure, undefinedBits, expected);
     AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == countInKey);
+
+    for (StubKey key : { callValueWithCount(), callCellWithCount() }) {
+        run = calls.runner.runCall(key, closure, thisValue, { firstArgument, secondArgument });
+        checkLandedInFunction(run, closure, thisValue, filled);
+        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == countInKey);
+
+        run = calls.runner.runCall(key, closure, thisValue, { });
+        filled.fill(undefinedBits);
+        checkLandedInFunction(run, closure, thisValue, filled);
+        AOT_TEST_CHECK(!run.landedCall.count);
+        filled[0] = firstArgument;
+        filled[1] = secondArgument;
+    }
+}
+
+// A call that passes an argument in every register leaves all of them as they are.
+static void checkCallThatFillsEveryRegister(Calls& calls, uint64_t closure)
+{
+    static_assert(numberOfArgumentGPRs == 4 || numberOfArgumentGPRs == 8);
+    for (StubKey key : { callValueWithCount(), callCellWithCount() }) {
+        StubRun run = numberOfArgumentGPRs == 4
+            ? calls.runner.runCall(key, closure, thisValue, { firstArgument, secondArgument, firstArgument, secondArgument })
+            : calls.runner.runCall(key, closure, thisValue, { firstArgument, secondArgument, firstArgument, secondArgument, firstArgument, secondArgument, firstArgument, secondArgument });
+        ArgumentRegisters passed;
+        for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
+            passed[i] = i % 2 ? secondArgument : firstArgument;
+        checkLandedInFunction(run, closure, thisValue, passed);
+        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == numberOfArgumentGPRs);
+    }
 }
 
 static void testCallsOfClosures(bool hasOneInstance)
@@ -198,8 +228,10 @@ static void testCallsOfClosures(bool hasOneInstance)
         calls.initializeClosure(async, StructureOf::AsyncClosure, word);
         calls.initializeSlimClosure(slim, word);
         calls.initializeSlimClosureWithProperties(slimWithProperties, word);
-        for (uint64_t closure : { plain.address(), async.address(), slim.address(), slimWithProperties.address() })
+        for (uint64_t closure : { plain.address(), async.address(), slim.address(), slimWithProperties.address() }) {
             checkCallOfClosure(calls, closure, numberOfParameters);
+            checkCallThatFillsEveryRegister(calls, closure);
+        }
     }
 }
 
@@ -213,6 +245,16 @@ static void testSlimClosuresAreEnteredByTheirWordAlone()
     const std::array passed { firstArgument, secondArgument };
     for (StubKey key : { callValue(countInKey), callValueCell(countInKey) })
         checkLandedInFunction(calls.runner.runCall(key, slim.address(), thisValue, { firstArgument, secondArgument }), slim.address(), thisValue, passed);
+
+    ArgumentRegisters filled;
+    filled.fill(undefinedBits);
+    filled[0] = firstArgument;
+    filled[1] = secondArgument;
+    FakeSlimClosure declaresMore;
+    calls.initializeSlimClosure(declaresMore, calls.runner.closureWord(countInKey + 1));
+    declaresMore.setHeader(0, SlimClosureType);
+    for (StubKey key : { callValue(countInKey), callValueCell(countInKey), callValueWithCount(), callCellWithCount() })
+        checkLandedInFunction(calls.runner.runCall(key, declaresMore.address(), thisValue, { firstArgument, secondArgument }), declaresMore.address(), thisValue, filled);
 }
 
 static void checkCallOfEngineCallee(Calls& calls, uint64_t callee)
@@ -220,7 +262,9 @@ static void checkCallOfEngineCallee(Calls& calls, uint64_t callee)
     const std::array passed { firstArgument, secondArgument };
     checkLandedInEngine(calls.runner.runCall(callValue(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee, thisValue, passed);
     checkLandedInEngine(calls.runner.runCall(callValueWithoutThis(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee, undefinedBits, passed);
+    checkLandedInEngine(calls.runner.runCall(callValueCellWithoutThis(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee, undefinedBits, passed);
     checkLandedInEngine(calls.runner.runCall(callValueWithCount(), callee, thisValue, { firstArgument, secondArgument }), callee, thisValue, passed);
+    checkLandedInEngine(calls.runner.runCall(callCellWithCount(), callee, thisValue, { firstArgument, secondArgument }), callee, thisValue, passed);
     checkLandedInEngine(calls.runner.runCall(callValue(0), callee, thisValue, { }), callee, thisValue, { });
 }
 
@@ -234,7 +278,7 @@ static void testCallsOfEngineCallees(bool hasOneInstance)
     FakeSlimClosure slimClosureThatIsNotCallable;
     FakeFunction interpretedFunction;
     FakeExecutable functionExecutable;
-    FakeObject<16> object;
+    FakeObject<16> objectWithCallData;
     calls.initializeClosure(classObject, StructureOf::PlainClosure, wordOfClass);
     calls.initializeClosure(classObjectWithOtherStructure, StructureOf::AsyncClosure, wordOfClass);
     calls.initializeClosure(closureOfOtherRealm, StructureOf::ClosureOfOtherRealm, calls.runner.closureWord(0));
@@ -242,9 +286,10 @@ static void testCallsOfEngineCallees(bool hasOneInstance)
     functionExecutable.setHeader(0, FunctionExecutableType);
     interpretedFunction.setHeader(calls.idOf(StructureOf::OtherFunction), JSFunctionType);
     interpretedFunction.at<uint64_t>(JSFunction::offsetOfExecutableOrRareData()) = functionExecutable.address();
-    object.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    objectWithCallData.setHeader(calls.idOf(StructureOf::Object), ObjectType);
+    objectWithCallData.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = OverridesGetCallData;
 
-    for (uint64_t callee : { classObject.address(), classObjectWithOtherStructure.address(), closureOfOtherRealm.address(), slimClosureThatIsNotCallable.address(), interpretedFunction.address(), object.address() })
+    for (uint64_t callee : { classObject.address(), classObjectWithOtherStructure.address(), closureOfOtherRealm.address(), slimClosureThatIsNotCallable.address(), interpretedFunction.address(), objectWithCallData.address() })
         checkCallOfEngineCallee(calls, callee);
 }
 
@@ -257,7 +302,9 @@ static void testCallsOfNonCells(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
     calls.runner.recordCallsOf(Entry::operationAOTThrowUnlessCallable);
-    for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits }) {
+    FakeObject<16> objectWithoutCallData;
+    objectWithoutCallData.setHeader(calls.idOf(StructureOf::Object), FinalObjectType);
+    for (uint64_t callee : { undefinedBits, boxedInt32(5), nullBits, objectWithoutCallData.address() }) {
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValueWithoutThis(countInKey), callee, thisValue, { firstArgument, secondArgument }), callee);
         checkThrowsUnlessCallable(calls.runner.runCall(callValue(0), callee, thisValue, { }), callee);
@@ -335,7 +382,10 @@ static void testCallsOfBoundFunctions(bool hasOneInstance)
     AOT_TEST_CHECK(!static_cast<uint32_t>(run.landedCall.count));
 
     FakeBoundFunction callBoundToNumber;
+    FakeExecutable executableOfBoundFunction;
+    executableOfBoundFunction.setHeader(0, NativeExecutableType);
     initializeBoundFunction(calls, callBoundToNumber, calls.functionPrototypeCall(), boundThis, { });
+    callBoundToNumber.at<uint64_t>(JSFunction::offsetOfExecutableOrRareData()) = executableOfBoundFunction.address();
     run = calls.runner.runCall(callValue(countInKey), callBoundToNumber.address(), thisValue, { firstArgument, secondArgument });
     checkLandedInEngine(run, callBoundToNumber.address(), thisValue, std::array { firstArgument, secondArgument });
 }

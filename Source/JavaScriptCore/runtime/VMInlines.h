@@ -100,11 +100,7 @@ inline CallFrame* VM::topJSCallFrame() const
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
-#if ENABLE(AOT)
-        if (hasCompiledCode() && AOT::isCallerCompiled(const_cast<VM&>(*this), frame))
-            return nullptr;
-#endif
-        frame = frame->callerFrame(entryFrame);
+        frame = frame->callerFrameUnlessCompiled(const_cast<VM&>(*this), entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());
     } while (frame && frame->isNativeCalleeFrame());
     return frame;

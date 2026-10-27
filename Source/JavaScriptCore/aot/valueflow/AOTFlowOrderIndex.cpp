@@ -11,6 +11,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
@@ -153,28 +154,13 @@ static void collectAccesses(FlowScopeIndex& index)
     parallelSort(loops, index.moduleValueReads.mutableSpan(), std::less<FlowModuleValueRead>());
 }
 
-static bool canOwnVariables(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID moduleID)
 {
     const Program& program = index.program();
     if (!moduleID || moduleID.index() >= program.modules.size() || !index.inputs.evaluatedModules.get(moduleID.index()))
         return { };
     const Module& module = program.at(moduleID);
-    if (!canOwnVariables(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
+    if (!canOwnVariablesOf(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
         return { };
     ModuleID file = program.at(module.body).module;
     if (index.modulesOfFunctionsEnteredWithoutMention.quickGet(moduleID.index()) || (file && index.modulesOfFunctionsEnteredWithoutMention.quickGet(file.index())))
@@ -239,11 +225,15 @@ static void findFunctionsEnteredWithoutMention(FlowScopeIndex& index, const BitV
 static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsEnteredFromOutside)
 {
     const Program& program = index.program();
+    // By function: where its closure is made, if the last mention that was met makes one.
+    Vector<FlowCallSite> closures(program.functions.size());
     for (size_t caller : index.bodies) {
         for (const FlowFunctionMention& mention : index.mentionsIn(FunctionID(static_cast<uint32_t>(caller)))) {
             ++index.calls.numberOfMentions[mention.function.index()];
-            if (program.functions[caller].at(mention.value).opcode == Opcode::CallDirect)
+            Opcode opcode = program.functions[caller].at(mention.value).opcode;
+            if (opcode == Opcode::CallDirect)
                 index.calls.soleCallSites[mention.function.index()] = { FunctionID(static_cast<uint32_t>(caller)), mention.value };
+            closures[mention.function.index()] = opcode == Opcode::NewClosure ? FlowCallSite { FunctionID(static_cast<uint32_t>(caller)), mention.value } : FlowCallSite { };
         }
     }
     for (const Variable& variable : program.variables) {
@@ -253,10 +243,22 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
     for (unsigned function = 0; function < program.functions.size(); ++function) {
         bool canRunOnlyDuringCall = !program.functions[function].isModuleBody() && !program.functions[function].isUnsplitCoroutine();
         if (index.calls.numberOfMentions[function] != 1 || !index.bodies.quickGet(function) || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall)
-            index.calls.soleCallSites[function] = { };
+            index.calls.soleCallSites[function] = closures[function] = { };
     }
+    // `(function () { .. })()`   `make(Base)` where the caller has made the closure for this call: the function that makes the only closure calls it, and the body runs once each time the call does.
+    auto callsClosure = [&](const FlowCall& link, const FlowCallSite& closure) {
+        if (link.caller != closure.first || !link.site)
+            return false;
+        const Function& caller = program.at(link.caller);
+        const Value& call = caller.at(link.site);
+        return call.opcode == Opcode::Call && sameObjectThroughCasts(caller, call.calleeOperand()) == closure.second;
+    };
     for (const FlowCall& link : index.inputs.calls) {
         FlowCallSite& site = index.calls.soleCallSites[link.callee.index()];
+        if (FlowCallSite closure = std::exchange(closures[link.callee.index()], { }); closure.second && callsClosure(link, closure)) {
+            site = { link.caller, link.site };
+            continue;
+        }
         if (site != FlowCallSite { link.caller, link.site })
             site = { };
     }

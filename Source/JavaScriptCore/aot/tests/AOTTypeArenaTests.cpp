@@ -7,12 +7,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsOfProtocols.h"
 #include "AOTIRTestSupport.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <array>
+#include <type_traits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -34,7 +36,7 @@ RecordsOfTask internRecordsOfTask(TypeArena& arena, unsigned task)
     RecordsOfTask records;
     records.key = arena.textKey(StringID(task % 4));
     records.layouts = arena.completeLayoutSet(std::array<LayoutID, 2> { LayoutID(task % 5), LayoutID(task % 3) });
-    records.callees = arena.intern(CalleeSet { { FunctionID(task % 6), FunctionID(task % 2) }, { }, true });
+    records.callees = arena.intern(CalleeSet::complete({ FunctionID(task % 6), FunctionID(task % 2) }, { }));
     records.range = arena.intern(Type::integer(Range { 0, 100 + task % 7 }));
     const TypeID contents[] { records.range };
     records.array = arena.intern(Type::builtinClass(BuiltinClasses::Array, contents));
@@ -84,7 +86,7 @@ TypeID internNestedLists(TypeTable& types, const ParallelLoops* loops, unsigned 
 unsigned nestingDepthOf(const TypeTable& types, TypeID list)
 {
     unsigned depth = 0;
-    for (; !types.at(list).classes.isEmpty(); list = types.at(list).classes[0].contents[0])
+    for (; !types.at(list).classes.isEmpty(); list = types.at(list).classes[0].writtenContents[0])
         ++depth;
     return depth;
 }
@@ -252,7 +254,7 @@ static void layoutSetOfTwoTasksGetsOneID()
     }
     TypeRemap remap = phase.finish(StringRemap());
     AOT_TEST_CHECK(remap(sets[0]) == remap(sets[1]) && types.numberOfLayoutSets() == 1);
-    AOT_TEST_CHECK(hasElements(types.at(remap(sets[0])).members, { LayoutID(0u), LayoutID(1u) }));
+    AOT_TEST_CHECK(hasElements(types.at(remap(sets[0])).written(), { LayoutID(0u), LayoutID(1u) }));
     AOT_TEST_CHECK(!remap.isIdentity() && !remap.isIdentityFor(0) && remap.isIdentityFor(1) && !remap.isIdentityFor(2));
 }
 
@@ -445,11 +447,38 @@ static void internedTablesDoNotDependOnSharedAnswers()
     AOT_TEST_CHECK(haveEqualRecords<LayoutSetID>(plainTypes, sharingTypes, plainTypes.numberOfLayoutSets()));
 }
 
+// A guess about callees turns into no list and into no answer by itself, and nobody but Proven makes a fact of anything.
+static_assert(!std::is_convertible_v<Expected<Callees>, Callees> && !std::is_constructible_v<bool, Expected<bool>>);
+static_assert(!std::is_constructible_v<ProvenValue<Callees>, Callees> && !std::is_constructible_v<ProvenValue<Callees>, Expected<Callees>>);
+static_assert(std::is_convertible_v<ProvenValue<Callees>, Callees> && std::is_convertible_v<ProvenValue<Callees>, Expected<Callees>>);
+
+static void onlyCompleteListOfCalleesSaysAllThatIsEntered()
+{
+    TypeTable types(BuiltinTable::singleton());
+    FunctionID first(1u);
+    FunctionID second(2u);
+    const CalleeSet& complete = types.at(types.intern(CalleeSet::complete({ second, first }, { Builtins::MathMax })));
+    const CalleeSet& open = types.at(types.intern(CalleeSet::open({ second, first }, { Builtins::MathMax })));
+    AOT_TEST_CHECK(complete != open && complete.listsEveryCallee() && !open.listsEveryCallee());
+    AOT_TEST_CHECK(complete.all() && hasElements(complete.all()->value().functions, { first, second }) && hasElements(complete.all()->value().builtins, { Builtins::MathMax }));
+    AOT_TEST_CHECK(!open.all() && !CalleeSet().all());
+    AOT_TEST_CHECK(hasElements(open.seen().predicted().functions, { first, second }) && hasElements(open.followed().value(), { first, second }));
+
+    CalleeList list = CalleeList::complete(complete.written());
+    AOT_TEST_CHECK(list.all() && !list.functionsAlone() && !list.runsNothing() && list.mayRunUserCode());
+    list.removeBuiltins();
+    AOT_TEST_CHECK(list.functionsAlone() && hasElements(list.functionsAlone()->value(), { first, second }));
+    list.addUnknownCallees();
+    AOT_TEST_CHECK(!list.all() && !list.functionsAlone() && hasElements(list.listed().functions, { first, second }) && list == CalleeList::open({ open.written().functions, { } }));
+    AOT_TEST_CHECK(CalleeList::none().runsNothing() && CalleeList::none().functionsAlone() && !CalleeList::unknown().all() && CalleeList::unknown().mayRunUserCode());
+}
+
 #define FOR_EACH_AOT_TYPE_ARENA_TEST(v) \
     v(internedTablesDoNotDependOnThreads) v(listsNestedToAnyDepthAreMergedAlikeByOneThreadAndByMany) v(provisionalStringLiteralsAreSortedAfterRemap) v(scratchArenaInOpenPhaseLeavesNoRecord) \
     v(scratchArenaWithoutOpenPhaseLeavesNoRecord) v(scratchArenasWithoutOpenPhaseOnManyThreads) v(layoutSetOfTwoTasksGetsOneID) \
     v(tasksCommitInTheListedOrder) v(discardedPhaseLeavesNoRecord) v(sharedMemoIsThreadSafe) v(fullSharedMemoRejectsNewEntries) \
-    v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers)
+    v(arenasShareOnlySideEffectFreeAnswers) v(verifyingSharedMemoRecomputesAnswers) v(internedTablesDoNotDependOnSharedAnswers) \
+    v(onlyCompleteListOfCalleesSaysAllThatIsEntered)
 
 std::span<const NativeTest> typeArenaTests()
 {

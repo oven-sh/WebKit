@@ -74,6 +74,8 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
             static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
             return low32(Integer(in<OptionalInteger>(id).value()));
         case Representation::Double:
+        case Representation::DoubleWithPayload:
+        case Representation::ImpureDouble:
         case Representation::OptionalDouble:
             return int32ConvertedOnce(value, id, [&] {
                 return emitter<ConversionEmitter>().toInt32(asNumericOperand(id));

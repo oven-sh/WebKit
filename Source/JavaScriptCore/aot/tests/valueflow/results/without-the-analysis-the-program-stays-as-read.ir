@@ -1,10 +1,10 @@
 # Without the flow analysis the application leaves the program as read, without one stamp, and the program is legal in the next form.
-# It changes one thing. Past form AsRead no test may stand on a terminator, so a tail call whose result has to be tested becomes an ordinary call, the test and a return
+# Past form AsRead no test may stand on a terminator. The result of a tail call goes to the caller and nowhere else: the result that takes it is only expected by then, so the cast tests nothing and the tail call stays one
 # FORM: AsRead
-# RUN: pass TypeValues ApplyFlowResults VerifyProgram
-# RUN(NOWHERE): pass TypeValues ApplyFlowResults
+# RUN: pass TypeValues GuardTaintedPositions ApplyFlowResults VerifyProgram
+# RUN(NOWHERE): pass TypeValues GuardTaintedPositions ApplyFlowResults
 # OPTIONS: disable=pass:AnalyzeFlow
-# STATISTIC: ReturnCallsDemoted = 1
+# STATISTIC: ReturnCallsDemoted = 0
 # CHECK: layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 # CHECK-NEXT: variable g0 name="point" module=m0 declared={type=anything}
 # CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
@@ -43,7 +43,6 @@ function f1 name="identity" parameters=[{type=anything}] results=[{type=anything
 function f2 name="tailCall" parameters=[{type=anything}] results=[{type=number site=w0}] {
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=number site=w0}}]
-# CHECK: v1: anything = Call v0 [isDemotedTailCall]
-# CHECK-NEXT: [[tested]]: number = Check v1 castType=number site=w0
-# CHECK-NEXT: Return [[tested]]
+# CHECK: v1: anything = Call v0
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w0 flags=[IsExpected]} resolution=Nothing}]
 }

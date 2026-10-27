@@ -534,10 +534,9 @@ static void parserFillsUntypedThis()
     BuildContext build(makeDefaultCompileOptions());
     auto program = parseProgram(makeString(moduleLine, "function f0 results=[{type=number}]\nfunction f1 flags=[HasThis] thisType={type=\"a\" flags=[IsExpected]} results=[{type=number}]\n"_s), IRForm::AsRead, build);
     AOT_TEST_CHECK(program);
-    DeclaredType untyped;
-    untyped.type = TypeTable::anything;
+    DeclaredType untyped(Proven::byPosition(TypeTable::anything));
     AOT_TEST_CHECK(program->functions[0].thisType == untyped);
-    AOT_TEST_CHECK(program->at(program->functions[1].thisType.type).singleStringLiteral() && program->functions[1].thisType.flags == OptionSet<PositionFlags> { PositionFlags::IsExpected });
+    AOT_TEST_CHECK(program->at(program->functions[1].thisType.written()).singleStringLiteral() && program->functions[1].thisType.writtenFlags() == OptionSet<PositionFlags> { PositionFlags::IsExpected });
 }
 
 static void parserChecksRuntimeFunctionNumbers()
@@ -588,10 +587,10 @@ function f1 results=[{type=anything}]
     AOT_TEST_CHECK(program->functions[1].capabilities == initialCapabilitiesOf(program->functions[1]) && !program->functions[1].capabilities.isEmpty());
 
     const Value& stated = program->functions[0].at(ValueID(0u));
-    AOT_TEST_CHECK(stated.type == TypeTable::number && stated.expected() == TypeTable::int32 && stated.expectedOrType() == TypeTable::int32);
+    AOT_TEST_CHECK(stated.type == TypeTable::number && stated.expected().predicted() == TypeTable::int32 && stated.expectedOrType().predicted() == TypeTable::int32);
     AOT_TEST_CHECK(stated.representation == Representation::Double && stated.position == 12 && stated.inlineFrame == 3 && stated.integer() == 5);
     const Value& unstated = program->functions[0].at(ValueID(1u));
-    AOT_TEST_CHECK(!unstated.type && !unstated.expected() && unstated.representation == Representation::Unchosen);
+    AOT_TEST_CHECK(!unstated.type && !unstated.expected().predicted() && unstated.representation == Representation::Unchosen);
     AOT_TEST_CHECK(unstated.position == 13 && !unstated.inlineFrame && unstated.integer() == 6);
 
     auto read = Program::read(program->buffer(), build);

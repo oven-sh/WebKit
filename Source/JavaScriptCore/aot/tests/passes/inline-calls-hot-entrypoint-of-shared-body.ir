@@ -1,4 +1,4 @@
-# A hot entrypoint takes the body of its function in beside a body that a call keeps: the copy is compiled for the calls by value alone
+# A hot entrypoint that knows more of its arguments than the body does takes the body of its function in beside a body that a call keeps: the copy is compiled for the calls by value alone
 # FORM: AsRead
 # OPTIONS: check=VerifyEachPass heat=EverythingIsHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
 # RUN: pipeline InlineCalls

@@ -70,6 +70,10 @@ static std::optional<B3::PinnedConstant> findPinnedConstant(uint64_t bits)
         { nullDouble, AOT_INSTANCE_PREFIX_OFFSET(nullDouble) },
         { absentDouble, AOT_INSTANCE_PREFIX_OFFSET(absentDouble) },
         { static_cast<uint64_t>(std::numeric_limits<int64_t>::min()), AOT_INSTANCE_PREFIX_OFFSET(minInt64) },
+        { static_cast<uint64_t>(minIntegerAddedTo), AOT_INSTANCE_PREFIX_OFFSET(minIntegerAddedTo) },
+        { static_cast<uint64_t>(maxIntegerAddedTo), AOT_INSTANCE_PREFIX_OFFSET(maxIntegerAddedTo) },
+        { static_cast<uint64_t>(-minIntegerAddedTo), AOT_INSTANCE_PREFIX_OFFSET(distanceOfIntegersAddedToFromZero) },
+        { static_cast<uint64_t>(maxIntegerAddedTo - minIntegerAddedTo), AOT_INSTANCE_PREFIX_OFFSET(spanOfIntegersAddedTo) },
     };
     for (const Constant& constant : constants) {
         if (bits == constant.bits)
@@ -139,6 +143,7 @@ static B3::OptimizationPolicy optimizationPolicyFor(const FunctionBackEndTraits&
     optimization.sinksValues = true;
     optimization.placesConstantsByFrequency = true;
     optimization.mergesBlocksAfterForwardingJumps = true;
+    optimization.keepsOriginsOfDemotedValues = true;
     return optimization;
 }
 

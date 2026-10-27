@@ -24,8 +24,8 @@ function f1 name="insertsOne" parameters=[{type=Array<number>}, {type=number}] r
 }
 # Only its entrypoint enters each function, so the body is there
 # SELECTED-LABEL: name="insertsOne" module=m0 role=GenericEntrypoint
-# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
-# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: [[array]]: Array<number> = AssumeType v2 provenType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 provenType=number
 # SELECTED: TryCallInline [[array]], {{*}}, [[number]] inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/
 function f2 name="insertsOneWithUnknownDeleteCount" parameters=[{type=Array<number>}, {type=number}, {type=i32}] results=[{type=anything}] {
     v3 = Integer integer=0
@@ -34,7 +34,7 @@ function f2 name="insertsOneWithUnknownDeleteCount" parameters=[{type=Array<numb
     Return v5
 }
 # SELECTED-LABEL: name="insertsOneWithUnknownDeleteCount" module=m0 role=GenericEntrypoint
-# SELECTED: [[receiver]]: Array<number> = AssumeType v2 castType=Array<number>
-# SELECTED: [[inserted]]: number = AssumeType v3 castType=number
-# SELECTED: [[deleteCount]]: i32 = AssumeType v4 castType=i32
+# SELECTED: [[receiver]]: Array<number> = AssumeType v2 provenType=Array<number>
+# SELECTED: [[inserted]]: number = AssumeType v3 provenType=number
+# SELECTED: [[deleteCount]]: i32 = AssumeType v4 provenType=i32
 # SELECTED: TryCallInline [[receiver]], {{*}}, [[deleteCount]], [[inserted]] inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/

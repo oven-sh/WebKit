@@ -158,9 +158,9 @@ static bool liesInParameter(const TypingContext& context, const BuiltinOverload&
     if (!parameter)
         return false;
     TypeID type = context.typeIDOf(value);
-    if (fitOf(context, type, parameter->accepted).fit == TypeFit::Inside)
+    if (fitsIfPristine(context, type, parameter->accepted))
         return true;
-    return parameter->converted && fitOf(context, type, parameter->converted).fit == TypeFit::Inside;
+    return parameter->converted && fitsIfPristine(context, type, parameter->converted);
 }
 
 static bool operandsLieInParameters(const TypingContext& context, const BuiltinOverload& overload, const BuiltinCall& call)

@@ -11,6 +11,7 @@
 #include "AOTAnalysisContext.h"
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTPredictedValues.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -45,12 +46,14 @@ struct InitializerCall {
     FunctionID initializer;
     LayoutID classLayout;
     std::optional<Keys> observedKeys;
+    Keys keysObservedWhereObjectRefusesDefinition { };
 };
 
-bool isNeverEntered(const Function& function, BlockID block)
+// Nothing has the type of one of its parameters. Where that type is owed to a check, the generic version of the function enters the block.
+bool isNeverEntered(const Function& function, const PredictedValues& predicted, BlockID block)
 {
     return std::ranges::any_of(function.at(block).parameters, [&](ValueID parameter) {
-        return function.at(parameter).type == TypeTable::never;
+        return function.at(parameter).type == TypeTable::never && !predicted.isBehindCheck(parameter);
     });
 }
 
@@ -102,6 +105,7 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
     if (cfg.hasHandlers() || cfg.hasCycle())
         return summary;
 
+    PredictedValues predicted(initializer, cfg);
     ValueIdentities identities(initializer, cfg);
     ValueID object = identities.identityOf(initializer.at(entryBlock).parameters[*thisIndex]);
     auto isObject = [&](ValueID id) {
@@ -118,7 +122,7 @@ InitializerSummary summarizeInitializer(const Program& program, const Function& 
 
     Keys keysDefinedTwice;
     for (BlockID block : cfg.reversePostOrder()) {
-        if (isNeverEntered(initializer, block))
+        if (isNeverEntered(initializer, predicted, block))
             continue;
         for (ValueID id : initializer.at(block).values) {
             const Value& value = initializer.at(id);
@@ -200,7 +204,7 @@ struct ConstructionWalk {
         if (usesOfObjectIn(terminator) || leavesConstructor(terminator.kind) || mergesObjectWithOtherValues(terminator))
             observeEverything(state);
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (isNeverEntered(function, predicted, target.block))
                 continue;
             if (target.block == firstBlock)
                 entersFirstBlockAgain = true;
@@ -304,7 +308,7 @@ struct ConstructionWalk {
     bool mergesObjectWithOtherValues(const Terminator& terminator)
     {
         for (const Target& target : terminator.targets) {
-            if (isNeverEntered(function, target.block))
+            if (isNeverEntered(function, predicted, target.block))
                 continue;
             const auto& parameters = function.at(target.block).parameters;
             for (uint32_t index = 0; index < target.arguments.size(); ++index) {
@@ -322,6 +326,7 @@ struct ConstructionWalk {
     ValueID object;
     bool isKnownToOtherCode { true };
     const Function& function { analyses.function() };
+    PredictedValues predicted { function, analyses.cfg() };
     Vector<std::optional<State>> statesAtHead = Vector<std::optional<State>>(function.blocks.size());
     Keys observedKeys { };
     bool hasChanged { false };
@@ -338,8 +343,9 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
     std::optional<unsigned> thisIndex = constructor.thisParameterIndex();
     ValueID thisParameter = thisIndex ? analyses.identityOf(constructor.at(entryBlock).parameters[*thisIndex]) : ValueID();
     Vector<BlockID> blocks(analyses.cfg().reversePostOrder());
+    PredictedValues checkedValues(constructor, analyses.cfg());
     blocks.removeAllMatching([&](BlockID block) {
-        return isNeverEntered(constructor, block);
+        return isNeverEntered(constructor, checkedValues, block);
     });
     Vector<ValueID, 8> worklist;
     for (BlockID block : blocks) {
@@ -350,10 +356,18 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
             worklist.append(terminator.valueOperand());
     }
 
+    std::optional<PredictedValues> predicted;
+    auto isNeverObject = [&](ValueID value) {
+        if (program.typeOf(constructor, value).hasObjects())
+            return false;
+        if (!predicted)
+            predicted.emplace(constructor, analyses.cfg(), PredictedValues::Options { .programToReadComparisonsWith = &program });
+        return !predicted->isBehindCheck(value);
+    };
     BitVector isVisited(constructor.values.size());
     while (!worklist.isEmpty()) {
         ValueID returned = analyses.identityOf(worklist.takeLast());
-        if (isVisited.set(returned.index()) || returned == thisParameter || !program.typeOf(constructor, returned).hasObjects())
+        if (isVisited.set(returned.index()) || returned == thisParameter || isNeverObject(returned))
             continue;
         const Value& value = constructor.at(returned);
         if (value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList || (value.opcode == Opcode::NewObject && program.at(value.layout()).kind == LayoutKind::Instance))
@@ -424,8 +438,9 @@ bool keepsObjectToItself(const Program& program, BuildContext& build, FunctionID
     }
 
     Vector<ValueID, 8> accesses;
+    PredictedValues predicted(constructor, analyses.cfg());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (isNeverEntered(constructor, block))
+        if (isNeverEntered(constructor, predicted, block))
             continue;
         for (ValueID valueID : constructor.at(block).values) {
             const Value& value = constructor.at(valueID);
@@ -519,7 +534,7 @@ InitializerCall analyzeCall(const Program& program, BuildContext& build, Functio
             return result.observedKeys->contains(key);
         });
         if (!isEveryEarlierKeyObserved && !takesEveryDefinitionBehindSuper(program, build, caller.constructedClass))
-            result.observedKeys->unite(summary.keysDefinedBeforeOthers);
+            result.keysObservedWhereObjectRefusesDefinition = summary.keysDefinedBeforeOthers;
     }
     for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined) {
         if (isDeclaredByBaseClass(program, caller.constructedClass, definition.key))
@@ -563,8 +578,12 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
             bool isObserved = std::ranges::any_of(callsOfInitializer, [&](const InitializerCall& call) {
                 return call.observedKeys->contains(definition.key);
             });
-            if (!isObserved && program.at(classLayout).findField(definition.key))
-                m_definitions.append({ initializer, definition.definition, classLayout, definition.key });
+            if (isObserved || !program.at(classLayout).findField(definition.key))
+                continue;
+            bool isObservedWhereObjectRefusesDefinition = std::ranges::any_of(callsOfInitializer, [&](const InitializerCall& call) {
+                return call.keysObservedWhereObjectRefusesDefinition.contains(definition.key);
+            });
+            m_definitions.append({ initializer, definition.definition, classLayout, definition.key, isObservedWhereObjectRefusesDefinition });
         }
     }
     AOT::sort(m_definitions, { }, [](const UnobservedFieldDefinition& definition) {
@@ -572,11 +591,12 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
     });
 }
 
-bool UnobservedFieldDefinitions::contains(FunctionID initializer, ValueID definition) const
+const UnobservedFieldDefinition* UnobservedFieldDefinitions::find(FunctionID initializer, ValueID definition) const
 {
-    return std::ranges::binary_search(m_definitions, std::pair { initializer, definition }, { }, [](const UnobservedFieldDefinition& entry) {
+    auto found = std::ranges::lower_bound(m_definitions, std::pair { initializer, definition }, { }, [](const UnobservedFieldDefinition& entry) {
         return std::pair { entry.initializer, entry.definition };
     });
+    return found != m_definitions.end() && found->initializer == initializer && found->definition == definition ? &*found : nullptr;
 }
 
 Vector<PropertyKeyID> keysDefinedRightAfterAllocation(const Program& program, FunctionID id, ValueID allocation)

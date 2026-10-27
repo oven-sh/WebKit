@@ -14,6 +14,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionKinds.h"
+#include "AOTObjectWords.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRemoveUnreachableFunctions.h"
@@ -25,6 +26,7 @@
 #include <functional>
 #include <tuple>
 #include <type_traits>
+#include <wtf/BitSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -61,7 +63,7 @@ struct PlacedFunctionSites : SiteLists {
     Vector<KeyCellUse> keyCellUses;
     Vector<GlobalBindingSite> globalBindingSites;
     FunctionID function;
-    uint32_t numberOfStoresThatMayAdd { 0 };
+    Vector<LayoutSetID> receiversOfStoresThatMayAdd;
     uint32_t numberOfOperationsWithWordForSiteCache { 0 };
 };
 
@@ -132,13 +134,12 @@ namespace {
 
 class SiteScanner {
 public:
-    SiteScanner(const PlacementContext& context, FunctionID id)
+    SiteScanner(const PlacementContext& context, FunctionID id, FunctionAnalyses* analyses)
         : m_context(context)
         , m_program(context.program)
         , m_id(id)
         , m_function(m_program.at(id))
-        , m_analyses({ context.build, m_program, &context.inputs.flow, nullptr, id }, m_function)
-        , m_weights(m_program, context.inputs.heat, id, m_analyses)
+        , m_weights(m_program, context.inputs.heat, id, analyses ? *analyses : m_ownAnalyses.emplace(AnalysisContext { context.build, m_program, &context.inputs.flow, nullptr, id }, m_function))
         , m_source(firstSourceOf(m_program, id))
     {
     }
@@ -161,7 +162,8 @@ public:
             };
             for (uint32_t index = 0; index < block.values.size(); ++index) {
                 const Value& value = m_function.at(block.values[index]);
-                sites.numberOfStoresThatMayAdd += remembersKeyOrderStep(block, value);
+                if (remembersKeyOrderStep(block, value))
+                    sites.receiversOfStoresThatMayAdd.append(value.receivers());
                 // Behind the first weight another costs less than the question.
                 scanValue({ BlockID(i), index }, block.values[index], value, weightWhere(weighedOpcodes.contains(value.opcode) && (hasWeighedBlock || isWeightRead(value))));
             }
@@ -206,7 +208,7 @@ private:
     LayoutSetID knownSetOf(ValueID id) const
     {
         const Type& type = m_program.typeOf(m_function, id);
-        if (!type.hasOnlyLayouts(m_program) || !type.layouts || !m_program.at(type.layouts).isComplete)
+        if (!type.hasOnlyLayouts() || !type.layouts || !m_program.at(type.layouts).all())
             return { };
         return type.layouts;
     }
@@ -242,7 +244,7 @@ private:
     void appendFieldCreations(LayoutSetID receivers, std::span<const PropertyKeyID> keys)
     {
         const SlotPlan& slots = m_context.slots();
-        for (LayoutID member : m_program.at(receivers).members) {
+        for (LayoutID member : m_program.at(receivers).completeMembers()) {
             if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
                 continue;
             Vector<FieldIndex> fields;
@@ -281,10 +283,10 @@ private:
             m_sites->guardSets.append(GuardSetUse { WTF::move(guards), weight });
     }
 
-    // A private name is no value, so it has no cell.
+    // A private name of a class is no value, so it has no cell. That of the library has one, which only the run time is handed.
     void appendKeyCell(PropertyKeyID key)
     {
-        if (!key || (m_program.at(key).kind != PropertyKeyKind::Text && !isSymbolKind(m_program.at(key).kind)))
+        if (!key || m_program.at(key).kind == PropertyKeyKind::PrivateName)
             return;
         ModuleID module = m_program.at(m_source).module;
         m_sites->keyCellUses.append(KeyCellUse { key, module ? module.index() : UINT32_MAX, m_source.index() });
@@ -329,7 +331,7 @@ private:
     {
         m_sites->tableCalls.append({ selectorOf(m_program, value), value.receivers() });
         PropertyAccessContext access { m_program, &m_context.inputs.flow };
-        MemberPartition partition = partitionMembers(access, m_program.at(value.receivers()).members.span(), value.key(), Access::Read);
+        MemberPartition partition = partitionMembers(access, m_program.at(value.receivers()).completeMembers(), value.key(), Access::Read);
         for (const MemberArm& arm : partition.arms) {
             if (arm.answer.kind == MemberKind::Method && !arm.answer.conditions.isEmpty())
                 appendGuards(guardsOf(arm.answer.conditions.span()), weight);
@@ -354,7 +356,7 @@ private:
             for (const ClassPart& part : type.classes) {
                 if (!part.contentsAreProven)
                     continue;
-                for (TypeID contents : part.contents) {
+                for (TypeID contents : part.writtenContents) {
                     bool everyBuiltinHasCell = contents && std::ranges::all_of(m_program.at(contents).builtins, [&](BuiltinID builtin) {
                         return BuiltinCellKey::object(builtin).hasCell(builtins);
                     });
@@ -376,7 +378,7 @@ private:
             if (!set || (!m_sites->layoutSets.isEmpty() && m_sites->layoutSets.last() == set))
                 return;
             if (TypeTable::isProvisional(set))
-                m_sites->layouts.appendVector(m_program.at(set).members);
+                m_sites->layouts.appendVector(m_program.at(set).written());
             else
                 m_sites->layoutSets.append(set);
         });
@@ -470,6 +472,7 @@ private:
             sites.keyOrderTests.append(KeyOrderTestUse { value.layout(), Vector<FieldIndex>(value.fields()) });
             break;
         case Opcode::Builtin:
+        case Opcode::InitializeBuiltin:
             appendCell(BuiltinCellKey::object(builtins.canonicalID(value.builtin())));
             break;
         case Opcode::IsBuiltinLocationUnchanged:
@@ -482,6 +485,7 @@ private:
             sites.bigIntConstants.append(value.digits());
             break;
         case Opcode::RequireModule:
+        case Opcode::EvaluateRequiredModule:
             sites.requireEdges.append(RequireEdgeUse { { value.referrer(), value.module() }, value.specifier() });
             break;
         case Opcode::ModuleBuiltin:
@@ -515,7 +519,7 @@ private:
     const Program& m_program;
     FunctionID m_id;
     const Function& m_function;
-    FunctionAnalyses m_analyses;
+    std::optional<FunctionAnalyses> m_ownAnalyses;
     FunctionSiteWeights m_weights;
     FunctionID m_source;
     PlacedFunctionSites* m_sites { nullptr };
@@ -655,17 +659,91 @@ static void mergeBits(const Program& program, FunctionSitesArray functions, Plac
     sites.typesInRunTimePayloads.ensureSize(program.types.size());
     sites.typesTestedByCode.ensureSize(program.types.size());
     sites.functionsWithAllocatedClosures.ensureSize(program.functions.size());
-    sites.firstStoreThatMayAdd.fill(0, program.functions.size() + 1);
     for (const PlacedFunctionSites* function : functions) {
-        sites.firstStoreThatMayAdd[function->function.index() + 1] = function->numberOfStoresThatMayAdd;
         setBits(sites.variablesNamedByCode, function->variables);
         setBits(sites.typesInRunTimePayloads, function->types);
         setBits(sites.typesTestedByCode, function->typesTestedByCode);
         setBits(sites.functionsWithAllocatedClosures, function->allocatedClosures);
         sites.maxClosureCaptures = std::max(sites.maxClosureCaptures, function->maxClosureCaptures);
     }
+}
+
+// The stores are numbered in their sequence, and the remainder of a number says where in the table the store's entries begin. A store whose remainder another store
+// of one of its layouts has takes the next remainder that none of them has. Where there is none left the stores meet, and their entries name them.
+static void numberStoresThatMayAdd(const Program& program, FunctionSitesArray functions, PlacedSites& sites)
+{
+    using Remainders = WTF::BitSet<numberOfKeyOrderStepCaches>;
+    struct RemaindersOfLayout {
+        Remainders taken;
+        Remainders takenTwice;
+        uint32_t numberTaken { 0 };
+    };
+    Vector<RemaindersOfLayout> remainders;
+    Vector<uint32_t> indexPlusOneOfLayout;
+    indexPlusOneOfLayout.fill(0, program.layouts.size());
+    auto remaindersOf = [&](LayoutID layout) -> RemaindersOfLayout* {
+        uint32_t indexPlusOne = indexPlusOneOfLayout[layout.index()];
+        return indexPlusOne ? &remainders[indexPlusOne - 1] : nullptr;
+    };
+
+    sites.firstStoreThatMayAdd.fill(0, program.functions.size() + 1);
+    for (const PlacedFunctionSites* function : functions)
+        sites.firstStoreThatMayAdd[function->function.index() + 1] = function->receiversOfStoresThatMayAdd.size();
     for (size_t index = 1; index < sites.firstStoreThatMayAdd.size(); ++index)
         sites.firstStoreThatMayAdd[index] += sites.firstStoreThatMayAdd[index - 1];
+    sites.placesOfStoresThatMayAdd.grow(sites.firstStoreThatMayAdd.last());
+
+    Vector<uint32_t> storesWithRemainder;
+    storesWithRemainder.fill(0, numberOfKeyOrderStepCaches);
+    auto forEachStore = [&](const Invocable<void(PlaceOfStoreThatMayAdd&, std::span<const LayoutID>)> auto& functor) {
+        for (const PlacedFunctionSites* function : functions) {
+            uint32_t store = sites.firstStoreThatMayAdd[function->function.index()];
+            for (LayoutSetID receivers : function->receiversOfStoresThatMayAdd)
+                functor(sites.placesOfStoresThatMayAdd[store++], program.at(receivers).completeMembers());
+        }
+    };
+    uint32_t storesInFront = 0;
+    forEachStore([&](PlaceOfStoreThatMayAdd& place, std::span<const LayoutID> members) {
+        uint32_t remainder = storesInFront++ % numberOfKeyOrderStepCaches;
+        bool isTaken = false;
+        bool hasRemainderLeft = true;
+        for (LayoutID member : members) {
+            if (RemaindersOfLayout* ofMember = remaindersOf(member)) {
+                isTaken |= ofMember->taken.get(remainder);
+                hasRemainderLeft &= ofMember->numberTaken < numberOfKeyOrderStepCaches;
+            }
+        }
+        if (isTaken && hasRemainderLeft) {
+            Remainders taken;
+            for (LayoutID member : members) {
+                if (RemaindersOfLayout* ofMember = remaindersOf(member))
+                    taken.merge(ofMember->taken);
+            }
+            size_t next = taken.findBit(remainder, false);
+            if (next >= numberOfKeyOrderStepCaches)
+                next = taken.findBit(0, false);
+            if (next < numberOfKeyOrderStepCaches)
+                remainder = next;
+        }
+        for (LayoutID member : members) {
+            uint32_t& indexPlusOne = indexPlusOneOfLayout[member.index()];
+            if (!indexPlusOne) {
+                remainders.append(RemaindersOfLayout { });
+                indexPlusOne = remainders.size();
+            }
+            RemaindersOfLayout& ofMember = remainders[indexPlusOne - 1];
+            if (ofMember.taken.testAndSet(remainder))
+                ofMember.takenTwice.set(remainder);
+            else
+                ++ofMember.numberTaken;
+        }
+        place.number = remainder + numberOfKeyOrderStepCaches * storesWithRemainder[remainder]++;
+    });
+    forEachStore([&](PlaceOfStoreThatMayAdd& place, std::span<const LayoutID> members) {
+        place.meetsOtherStores = std::ranges::any_of(members, [&](LayoutID member) {
+            return remaindersOf(member)->takenTwice.get(place.number % numberOfKeyOrderStepCaches);
+        });
+    });
 }
 
 static bool isMadeOnlyWhereItIsNamed(const Program& program, LayoutID id)
@@ -704,7 +782,7 @@ static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bo
             use(LayoutID(index));
     }
     for (size_t index : layoutSets) {
-        for (LayoutID member : program.at(LayoutSetID(static_cast<uint32_t>(index))).members)
+        for (LayoutID member : program.at(LayoutSetID(static_cast<uint32_t>(index))).written())
             use(member);
     }
     for (const Module& module : program.modules) {
@@ -759,10 +837,10 @@ BodyScansForPlacement::BodyScansForPlacement(const Program& program, const Place
 
 BodyScansForPlacement::~BodyScansForPlacement() = default;
 
-void BodyScansForPlacement::scan(FunctionID id)
+void BodyScansForPlacement::scan(FunctionID id, FunctionAnalyses* analyses)
 {
     auto scan = makeUnique<PlacedFunctionSites>();
-    SiteScanner(m_state->context, id).run(*scan);
+    SiteScanner(m_state->context, id, analyses).run(*scan);
     m_state->scans[id.index()] = WTF::move(scan);
 }
 
@@ -820,6 +898,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { mergeEach(&SiteLists::profiledArrayLiterals, &SiteLists::regExpLiterals, &SiteLists::templateObjects, &SiteLists::copyOnWriteArrays, &SiteLists::arraysWithStorageInImage); },
         [&] { mergeEach(&SiteLists::builtinCells, &SiteLists::bigIntConstants, &SiteLists::moduleBuiltins, &SiteLists::requireEdges); },
         [&] { mergeBits(program, functions, sites); },
+        [&] { numberStoresThatMayAdd(program, functions, sites); },
         [&] {
             sites.bodiesWithoutCode = findBodiesWithoutCode(program, context.build);
             sites.layoutsOutOfUse = findLayoutsOutOfUse(program, sites.bodiesWithoutCode, functions);

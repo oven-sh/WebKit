@@ -30,7 +30,7 @@ function f0 name="next" module=m1 role=Library parameters=[{type=object}] result
 # CHECK-NEXT: Jump -> next [[after]]([[yes]], [[nothing]])
 # CHECK: [[steps]]():
 # CHECK-NEXT: [[field]]: anything = GetInternalField v0 index=1
-# CHECK-NEXT: [[iterated]]: object = AssumeType [[field]] castType=object
+# CHECK-NEXT: [[iterated]]: object = AssumeType [[field]] provenType=object
 # CHECK-NEXT: [[isView]]: boolean = HasJSType [[iterated]] first=4 last=2
 # CHECK-NEXT: Branch [[isView]] -> taken [[view]](), notTaken [[list]]()
 # CHECK: [[view]]():

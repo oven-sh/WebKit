@@ -157,13 +157,13 @@ uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, OptionalIndex site, con
     return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
 }
 
-uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters)
+uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters, OptionalIndex firstReadSite)
 {
     StubKey finalKey = prepare(jit, key, immediate);
-    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
+    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, firstReadSite }, keptRegisters);
 }
 
-void StubCalls::call(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves& moves)
+void StubCalls::call(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves& moves, OptionalIndex firstReadSite)
 {
     RELEASE_ASSERT(!moves.isEmpty() && !(moves.size() % 2));
     auto [finalKey, immediateToMove] = resolveKey(key, immediate);
@@ -174,7 +174,7 @@ void StubCalls::call(CCallHelpers& jit, StubKey key, std::optional<uint32_t> imm
     words.appendVector(moves);
     uint32_t index = safeCast<uint32_t>(m_argumentMoves.size());
     m_argumentMoves.append(WTF::move(words));
-    emitCall(jit, finalKey, { SymbolSpace::ArgumentThunk, index }, { 0, site, { } });
+    emitCall(jit, finalKey, { SymbolSpace::ArgumentThunk, index }, { 0, site, firstReadSite });
 }
 
 void StubCalls::callForTwoReads(CCallHelpers& jit, StubKey key, OptionalIndex firstRead, OptionalIndex secondRead)

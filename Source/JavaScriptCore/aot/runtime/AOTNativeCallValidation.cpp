@@ -517,15 +517,16 @@ public:
     bool finish(JSValue result)
     {
         s_innermost = m_outer;
-        bool didRunCode = m_vm.didEnterVM;
         // What throws allocates the error that it throws: compiled code expects a collection on the way to a handler, whatever the call is said to do.
         bool didCollect = collectionVersionsOf(m_vm) != m_collectionVersions && !m_vm.exceptionForInspection();
-        m_vm.didEnterVM |= m_didEnterVMBefore;
         bool didEnterCompiledCode = false;
         if (Instance* instance = Instance::of(m_call.realm)) {
             didEnterCompiledCode = instance->scratch.didEnterCompiledCode;
             instance->scratch.didEnterCompiledCode |= m_didEnterCompiledCodeBefore;
         }
+        // The stub through which native code enters compiled code sets it as an entry scope of the engine does.
+        bool didRunCode = m_vm.didEnterVM;
+        m_vm.didEnterVM |= m_didEnterVMBefore;
 
         DeferGCForAWhile deferGC(m_vm);
         if (didEnterCompiledCode && m_expectation.isKnown && !m_expectation.mayEnterCompiledCode)
@@ -723,9 +724,10 @@ private:
                 return true;
             // The capability is that of the function behind the conversions of its operands.
             bool runsOnlyConversions = overload->effects.capability != BuiltinCapability::JS;
+            constexpr OperandUses usesRunningSettersAndTraps { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DeletesByKey, OperandUse::TakesDescriptor };
             auto mayRunCodeThrough = [&](const BuiltinParameter& parameter, JSValue operand) {
                 if (operand.isObject())
-                    return !parameter.protocols.isEmpty() || parameter.conversion != BuiltinConversion::None;
+                    return !parameter.protocols.isEmpty() || parameter.conversion != BuiltinConversion::None || parameter.uses.containsAny(usesRunningSettersAndTraps) || parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused);
                 return !runsOnlyConversions && !operand.isUndefinedOrNull() && !parameter.protocols.isEmpty();
             };
             if (anyParameterWithOperand(*overload, mayRunCodeThrough))
@@ -883,17 +885,23 @@ private:
     }
 
     // What an operand holds may be another operand, or the operand itself, and a copy of its properties hands that on under its key.
-    bool isAmongRetainedContents(JSObject* arrived, UniquedStringImpl* key) const
+    bool isAmongRetainedContents(JSObject* arrived, const OperandDifference& difference) const
     {
-        if (!key)
+        if (!difference.key && !difference.index)
             return false;
         return std::ranges::any_of(m_operands, [&](const Operand& source) {
             if (!usesOf(source.object).contains(OperandUse::RetainsContents))
                 return false;
             PropertySlot slot(source.object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
-            if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, PropertyName(key), slot) || !slot.isValue())
+            if (!difference.key) {
+                if (!source.object->methodTable()->getOwnPropertySlotByIndex(source.object, m_call.realm, *difference.index, slot) || !slot.isValue())
+                    return false;
+                return slot.getValue(m_call.realm, static_cast<uint64_t>(*difference.index)) == JSValue(arrived);
+            }
+            PropertyName key(difference.key.get());
+            if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, key, slot) || !slot.isValue())
                 return false;
-            return slot.getValue(m_call.realm, PropertyName(key)) == JSValue(arrived);
+            return slot.getValue(m_call.realm, key) == JSValue(arrived);
         });
     }
 
@@ -905,7 +913,7 @@ private:
             if (JSValue::encode(operand.object) != difference.arrived || operand.object == holder.object)
                 continue;
             OperandUses uses = usesOf(operand.object);
-            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference.key.get()))
+            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference))
                 fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": "_s, describe(holder.position), " holds it, uses "_s, describeMembers(uses)));
         }
     }

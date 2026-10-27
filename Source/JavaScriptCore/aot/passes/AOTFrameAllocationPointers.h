@@ -160,6 +160,11 @@ void propagateUntilNothingChanges(const Function& function, const auto& blocks, 
     }
 }
 
+// A function that returns the parts of an object returns Unspecified values for the parts that the returned variant does not have.
+bool isUnspecifiedAtDefinition(const Function&, const Value&);
+// For the checks of a validating build alone. A pass that asked would decide otherwise in a validating build than in any other.
+bool isValidatedWhereLookedAt(const Function&, const Value&);
+
 // No use of an Unspecified value is reached. Whoever moves a value to where paths run that never reach a use of it, or hands it to another function, asks first.
 // What was found to be specified is not walked again, so the function has to stay as it is between the questions.
 class UnspecifiedValues {

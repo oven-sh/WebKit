@@ -88,11 +88,12 @@ static ScannedParameters scanParametersHandedArrays(const Program& program, cons
     auto handOn = [&](const Value& call, uint32_t operandIndex, uint32_t parameters) {
         CalleeList callees = calleesOfCall(program, call);
         bool isArgument = !call.operandUses(operandIndex).containsAny(callingUses);
-        if (!isArgument || !callees.isComplete || !callees.builtins.isEmpty()) {
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (!isArgument || !functions) {
             refused |= parameters;
             return;
         }
-        for (FunctionID callee : callees.functions) {
+        for (FunctionID callee : functions->value()) {
             std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
             if (!entryParameter || *entryParameter >= maxFrameArrayParameters) {
                 refused |= parameters;
@@ -216,7 +217,7 @@ static void collectQuestions(const Program& program, BuildContext& build, const 
                     return;
                 if (!callees)
                     callees = calleesOfCall(program, call);
-                for (FunctionID callee : callees->functions) {
+                for (FunctionID callee : callees->listed().functions) {
                     if (std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex); entryParameter && *entryParameter < maxFrameArrayParameters)
                         questions.append(HandedOnArray { callee, *entryParameter, 0 });
                 }
@@ -245,10 +246,13 @@ static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const P
         forEachBlockEndingWith(program, FunctionID(index), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
             CalleeList callees = calleesOfCall(program, call);
-            if (!callees.isComplete || !callees.builtins.isEmpty())
+            std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+            if (!functions) {
                 neverEnds[index] = true;
+                return;
+            }
             auto& list = call.opcode == Opcode::CallDirect ? calls.callees : calls.calleesByValue;
-            list.appendRange(callees.functions.begin(), callees.functions.end());
+            list.append(functions->value());
         });
         if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty()))
             found.append(WTF::move(calls));

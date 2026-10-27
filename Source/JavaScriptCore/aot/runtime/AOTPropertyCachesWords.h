@@ -180,6 +180,20 @@ struct KeyedValuePlace {
     };
 };
 
+enum class TrapOfProxy : uint8_t { Get, Has, Set };
+inline constexpr unsigned numberOfTrapsOfProxies = 3;
+
+// What the stub that goes through a proxy keeps in its frame while code of the program runs.
+struct ProxyAccessWords {
+    JSObject* proxy;
+    JSCell* key;
+    JSObject* target;
+    JSObject* handler;
+    EncodedJSValue storedValue;
+    // Of a store: whether the code is strict. Of a read: Slot::headerBits() of the slot that led here.
+    uint64_t storeIsStrictOrHeaderOfSlot;
+};
+
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
     static constexpr uint32_t missesBetweenFilings = 16;
@@ -191,7 +205,7 @@ struct FrontWords {
     const PackedSlot* plane;
 };
 
-using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKinds];
+using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKindsWithHandlers];
 
 struct PropertyCacheWords {
     FrontWords front[numberOfSlotAccesses];
@@ -205,6 +219,8 @@ struct PropertyCacheWords {
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
+    // A place for stores was filled while nobody watched the Structure for replacements. Such a place holds until somebody does.
+    uint8_t placesTakeReplacementsAsUnwatched;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;
@@ -213,8 +229,15 @@ struct PropertyCacheWords {
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
+    // By TrapOfProxy. Zero where the image does not have the name.
+    uint32_t numbersOfNamesOfTraps[numberOfTrapsOfProxies];
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
+    UniquedStringImpl* lengthUID;
+    UniquedStringImpl* nameUID;
+    const void* lookupOfOrdinaryObjects;
+    const void* lookupOfArrays;
+    const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;
@@ -226,7 +249,7 @@ struct PropertyCacheWords {
 static_assert(sizeof(HashedSlot) == 1u << HashedSlot::sizeShift && alignof(HashedSlot) == sizeof(HashedSlot));
 static_assert(OBJECT_OFFSETOF(HashedSlot, slot) == HashedSlot::offsetOfSlot() && OBJECT_OFFSETOF(HashedSlot, key) == HashedSlot::offsetOfKey());
 static_assert(std::is_trivially_copyable_v<HashedSlot> && std::is_aggregate_v<HashedSlot>);
-static_assert(numberOfSlotAccesses <= HashedSlot::accessMask + 1 && alignof(UniquedStringImpl) > HashedSlot::accessMask);
+static_assert(static_cast<unsigned>(SlotAccess::Delete) <= HashedSlot::accessMask && alignof(UniquedStringImpl) > HashedSlot::accessMask);
 static_assert(hasOneBitSet(HashedSlot::ways));
 static_assert(sizeof(FrontWords) == 2 * sizeof(void*) && OBJECT_OFFSETOF(FrontWords, plane) == sizeof(void*));
 static_assert(1u << StructureRowWords::wordShift == sizeof(uint32_t));

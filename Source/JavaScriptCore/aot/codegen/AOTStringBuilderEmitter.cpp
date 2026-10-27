@@ -12,6 +12,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTStubsStrings.h"
 #include "AOTVector.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -230,7 +231,12 @@ void StringBuilderEmitter::generateStringBuilderBegin(const ValueContext& value)
 
 void StringBuilderEmitter::generateStringBuilderAppendJSON(const ValueContext& value)
 {
-    defineTest(value, callOperation<Condition>(value, RuntimeOperation::StringBuilderAppendJSON, { in<CellPointer>(value->builderOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->propertyOperand()) }));
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::StringBuilderAppendJSON, { in<CellPointer>(value->builderOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->holderOperand()) }));
+}
+
+void StringBuilderEmitter::generateStringBuilderAppendJSONMembers(const ValueContext& value)
+{
+    defineTest(value, callOperation<Condition>(value, RuntimeOperation::StringBuilderAppendJSONMembers, { in<CellPointer>(value->builderOperand()), in<Boxed>(value->objectOperand()), in<Boxed>(value->namesOperand()), emitter<StringEmitter>().word32Of(value->startOperand()), in<Boxed>(value->holderOperand()) }));
 }
 
 void StringBuilderEmitter::generateStringBuilderLength(const ValueContext& value)
@@ -274,8 +280,8 @@ void StringBuilderEmitter::generateStringBuilderDiscard(const ValueContext& valu
         });
         return;
     }
-    // The operation returns the builder to the pool, whose word is collector state, and it does not collect.
-    callVoidOperation(value, RuntimeOperation::StringBuilderDiscard, { in<CellPointer>(value->builderOperand()) }, { .accessesCollectorState = true });
+    // The builder goes back to the pool, whose word is collector state, and nothing collects.
+    callStub(value, stringBuilderDiscard(), { in<CellPointer>(value->builderOperand()).value() }, { .accessesCollectorState = true });
 }
 
 void StringBuilderEmitter::generateStringBuilderCheckpoint(const ValueContext& value)

@@ -33,7 +33,7 @@ function f1 name="throughFamily" parameters=[{type=undefined|null|L0 site=w0}] r
     Return v2
 # CHECK: b0(v0: undefined|null|L0|L1|L2):
 # CHECK-NEXT: v1: anything ~ undefined|null|number = PropGet v0 key="x"
-# CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
+# CHECK-NEXT: v2: undefined|null|number = Check v1 expectedType=undefined|null|number site=w1
 # CHECK-NEXT: Return v2
 }
 function f2 name="throughUnionWithUnrelatedType" parameters=[{type=undefined|null|L0|L3 site=w0}] results=[{type=anything}] {
@@ -42,7 +42,7 @@ function f2 name="throughUnionWithUnrelatedType" parameters=[{type=undefined|nul
     Return v2
 # CHECK: b0(v0: undefined|null|L0|L1|L2|L3):
 # CHECK-NEXT: v1: anything ~ undefined|null|number|string = PropGet v0 key="x"
-# CHECK-NEXT: v2: undefined|null|number|string = Check v1 castType=undefined|null|number|string site=w1
+# CHECK-NEXT: v2: undefined|null|number|string = Check v1 expectedType=undefined|null|number|string site=w1
 # CHECK-NEXT: Return v2
 }
 function f3 name="throughTypeThatTakesStrings" parameters=[{type=undefined|null|string|L4 site=w0}] results=[{type=anything}] {
@@ -51,7 +51,7 @@ function f3 name="throughTypeThatTakesStrings" parameters=[{type=undefined|null|
     Return v2
 # CHECK: b0(v0: undefined|null|string|L4):
 # CHECK-NEXT: v1: anything ~ undefined|null|string = PropGet v0 key="label"
-# CHECK-NEXT: v2: undefined|null|string = Check v1 castType=undefined|null|string site=w1
+# CHECK-NEXT: v2: undefined|null|string = Check v1 expectedType=undefined|null|string site=w1
 # CHECK-NEXT: Return v2
 }
 function f4 name="throughFamilyOfExpectedFields" parameters=[{type=undefined|null|L1 site=w0}] results=[{type=anything}] {
@@ -69,6 +69,6 @@ function f5 name="throughFamilyThatNothingAllocates" parameters=[{type=undefined
     Return v2
 # CHECK: b0(v0: undefined|null|L5):
 # CHECK-NEXT: v1: anything = PropGet v0 key="x"
-# CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
+# CHECK-NEXT: v2: undefined|null|number = Check v1 expectedType=undefined|null|number site=w1
 # CHECK-NEXT: Return v2
 }

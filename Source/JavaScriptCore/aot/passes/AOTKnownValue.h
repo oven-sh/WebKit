@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <optional>
 #include <wtf/ScopedLambda.h>
 
@@ -36,6 +37,8 @@ public:
         return { Kind::Integer, static_cast<uint64_t>(value) };
     }
     static KnownValue number(double);
+    // Unknown where the processor gives the NaN it makes a sign: the one NaN of a known value has none.
+    static KnownValue computedNumber(double value) { return value != value && std::signbit(value) ? KnownValue() : number(value); }
     static KnownValue string(StringID value) { return { Kind::String, value.index() }; }
     static KnownValue object() { return { Kind::Object, 0 }; }
     static KnownValue function() { return { Kind::Function, 0 }; }
@@ -90,7 +93,7 @@ private:
 constexpr KnownBoolean knownBoolean(bool value) { return value ? KnownBoolean::True : KnownBoolean::False; }
 
 KnownValue knownValueOf(const Program&, const Function&, ValueID);
-KnownValue knownValueOfType(const Program&, const Type&);
+KnownValue knownValueOfType(const Type&);
 // Unknown for a hole, a bigint, a list and an object.
 KnownValue knownValueOf(const DataNode&);
 // The type that has the primitive and nothing else.
@@ -107,19 +110,11 @@ bool isRuledOutByDefinition(const Program&, const Function&, ValueID, KnownValue
 
 std::optional<int64_t> switchCaseOf(KnownValue);
 
-inline constexpr OpcodeSet opcodesWithKnownValueRules {
-    Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String,
-    Opcode::Upcast, Opcode::NarrowByField, Opcode::AssumeType, Opcode::Check, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject,
-    Opcode::ToBoolean, Opcode::LogicalNot, Opcode::TypeTest,
-    Opcode::StrictEq, Opcode::Eq, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq,
-    Opcode::Add, Opcode::Sub, Opcode::BitAnd, Opcode::ToNumber, Opcode::ToNumeric, Opcode::GetStringLength,
-};
-
 KnownValue evaluateOperation(const Program&, const Function&, const Value&, std::array<KnownValue, 2> operands);
 
 KnownValue evaluateWithKnownOperands(const Program& program, const Function& function, const Value& value, NOESCAPE const Invocable<KnownValue(ValueID)> auto& operandValue)
 {
-    if (!opcodesWithKnownValueRules.contains(value.opcode))
+    if (!hasKnownValueRuleOf(value.opcode))
         return { };
     std::array<KnownValue, 2> operands;
     for (uint32_t i = 0; i < std::min<uint32_t>(value.numberOfOperands(), 2); ++i) {

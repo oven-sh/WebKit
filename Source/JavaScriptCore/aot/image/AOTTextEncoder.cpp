@@ -420,6 +420,7 @@ static uint32_t hashOrSymbolOf(const Typed::PropertyKey& key, uint32_t textHash)
         return static_cast<uint32_t>(*key.symbol);
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:
     case PropertyKeyKind::RegisteredSymbol:

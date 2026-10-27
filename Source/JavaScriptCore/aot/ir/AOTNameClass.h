@@ -62,6 +62,7 @@ constexpr bool isSymbolKind(PropertyKeyKind kind)
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return false;
     }

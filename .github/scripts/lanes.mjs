@@ -53,6 +53,10 @@ const SANITIZERS = "address,undefined";
 
 // All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
 // function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
+//
+// Not -mbranch-protection=pac-ret for arm64: it signs the return address that a C++ function saves. The run time of
+// compiled programs reads that word in the frame record of its operations (AOT_OPERATION_FRAME_RECORD) and writes it
+// (throwOutOfMemoryErrorAtReturnOf). bun would have to compile with it too: LLVM inlines no function into one that differs in it.
 const HARDENING =
   "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096" +
   " -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -fsanitize=array-bounds -fsanitize-trap=array-bounds" +
@@ -96,8 +100,8 @@ const variants = {
   "assertions-aot": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed. Only what ships
-  // has a twin without the compiler.
+  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
+  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
@@ -127,6 +131,7 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //                   asan lanes are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not
 //                   finish in 275 on Windows. `quick` is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
+//   fuzzed          per architecture, the variants that are downloaded to be fuzzed. See `programs`.
 //   bunTests        per architecture, the variants bun's CI links and then runs bun's tests with (buildPlatforms and
 //                   testPlatforms in bun's .buildkite/ci.ts, ltoDefault in its scripts/build/config.ts): of a variant
 //                   that has an "-aot" twin it links the twin. See `programs`.
@@ -137,12 +142,18 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
+    lanes: {
+      amd64: [...ALL, ...FUZZING, ...HARDENED],
+      // Nothing asks for the others of FUZZING and HARDENED here.
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
+    },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
     },
     testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
+    // Not "asan-aot" of amd64: it has the objects of testaot, for bun's CI.
+    fuzzed: { amd64: FUZZING, arm64: ["assertions-aot", "assertions-coverage-aot", "asan-aot"] },
     bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
     image: () => "linux-glibc",
     args: (arch, v) => ({
@@ -156,9 +167,13 @@ const platforms = [
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
+      //
+      // No -mtune with HARDENING: clang emits its copies of glibc's always-inline _FORTIFY_SOURCE wrappers (memcpy.inline,
+      // ...) without a tune CPU, and LLVM 23 for AArch64 inlines no such function into one that has one. Out of line, a
+      // wrapper cannot see the size of the destination and calls the plain function: nothing is checked.
       MARCH_FLAG:
         arch === "arm64"
-          ? `--target=aarch64-unknown-linux-gnu ${ARMV8} -mtune=ampere1`
+          ? `--target=aarch64-unknown-linux-gnu ${ARMV8}${v.hardened ? "" : " -mtune=ampere1"}`
           : `--target=x86_64-unknown-linux-gnu ${NEHALEM}`,
     }),
   },
@@ -260,7 +275,8 @@ const platforms = [
 //   jsc        everywhere
 //   testFFI    in the lanes bun's CI tests, which packs it next to bun (packageAndUpload in bun's scripts/build/ci.ts),
 //              and in the lanes the `test` job here runs
-//   testaot    in the lanes the `test` job here runs. It has the table of built-ins of the stand-in host (aot/tests/host).
+//   testaot    in the lanes the `test` job here runs, and in the ones that are fuzzed. It has the table of built-ins of the
+//              stand-in host (aot/tests/host).
 // and, in lib/, the objects of jsc and of testaot without a table (shell/CMakeLists.txt), which bun links with its own:
 //   jsc-objects, testaot-objects   in those same lanes, and in linux-amd64-debug-asan-aot for bun's "AoT cargo test" job.
 //                                  bun's build looks for them in the tarball (scripts/build/deps/webkit.ts).
@@ -269,6 +285,7 @@ function programs(platform, arch, variant, test) {
   if (test && variants[variant].aot === false) return ["jsc", "testFFI"];
   if (test) return ["jsc", "testFFI", "testaot", ...objects];
   if (platform.bunTests?.(arch).includes(withoutAOT(variant))) return variants[variant].aot === false ? ["jsc", "testFFI"] : ["jsc", "testFFI", ...objects];
+  if (platform.fuzzed?.[arch]?.includes(variant)) return ["jsc", "testaot"];
   return platform.label(arch) === "bun-webkit-linux-amd64" && variant === "debug-asan-aot" ? ["jsc", ...objects] : ["jsc"];
 }
 

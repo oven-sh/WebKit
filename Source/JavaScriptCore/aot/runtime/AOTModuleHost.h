@@ -13,7 +13,9 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSExportMacros.h>
+#include <limits>
 #include <optional>
+#include <span>
 #include <wtf/IterationStatus.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
@@ -27,6 +29,7 @@ class JSGlobalObject;
 class JSObject;
 class JSPromise;
 class JSString;
+class ScriptFetchParameters;
 
 namespace AOT {
 
@@ -69,16 +72,27 @@ struct ModuleHost {
     JSObject* (*createEmptyJSONBodyError)(JSGlobalObject*);
     // What loading the file as code throws before any of it runs. Empty where the host finds nothing wrong with the file. Null in a host that reads no code at run time.
     JSValue (*createLoadError)(JSGlobalObject*, const String& path);
+    // A require() in the file of the module object has returned a CommonJS file: for the first time, and forEachNewChild() names the file, or once more.
+    void (*showChildren)(JSGlobalObject*, JSObject* module, JSObject* requiredAgain);
+    // The module of the image that an import of the path with these attributes gets. The build has named each module by the rules of the host. Null in a host where attributes choose nothing.
+    std::optional<ModuleID> (*findModuleWithAttributes)(JSGlobalObject*, const String& path, const ScriptFetchParameters&);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
+// The image holds the file as something that only an import with an attribute gets.
+JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
+// The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
+String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool isESModule(ModuleID);
+// A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
+JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
-JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*);
+JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // A file whose loader answers an object of the host, a database or a page.
 JS_EXPORT_PRIVATE bool refusesHostObjectsOutsideImage(JSGlobalObject*);
 
@@ -112,6 +126,32 @@ JS_EXPORT_PRIVATE bool hasESModuleMarker(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE void setESModuleMarker(JSCell* moduleNamespace, bool);
 
 JS_EXPORT_PRIVATE void setVerbose(bool);
+
+// Whether the limit on the address space of the process leaves what a program of this size maps until its first statement runs. It allocates nothing: the host asks before its allocator starts.
+struct AddressSpaceToStart {
+    size_t needed { 0 };
+    size_t left { 0 };
+    // The allocator reserves address space in steps: the largest of them that leaves enough for the rest, or 0.
+    size_t largestStepOfAllocator { std::numeric_limits<size_t>::max() };
+    bool isRefused { false };
+};
+JS_EXPORT_PRIVATE AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<const size_t> stepsOfAllocatorFromLargest);
+
+// The address space for the tables that a thread reserves when it creates its VM and its instance. The thread that starts it takes the pages, so it is there that a refusal is heard.
+// Only where the address space of the process is limited: elsewhere there is nothing to take, and the pages are null.
+struct PagesForNewThread {
+    void* pages { nullptr };
+    bool isRefused { false };
+};
+// Also makes sure that the allocator has room for what the thread takes as it starts, and that there is room for its stack.
+JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForNewThread();
+// The first thread takes its own: askForAddressSpaceToStart() has asked for the rest.
+JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
+JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
+// On the new thread, before it has a VM.
+JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
+// On the new thread, once it has its instance, or ends without one.
+JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
 
 } // namespace AOT
 } // namespace JSC

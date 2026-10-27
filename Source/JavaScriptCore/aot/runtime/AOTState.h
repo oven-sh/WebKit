@@ -43,6 +43,7 @@ struct ObjectModel;
 
 // Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
 class ZeroedPages {
@@ -129,6 +130,10 @@ struct State {
     std::unique_ptr<AllocationCounts> allocationCounts;
     // What registerWrittenAtFaults held at the last null check that faulted. The handler may run on another thread than the one that faulted.
     uint64_t registerBeforeFault { 0 };
+    // Where the last Throw at the end of a cleanup returns to. No other throw returns there.
+    const void* returnAddressOfThrowAfterCleanup { nullptr };
+    // What that cleanup has kept of the throw that entered it: the Exception, or where a `throw` of the same function returns to, or zero. It is read only between that Throw and the search for its handler.
+    uint64_t keptByCleanup { 0 };
 
 private:
     explicit State(Instance&);

@@ -352,7 +352,7 @@ static Effects effectsOfConversionsIn(const Function& function)
 static bool holdsExpectedTypeEqualToType(const Function& function)
 {
     return std::ranges::any_of(function.values, [](const Value& value) {
-        return value.expected() && value.expected() == value.type;
+        return value.expected().predicted() && value.expected().predicted() == value.type;
     });
 }
 
@@ -482,7 +482,7 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
             }
             // All that remapIDs() does to a body without provisional ids.
             for (Value& value : function.editAllValues()) {
-                if (value.expected() == value.type)
+                if (value.expected().predicted() == value.type)
                     value.setExpected({ });
             }
         });

@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowResults.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTVector.h"
@@ -66,6 +68,7 @@ static void checkHasNoResults(const FlowResults& flow)
     for (FunctionID id : { unreachedFunction, functionRunOnce, derivedFunction, functionPastTheProgram }) {
         checkFunctionIsUnknown(flow, id);
         AOT_TEST_CHECK(flow.indirectCallsFrom(id).empty());
+        AOT_TEST_CHECK(flow.closuresMayBeRenamed(id) && !flow.closuresMayBeRenamedOnlyWhereNobodySees(id) && flow.closuresAreGivenDisplayName(id) && !flow.closureIsMadeOnce(id));
     }
     checkSitesAreUnknown(flow, 0);
     checkSitesAreUnknown(flow, 5);
@@ -227,6 +230,31 @@ static void flowResultsKeepAnswersWhenMoved()
     checkHasNoResults(assigned);
 }
 
+static void startUpLocksTheMembersThatTheRecordNames()
+{
+    TestProgram test;
+    addFunctions(test);
+    test.program.internBuiltinNameKeys();
+    const BuiltinTable& builtins = test.program.builtins();
+    FlowResultTables tables = createTables(test);
+    tables.builtins.locations = { BuiltinLocationFlow { Builtins::Math, test.program.keyOf(builtins.at(Builtins::MathSign).name), BuiltinLocationState::Constant, noWitness } };
+    AOT_TEST_CHECK(canLockAtStartUp(builtins, Builtins::MathSign) && canLockAtStartUp(builtins, Builtins::MathRandom));
+    tables.builtins.membersLockedAtStartUp.set(Builtins::MathRandom.index());
+    // A default export is no property of its holder.
+    BuiltinID defaultExport;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::IsDefaultExport) && canLockAtStartUp(builtins, BuiltinID(index)))
+            defaultExport = BuiltinID(index);
+    }
+    // The table of the stand-in host has none.
+    AOT_TEST_CHECK(defaultExport || hasStandInHost());
+    if (defaultExport)
+        tables.builtins.membersLockedAtStartUp.set(defaultExport.index());
+    FlowResults flow(WTF::move(tables));
+    AOT_TEST_CHECK(constantBuiltinMembersToLock(test.program, flow) == Vector<BuiltinID> { Builtins::MathRandom });
+    AOT_TEST_CHECK(constantBuiltinMembersToLock(test.program, FlowResults()).isEmpty());
+}
+
 static void flowResultsFollowRemovedEntryParameters()
 {
     TestProgram test;
@@ -323,7 +351,8 @@ static void flowResultsFindClosuresBelowFunctions()
 
 #define FOR_EACH_AOT_FLOW_RESULTS_TEST(v) \
     v(flowResultsWithoutResultsAnswerUnknown) v(flowResultsAnswerFromTheirTables) v(flowResultsKeepAnswersWhenMoved) \
-    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFindChangedClosures) v(flowResultsFindClosuresBelowFunctions)
+    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFindChangedClosures) v(flowResultsFindClosuresBelowFunctions) \
+    v(startUpLocksTheMembersThatTheRecordNames)
 
 std::span<const NativeTest> flowResultsTests()
 {

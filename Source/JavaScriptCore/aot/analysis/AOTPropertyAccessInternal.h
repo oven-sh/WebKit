@@ -53,6 +53,7 @@ struct FieldArmState {
     bool hasSlotNowhere { true };
     bool isRequired { true };
     bool isAddedLate { true };
+    bool isFilledByCreator { true };
     bool admitsUndefined { false };
     bool isAddedLateInSomeMember { false };
     bool isLeftOutAtConstruction { false };

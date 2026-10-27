@@ -388,7 +388,7 @@ static std::optional<DerivedFunctionKey> parseDerivedFunctionKey(const Program& 
         std::optional<uint32_t> variable = parseNumber(target.substring(1));
         if (!variable || *variable >= program.variables.size())
             return std::nullopt;
-        return derivedFunctionKey(role, program.at(VariableID(*variable)).declared.type);
+        return derivedFunctionKey(role, program.at(VariableID(*variable)).declared.written());
     }
     default:
         return std::nullopt;

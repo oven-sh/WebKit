@@ -14,8 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr int64_t stackReservedForJSONParsers = 64 * KB;
-
 class JSONParseEmitter final : public OperationEmitter {
 public:
     explicit JSONParseEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
@@ -44,6 +42,8 @@ public:
     void generateJSONObjectFinish(const ValueContext&);
     void generateJSONParseExtraMembers(const ValueContext&);
 
+    Pointer framePointerAtThisPoint();
+
 private:
     struct ExtraMemberState {
         Boxed extra;
@@ -54,7 +54,6 @@ private:
     TypedPointer word(ptrdiff_t offsetInInstance) { return instanceField(m_heaps.entire(AbstractHeap::ParserState), offsetInInstance); }
     TypedPointer at(Pointer cursor, ptrdiff_t offset = 0) { return m_out.address(m_heaps.entire(AbstractHeap::ParserState), cursor.value(), offset); }
     Pointer sourceEnd() { return Pointer(m_out.loadPtr(word(AOT_INSTANCE_OFFSET(json.sourceEnd)))); }
-    Pointer framePointerAtThisPoint();
     Condition startsWith(Pointer cursor, std::span<const uint8_t> text, bool isLikely);
     StubCallResult callReturningPair(const ValueContext&, RuntimeOperation, std::initializer_list<Operand> arguments);
     Pointer cursorOrSourceEnd(Condition isParsed, LValue next) { return select(isParsed, Pointer(next), sourceEnd()); }

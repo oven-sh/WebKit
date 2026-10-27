@@ -51,6 +51,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPipelineInternal.h"
 #include "AOTPlacement.h"
+#include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
 #include "AOTPromoteEnvironmentsToVariables.h"
 #include "AOTReadCapturesFromEnvironments.h"
@@ -178,7 +179,7 @@ constexpr std::array rows {
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
-    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
+    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
@@ -193,9 +194,10 @@ constexpr std::array rows {
     programPass(CheckPlacement, Required, { Placed, Placed }, placementInputs | Results { Placement, SiteCaches }, { }, { }),
     programPass(GenerateCode, Required, { Placed, Placed }, codeGenerationInputs, { }, { }),
 
+    verifiedAfterNextPass(functionPass(ListLiveValuesAtSuspensions, listLiveValuesAtSuspensions, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(TypeValues, typeValues, Required, AsRead, { }, everything)),
     verifiedAfterNextPass(functionPass(CheckInt32Promises, checkInt32Promises, Required, AsRead, { }, values)),
-    verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, nothing)),
+    verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, everything)),
 
     functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(ResolveBuiltins, resolveBuiltins, Required, Prepared, { Flow, EffectSummaries }, everything),
@@ -218,6 +220,7 @@ constexpr std::array rows {
     functionPass(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { }, everything),
     functionPass(RemoveDeadCountedLoops, removeDeadCountedLoops, Optional, Prepared, { EffectSummaries }, everything),
+    functionPass(UnrollShortLoops, unrollShortLoops, Optional, Prepared, { Heat }, everything),
     derivingFunctions(functionPass(FuseArrayChains, fuseArrayChains, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(FuseGeneratorLoops, fuseGeneratorLoops, Optional, Prepared, { Flow, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep, Optional, Prepared, { Flow, EffectSummaries }, everything)),
@@ -234,10 +237,10 @@ constexpr std::array rows {
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
     functionPass(RemoveRedundantHandlers, removeRedundantHandlers, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, values),
+    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
-    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
+    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(PlanCollectionCapacities, planCollectionCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(FoldConstantRegExps, foldConstantRegExps, Optional, Prepared, { Flow }, everything),
     functionPass(ShareRegExpLiterals, shareRegExpLiterals, Optional, Prepared, { Flow }, values),
@@ -255,6 +258,7 @@ constexpr std::array rows {
 };
 
 constexpr std::array typeSteps {
+    ScheduleStep::run(ListLiveValuesAtSuspensions),
     ScheduleStep::run(TypeValues),
     ScheduleStep::run(CheckInt32Promises),
     ScheduleStep::run(CheckRegExpLiterals),
@@ -321,11 +325,15 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(RemoveRedundantHandlers),
         ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
         ScheduleStep::run(SinkAllocations),
+        ScheduleStep::run(UnrollShortLoops),
     ScheduleStep::endFixpoint(),
     ScheduleStep::run(ExpandIteration),
     ScheduleStep::run(SelectTypedResults),
     // What SelectTypedResults has put in calls helpers of the compiler, which are in no realm. Where the rounds above have ended, as they do after one for a generic version, nobody else makes direct calls of them.
     ScheduleStep::run(ResolveBuiltins),
+    ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
+    ScheduleStep::run(RestartInGenericVersion),
+    // Where generic code has gone, what it joined stands in one block with the test behind it.
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(StartGeneratorsAtFirstStep),
@@ -816,7 +824,7 @@ FunctionID FunctionPassContext::derivedFunction(const DerivedFunctionKey& key)
     return inputs.derivedFunctions->ensure(key);
 }
 
-double FunctionPassContext::heatOf(BlockID block)
+Expected<double> FunctionPassContext::heatOf(BlockID block)
 {
     return inputs.heat.activationsOf(program, id) * analyses.blockFrequencies().frequencyOf(block);
 }
@@ -976,6 +984,16 @@ public:
     {
         if (verifiesProgram())
             verify(form);
+    }
+
+    void verifyRecordsAtBoundary(IRForm form)
+    {
+        PassRunner& runner = m_pipeline.m_runner;
+        if (!verifiesProgram() || runner.isStopped())
+            return;
+        verifyRecords(m_pipeline.m_program, form, m_pipeline.m_build, runner.verifierInputs());
+        runner.stopAfterErrors();
+        didFinish(nameOf(PassID::VerifyProgram));
     }
 
 private:
@@ -1317,7 +1335,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, markResultsUsedAsKeys, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::DeferClosuresInFields:
-        edit(id, deferClosuresInFields, m_build);
+        edit(id, deferClosuresInFields, inputsFor(id).heat, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::ReadCapturesFromEnvironments:
         edit(id, readCapturesFromEnvironments, flow(), m_build);
@@ -1455,13 +1473,106 @@ static void forgetLongExpectations(Program& program, BuildContext& build)
         expectations.forget(variable.declared);
 }
 
+// Whether a parameter that is tested at the entrance goes into a position as it is: the front end hands it on to a capture or a result of its own type without a conversion.
+static bool storesTestedParameter(const Function& function)
+{
+    Vector<ValueID, 8> tests;
+    for (size_t index = 0; index < function.values.size(); ++index) {
+        if (function.values[index].opcode == Opcode::Convert && function.values[index].illTypedCause() == IllTypedCause::UnseenCaller)
+            tests.append(ValueID(static_cast<uint32_t>(index)));
+    }
+    if (tests.isEmpty())
+        return false;
+    BitVector isTestedParameter = valuesThatAre(function, CFG(function), tests.span());
+    bool result = false;
+    auto look = [&](const auto& user) {
+        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            result |= isTestedParameter.get(operand.index()) && user.operandKind(operandIndex) == OperandKind::Declared;
+        });
+    };
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values)
+            look(function.at(id));
+        look(block.terminator);
+    }
+    return result;
+}
+
+// An expected type decides which test is worth making and never what is right, so a program means the same under any expected types.
+// TestingSwitch::ShuffleExpectedTypes gives every expected position and conversion of the program's own code another of the types that are expected somewhere in it, drawn from the seed and the number of its type.
+// So does the test of a parameter at the entrance: to the function every caller then hands over a value of another type than it says.
+static void shuffleExpectedTypes(Program& program, BuildContext& build)
+{
+    if (!build.recordedOptions().has(TestingSwitch::ShuffleExpectedTypes)) [[likely]]
+        return;
+
+    auto isShuffled = [&](const DeclaredType& declared, bool isTestAtEntrance = false) {
+        if ((!declared.isExpected() && !isTestAtEntrance) || !declared.written() || declared.has(PositionFlags::IsInt32Promise))
+            return false;
+        const Type& type = program.at(declared.written());
+        // That a value is an int32 where the program promises one is shown at build time, from what is expected of the other int32s, and a build is refused where it cannot be shown.
+        return type.isJavaScriptValue() && !(type.primitives & Primitive::Absent) && !type.isNever() && !type.isAnything() && !type.isInt32OrNullish();
+    };
+    auto forEachExpectation = [&](const Invocable<bool(DeclaredType&, bool isTestAtEntrance)> auto& functor) {
+        for (Function& function : program.functions) {
+            if (function.role == FunctionRole::Library)
+                continue;
+            for (DeclaredType& declared : function.parameters)
+                functor(declared, false);
+            for (DeclaredType& declared : function.results)
+                functor(declared, false);
+            bool shufflesTestsAtEntrance = !storesTestedParameter(function);
+            for (Value& value : function.editAllValues()) {
+                if (value.opcode != Opcode::Convert)
+                    continue;
+                DeclaredType declared = value.declared();
+                if (functor(declared, shufflesTestsAtEntrance && value.illTypedCause() == IllTypedCause::UnseenCaller))
+                    value.setDeclared(declared);
+            }
+        }
+        for (Layout& layout : program.layouts) {
+            if (layout.module && program.at(layout.module).flags.contains(ModuleFlags::IsLibrary))
+                continue;
+            for (Field& field : layout.fields)
+                functor(field.declared, false);
+        }
+        for (Variable& variable : program.variables)
+            functor(variable.declared, false);
+    };
+
+    BitVector isExpectedSomewhere(program.types.size());
+    forEachExpectation([&](DeclaredType& declared, bool isTestAtEntrance) {
+        if (isShuffled(declared, isTestAtEntrance))
+            isExpectedSomewhere.set(declared.written().index());
+        return false;
+    });
+    Vector<TypeID> drawn;
+    for (size_t index : isExpectedSomewhere)
+        drawn.append(TypeID(static_cast<uint32_t>(index)));
+    if (drawn.size() < 2)
+        return;
+    uint32_t seed = build.recordedOptions().layoutSeed;
+    forEachExpectation([&](DeclaredType& declared, bool isTestAtEntrance) {
+        if (!isShuffled(declared, isTestAtEntrance))
+            return false;
+        // Always another one.
+        size_t own = std::ranges::lower_bound(drawn, declared.written(), { }, [](TypeID type) { return type; }) - drawn.begin();
+        size_t steps = 1 + WTF::pairIntHash(seed, declared.written().index()) % (drawn.size() - 1);
+        declared.changeType(Proven::byConversion(ExpectedType(drawn[(own + steps) % drawn.size()])));
+        return true;
+    });
+}
+
 void Pipeline::runReadStage()
 {
     TimedStage stage(*this, Stage::ReadAndVerify);
+    stage.verifyRecordsAtBoundary(IRForm::AsRead);
+    shuffleRecordedFrequencies(m_program, m_build);
     forgetLongExpectations(m_program, m_build);
     stage.run(PassID::CopyClosureFactories);
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
+    shuffleExpectedTypes(m_program, m_build);
     markEnforcedFields(m_program, m_build);
     stage.run(FunctionSchedule::Type);
     stage.run(PassID::NarrowFieldTypes);
@@ -1511,9 +1622,6 @@ void Pipeline::runOptimizeStage()
     m_analyses.estimateHeatFor(HeatFor::Everything);
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
-    Vector<InternalError> functionsThatEndInFirstBlock;
-    if (m_build.options().checksThatFunctionsGetPastEntry && !m_runner.isStopped())
-        functionsThatEndInFirstBlock = findFunctionsThatEndInFirstBlock(m_program, findReachableFunctions(m_program, m_analyses.callGraph(flow()), m_build), m_build);
     stage.run(FunctionSchedule::Optimize);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
@@ -1525,8 +1633,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);
-    if (!m_runner.isStopped())
-        reportFunctionsThatEndInFirstBlock(m_program, WTF::move(functionsThatEndInFirstBlock), m_build);
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);
@@ -1588,20 +1694,17 @@ void Pipeline::runSelectStage()
         auto observe = [&](FunctionID id) {
             observer.observe(id);
         };
-        auto findOutliningSites = [&](FunctionID id) {
+        auto findOutliningSitesOrReadFinishedFunction = [&](FunctionID id) {
+            FunctionAnalyses analyses(finder.contextOf(id), std::as_const(m_program).at(id));
             if (findsOutliningSites)
-                finder.findIn(id);
+                finder.findIn(id, analyses);
+            if (hasOutliningSites[id.index()])
+                return;
+            facts.readReferences(id);
+            facts.scansForPlacement().scan(id, &analyses);
         };
-        auto readReferences = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.readReferences(id);
-        };
-        auto scanForPlacement = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.scansForPlacement().scan(id);
-        };
-        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSites, readReferences, scanForPlacement };
-        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1], &readers1[2], &readers1[3] };
+        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSitesOrReadFinishedFunction };
+        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
         advanceTo(IRForm::Selected, wasRunning);
         if (!m_runner.isStopped())

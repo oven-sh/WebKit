@@ -15,6 +15,7 @@ import type {
   NaturalTable,
   OpaqueKind,
   OptionWord,
+  PackedRecord,
   ProgramList,
   RuntimeOperation,
   Schema,
@@ -38,6 +39,7 @@ import {
   resolveRuntimeOperations,
 } from "./resolve-entries.ts";
 import { resolveOptionWords } from "./resolve-options.ts";
+import { resolvePackedRecords } from "./resolve-packed.ts";
 import { resolveNaturalTables } from "./resolve-results.ts";
 import {
   applyExtensions,
@@ -103,6 +105,7 @@ export class Scope {
   readonly opaqueKinds = new Map<string, OpaqueKind>();
   readonly records = new Map<string, MutableRecord>();
   readonly variants = new Map<string, MutableVariant>();
+  readonly packedRecords = new Map<string, PackedRecord>();
   readonly lists = new Map<string, ProgramList>();
   readonly idKinds = new Map<string, IdKind>();
   readonly heaps = new Map<string, Heap>();
@@ -155,6 +158,7 @@ function locationOf(declaration: Declaration): Location {
     case "enum":
     case "flags":
     case "record":
+    case "packed":
     case "variant":
     case "list":
     case "natural":
@@ -348,6 +352,7 @@ function buildSchema(scope: Scope, declarations: readonly DeclarationInFile[]): 
     idKinds: [...scope.idKinds.values()],
     externals: [...scope.externals.values()],
     types: typesInOrder(scope, declarations),
+    packedRecords: [...scope.packedRecords.values()],
     lists: [...scope.lists.values()],
     heaps: [...scope.heaps.values()],
     opaqueKinds: [...scope.opaqueKinds.values()],
@@ -373,6 +378,7 @@ export function resolveSchema(files: readonly ParsedFile[]): Schema {
   resolveLists(scope, declarations);
   resolveIdKinds(scope);
   resolveRecords(scope, declarations);
+  resolvePackedRecords(scope, declarations);
   checkVocabulary(scope, firstLocationOf(files[0]));
   resolveHeaps(scope, declarations);
   resolveNamedSets(scope, declarations);

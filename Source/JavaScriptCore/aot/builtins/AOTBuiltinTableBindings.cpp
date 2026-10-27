@@ -207,10 +207,10 @@ std::optional<BuiltinNativeFunction> BuiltinBindings::nativeFunctionOf(BuiltinID
 {
     if (isOfEngine(id)) {
         auto* binding = findEngineBinding(engineBuiltinBindings.nativeFunctions, &EngineNativeFunctionBinding::builtin, id);
-        return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length }) : std::nullopt;
+        return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length, binding->name }) : std::nullopt;
     }
     auto* binding = findBinding(&BuiltinBindingSet::nativeFunctions, &BuiltinNativeFunctionBinding::builtin, id);
-    return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length }) : std::nullopt;
+    return binding ? std::optional(BuiltinNativeFunction { binding->function, binding->length, binding->name }) : std::nullopt;
 }
 
 std::optional<uint32_t> BuiltinBindings::nativeFunctionNumberOf(BuiltinID id)

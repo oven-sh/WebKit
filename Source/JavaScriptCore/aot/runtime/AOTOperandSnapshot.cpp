@@ -396,7 +396,7 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
     } else if (before.elements != after.elements) {
         // Another storage of the same length may hold fewer words.
         size_t index = std::ranges::mismatch(before.elements, after.elements).in1 - before.elements.begin();
-        differences.append({ OperandChange::ElementsChanged, { }, nullptr, index < after.elements.size() ? static_cast<EncodedJSValue>(after.elements[index]) : 0 });
+        differences.append({ OperandChange::ElementsChanged, { }, nullptr, index < after.elements.size() ? static_cast<EncodedJSValue>(after.elements[index]) : 0, static_cast<uint32_t>(index) });
     }
 
     if (before.internalState != after.internalState)

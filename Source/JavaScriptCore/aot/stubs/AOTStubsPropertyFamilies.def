@@ -16,6 +16,7 @@ v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, 
 // AOTStubsPropertyReadHandlers.cpp
 v(ReadSlot, Handler, (ById, ByIdPacked, ByVal, FreeName, FreeNameForTypeOf), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 27, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
 v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached, FreeNameMiss, FreeNameUncached, FreeNameForTypeOfMiss, FreeNameForTypeOfUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
+v(ThroughProxy, InternalEntry, (Get, Has, Set), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThroughProxy)
 
 // AOTStubsPropertyCannot.cpp
 v(SlotCannot, InternalEntry, (ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SlotCannot)
@@ -65,8 +66,6 @@ v(StoreSlot, Handler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName
 v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByValMiss, StrictByValUncached, StrictFreeNameMiss, StrictFreeNameUncached, SloppyByIdMiss, SloppyByIdUncached, SloppyByValMiss, SloppyByValUncached, SloppyFreeNameMiss, SloppyFreeNameUncached, DefineByIdMiss, DefineByIdUncached, DefineByValMiss, DefineByValUncached), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlotExit)
 
 // AOTStubsObjectCopy.cpp
-v(CopyDataPropertiesFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyDataPropertiesFrontEnd)
-AOT_STUB_FRONT_END(CopyDataProperties, CopyDataPropertiesFrontEnd)
 v(CopyObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyObjectFrontEnd)
 AOT_STUB_FRONT_END(CopyObject, CopyObjectFrontEnd)
 
@@ -78,7 +77,10 @@ v(RememberKeyOrderStep, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice
 // AOTStubsKeyedAccess.cpp
 v(GetByValCached, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
 v(GetByValCachedCells, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(GetSuperByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetSuperByVal)
 v(InByValCached, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InByValCached)
+v(DeleteByIdCached, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, DeleteByIdCached)
+v(DeleteByValCached, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, DeleteByValCached)
 v(PutByValCached, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValCached)
 v(DefineByValCached, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, DefineByValCached)
 v(ToPropertyKey, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ToPropertyKey)

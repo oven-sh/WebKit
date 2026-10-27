@@ -99,13 +99,13 @@ DerivedFunctionHead createDerivedFunction(const EmissionInputs& inputs, Function
     function.capabilities = capabilitiesOf(role);
     function.creator = WTF::move(creator);
     function.length = static_cast<uint32_t>(signature.parameters.size());
-    function.thisType = DeclaredType { .type = TypeTable::anything };
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (TypeID type : signature.parameters) {
-        function.parameters.append(DeclaredType { .type = type });
+        function.parameters.append(DeclaredType(Proven::byPosition(type)));
         function.derivation.parameterMap.append(ParameterOrigin { });
     }
     for (TypeID type : signature.results)
-        function.results.append(DeclaredType { .type = type });
+        function.results.append(DeclaredType(Proven::byPosition(type)));
 
     IRBuilder builder(inputs.analysisContext(), function, inputs.types);
     head.entry = builder.addBlock();
@@ -148,12 +148,12 @@ ValueID Emission::appendHelperCall(BuiltinID helper, std::initializer_list<Value
     return m_builder.append(makeBuiltinCall(overloads.at(0), BuiltinCallForm::Whole, { { }, Vector<ValueID, 4>(arguments) }, { }));
 }
 
-Emission::TestedObject Emission::emitShapeTest(ValueID value, std::span<const LayoutID> layouts, BlockID notTaken, BlockFrequency whenTaken)
+Emission::TestedObject Emission::emitShapeTest(ValueID value, std::span<const LayoutID> layouts, BlockID notTaken, Expected<BlockFrequency> whenTaken)
 {
     LayoutSetID tested = layoutSetOf(layouts);
     ValueID object = emitTypeTest(value, TypeTable::object, notTaken);
     const Type& type = typeOf(object);
-    if (type.hasOnlyLayouts(program()) && isSubsetOf(program().at(type.layouts), program().at(tested)))
+    if (type.hasOnlyLayouts() && isSubsetOf(program().at(type.layouts), program().at(tested)))
         return { object, { } };
     return { object, emitProvenBranch(m_builder.append(make<&Value::setLayouts>(Opcode::ShapeTest, { object }, tested)), notTaken, whenTaken) };
 }
@@ -181,7 +181,7 @@ ValueID Emission::appendFieldRead(const TestedObject& object, LayoutID layout, u
     return m_builder.append(WTF::move(read));
 }
 
-ValueID Emission::emitProvenBranch(ValueID test, BlockID notTaken, BlockFrequency whenTaken)
+ValueID Emission::emitProvenBranch(ValueID test, BlockID notTaken, Expected<BlockFrequency> whenTaken)
 {
     IRBuilder::ProvenBranch branch = m_builder.emitBranchWithProof(test, 0, whenTaken, function().at(notTaken).frequency);
     m_builder.moveToEndOf(branch.notTaken);
@@ -226,7 +226,7 @@ static bool provenContentsAdmitPlainData(const Program& program, const Type& fie
         .unionWith(Type::builtinClass(BuiltinClasses::Array), types)
         .unionWith(Type::builtinClass(BuiltinClasses::Object), types);
     return std::ranges::all_of(fieldType.classes, [&](const ClassPart& part) {
-        return !part.contentsAreProven || std::ranges::all_of(part.contents, [&](TypeID contents) {
+        return !part.contentsAreProven || std::ranges::all_of(part.writtenContents, [&](TypeID contents) {
             return plainData.isSubsetOf(program.at(contents).withoutClassProofs(), program);
         });
     });
@@ -248,7 +248,7 @@ ValueID Emission::emitRequireFieldType(ValueID value, TypeID fieldType, BlockID 
         return tested;
     if (m_inputs.build.validates())
         m_builder.append(makeValidateType(tested, fieldType));
-    return m_builder.append(makeAssumeType(tested, fieldType));
+    return m_builder.append(makeAssumeType(tested, Proven::byConstruction(fieldType)));
 }
 
 void Emission::emitBranchOnOutcome(ValueID outcome, BlockID parsed, BlockID rejected, BlockID unknown)

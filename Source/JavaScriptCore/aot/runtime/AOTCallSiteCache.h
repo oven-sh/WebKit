@@ -35,14 +35,21 @@ public:
 
         const void* address { nullptr };
         CompiledFunctionID code;
-        CallSiteRecord site { CallSiteIndex(0), 0, false, false, std::nullopt };
-        bool innermostIsInlinedConstructCall { false };
-        bool rejectsOnThrow { false };
+        CallSiteRecord site { CallSiteIndex(0), 0 };
+        bool innermostIsInlinedConstructCall : 1 { false };
+        bool rejectsOnThrow : 1 { false };
+        bool isInModuleBody : 1 { false };
+        bool innermostIsAsync : 1 { false };
+        // What the site calls is a function object that its own function made and handed to nobody.
+        bool callsOwnFunctionObject : 1 { false };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
         FunctionID innermostFunction;
         uint16_t shownFrameCount { 0 };
-        uint16_t shownFrameCountOnTop { 0 };
+        static constexpr uint8_t tooManyFramesToCount = UINT8_MAX;
+        uint8_t shownFrameCountOnTop { 0 };
+        // No frame above is shown, and the tail call of the site has taken its frame from the stack.
+        uint8_t shownFrameCountOnTopBehindTailCall { 0 };
         std::optional<HandlerRecord> handler;
         ImageFrame frame { };
     };
@@ -51,7 +58,11 @@ public:
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
     // Nothing for an address that runs no compiled code.
     const Entry* resolve(const Image&, const void* returnAddress);
+    // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
+    const Entry* withMethodReadSite(const Image&, const Entry*);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
+    // It remembers the inlined frames of the function that was asked for last.
+    InlineFrameReader& inlineFrames() { return m_inlineFrames; }
 
     static constexpr size_t initialNumberOfEntries = 128;
     static constexpr size_t maxNumberOfEntries = 2048;
@@ -87,9 +98,16 @@ static_assert(CallSiteCache::initialNumberOfEntries <= CallSiteCache::maxNumberO
 ALWAYS_INLINE std::optional<unsigned> CallSiteCache::Entry::shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const
 {
     ASSERT(!isStubReturnSite());
-    if (site.isTailCall && hasShownFrame != calleeWasEntered) [[unlikely]]
+    bool isTailDeleted = site.isTailDeleted(calleeWasEntered);
+    if (hasShownFrame) {
+        if (site.isTailCall() && !isTailDeleted) [[unlikely]]
+            return std::nullopt;
+        return static_cast<unsigned>(shownFrameCount);
+    }
+    uint8_t count = isTailDeleted ? shownFrameCountOnTopBehindTailCall : shownFrameCountOnTop;
+    if (count == tooManyFramesToCount) [[unlikely]]
         return std::nullopt;
-    return static_cast<unsigned>(hasShownFrame ? shownFrameCount : shownFrameCountOnTop);
+    return static_cast<unsigned>(count);
 }
 
 ALWAYS_INLINE const CallSiteCache::Entry* CallSiteCache::find(const void* returnAddress) const

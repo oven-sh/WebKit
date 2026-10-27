@@ -1,0 +1,11 @@
+# Below an object that answers for indices, an object that is no array keeps its elements in another storage. The storage of arrays is not among what is written
+# FORM: Prepared
+# RUN: effects summaries f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="link" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    SetLiteralPrototype v0, v1
+    v3 = Undefined
+    Return v3
+}
+# CHECK: f0 return: reads(ShapeWords, PrototypeLinks) writes(ShapeWords, MemberGuards, PrototypeLinks, Elements/1, RuntimeState) throws collects

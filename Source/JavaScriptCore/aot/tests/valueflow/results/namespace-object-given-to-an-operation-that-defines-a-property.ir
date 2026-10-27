@@ -1,0 +1,80 @@
+# A namespace object accepts only a definition that changes nothing. So a class field, a computed class field and a store through super whose receiver is a namespace read the export of that name, and leave the others unread.
+# Under a key nobody knows they may read every export. A plain store is refused whatever the exports are, and reads none.
+#   class .. extends Returns { b = 1 }  new ..(field); { ["b"] = 1 }  new ..(computed); super.b = 1 with this = stored; { [name] = 1 }  new ..(walked); assigned.b = 1
+# FORM: AsRead
+# RUN: valueflow-apply
+# RUN(RESULTS): valueflow-results
+# CHECK: variable g0 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g1
+# CHECK-NOT: reads=
+# CHECK: variable g2 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g3
+# CHECK-NOT: reads=
+# CHECK: variable g4 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g5
+# CHECK-NOT: reads=
+# CHECK: variable g7 {{*}}reads=NeverRead
+# CHECK-NEXT: variable g8 {{*}}reads=NeverRead
+# CHECK: module m0 path=
+# RESULTS: module m0 namespaceUse=NeverCreated
+# RESULTS-NEXT: module m1 namespaceUse=NamedReadsOnly
+# RESULTS-NEXT: module m2 namespaceUse=NamedReadsOnly
+# RESULTS-NEXT: module m3 namespaceUse=NamedReadsOnly
+# RESULTS-NOT: module m4
+# RESULTS: module m5 namespaceUse=NamedReadsOnly
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}]
+module m1 path="field.js" displayPath="field.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}]
+module m2 path="computed.js" displayPath="computed.js" body=f2 exports=[{name="a" variable=g2}, {name="b" variable=g3}]
+module m3 path="stored.js" displayPath="stored.js" body=f3 exports=[{name="a" variable=g4}, {name="b" variable=g5}]
+module m4 path="walked.js" displayPath="walked.js" body=f4 exports=[{name="a" variable=g6}]
+module m5 path="assigned.js" displayPath="assigned.js" body=f5 exports=[{name="a" variable=g7}, {name="b" variable=g8}]
+entry module=m0
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="b" module=m1 declared={type=anything}
+variable g2 name="a" module=m2 declared={type=anything}
+variable g3 name="b" module=m2 declared={type=anything}
+variable g4 name="a" module=m3 declared={type=anything}
+variable g5 name="b" module=m3 declared={type=anything}
+variable g6 name="a" module=m4 declared={type=anything}
+variable g7 name="a" module=m5 declared={type=anything}
+variable g8 name="b" module=m5 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = String string="b"
+    v3 = Integer integer=1
+    v4 = ModuleNamespace module=m1
+    PropDefine v4, v3 key="b"
+    v6 = ModuleNamespace module=m2
+    ElemDefine v6, v2, v3
+    v8 = ModuleNamespace module=m3
+    v9 = NewDictionary
+    SuperSet v9, v8, v3 key="b"
+    v11 = ModuleNamespace module=m4
+    ElemDefine v11, v1, v3
+    v13 = ModuleNamespace module=m5
+    PropSet v13, v3 key="b"
+    Return
+}
+function f1 name="body1" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="body2" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="body3" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="body4" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="body5" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -41,9 +41,12 @@ struct RegExpSummary {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RegExpSummary);
 
     bool isValid() const { return !Yarr::hasError(syntaxError); }
+    // Creating a RegExp builds its pattern, which has limits that the syntax does not have. With the metadata the run time builds nothing.
+    bool canBeCreated() const { return metadata == RegExpMetadata::Known; }
     bool hasNamedGroups() const { return !captureGroupNames.isEmpty() || !namedGroups.isEmpty(); }
 
     Yarr::ErrorCode syntaxError { Yarr::ErrorCode::NoError };
+    Yarr::ErrorCode constructionError { Yarr::ErrorCode::NoError };
     RegExpMetadata metadata { RegExpMetadata::Unknown };
     bool exceedsParenthesesDepth { false };
     bool hasUnicodePropertyLookup { false };

@@ -55,7 +55,7 @@ function f4 name="handsOverInTailPosition" flags=[HasThis, HasRestParameter] thi
 # As ExpandIteration leaves a spread.
 function f5 name="handsOverWhereTheSpreadIsExpanded" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
     v3 = NewArray v1, v0 contents=anything
-    v4 = AssumeType v3 castType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v4 = AssumeType v3 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
     v5 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
     Branch v5 -> taken b1(| 0), notTaken b2()
   b1(v6: guard):
@@ -250,7 +250,7 @@ function f20 name="anotherWayIsAsLikely" flags=[HasThis, HasRestParameter] thisT
 
 # The name under which the array is spread says what the callee wants to know of its rest array.
 function f21 name="spreadsUnderNameThatSaysMore" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-    v3 = AssumeType v2 castType=Array<string, proven>
+    v3 = AssumeType v2 provenType=Array<string, proven>
     v4 = NewArray v1, v0 contents=anything
     AppendSpread v4, v3
     v6 = NewClosure function=f2

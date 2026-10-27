@@ -158,6 +158,28 @@ static String repeated(char character, size_t count)
     return String(characters.span());
 }
 
+static void collectParts(VM& vm, JSString* string, Vector<JSString*>& parts)
+{
+    if (!string->isRope() || string->isSubstring()) {
+        parts.append(string);
+        return;
+    }
+    RecordingVisitor visitor(vm);
+    AbstractSlotVisitor& abstractVisitor = visitor;
+    string->methodTable()->visitChildren(string, abstractVisitor);
+    for (JSCell* cell : visitor.cells()) {
+        if (auto* part = dynamicDowncast<JSString>(cell))
+            collectParts(vm, part, parts);
+    }
+}
+
+static Vector<JSString*> partsOf(LoadedProgram& program, JSString* string)
+{
+    Vector<JSString*> parts;
+    collectParts(program.vm(), string, parts);
+    return parts;
+}
+
 static const Latin1Character* charactersOf(JSString* string)
 {
     const StringImpl* impl = string->tryGetValueImpl();
@@ -201,9 +223,6 @@ static void testAppendLatin1(LoadedProgram& program)
     const Latin1Character accents[] = { 0xe9, 0xff, 0x80 };
     AOT_TEST_CHECK(builder->append(realm, std::span(accents)) == AppendResult::Appended);
     expected.append(std::span(accents));
-    const char16_t narrowInWideUnits[] = { 'w', 0xe9 };
-    builder.append(std::span(narrowInWideUnits));
-    expected.append(std::span(narrowInWideUnits));
 
     builder.append(jsString(vm, String("a string"_s)));
     expected.append("a string"_s);
@@ -273,8 +292,9 @@ static void testLimitIsRoom(LoadedProgram& program)
     }
     {
         Builder builder(program);
+        builder.append("ab"_s);
         builder.append(jsString(vm, repeated('x', byReference - 1)));
-        AOT_TEST_CHECK(builder.position() == byReference - 1 && !builder.lengthOutsideBuffer() && builder.limit() >= builder.position());
+        AOT_TEST_CHECK(builder.position() == byReference + 1 && !builder.lengthOutsideBuffer() && builder.limit() >= builder.position());
         builder->release(program.instance());
     }
 }
@@ -505,7 +525,130 @@ static void testFinishGivesLargeBufferAway(LoadedProgram& program)
     AOT_TEST_CHECK(charactersOf(whole) == fullBuffer && !whole->tryGetValueImpl()->isSubString() && whole->length() == large);
 }
 
-static void testSegmentsFlat(LoadedProgram& program)
+static void testNextLargeTextGrowsOnce(LoadedProgram& program)
+{
+    uint32_t least = limitValue(program, LimitID::MinStringBuilderCapacity);
+    uint32_t retained = limitValue(program, LimitID::MaxRetainedStringBuilderCapacity);
+    uint32_t large = retained * 4;
+    auto write = [&](Builder& builder, uint32_t length) {
+        for (uint32_t written = 0; written < length; written += 1000)
+            builder.appendRepeated('a', 1000);
+    };
+
+    Builder first(program);
+    write(first, large - retained);
+    AOT_TEST_CHECK(first.limit() == large);
+    first.finish();
+
+    Builder shortText(program);
+    shortText.append("short"_s);
+    AOT_TEST_CHECK(shortText.limit() == least);
+    shortText.finish();
+
+    Builder second(program);
+    second.appendRepeated('a', least);
+    AOT_TEST_CHECK(second.limit() == least);
+    second.append("a"_s);
+    AOT_TEST_CHECK(second.limit() == large);
+    const Latin1Character* buffer = second.characters();
+    write(second, large - retained);
+    AOT_TEST_CHECK(second.characters() == buffer && charactersOf(second.finish()) == buffer);
+
+    program.instance().stringBuilder.freeStorage = nullptr;
+    Builder half(program);
+    AOT_TEST_CHECK(half.storage() != second.storage());
+    write(half, retained + 1000);
+    AOT_TEST_CHECK(half.limit() == large);
+    buffer = half.characters();
+    JSString* result = half.finish();
+    AOT_TEST_CHECK(charactersOf(result) != buffer && !result->tryGetValueImpl()->isSubString());
+
+    Builder fitting(program);
+    write(fitting, retained + 1000);
+    AOT_TEST_CHECK(fitting.limit() == retained * 2);
+    buffer = fitting.characters();
+    AOT_TEST_CHECK(charactersOf(fitting.finish()) == buffer);
+
+    Builder shorter(program);
+    write(shorter, retained / 4 + 1000);
+    AOT_TEST_CHECK(shorter.limit() == retained * 2);
+    buffer = shorter.characters();
+    AOT_TEST_CHECK(charactersOf(shorter.finish()) != buffer);
+    AOT_TEST_CHECK(!shorter.limit() && !shorter->length());
+
+    Builder kept(program);
+    AOT_TEST_CHECK(kept.storage() == shorter.storage());
+    kept.append("a"_s);
+    AOT_TEST_CHECK(kept.limit() == retained / 2);
+    buffer = kept.characters();
+    write(kept, retained / 4 + 1000);
+    AOT_TEST_CHECK(kept.characters() == buffer);
+    kept.finish();
+    AOT_TEST_CHECK(kept.characters() == buffer);
+
+    Builder wide(program);
+    write(wide, large - retained);
+    wide.append(std::span(japan));
+    AOT_TEST_CHECK(wide.limit() == large);
+    wide.finish();
+    Builder afterWide(program);
+    write(afterWide, least + 1000);
+    AOT_TEST_CHECK(afterWide.limit() == large);
+    afterWide->release(program.instance());
+}
+
+// A collection that has been asked for runs at the next place where the collector may run.
+static void testDiscardLeavesNextBufferToNextWrite(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t retained = limitValue(program, LimitID::MaxRetainedStringBuilderCapacity);
+    uint32_t large = retained * 4;
+    auto write = [&](Builder& builder, uint32_t length) {
+        for (uint32_t written = 0; written < length; written += 1000)
+            builder.appendRepeated('a', 1000);
+    };
+    auto discardWhileCollectionIsAskedFor = [&](auto operation, auto* builder) {
+        AOT_TEST_CHECK(!vm.heap.isDeferred());
+        vm.heap.collectAsync(CollectionScope::Full);
+        HeapVersion version = vm.heap.objectSpace().markingVersion();
+        {
+            AssertNoGC assertNoGC;
+            operation(&program.instance(), builder);
+        }
+        AOT_TEST_CHECK(vm.heap.objectSpace().markingVersion() == version);
+        vm.heap.collectSync(CollectionScope::Full);
+        AOT_TEST_CHECK(vm.heap.objectSpace().markingVersion() != version);
+    };
+    auto rememberLargeBuffer = [&] {
+        Builder builder(program);
+        write(builder, large - retained);
+        AOT_TEST_CHECK(builder.limit() == large);
+        builder.finish();
+    };
+
+    rememberLargeBuffer();
+    Builder discarded(program);
+    write(discarded, retained / 4 + 1000);
+    AOT_TEST_CHECK(discarded.limit() == large);
+    discardWhileCollectionIsAskedFor(operationAOTStringBuilderDiscard, static_cast<JSCell*>(discarded.storage()));
+    AOT_TEST_CHECK(!discarded.limit() && !discarded.characters() && !discarded->length());
+    discarded.append("a"_s);
+    AOT_TEST_CHECK(discarded.limit() == retained / 2);
+    discarded->release(program.instance());
+
+    rememberLargeBuffer();
+    Builder moved(program);
+    write(moved, retained / 4 + 1000);
+    AOT_TEST_CHECK(moved.limit() == large);
+    StackStringBuilder onStack;
+    onStack.limit = nullptr;
+    onStack.storage = moved.storage();
+    discardWhileCollectionIsAskedFor(operationAOTStackStringBuilderDiscard, reinterpret_cast<uint8_t*>(&onStack));
+    AOT_TEST_CHECK(!moved.limit() && !moved.characters() && !moved->length());
+}
+
+// Pieces of one width that follow each other become one flat part. Where the width changes a new part begins.
+static void testSegmentsKeepTheirWidth(LoadedProgram& program)
 {
     Builder builder(program);
     WTF::StringBuilder expected;
@@ -517,8 +660,30 @@ static void testSegmentsFlat(LoadedProgram& program)
     }
     AOT_TEST_CHECK(builder.position() == 200 && builder.lengthOutsideBuffer() == 200);
     JSString* result = builder.finish();
-    AOT_TEST_CHECK(!result->isRope() && !result->is8Bit() && result->length() == 400);
+    AOT_TEST_CHECK(result->isRope() && !result->is8Bit() && result->length() == 400);
+    Vector<JSString*> parts = partsOf(program, result);
+    AOT_TEST_CHECK(parts.size() == 200);
+    for (size_t i = 0; i < parts.size(); ++i) {
+        AOT_TEST_CHECK(!parts[i]->isRope() && parts[i]->length() == 2 && parts[i]->is8Bit() == !(i % 2));
+        AOT_TEST_CHECK(textOf(program, parts[i]) == (i % 2 ? String(std::span(japan)) : String("ab"_s)));
+    }
     AOT_TEST_CHECK(textOf(program, result) == expected.toString());
+    AOT_TEST_CHECK(!result->isRope() && !result->is8Bit());
+
+    Builder runs(program);
+    runs.append("ab"_s);
+    runs.append(jsNumber(12));
+    runs.append(std::span(japan));
+    runs.append(std::span(japan));
+    runs.append("cd"_s);
+    AOT_TEST_CHECK(runs.position() == 6 && runs.lengthOutsideBuffer() == 4);
+    JSString* joined = runs.finish();
+    AOT_TEST_CHECK(joined->isRope() && !joined->is8Bit() && joined->length() == 10);
+    Vector<JSString*> joinedParts = partsOf(program, joined);
+    AOT_TEST_CHECK(joinedParts.size() == 3);
+    AOT_TEST_CHECK(!joinedParts[0]->isRope() && joinedParts[0]->is8Bit() && textOf(program, joinedParts[0]) == "ab12"_s);
+    AOT_TEST_CHECK(!joinedParts[1]->isRope() && !joinedParts[1]->is8Bit() && textOf(program, joinedParts[1]) == makeString(String(std::span(japan)), String(std::span(japan))));
+    AOT_TEST_CHECK(!joinedParts[2]->isRope() && joinedParts[2]->is8Bit() && textOf(program, joinedParts[2]) == "cd"_s);
 }
 
 static void testSegmentsByReference(LoadedProgram& program)
@@ -538,6 +703,34 @@ static void testSegmentsByReference(LoadedProgram& program)
     result->methodTable()->visitChildren(result, abstractVisitor);
     AOT_TEST_CHECK(visitor.cells().contains(first) && visitor.cells().contains(second));
     AOT_TEST_CHECK(textOf(program, result) == makeString(repeated('x', 70000), " between "_s, repeated('y', 70000)));
+}
+
+static void testLongFirstStringIsNotCopied(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t least = limitValue(program, LimitID::MinLengthAdoptedByFinish);
+    {
+        JSString* first = jsString(vm, repeated('x', least));
+        Builder builder(program);
+        builder.append(first);
+        AOT_TEST_CHECK(!builder.position() && builder.lengthOutsideBuffer() == least);
+        builder.append("tail"_s);
+        builder.append(jsString(vm, repeated('y', least)));
+        AOT_TEST_CHECK(builder.position() == 4 + least && builder.lengthOutsideBuffer() == least);
+        JSString* result = builder.finish();
+        AOT_TEST_CHECK(result->isRope() && result->length() == 2 * least + 4);
+
+        RecordingVisitor visitor(vm);
+        AbstractSlotVisitor& abstractVisitor = visitor;
+        result->methodTable()->visitChildren(result, abstractVisitor);
+        AOT_TEST_CHECK(visitor.cells().contains(first));
+        AOT_TEST_CHECK(textOf(program, result) == makeString(repeated('x', least), "tail"_s, repeated('y', least)));
+    }
+    {
+        Builder builder(program);
+        builder.append(jsString(vm, repeated('x', least - 1)));
+        AOT_TEST_CHECK(builder.position() == least - 1 && !builder.lengthOutsideBuffer());
+    }
 }
 
 static void testSegmentsCap(LoadedProgram& program)
@@ -615,26 +808,47 @@ static String fillWithPiecesAndSegments(LoadedProgram& program, Builder& builder
     return expected.toString();
 }
 
-// One wide character makes a whole text wide. A part of it without one, and a wide string without one, are copied into the buffer like any plain text.
-static void testPlainPartsOfWideStringsLieInTheBuffer(LoadedProgram& program)
+// A 16-bit string stays a 16-bit part of the text, whatever its units are. What is cut out of one as an 8-bit string lies in the buffer.
+static void testWideStringsStayOutsideTheBuffer(LoadedProgram& program)
 {
     VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
     static constexpr char16_t text[] = { 0x3c0, 'a', 'b', 'c', 0xe9, ',', 'd' };
     Strong<JSString> wide(vm, jsString(vm, String(std::span(text))));
     AOT_TEST_CHECK(!wide->is8Bit());
 
     Builder builder(program);
     builder.append("<"_s);
-    builder.append(jsSubstring(program.realm(), wide.get(), 1, 4));
-    AOT_TEST_CHECK(builder.position() == 5 && !builder.lengthOutsideBuffer());
+    JSString* part = jsSubstring(realm, wide.get(), 1, 4);
+    AOT_TEST_CHECK(!part->is8Bit());
+    builder.append(part);
+    AOT_TEST_CHECK(builder.position() == 1 && builder.lengthOutsideBuffer() == 4);
     builder.append(jsString(vm, String(std::span(text).subspan(5))));
-    AOT_TEST_CHECK(builder.position() == 7 && !builder.lengthOutsideBuffer());
-    JSString* plain = builder.toString();
-    AOT_TEST_CHECK(plain->is8Bit() && builder.text() == String::fromUTF8("<abc\xc3\xa9,d"));
+    AOT_TEST_CHECK(builder.position() == 1 && builder.lengthOutsideBuffer() == 6);
+    const char16_t narrowInWideUnits[] = { 'w', 0xe9 };
+    builder.append(std::span(narrowInWideUnits));
+    AOT_TEST_CHECK(builder.position() == 1 && builder.lengthOutsideBuffer() == 8);
 
-    builder.append(jsSubstring(program.realm(), wide.get(), 0, 2));
-    AOT_TEST_CHECK(builder.position() == 7 && builder.lengthOutsideBuffer() == 2);
-    AOT_TEST_CHECK(builder.text() == String::fromUTF8("<abc\xc3\xa9,d\xcf\x80" "a"));
+    JSString* twoPlainUnits = jsSubstring(realm, wide.get(), 1, 2);
+    JSString* oneNarrowUnit = jsSubstring(realm, wide.get(), 4, 1);
+    AOT_TEST_CHECK(twoPlainUnits->is8Bit() && oneNarrowUnit->is8Bit());
+    builder.append(twoPlainUnits);
+    builder.append(oneNarrowUnit);
+    AOT_TEST_CHECK(builder.position() == 4 && builder.lengthOutsideBuffer() == 8);
+
+    JSString* built = builder.toString();
+    AOT_TEST_CHECK(built->isRope() && !built->is8Bit() && built->length() == 12);
+    Vector<JSString*> parts = partsOf(program, built);
+    AOT_TEST_CHECK(parts.size() == 3);
+    AOT_TEST_CHECK(!parts[0]->isRope() && parts[0]->is8Bit() && textOf(program, parts[0]) == "<"_s);
+    AOT_TEST_CHECK(!parts[1]->isRope() && !parts[1]->is8Bit() && textOf(program, parts[1]) == String::fromUTF8("abc\xc3\xa9,dw\xc3\xa9"));
+    AOT_TEST_CHECK(!parts[2]->isRope() && parts[2]->is8Bit() && textOf(program, parts[2]) == String::fromUTF8("ab\xc3\xa9"));
+    AOT_TEST_CHECK(!builder.position() && builder.lengthOutsideBuffer() == 12);
+    AOT_TEST_CHECK(builder.text() == String::fromUTF8("<abc\xc3\xa9,dw\xc3\xa9" "ab\xc3\xa9"));
+
+    builder.append(jsSubstring(realm, wide.get(), 0, 2));
+    AOT_TEST_CHECK(!builder.position() && builder.lengthOutsideBuffer() == 14);
+    AOT_TEST_CHECK(builder.text() == String::fromUTF8("<abc\xc3\xa9,dw\xc3\xa9" "ab\xc3\xa9\xcf\x80" "a"));
     builder->release(program.instance());
 }
 
@@ -771,6 +985,67 @@ static void testPoolDepth(LoadedProgram& program)
     StringBuilderStorage* fresh = StringBuilderStorage::acquire(instance);
     for (auto& builder : builders)
         AOT_TEST_CHECK(fresh != builder->storage());
+}
+
+// As compiled code discards a builder without text while the pool is empty: by one store.
+static void layIntoEmptyPool(LoadedProgram& program, Builder& builder)
+{
+    StringBuilderStorage*& pool = program.instance().stringBuilder.freeStorage;
+    AOT_TEST_CHECK(!pool && !builder->length() && !builder.nextFree());
+    pool = builder.storage();
+}
+
+static void testPoolDepthAboveBuilderLaidIntoEmptyPool(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    uint32_t maxPooled = limitValue(program, LimitID::MaxPooledStringBuilders);
+    AOT_TEST_CHECK(maxPooled >= 2);
+
+    Vector<std::unique_ptr<Builder>> builders;
+    for (uint32_t i = 0; i <= maxPooled; ++i)
+        builders.append(makeUniqueWithoutFastMallocCheck<Builder>(program));
+    auto fillPoolAbove = [&](uint32_t bottom) {
+        uint64_t hitsBefore = limitHitsOf(vm, LimitID::MaxPooledStringBuilders);
+        layIntoEmptyPool(program, *builders[bottom]);
+        uint32_t numberPooled = 1;
+        for (uint32_t i = 0; i <= maxPooled; ++i) {
+            if (i == bottom)
+                continue;
+            StringBuilderStorage* head = instance.stringBuilder.freeStorage;
+            builders[i]->append("content"_s);
+            (*builders[i])->release(instance);
+            if (numberPooled < maxPooled) {
+                ++numberPooled;
+                AOT_TEST_CHECK(instance.stringBuilder.freeStorage == builders[i]->storage() && builders[i]->nextFree() == head && builders[i]->characters());
+                AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore);
+            } else {
+                AOT_TEST_CHECK(instance.stringBuilder.freeStorage == head && !builders[i]->nextFree() && !builders[i]->characters());
+                AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore + 1);
+            }
+        }
+        while (instance.stringBuilder.freeStorage)
+            StringBuilderStorage::acquire(instance);
+    };
+    // None has been in the pool. Then the one that lay on top of the full pool is at the bottom, then one from the middle.
+    fillPoolAbove(0);
+    fillPoolAbove(maxPooled - 1);
+    fillPoolAbove(maxPooled / 2);
+
+    // Two are open at once, and the one that was taken first goes back first.
+    uint64_t hitsBefore = limitHitsOf(vm, LimitID::MaxPooledStringBuilders);
+    layIntoEmptyPool(program, *builders[0]);
+    (*builders[1])->release(instance);
+    for (uint32_t turn = 0; turn < 3 * maxPooled; ++turn) {
+        Builder first(program);
+        Builder second(program);
+        AOT_TEST_CHECK((first.storage() == builders[0]->storage() && second.storage() == builders[1]->storage()) || (first.storage() == builders[1]->storage() && second.storage() == builders[0]->storage()));
+        second.append("content"_s);
+        layIntoEmptyPool(program, first);
+        second->release(instance);
+        AOT_TEST_CHECK(instance.stringBuilder.freeStorage == second.storage() && second.nextFree() == first.storage() && second.characters());
+    }
+    AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore);
 }
 
 static void testPoolClearedByCollection(LoadedProgram& program)
@@ -1226,17 +1501,21 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/short-read-copies"_s, withInstance<testShortReadCopies> },
         { "string-builder-storage/finish-keeps-pooled-buffer"_s, withInstance<testFinishKeepsPooledBuffer> },
         { "string-builder-storage/finish-gives-large-buffer-away"_s, withInstance<testFinishGivesLargeBufferAway> },
-        { "string-builder-storage/segments-flat"_s, withInstance<testSegmentsFlat> },
+        { "string-builder-storage/next-large-text-grows-once"_s, withInstance<testNextLargeTextGrowsOnce> },
+        { "string-builder-storage/segments-keep-their-width"_s, withInstance<testSegmentsKeepTheirWidth> },
         { "string-builder-storage/segments-by-reference"_s, withInstance<testSegmentsByReference> },
+        { "string-builder-storage/long-first-string-is-not-copied"_s, withInstance<testLongFirstStringIsNotCopied> },
         { "string-builder-storage/segments-cap"_s, withInstance<testSegmentsCap> },
         { "string-builder-storage/read-with-segments-twice"_s, withInstance<testReadWithSegmentsTwice> },
-        { "string-builder-storage/plain-parts-of-wide-strings-lie-in-the-buffer"_s, withInstance<testPlainPartsOfWideStringsLieInTheBuffer> },
+        { "string-builder-storage/wide-strings-stay-outside-the-buffer"_s, withInstance<testWideStringsStayOutsideTheBuffer> },
         { "string-builder-storage/roll-back-everywhere"_s, withInstance<testRollBackEverywhere> },
         { "string-builder-storage/append-values-is-atomic"_s, withInstance<testAppendValuesIsAtomic> },
         { "string-builder-storage/reserve-commit"_s, withInstance<testReserveCommit> },
         { "string-builder-storage/length-limit"_s, withInstance<testLengthLimit> },
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
+        { "string-builder-storage/pool-depth-above-a-builder-laid-into-the-empty-pool"_s, withInstance<testPoolDepthAboveBuilderLaidIntoEmptyPool> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },
+        { "string-builder-storage/discard-leaves-next-buffer-to-next-write"_s, withInstance<testDiscardLeavesNextBufferToNextWrite> },
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
         { "string-builder-storage/parse-index"_s, testParseIndex },
         { "string-builder-storage/stack-builder"_s, withInstance<testStackBuilder> },

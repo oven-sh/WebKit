@@ -11,6 +11,8 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTFlowSiteData.h"
 #include "AOTGuardAvailability.h"
+#include "AOTHeldOperands.h"
+#include "AOTMemoryLocation.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
@@ -55,7 +57,7 @@ static bool isOnlyReturned(std::span<const Use> uses)
 
 static bool hasExpectedTypeInsideType(const Program& program, const Value& value)
 {
-    TypeID expectedID = value.expected();
+    TypeID expectedID = value.expected().predicted();
     if (!expectedID)
         return true;
     const Type& type = program.at(value.type);
@@ -68,7 +70,7 @@ static ValueID findValueWithInvalidTypeID(const FunctionVerifier& verifier, cons
     const Function& function = verifier.function();
     ValueID found;
     auto visit = [&](ValueID id) {
-        TypeID expected = function.at(id).expected();
+        TypeID expected = function.at(id).expected().predicted();
         if (!found && (!verifier.isValid(function.at(id).type) || (expected && !verifier.isValid(expected))))
             found = id;
     };
@@ -94,7 +96,7 @@ static std::optional<uint32_t> expectedNumberOfVariadicOperands(const Program& p
         return program.at(user.function()).numberOfEntryParameters();
     case Opcode::AwaitCallBySavingFrame: {
         unsigned numberOfEntryParameters = program.at(user.function()).numberOfEntryParameters();
-        return numberOfEntryParameters ? numberOfEntryParameters - 1 : 0;
+        return (numberOfEntryParameters ? numberOfEntryParameters - 1 : 0) + numberOfHeldOperandsOf(user);
     }
     case Opcode::PutSlots:
         return static_cast<uint32_t>(user.placedKeys().size());
@@ -224,18 +226,40 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         }
     }
 
+    if (holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, value) && value.inlineFrame && !value.factOperand() && !value.mayPrecedeItsStore()) {
+        fail(InternalErrorKind::InvalidGuard, block, id);
+        return;
+    }
+    if (value.opcode == Opcode::AssumeType && typeOf(value.valueOperand()).mayBeUnspecified() && !typeOf(id).mayBeUnspecified() && !value.factOperand()) {
+        fail(InternalErrorKind::InvalidGuard, block, id);
+        return;
+    }
+
     LayoutID layout = Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!hasFailed())
-            verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
+        if (hasFailed())
+            return;
+        // A cast hands the word on. Everything else would look at it, or put it where somebody may. The variable that it came from may get it back, and a validating build compares words.
+        bool goesBackIntoVariable = value.opcode == Opcode::PutModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program.at(value.variable()).flow);
+        bool handsWordOn = value.operandUses(operandIndex) == OperandUses { OperandUse::Returns } || goesBackIntoVariable || value.opcode == Opcode::ValidateSameValue;
+        if (typeOf(operand).mayBeUnspecified() && !handsWordOn) {
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
+            return;
+        }
+        verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
     });
 }
 
 void FunctionVerifier::verifyOperands(BlockID block, const Terminator& terminator)
 {
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!hasFailed())
-            verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
+        if (hasFailed())
+            return;
+        if (typeOf(operand).mayBeUnspecified()) {
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, { }, operand.index());
+            return;
+        }
+        verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
     });
 }
 
@@ -245,7 +269,8 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
     auto hasKind = [&] {
         switch (kind) {
         case OperandKind::Any:
-            return type.isJavaScriptValue();
+            // A pass may ask an environment that may be absent whether it is there.
+            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()));
         case OperandKind::Boolean:
             return type.hasOnlyPrimitives(Primitive::Boolean);
         case OperandKind::Integer:
@@ -285,8 +310,10 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
         case OperandKind::StringBuilder:
         case OperandKind::Cursor:
         case OperandKind::KeyOrder:
+        case OperandKind::Fact:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
+        case OperandKind::JSONHolders:
         case OperandKind::BuilderCursor:
             return type.isOpaque(*opaqueKindOf(kind));
         }
@@ -313,9 +340,14 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
         const Value& definition = m_function.at(operand);
-        if (definition.opcode == Opcode::Check && context.types.at(definition.castType()).isNever())
+        if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
             return;
-        if (TypeID required = requiredTypeOfOperand(context, value, operandIndex))
+        TypeID required = requiredTypeOfOperand(context, value, operandIndex);
+        if (!required)
+            return;
+        if (value.opcode == Opcode::PutModuleVariable && typeOf(operand).mayBeUnspecified())
+            need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required).withPrimitives(Primitive::Unspecified));
+        else
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));
     });
 }
@@ -401,7 +433,9 @@ static bool fillsFieldsInsideTheirTypes(const Program& program, const DataNode::
         if (!field)
             return true;
         const Field& filled = layout.fields[*field];
-        return filled.declared.flags.contains(PositionFlags::IsExpected) || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
+        if (filled.form.contains(FieldForm::IsAccessor))
+            return false;
+        return filled.declared.isExpected() || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
     });
 }
 

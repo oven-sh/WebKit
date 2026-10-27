@@ -93,6 +93,8 @@ struct PlannedLayout {
     bool hasExtension() const { return !slots.isEmpty() && slots[extensionWordIndex()].hasStorage(); }
     bool hasExtraPropertiesWord() const { return !slots.isEmpty() && slots[extraPropertiesWordIndex()].hasStorage(); }
     JS_EXPORT_PRIVATE bool keepsZero(uint32_t offset, uint32_t width) const;
+    // A bit for each byte of the cell in which nothing is kept. Whoever makes a cell leaves those bytes as they are.
+    JS_EXPORT_PRIVATE BitVector padding() const;
 
     LayoutStorage storage { LayoutStorage::None };
     bool holdsWideReferences { false };
@@ -159,6 +161,8 @@ struct ClassCreationPlan {
     bool createsClassObjectOnMutation { false };
     bool guardsHoldWhileClear { false };
     Vector<MemberCreation> members;
+    // Sorted. A function that is several members is listed if the record creates all of them.
+    Vector<FunctionID> functionsCreatedByClassRecord;
 };
 
 struct SlotPlanInputs {

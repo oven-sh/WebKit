@@ -32,7 +32,7 @@ function f0 name="arrayBesideObjects" parameters=[{type=undefined|string|Array<n
 # SIMPLE-NOT: RequireObjectCoercible
 # SIMPLE: = CallBuiltin {{*}} overload=ArrayPrototypeLength/0
 # SIMPLE-NOT: TypeTest
-# SIMPLE: frequency=Unlikely:
+# SIMPLE-NOT: frequency=
 # SIMPLE: LoopHint
 # SIMPLE-NOT: TypeTest
 # SIMPLE-NOT: ArrayPrototypeLength

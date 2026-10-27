@@ -21,12 +21,12 @@ function f0 name="checkBehindATagTest" parameters=[{type=L0|L1}] results=[{type=
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
   b1(v4):
     v5 = NarrowByField v0, v4 key="kind"
-    v6 = Check v5 castType=L0
+    v6 = Check v5 expectedType=L0
     v7 = PropGet v6 key="radius"
     Return v7
   b2(v8):
     v9 = NarrowByField v0, v8 key="kind"
-    v10 = Check v9 castType=L1
+    v10 = Check v9 expectedType=L1
     v11 = PropGet v10 key="side"
     Return v11
 # CHECK: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
@@ -47,7 +47,7 @@ function f1 name="tagMayBeStoredWithAnotherType" parameters=[{type=L2|L3}] resul
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
     v5 = NarrowByField v0, v4 key="kind"
-    v6 = Check v5 castType=L2
+    v6 = Check v5 expectedType=L2
     v7 = PropGet v6 key="radius"
     Return v7
   b2():
@@ -55,7 +55,7 @@ function f1 name="tagMayBeStoredWithAnotherType" parameters=[{type=L2|L3}] resul
 # CHECK: v1: anything ~ int[1, 2] = PropGet v0 key="kind"
 # CHECK: b1(v4: 1):
 # CHECK-NEXT: v5: L2|L3 ~ L2 = NarrowByField v0, v4 key="kind"
-# CHECK-NEXT: v6: L2 = Check v5 castType=L2
+# CHECK-NEXT: v6: L2 = Check v5 expectedType=L2
 # CHECK-NEXT: = PropGet v6 key="radius"
 # CHECK-NEXT: Return v7
 }
@@ -68,7 +68,7 @@ function f2 name="memberThatNothingAllocates" parameters=[{type=L0|L1|L4}] resul
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
     v5 = NarrowByField v0, v4 key="kind"
-    v6 = Check v5 castType=L0
+    v6 = Check v5 expectedType=L0
     v7 = PropGet v6 key="radius"
     Return v7
   b2():

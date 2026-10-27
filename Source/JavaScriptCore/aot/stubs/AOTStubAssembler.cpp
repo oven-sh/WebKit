@@ -112,8 +112,13 @@ void StubAssembler::emitOperationCallHead()
         if (prelude.operation == entry && prelude.emit(*this) == PreludeExit::Returns)
             return;
     }
+    jumpToOperationCallOf(entry);
+}
+
+void StubAssembler::jumpToOperationCallOf(Entry entry)
+{
     recordCall(entry);
-    move(TrustedImm32(offset), *m_signature.immediate);
+    move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
     jumpToStub(key().withoutImmediate());
 }
 
@@ -614,17 +619,32 @@ void StubAssembler::jumpToExceptionHandler()
     jumpToStub(handleException(false));
 }
 
+CCallHelpers::Address StubAssembler::limitOfCallsByValue()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
+}
+
 void StubAssembler::checkStackBeforeEntering()
 {
-    Jump doesNotFit = branchPtr(Below, stackPointerRegister, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()));
+    pollIfBelow(Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()), pollBeforeEntering(PollBeforeEnteringForm::Plain));
+}
+
+void StubAssembler::checkStackBeforeEnteringCallee()
+{
+    pollIfBelow(limitOfCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
+}
+
+void StubAssembler::pollIfBelow(Address limit, StubKey poll)
+{
+    Jump doesNotFit = branchPtr(Below, stackPointerRegister, limit);
     Label afterCheck = label();
-    addOutOfLinePart([doesNotFit, afterCheck](StubAssembler& jit) {
+    addOutOfLinePart([doesNotFit, afterCheck, poll](StubAssembler& jit) {
         doesNotFit.link(&jit);
 #if CPU(ARM64)
         jit.move(linkRegister, ARM64Registers::x16);
 #endif
         // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
-        jit.emitStubCall(pollBeforeEntering());
+        jit.emitStubCall(poll);
 #if CPU(X86_64)
         jit.bindReturnLabel(StubFrameKind::AtStubEntry);
 #endif

@@ -11,7 +11,6 @@
 #include "AOTAddGenericVersion.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
-#include "AOTCFG.h"
 #include "AOTCheckTypesAtEntry.h"
 #include "AOTCreateEntrypointsInternal.h"
 #include "AOTDerivedFunctions.h"
@@ -23,6 +22,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
 #include "AOTProgramPasses.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
@@ -36,6 +36,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <wtf/BitVector.h>
 #include <wtf/text/MakeString.h>
 
@@ -63,9 +64,9 @@ static const DeclaredType* findTypeCheckedAtEntry(const TypeTable& types, const 
     if (!isPassedByCaller(function, index))
         return nullptr;
     const DeclaredType* declared = function.declaredEntryParameter(index);
-    if (!declared->type || declared->flags.containsAny({ PositionFlags::IsFromCompiler, PositionFlags::IsExpected }))
+    if (!declared->written() || declared->has(PositionFlags::IsFromCompiler) || declared->isExpected())
         return nullptr;
-    const Type& type = types.at(declared->type);
+    const Type& type = types.at(*declared->established());
     return type.isJavaScriptValue() && !type.isAnything() ? declared : nullptr;
 }
 
@@ -138,11 +139,11 @@ void appendChecksAtEntry(const Program& program, BuildContext& build, Function& 
     for (unsigned index : checkedParameters) {
         DeclaredType& declared = *function.declaredEntryParameter(index);
         Value convert = IRBuilder::make(Opcode::Convert, { function.at(entryBlock).parameters[index] });
-        convert.setDeclared(DeclaredType { .type = declared.type, .site = declared.site });
+        convert.setDeclared(DeclaredType(Proven::byConversion(declared.expected()), declared.site));
         convert.setIllTypedCause(IllTypedCause::UnseenCaller);
         convert.setOrigin({ declared.site ? program.at(declared.site).position : function.position, 0 });
-        declared.flags.add(PositionFlags::IsExpected);
-        declared.flags.remove(PositionFlags::IsInt32Promise);
+        declared.expect(declared.expected());
+        declared.remove(PositionFlags::IsInt32Promise);
 
         checks.append(ValueID(function.values.size()));
         function.add(WTF::move(convert));
@@ -238,11 +239,6 @@ struct AnsweredCall {
 
 } // anonymous namespace
 
-static constexpr OptionSet<FunctionCapabilities> capabilitiesSplitBodiesInherit {
-    FunctionCapabilities::HasOnlyDirectCallers,
-    FunctionCapabilities::IsNeverCalledByHost,
-    FunctionCapabilities::IsHiddenInStackTraces,
-};
 static constexpr OptionSet<FunctionCapabilities> capabilitiesBehindEntrance { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
 
 static bool canBeSplit(const Program& program, const BuildContext& build, FunctionID id)
@@ -292,7 +288,7 @@ static BitVector findValuesUsedAsOperands(const Function& function)
 
 static bool narrowsWithoutTest(Opcode opcode)
 {
-    return opcode == Opcode::AssumeType || opcode == Opcode::Upcast;
+    return opcode == Opcode::AssumeType || isCastThatProvesNothing(opcode);
 }
 
 static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, const Function& function)
@@ -303,6 +299,8 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         return checks;
     for (ValueID id : entry.values) {
         const Value& value = function.at(id);
+        if (value.opcode == Opcode::ValidateType)
+            continue;
         if (value.opcode != Opcode::Check && !narrowsWithoutTest(value.opcode))
             break;
         ValueID source = value.valueOperand();
@@ -315,12 +313,14 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         if (value.opcode != Opcode::Check || value.cause() == CheckCause::MayFail)
             continue;
         const Type& given = program.typeOf(function, value.valueOperand());
-        const Type& checked = program.at(value.castType());
+        const Type& checked = program.at(value.expectedType().predicted());
         if (given.isSubsetOf(checked, program))
             continue;
         if (!given.overlaps(checked, program))
             return { };
-        checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.castType(), value.site() });
+        if (!changesCodeWhereProven(checked))
+            continue;
+        checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.expectedType().predicted(), value.site() });
     }
     if (checks.isEmpty())
         return checks;
@@ -390,7 +390,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            if (narrowsWithoutTest(value.opcode) && find(id))
+            if ((narrowsWithoutTest(value.opcode) && find(id)) || value.opcode == Opcode::ValidateType)
                 continue;
             if (CheckedEntryValue* checked = value.opcode == Opcode::Check && value.cause() != CheckCause::MayFail ? find(value.valueOperand()) : nullptr) {
                 // Nobody wants what a check without a use lets through.
@@ -410,15 +410,15 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
     for (CheckedEntryValue& entryValue : entryValues) {
         if (entryValue.hasOtherUse || entryValue.checks.isEmpty())
             continue;
-        entryValue.type = function.at(entryValue.checks[0]).castType();
+        entryValue.type = function.at(entryValue.checks[0]).expectedType().predicted();
         bool isOneType = std::ranges::all_of(entryValue.checks, [&](ValueID check) {
-            return function.at(check).castType() == entryValue.type;
+            return function.at(check).expectedType().predicted() == entryValue.type;
         });
         if (!isOneType)
             continue;
         const Type& given = program.typeOf(function, entry.parameters[entryValue.entryParameter]);
         const Type& checked = program.at(entryValue.type);
-        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program))
+        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked))
             continue;
         if (entryValue.entryCheck && !checked.isSubsetOf(program.at(entryChecks[*entryValue.entryCheck].type), program))
             continue;
@@ -436,9 +436,9 @@ static void leaveOutOmittedNullish(const Program& program, const Function& funct
         if (!declared || function.at(check.check).valueOperand() != function.at(entryBlock).parameters[check.entryParameter])
             continue;
         uint16_t omitted = 0;
-        if (declared->flags.contains(PositionFlags::OmitsNull))
+        if (declared->has(PositionFlags::OmitsNull))
             omitted |= Primitive::Null;
-        if (declared->flags.contains(PositionFlags::OmitsUndefined))
+        if (declared->has(PositionFlags::OmitsUndefined))
             omitted |= Primitive::Undefined;
         if (!omitted || std::ranges::contains(checkedEntryValues, check.entryParameter, &CheckedEntryValue::entryParameter))
             continue;
@@ -485,7 +485,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             if (!call.callees())
                 return;
             uint32_t numberOfArguments = call.numberOfOperands() - OperandIndex::Call::arguments;
-            for (FunctionID callee : program.at(call.callees()).functions) {
+            for (FunctionID callee : program.at(call.callees()).seen().predicted().functions) {
                 if (!hasCheckedEntryValue.get(callee.index()))
                     continue;
                 unsigned first = program.at(callee).firstParameterIndex();
@@ -512,10 +512,10 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
             Value& parameterValue = body.edit(parameter);
             parameterValue.type = check.type;
             // An expected type is set where it says more than the type does.
-            TypeID expected = parameterValue.expected();
+            TypeID expected = parameterValue.expected().predicted();
             if (expected && (program.at(expected) == program.at(check.type) || !program.at(expected).isSubsetOf(program.at(check.type), program)))
                 parameterValue.setExpected({ });
-            *body.declaredEntryParameter(check.entryParameter) = DeclaredType { .type = check.type, .site = check.site };
+            *body.declaredEntryParameter(check.entryParameter) = DeclaredType(Proven::byPosition(check.type), check.site);
         }
 
         Value& proven = body.edit(check.check);
@@ -523,14 +523,39 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
         // The type of a check is what is left of the given type. A check that was taken in from the body has narrowed the one at the entrance.
         bool isAllOfTestedType = program.at(check.type).isSubsetOf(program.at(proven.type), program);
         TypeID provenType = isAllOfTestedType ? check.type : proven.type;
-        proven.become(operand == parameter && isAllOfTestedType ? Opcode::Upcast : Opcode::AssumeType);
-        proven.setValueOperand(operand);
-        proven.setCastType(provenType);
+        // The entrance has made the test.
+        if (operand == parameter && isAllOfTestedType) {
+            proven.become(Opcode::Upcast);
+            proven.setValueOperand(operand);
+            proven.setCastType(provenType);
+        } else
+            proven.becomeAssumeType(operand, Proven::byPosition(provenType));
         proven.type = provenType;
     }
-    body.results[0].flags.remove(PositionFlags::IsExpected);
+    settleProofsBehindAnsweredChecks(body);
+    body.results[0].establish(Proven::asCandidate(body.results[0].expected()));
     body.capabilities = initialCapabilitiesOf(body) | capabilitiesBehindEntrance;
     return WTF::move(body);
+}
+
+// A cast between a parameter and its check holds what is left of the type that the parameter has behind the tests.
+static void typeCastsAheadOfChecks(const Program& program, Function& body, TypeArena& types, std::span<const EntryCheck> checks)
+{
+    TypingContext typing { program, body, types };
+    for (const EntryCheck& check : checks) {
+        ValueID parameter = body.at(entryBlock).parameters[check.entryParameter];
+        Vector<ValueID, 4> casts;
+        for (ValueID cast = body.at(check.check).valueOperand(); cast != parameter; cast = body.at(cast).valueOperand())
+            casts.append(cast);
+        for (ValueID cast : casts | std::views::reverse) {
+            Value& value = body.edit(cast);
+            value.type = computeResultTypeID(typing, value);
+            // An expected type is set where it says more than the type does.
+            TypeID expected = value.expected().predicted();
+            if (expected && (types.at(expected) == types.at(value.type) || !types.at(expected).isSubsetOf(types.at(value.type), program)))
+                value.setExpected({ });
+        }
+    }
 }
 
 static Derivation derivationWithSameParameters(FunctionID source, const Function& function)
@@ -558,7 +583,7 @@ static Function createFallback(const Function& original, FunctionID typedBody)
     fallback.creator = CreatorRecord::Version { .provenVersion = typedBody };
     fallback.capabilities = initialCapabilitiesOf(fallback) | capabilitiesBehindEntrance;
     for (Block& block : fallback.editAllBlocks())
-        block.frequency = block.frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+        block.frequency = block.frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
     return fallback;
 }
 
@@ -611,7 +636,7 @@ static Function createChecks(const AnalysisContext& context, TypeArena& types, c
     tests.inlineFrames.clear();
     tests.role = FunctionRole::EntryChecks;
     tests.creator = CreatorRecord::EntryChecks { typedBody, fallback };
-    tests.capabilities = (initialCapabilitiesOf(tests) - capabilitiesSplitBodiesInherit) | (header.capabilities & capabilitiesSplitBodiesInherit);
+    tests.capabilities = capabilitiesInPlaceOf(tests, header.capabilities, FunctionCapabilities::IsHiddenInStackTraces);
     if (header.isUnsplitCoroutine())
         tests.flags.add(FunctionFlags::IsHiddenInStackTraces);
 
@@ -634,7 +659,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
     Vector<Split> splits = collectInParallel<Split>(loops, program.functions.size(), [&](unsigned index, Vector<Split>& found) {
         FunctionID id(index);
         // Tests, a typed body and a fallback are three functions for one. They pay where callers that have proven their arguments enter the typed body often.
-        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id))))
+        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id)).predicted()))
             return;
         Vector<EntryCheck, 4> checks = findEntryChecksThatMayFail(program, program.at(id));
         Vector<CheckedEntryValue, 2> checkedEntryValues;
@@ -688,11 +713,11 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
 
     std::atomic<unsigned> numberOfProvenResults { 0 };
     forEachIndexInParallel(loops, count, [&](unsigned index) {
-        if (!headers[index].result().flags.contains(PositionFlags::IsExpected))
+        if (!headers[index].result().isExpected())
             return;
         // What a coroutine returns is the value inside its promise or generator. A call of it gives the promise or the generator, of which the body proves nothing.
-        if (headers[index].isUnsplitCoroutine() || mayReturnTaintedValue(program, added[index], build))
-            editor.at(added[index]).results[0].flags.add(PositionFlags::IsExpected);
+        if (headers[index].isUnsplitCoroutine() || mayReturnTaintedValue(program, added[index], editor.at(added[index]), build))
+            editor.at(added[index]).results[0].expect(program.at(added[index]).results[0].expected());
         else
             numberOfProvenResults.fetch_add(1, std::memory_order_relaxed);
     });
@@ -713,7 +738,8 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!splits[index].checkedEntryValues.isEmpty()) {
             FunctionAnalyses analyses(context, body);
             typeValuesFromNever(TypePropagationInputs { program, id, body, analyses, arenas.types, build });
-        }
+        } else
+            typeCastsAheadOfChecks(program, body, arenas.types, splits[index].checks.span());
         // While the tests at its head were checks, the function waited for its generic version and kept what stands behind a value of type never. A body without a check waits for nothing.
         if (!waitsForGenericVersion(program, body)) {
             FunctionAnalyses analyses(context, body);
@@ -819,7 +845,7 @@ static Function createShorterEntrance(const AnalysisContext& context, TypeArena&
     for (uint32_t index = 0; index < entrance.tests.size(); ++index) {
         const EntryTest& test = entrance.tests[index];
         if (key.answered & 1u << index)
-            *tests.declaredEntryParameter(test.entryParameter) = DeclaredType { .type = test.type };
+            *tests.declaredEntryParameter(test.entryParameter) = DeclaredType(Proven::byPosition(test.type));
         else
             shorter.tests.append(test);
     }
@@ -850,13 +876,13 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<AnsweredCall> calls = collectInParallel<AnsweredCall>(loops, program.functions.size(), [&](unsigned index, Vector<AnsweredCall>& found) {
         FunctionID id(index);
         const Function& caller = program.functions[index];
-        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)))
+        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)).predicted())
             return;
         auto isEntrance = [&](NameKind kind, uint32_t callee) {
             return kind == NameKind::Function && entranceOf(FunctionID(callee));
         };
         forEachListedValueNaming(program, id, { Opcode::CallDirect }, isEntrance, [&](BlockID block, ValueID value, const Value& call) {
-            if (caller.at(block).frequency != BlockFrequency::Normal || isCold(heat.of(program, call.function())))
+            if (caller.at(block).frequency.predicted() != BlockFrequency::Normal || isCold(heat.of(program, call.function())).predicted())
                 return;
             // The typed body promises another result than its entrance, so a call that named it would have another type, and so would all that is computed from it.
             if (uint32_t answered = testsAnsweredBy(program, caller, call, *entranceOf(call.function())))
@@ -911,9 +937,8 @@ static bool runsAsCoroutine(const Function& target)
 
 bool hasAllocatingConstructEntrypoint(const Program& program, const Function& target)
 {
-    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line. The length of the source never changes.
-    AOT_THRESHOLD(uint32_t, mostCharactersOfShortConstructor, 1000);
-    if (target.text.end - target.text.start > mostCharactersOfShortConstructor)
+    // A second entrypoint keeps the body out of the first. A long constructor spends its time in the body, and gains little by an object that is made in line.
+    if (target.has(FunctionCapabilities::IsLongConstructor))
         return false;
     // The constructor functions of the runtime's own modules are constructed by name.
     if (target.role == FunctionRole::Library || target.enclosingRuntimeFunction || (target.module && program.at(target.module).kind == ModuleKind::RuntimeSource))
@@ -947,7 +972,7 @@ EntrypointVariants entrypointVariantsOf(const Program& program, const Function& 
 
 static Function createEntryWithoutBody(const Program& program, TypeArena& types, const Function& target, const GenericEntrypointRequest& request)
 {
-    const DeclaredType anything { .type = TypeTable::anything };
+    const DeclaredType anything(Proven::byPosition(TypeTable::anything));
     bool readsArgumentList = target.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest, FunctionFlags::HasArgumentCount });
     ArgumentPassing passing = readsArgumentList ? ArgumentPassing::Buffer : ArgumentPassing::Registers;
     uint32_t keyParameter = callEntrypointParameter;
@@ -959,7 +984,7 @@ static Function createEntryWithoutBody(const Program& program, TypeArena& types,
     entry.thisType = anything;
     // The run time enters the bodies of all modules with one closure, which it made for the first of them: Modules::callBody().
     bool isBodyOfModule = target.kind == FunctionKind::Module || target.kind == FunctionKind::CommonJsModule;
-    entry.captures.append(DeclaredType { .type = isBodyOfModule ? TypeTable::function : types.intern(Type::forFunction(request.target)) });
+    entry.captures.append(DeclaredType(Proven::byPosition(isBodyOfModule ? TypeTable::function : types.intern(Type::forFunction(request.target)))));
     entry.results.append(anything);
     switch (passing) {
     case ArgumentPassing::Registers:
@@ -1045,8 +1070,8 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
         read.setFirstArgument(firstArgument);
         return builder.append(WTF::move(read));
     };
-    ValueID closure = builder.addParameter(block, entry.captures[0].type);
-    ValueID thisValue = builder.addParameter(block, entry.thisType.type);
+    ValueID closure = builder.addParameter(block, context.program.provenTypeOf(entry.captures[0]));
+    ValueID thisValue = builder.addParameter(block, context.program.provenTypeOf(entry.thisType));
     ValueID newTarget = request.takesNewTarget ? addArgument() : ValueID();
     uint32_t firstSourceArgument = request.takesNewTarget;
     Vector<ValueID, 8> fixedArguments(target.numberOfPositionalParameters(), [&](size_t) { return addArgument(); });
@@ -1067,6 +1092,11 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
         emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
+        if (target.capabilities.contains(FunctionCapabilities::RecordsCallee) && !target.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed)) {
+            Value record = IRBuilder::make(Opcode::RecordCallee);
+            record.setClosureOperand(closure);
+            builder.append(WTF::move(record));
+        }
         Vector<ValueID, 8> captures = appendCaptures(builder, request.target, closure);
         ValueID call = appendDirectCall(builder, {
             .callee = request.target,

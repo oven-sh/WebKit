@@ -8,10 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowParts.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPropertyAccessMembers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -24,14 +27,18 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    return level == TypeLevel::Expected ? declared.type : program.provenTypeOf(declared);
+    return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
+}
+
+static TypeID typeIDOfField(const TypingContext& context, const Field& field)
+{
+    TypeID narrowed = context.level == TypeLevel::Proven ? narrowedSlotTypeOf(field) : TypeID();
+    return narrowed ? narrowed : context.typeIDOf(field.declared);
 }
 
 static const Type& typeOfField(const TypingContext& context, const Field& field)
 {
-    if (context.level == TypeLevel::Proven && field.slotType && !field.declared.flags.contains(PositionFlags::IsExpected))
-        return context.types.at(field.slotType);
-    return context.typeOf(field.declared);
+    return context.types.at(typeIDOfField(context, field));
 }
 
 static bool hasProvenType(const FieldFlow& flow)
@@ -45,7 +52,15 @@ FieldTypeState fieldTypeStateOf(const Program& program, FieldReference reference
     return hasProvenType(flowOf(program, reference)) ? FieldTypeState::Proven : FieldTypeState::Unknown;
 }
 
-static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldReference reference)
+static FunctionID findMethodBehindField(const Program& program, LayoutID receiver, PropertyKeyID key)
+{
+    if (program.at(receiver).kind != LayoutKind::Instance)
+        return { };
+    MemberAnswer above = findMemberOnPrototypes({ program }, { MemberStart::Instance, receiver, key, Access::Read, false });
+    return above.kind == MemberKind::Method ? above.method : FunctionID();
+}
+
+static std::optional<Type> tryTypeOfField(const TypingContext& context, LayoutID receiver, FieldReference reference)
 {
     const Field& field = fieldAt(context.program, reference);
     if (field.form.contains(FieldForm::IsAccessor)) {
@@ -54,8 +69,14 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldRef
         return context.typeOf(field.declared);
     }
     const Type& declared = typeOfField(context, field);
-    if (context.level == TypeLevel::Expected)
-        return field.flags.contains(FieldFlags::IsRequired) ? declared : declared.withPrimitives(Primitive::Undefined);
+    if (context.level == TypeLevel::Expected) {
+        if (field.flags.contains(FieldFlags::IsRequired))
+            return declared;
+        // An object that has no property of its own under the name answers with the method of its class.
+        if (FunctionID method = field.flags.contains(FieldFlags::IsFilledByCreator) ? FunctionID() : findMethodBehindField(context.program, receiver, field.key))
+            return declared.unionWith(Type::forFunction(method), context.types);
+        return declared.withPrimitives(Primitive::Undefined);
+    }
 
     const FieldFlow& flow = flowOf(context.program, reference);
     if (!hasProvenType(flow))
@@ -82,7 +103,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
             continue;
         }
         isMissingInEveryReceiver = false;
-        std::optional<Type> part = tryTypeOfField(context, *field);
+        std::optional<Type> part = tryTypeOfField(context, receiver, *field);
         if (!part)
             return std::nullopt;
         result = result.unionWith(*part, context.types);
@@ -114,6 +135,13 @@ std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::spa
     return result;
 }
 
+// The body that is typed with its checks taken out has opened the sets of the accesses behind them. An access by slot has no form for another layout, so it is typed there as where its check has passed.
+static std::span<const LayoutID> layoutsReadBySlot(const TypingContext& context, LayoutSetID set)
+{
+    const LayoutSet& layouts = context.types.at(set);
+    return layouts.listsEveryLayout() ? layouts.completeMembers().value() : layouts.seen().predicted();
+}
+
 std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     if (context.level == TypeLevel::Proven)
@@ -130,7 +158,7 @@ std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, std::spa
 
 std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, LayoutSetID receivers, PropertyKeyID key)
 {
-    return tryTypeOfSetterInSlot(context, context.types.at(receivers).members.span(), key);
+    return tryTypeOfSetterInSlot(context, layoutsReadBySlot(context, receivers), key);
 }
 
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
@@ -205,9 +233,8 @@ static std::optional<Type> computeFieldType(const TypingContext& context, std::s
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<Type> sharedFieldTypeOf(const TypingContext& context, LayoutSetID set, PropertyKeyID key, FieldTypeRule rule)
+static std::optional<Type> sharedFieldTypeOf(const TypingContext& context, LayoutSetID set, std::span<const LayoutID> receivers, PropertyKeyID key, FieldTypeRule rule)
 {
-    std::span<const LayoutID> receivers = context.types.at(set).members.span();
     SharedFieldTypes* shared = context.program.sharedFieldTypes();
     if (!shared || TypeTable::isProvisional(key))
         return computeFieldType(context, receivers, key, rule);
@@ -226,11 +253,11 @@ static std::optional<Type> sharedFieldTypeOf(const TypingContext& context, Layou
 
 static std::optional<Type> fieldTypeOf(const TypingContext& context, LayoutSetID set, PropertyKeyID key, FieldTypeRule rule)
 {
-    std::span<const LayoutID> receivers = context.types.at(set).members.span();
+    std::span<const LayoutID> receivers = layoutsReadBySlot(context, set);
     if (receivers.size() < FieldReadTypes::fewestReceivers)
         return computeFieldType(context, receivers, key, rule);
     if (!context.memo)
-        return sharedFieldTypeOf(context, set, key, rule);
+        return sharedFieldTypeOf(context, set, receivers, key, rule);
 
     FieldReadTypes& fieldReads = context.memo->fieldReads;
     if (const FieldReadTypes::Entry* known = fieldReads.find(set, key, context.level, rule)) {
@@ -239,7 +266,7 @@ static std::optional<Type> fieldTypeOf(const TypingContext& context, LayoutSetID
             return std::nullopt;
         return context.types.at(known->type);
     }
-    std::optional<Type> type = sharedFieldTypeOf(context, set, key, rule);
+    std::optional<Type> type = sharedFieldTypeOf(context, set, receivers, key, rule);
     fieldReads.add({ set, key, context.level, rule, type ? context.types.intern(*type) : TypeID() });
     return type;
 }
@@ -261,27 +288,22 @@ std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context,
     return fieldTypeOf(context, receivers, key, FieldTypeRule::DeferringSlotRead);
 }
 
-static bool hasOnlyClassObjects(const Type& type)
-{
-    return !type.anyObject && !type.anyFunction && !type.layouts && type.functions.isEmpty() && type.builtins.isEmpty();
-}
-
 std::optional<Type> tryTypeOfContentsRead(const TypingContext& context, const Type& container, ContentsSlot slot)
 {
-    if (!container.isJavaScriptValue() || container.primitives & ~Primitive::UndefinedOrNull || !hasOnlyClassObjects(container))
+    if (!container.isJavaScriptValue() || container.primitives & ~Primitive::UndefinedOrNull || !container.hasOnlyClassObjects())
         return std::nullopt;
 
     const BuiltinTable& builtins = context.program.builtins();
     Type result = Type::never();
     for (const ClassPart& part : container.classes) {
-        BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(part.builtinClass);
-        if (slot == ContentsSlot::Element && typedArrayClass) {
-            result = result.unionWith(elementTypeOf(builtins.at(typedArrayClass).typedArrayType), context.types);
+        TypedArrayType typedArrayType = builtins.typedArrayTypeOf(part.builtinClass);
+        if (slot == ContentsSlot::Element && typedArrayType != NotTypedArray) {
+            result = result.unionWith(elementTypeOf(typedArrayType), context.types);
             continue;
         }
         if (context.level == TypeLevel::Proven && !part.contentsAreProven)
             return std::nullopt;
-        result = result.unionWith(context.types.at(part.contentsAt(builtins, slot)), context.types);
+        result = result.unionWith(context.types.at(part.writtenContentsAt(builtins, slot)), context.types);
     }
     return result;
 }
@@ -338,7 +360,7 @@ std::optional<Type> tryTypeOfAwaited(const TypingContext& context, const Type& a
         return awaited;
 
     const ClassPart* promise = awaited.findClassPart(BuiltinClasses::Promise);
-    bool hasOnlyPromiseObjects = promise && awaited.classes.size() == 1 && hasOnlyClassObjects(awaited);
+    bool hasOnlyPromiseObjects = promise && awaited.classes.size() == 1 && awaited.hasOnlyClassObjects();
     switch (context.level) {
     case TypeLevel::Proven:
         if (!hasOnlyPromiseObjects || !promise->contentsAreProven)
@@ -352,7 +374,7 @@ std::optional<Type> tryTypeOfAwaited(const TypingContext& context, const Type& a
         break;
     }
 
-    const Type& fulfillment = context.types.at(promise->contentsAt(context.program.builtins(), ContentsSlot::Value));
+    const Type& fulfillment = context.types.at(promise->writtenContentsAt(context.program.builtins(), ContentsSlot::Value));
     return awaited.without(Type::builtinClass(BuiltinClasses::Promise), context.types).unionWith(fulfillment, context.types);
 }
 
@@ -387,9 +409,7 @@ static TypeID requiredTypeOfField(const TypingContext& positions, LayoutID layou
     const Vector<Field>& fields = positions.program.at(layout).fields;
     if (field >= fields.size())
         return { };
-    if (positions.level == TypeLevel::Proven && fields[field].slotType && !fields[field].declared.flags.contains(PositionFlags::IsExpected))
-        return fields[field].slotType;
-    return positions.typeIDOf(fields[field].declared);
+    return typeIDOfField(positions, fields[field]);
 }
 
 static TypeID requiredTypeOfPrivateDefinition(const TypingContext& positions, LayoutID layout, uint32_t field)
@@ -406,7 +426,7 @@ static TypeID requiredTypeOfInitializedField(const TypingContext& positions, con
     if (valueIndex >= fields.size())
         return { };
     TypeID declared = requiredTypeOfField(positions, allocation.layout(), fields[valueIndex]);
-    if (!declared || !isObjectLayout(positions.program.at(allocation.layout()).kind) || !slotHoldsUndefinedAndNull(positions.program, { allocation.layout(), fields[valueIndex] }))
+    if (!declared || !slotHoldsUndefinedAndNull(positions.program, { allocation.layout(), fields[valueIndex] }))
         return declared;
     return positions.types.withPrimitives(declared, Primitive::UndefinedOrNull);
 }
@@ -472,6 +492,15 @@ static TypeID requiredTypeOfIteratorResultField(const TypingContext& positions, 
     return field ? positions.typeIDOf(layout.fields[*field].declared) : TypeID();
 }
 
+// A literal that names storage for numbers alone is born with it, whatever is known of its elements where code is generated, and nobody who reads the name tests the storage.
+// One that names none is born with such storage where its elements are known to fit. Storage for every value takes an element whatever is known of it.
+static TypeID requiredTypeOfElement(const TypingContext& positions, const Value& literal)
+{
+    ArrayStorage named = literal.arrayStorage();
+    bool mayHoldOnlyNumbers = holdsOnlyNumbers(named == ArrayStorage::Other ? arrayStorageAtAllocation(positions.types.at(literal.contents())) : named);
+    return literal.contentsAreProven() && mayHoldOnlyNumbers ? literal.contents() : TypeID();
+}
+
 const OpcodeSet& opcodesWithRequiredOperandTypes()
 {
     static const OpcodeSet opcodes = [] {
@@ -494,7 +523,7 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, ui
     TypingContext positions = context.atLevel(TypeLevel::Proven);
     if (user.opcode == Opcode::CreateIteratorResult)
         return requiredTypeOfIteratorResultField(positions, operandIndex);
-    if (user.operandKind(operandIndex) != OperandKind::Declared)
+    if (user.operandKind(operandIndex) != OperandKind::Declared || isHeldOperand(user, operandIndex))
         return { };
 
     auto variadicIndex = [&] {
@@ -512,6 +541,8 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, ui
         return requiredTypeOfCapture(positions, user.function(), variadicIndex());
     case Opcode::NewObject:
         return requiredTypeOfInitializedField(positions, user, variadicIndex());
+    case Opcode::NewArray:
+        return requiredTypeOfElement(positions, user);
     case Opcode::CallDirect:
     case Opcode::CallTable:
     case Opcode::AwaitCallBySavingFrame:
@@ -553,6 +584,8 @@ RequiredTypeHolder holderOfRequiredTypes(const Program& program, const Value& us
         return RequiredTypeHolder::PositionThatFlowFollows;
     case Opcode::NewObject:
         return program.at(user.layout()).isEnvironment() ? RequiredTypeHolder::PositionThatFlowFollows : RequiredTypeHolder::InitializedSlot;
+    case Opcode::NewArray:
+        return RequiredTypeHolder::ContentsOfLiteral;
     default:
         return RequiredTypeHolder::StoredSlot;
     }

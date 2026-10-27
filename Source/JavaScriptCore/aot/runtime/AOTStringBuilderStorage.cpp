@@ -17,6 +17,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -25,8 +26,11 @@
 #include <array>
 #include <charconv>
 #include <optional>
+#include <wtf/HashSet.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringBuilderJSON.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -37,10 +41,132 @@ static_assert(defaultLimitValue(LimitID::MaxPooledStringBuilders, hostArchitectu
 
 const ClassInfo StringBuilderStorage::s_info = { "StringBuilderStorage"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(StringBuilderStorage) };
 
-static NEVER_INLINE void throwOutOfMemory(JSGlobalObject* globalObject)
+bool StringBuilderStorage::hasRepeatedHolder(const JSONHolderRecord* innermost)
+{
+    AOT_THRESHOLD(size_t, maxNumberComparedInPairs, 16);
+    size_t numberOfHolders = 0;
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer)
+        ++numberOfHolders;
+    if (numberOfHolders <= maxNumberComparedInPairs) {
+        for (const JSONHolderRecord* record = innermost; record; record = record->outer) {
+            for (const JSONHolderRecord* other = record->outer; other; other = other->outer) {
+                if (other->holder == record->holder)
+                    return true;
+            }
+        }
+        return false;
+    }
+    UncheckedKeyHashSet<EncodedJSValue> seen;
+    seen.reserveInitialCapacity(numberOfHolders);
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer) {
+        if (!seen.add(record->holder).isNewEntry)
+            return true;
+    }
+    return false;
+}
+
+// The holders of a value that holds itself come round again and again, so from some length on the list holds the one in its middle twice.
+bool StringBuilderStorage::holderInTheMiddleRepeats(const JSONHolderRecord* innermost)
+{
+    size_t numberOfHolders = 0;
+    for (const JSONHolderRecord* record = innermost; record; record = record->outer)
+        ++numberOfHolders;
+    const JSONHolderRecord* middle = innermost;
+    for (size_t index = 0; index < numberOfHolders / 2; ++index)
+        middle = middle->outer;
+    for (const JSONHolderRecord* record = innermost; record != middle; record = record->outer) {
+        if (record->holder == middle->holder)
+            return true;
+    }
+    return false;
+}
+
+bool WatchedJSONLevels::isWatchingAfterGrowthTo(size_t numberOfCharacters)
+{
+    AOT_THRESHOLD(size_t, charactersPerWatchedLevel, 64 * KB);
+    uint32_t numberOfLevels = static_cast<uint32_t>(numberOfCharacters / charactersPerWatchedLevel);
+    if (numberOfLevels > m_numberOfLevelsLeft) {
+        if (!m_numberOfLevelsLeft)
+            forgetLevels();
+        m_numberOfLevelsLeft = numberOfLevels;
+    }
+    return m_numberOfLevelsLeft;
+}
+
+void WatchedJSONLevels::forgetLevels()
+{
+    if (!m_levels)
+        return;
+    m_levels->path.shrink(0);
+    m_levels->holders.clear();
+}
+
+bool WatchedJSONLevels::enter(EncodedJSValue holder, void* frame)
+{
+    ASSERT(isWatching());
+    if (!m_levels)
+        m_levels = makeUnique<Levels>();
+    while (!m_levels->path.isEmpty() && std::bit_cast<uintptr_t>(m_levels->path.last().frame) <= std::bit_cast<uintptr_t>(frame))
+        m_levels->holders.remove(m_levels->path.takeLast().holder);
+    if (!m_levels->holders.add(holder).isNewEntry) {
+        stop();
+        return false;
+    }
+    m_levels->path.append(Level { frame, holder });
+    --m_numberOfLevelsLeft;
+    return true;
+}
+
+// The word that compiled code reads. The next change of the limit of the stack overwrites it.
+void StringBuilderStorage::setLevelLimit(void* limit)
+{
+    *std::bit_cast<void**>(std::bit_cast<uintptr_t>(&m_levelLimit) + StackManager::Mirror::offsetOfSoftStackLimit()) = limit;
+}
+
+void StringBuilderStorage::watchLevelsAfterGrowth(size_t numberOfCharacters)
+{
+    bool wasWatching = m_watchedLevels.isWatching();
+    if (!m_watchedLevels.isWatchingAfterGrowthTo(numberOfCharacters))
+        return;
+    if (!wasWatching)
+        m_lengthWhenWatchBegan = length();
+    setLevelLimit(std::bit_cast<void*>(std::numeric_limits<uintptr_t>::max()));
+}
+
+void StringBuilderStorage::stopWatchingLevels()
+{
+    m_watchedLevels.stop();
+    setLevelLimit(vm().softStackLimit());
+}
+
+bool StringBuilderStorage::enterWatchedLevel(EncodedJSValue holder, void* frame)
+{
+    if (std::bit_cast<uintptr_t>(frame) - stackReservedForJSONParsers < std::bit_cast<uintptr_t>(vm().softStackLimit()))
+        return false;
+    // Without a watch of its own: another builder has grown.
+    bool goesOn = true;
+    if (m_watchedLevels.isWatching()) {
+        // A builder that ends with a short text goes back to the pool as it is.
+        if (length() < m_lengthWhenWatchBegan) {
+            m_watchedLevels.forgetLevels();
+            m_lengthWhenWatchBegan = 0;
+        }
+        goesOn = m_watchedLevels.enter(holder, frame);
+    }
+    if (!m_watchedLevels.isWatching())
+        stopWatchingLevels();
+    return goesOn;
+}
+
+NEVER_INLINE void StringBuilderStorage::throwOutOfMemory(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Compiled code that writes a value as JSON does not look for a cycle, and the text of a value that holds itself has no end.
+    if (hasRepeatedHolder(m_jsonHolders)) {
+        throwTypeError(globalObject, scope, "JSON.stringify cannot serialize cyclic structures."_s);
+        return;
+    }
     throwOutOfMemoryError(globalObject, scope);
 }
 
@@ -54,15 +180,18 @@ StringBuilderStorage::Limits::Limits(VM& vm)
 {
 }
 
-StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure)
+StringBuilderStorage::StringBuilderStorage(VM& vm, Structure* structure, StackManager::Mirror& levelLimit, StringBuilderWords& words)
     : Base(vm, structure)
+    , m_levelLimit(levelLimit)
+    , m_words(words)
     , m_limits(vm)
 {
 }
 
-StringBuilderStorage* StringBuilderStorage::create(VM& vm)
+StringBuilderStorage* StringBuilderStorage::create(Instance& instance)
 {
-    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get());
+    VM& vm = *instance.vm;
+    auto* storage = new (NotNull, allocateCell<StringBuilderStorage>(vm)) StringBuilderStorage(vm, vm.aotState().stringBuilderStorageStructure.get(), instance.jsonLevels.limit.get(), instance.stringBuilder);
     storage->finishCreation(vm);
     storage->tryEnsureRoom(1);
     return storage;
@@ -107,7 +236,7 @@ StringBuilderStorage* StringBuilderStorage::acquire(Instance& instance)
         instance.state->caches->addClearedEachCollection("string builder pool"_s, asMutableByteSpan(words.freeStorage));
         words.isPoolRegistered = true;
     }
-    return create(*instance.vm);
+    return create(instance);
 }
 
 void StringBuilderStorage::release(Instance& instance)
@@ -123,7 +252,8 @@ void StringBuilderStorage::returnToPool(Instance& instance)
     StringBuilderWords& words = instance.stringBuilder;
     StringBuilderStorage* head = words.freeStorage;
     ASSERT(head != this);
-    unsigned depth = head ? head->m_poolDepth + 1 : 1;
+    // Compiled code lays a builder into the empty pool by one store, which writes no depth: the builder that has none below it is the first, whatever it says.
+    unsigned depth = !head ? 1 : head->m_nextFree ? head->m_poolDepth + 1 : 2;
     if (depth > m_limits.maxPooledBuilders) [[unlikely]] {
         countLimitHit(vm, LimitID::MaxPooledStringBuilders);
         dropBuffer();
@@ -140,14 +270,19 @@ void StringBuilderStorage::reset()
         Locker locker { cellLock() };
         m_segments.shrink(0);
     }
+    size_t longestTextInBuffer = std::max(m_position, std::exchange(m_positionWhenSegmentsWereJoined, 0));
     m_position = 0;
     m_lengthOutsideBuffer = 0;
     m_lengthOfLastString = 0;
+    m_jsonHolders = nullptr;
+    m_watchedLevels.stop();
     m_lastString.clear();
-    bool isTooLargeToRetain = capacity() > m_limits.maxRetainedCapacity;
-    if (isTooLargeToRetain)
+    if (capacity() > m_limits.maxRetainedCapacity) {
         countLimitHit(vm(), LimitID::MaxRetainedStringBuilderCapacity);
-    if (isTooLargeToRetain || (m_buffer && !m_buffer->hasOneRef())) {
+        dropLargeBuffer(longestTextInBuffer);
+        return;
+    }
+    if (m_buffer && !m_buffer->hasOneRef()) {
         dropBuffer();
         return;
     }
@@ -181,8 +316,16 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
         updateLimit();
         return true;
     }
+    if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders))
+        return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
-    return tryReplaceBuffer(std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength)));
+    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength));
+    size_t expectedCapacity = std::exchange(m_capacityOfNextBuffer, 0);
+    if (needed > m_limits.minCapacity)
+        expectedCapacity = std::max<size_t>(expectedCapacity, std::exchange(m_words.capacityOfLastLargeBuffer, 0));
+    if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
+        return true;
+    return tryReplaceBuffer(newCapacity);
 }
 
 NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
@@ -192,6 +335,8 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     if (!buffer)
         return false;
     StringImpl::copyCharacters(characters, std::span<const Latin1Character> { m_characters, m_position });
+    if (m_buffer)
+        count(vm(), RuntimeCounterID::StringBuilderGrowths);
     {
         Locker locker { cellLock() };
         m_buffer = WTF::move(buffer);
@@ -199,6 +344,8 @@ NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
     m_characters = characters.data();
     m_sharedLength = 0;
     updateLimit();
+    if (length())
+        watchLevelsAfterGrowth(newCapacity);
     vm().heap.reportExtraMemoryAllocated(this, newCapacity);
     return true;
 }
@@ -212,6 +359,17 @@ void StringBuilderStorage::dropBuffer()
     m_characters = nullptr;
     m_sharedLength = 0;
     updateLimit();
+}
+
+// A builder is emptied where compiled code counts on no collection, so the buffer that fits is made by the next write.
+void StringBuilderStorage::dropLargeBuffer(size_t longestTextInBuffer)
+{
+    size_t fittingCapacity = longestTextInBuffer > capacity() / 2 ? capacity() : std::max<size_t>(roundUpToPowerOfTwo(longestTextInBuffer), m_limits.minCapacity);
+    dropBuffer();
+    if (fittingCapacity > m_limits.maxRetainedCapacity)
+        m_words.capacityOfLastLargeBuffer = static_cast<uint32_t>(fittingCapacity);
+    else
+        m_capacityOfNextBuffer = static_cast<uint32_t>(fittingCapacity);
 }
 
 bool StringBuilderStorage::ensureRoom(JSGlobalObject* globalObject, size_t size)
@@ -237,13 +395,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
 {
     if (characters.empty())
         return AppendResult::Appended;
-    if (WTF::charactersAreAllLatin1(characters)) {
-        if (!ensureRoom(globalObject, characters.size()))
-            return AppendResult::Failed;
-        StringImpl::copyCharacters(std::span { m_characters + m_position, characters.size() }, characters);
-        m_position += static_cast<uint32_t>(characters.size());
-        return AppendResult::Appended;
-    }
     std::span<char16_t> copy;
     RefPtr<StringImpl> impl = canGrowBy(characters.size()) ? StringImpl::tryCreateUninitialized(characters.size(), copy) : nullptr;
     if (!impl) {
@@ -254,17 +405,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     return addSegment(globalObject, jsString(globalObject->vm(), String { impl.releaseNonNull() }));
 }
 
-// The units of a 16-bit string that lie in one piece of memory: of a flat string, and of a part of one.
-static std::optional<std::span<const char16_t>> flatUnitsOf(JSString* string)
-{
-    if (const StringImpl* impl = string->tryGetValueImpl())
-        return impl->span16();
-    if (!string->isSubstring())
-        return std::nullopt;
-    auto* rope = uncheckedDowncast<JSRopeString>(string);
-    return rope->substringBase()->tryGetValueImpl()->span16().subspan(rope->substringOffset(), rope->length());
-}
-
 auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string) -> AppendResult
 {
     VM& vm = globalObject->vm();
@@ -272,11 +412,9 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
     if (!length)
         return AppendResult::Appended;
     bool wasEmpty = !this->length();
-    bool isAppendedByReference = length >= m_limits.minLengthAppendedByReference || !string->is8Bit();
-    if (isAppendedByReference && length < m_limits.minLengthAppendedByReference) {
-        if (std::optional<std::span<const char16_t>> units = flatUnitsOf(string); units && WTF::charactersAreAllLatin1(*units))
-            return append(globalObject, *units);
-    }
+    // What a builder begins with has been built before. Copying it would cost a loop that begins a builder with its own last result the whole text at every turn.
+    uint32_t minLengthAppendedByReference = wasEmpty ? std::min(m_limits.minLengthAdoptedByFinish, m_limits.minLengthAppendedByReference) : m_limits.minLengthAppendedByReference;
+    bool isAppendedByReference = length >= minLengthAppendedByReference || !string->is8Bit();
     AppendResult result = isAppendedByReference ? addSegment(globalObject, string) : appendCharactersOf(globalObject, string);
     if (wasEmpty && result == AppendResult::Appended) {
         m_lastString.set(vm, this, string);
@@ -310,8 +448,13 @@ auto StringBuilderStorage::addSegment(JSGlobalObject* globalObject, JSString* st
     }
     if (m_segments.size() >= m_limits.maxSegments && !m_segments.isEmpty()) {
         countLimitHit(vm, LimitID::MaxStringBuilderSegments);
+        if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders)) {
+            throwOutOfMemory(globalObject);
+            return AppendResult::Failed;
+        }
         if (!collapseSegments(globalObject))
             return AppendResult::Failed;
+        watchLevelsAfterGrowth(this->length());
     }
     {
         Locker locker { cellLock() };
@@ -415,7 +558,7 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
     size_t position = cursor - storage->m_characters;
     ASSERT(position <= storage->capacity());
     if (position > String::MaxLength - storage->m_lengthOutsideBuffer) [[unlikely]] {
-        throwOutOfMemory(globalObject);
+        storage->throwOutOfMemory(globalObject);
         return nullptr;
     }
     storage->m_position = static_cast<uint32_t>(position);
@@ -425,7 +568,7 @@ StringBuilderStorage* StackStringBuilder::moveToStorage(JSGlobalObject* globalOb
 Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObject)
 {
     if (!storage->tryEnsureRoom(0, maxBytesWrittenPastLimit)) [[unlikely]] {
-        throwOutOfMemory(globalObject);
+        storage->throwOutOfMemory(globalObject);
         return nullptr;
     }
     ASSERT(!storage->m_sharedLength && storage->capacity() >= storage->m_position + maxBytesWrittenPastLimit);
@@ -459,11 +602,11 @@ RefPtr<StringImpl> StringBuilderStorage::tryShareOrGiveAwayBuffer(bool mayGiveBu
         m_sharedLength = std::max(m_sharedLength, m_position);
         return StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position);
     }
-    if (capacity() <= m_limits.maxRetainedCapacity)
+    if (capacity() <= m_limits.maxRetainedCapacity || m_position <= capacity() / 2)
         return nullptr;
     countLimitHit(vm(), LimitID::MaxRetainedStringBuilderCapacity);
     RefPtr<StringImpl> impl = m_position == capacity() ? m_buffer : RefPtr<StringImpl> { StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position) };
-    dropBuffer();
+    dropLargeBuffer(m_position);
     return impl;
 }
 
@@ -604,31 +747,39 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t minFiberLength = m_limits.minLengthAppendedByReference;
+    uint32_t minFiberLength = std::min(m_limits.minLengthAdoptedByFinish, m_limits.minLengthAppendedByReference);
 
     Vector<Piece, 16> pieces;
     forEachPiece([&](const Piece& piece) {
         pieces.append(piece);
     });
 
+    auto is8Bit = [](const Piece& piece) {
+        return !piece.string || piece.string->is8Bit();
+    };
+    // A 16-bit rope may have 8-bit parts, and a piece of the text that lies in an 8-bit part is an 8-bit string.
+    auto isFiber = [&](const Piece& piece) {
+        return piece.string && (piece.length >= minFiberLength || (!piece.string->is8Bit() && piece.string->isRope() && !piece.string->isSubstring()));
+    };
     JSRopeString::RopeBuilder<RecordOverflow> fibers(vm);
     size_t runStart = 0;
     for (size_t index = 0; index <= pieces.size(); ++index) {
-        bool hasPiece = index < pieces.size();
-        if (hasPiece && (!pieces[index].string || pieces[index].length < minFiberLength))
+        bool hasFiber = index < pieces.size() && isFiber(pieces[index]);
+        if (index < pieces.size() && !hasFiber && (index == runStart || is8Bit(pieces[index]) == is8Bit(pieces[runStart])))
             continue;
         if (index > runStart) {
             JSString* run = createFlatRun(globalObject, pieces.span().subspan(runStart, index - runStart));
             RETURN_IF_EXCEPTION(scope, nullptr);
             fibers.append(run);
         }
-        if (hasPiece) {
+        runStart = index;
+        if (hasFiber) {
             const Piece& piece = pieces[index];
             JSString* fiber = piece.length == piece.string->length() ? piece.string : jsSubstring(globalObject, piece.string, 0, piece.length);
             RETURN_IF_EXCEPTION(scope, nullptr);
             fibers.append(fiber);
+            runStart = index + 1;
         }
-        runStart = index + 1;
     }
     if (fibers.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -651,6 +802,7 @@ bool StringBuilderStorage::collapseSegments(JSGlobalObject* globalObject)
         m_segments.append(Segment { 0, length, WriteBarrier<JSString>(vm, this, all) });
     }
     m_lengthOutsideBuffer = length;
+    m_positionWhenSegmentsWereJoined = std::max(m_positionWhenSegmentsWereJoined, m_position);
     m_position = 0;
     m_lastString.set(vm, this, all);
     m_lengthOfLastString = length;
@@ -850,6 +1002,23 @@ JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instan
             return key;
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Beside a 16-bit string each part stays a part of a rope: a piece of the text that lies in an 8-bit part is an 8-bit string.
+    bool hasWidePart = std::ranges::any_of(primitives, [](EncodedJSValue primitive) {
+        JSValue value = JSValue::decode(primitive);
+        return value.isString() && !asString(value)->is8Bit();
+    });
+    if (hasWidePart) [[unlikely]] {
+        JSRopeString::RopeBuilder<RecordOverflow> parts(vm);
+        for (EncodedJSValue primitive : primitives) {
+            JSString* part = JSValue::decode(primitive).toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!parts.append(part)) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return nullptr;
+            }
+        }
+        return parts.release();
+    }
     StringBuilderStorage* storage = acquire(instance);
     AppendResult result = storage->append(globalObject, primitives);
     EXCEPTION_ASSERT(!!scope.exception() == (result == AppendResult::Failed));
@@ -1053,6 +1222,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendString, void, (Instance*
     [[clang::musttail]] return appendAnyString(instance, builder, string);
 }
 
+struct NarrowPart {
+    std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { characters }.first(length); }
+
+    std::array<Latin1Character, 2> characters;
+    size_t length;
+};
+
+// A part of a 16-bit string is an 8-bit string if it is one Latin-1 unit or two ASCII units.
+static ALWAYS_INLINE std::optional<NarrowPart> narrowPartOf(std::span<const char16_t> units)
+{
+    if (units.size() == 1 && units[0] <= maxSingleCharacterString)
+        return NarrowPart { { static_cast<Latin1Character>(units[0]) }, 1 };
+    if (units.size() == 2 && isASCII(units[0] | units[1]))
+        return NarrowPart { { static_cast<Latin1Character>(units[0]), static_cast<Latin1Character>(units[1]) }, 2 };
+    return std::nullopt;
+}
+
 static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage& storage, JSString* base, int32_t start, int32_t end, Entry entry)
 {
     VM& vm = globalObject->vm();
@@ -1062,7 +1248,9 @@ static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage
     unsigned length = end - start;
     if (!length)
         return;
-    if (length < storage.minLengthAppendedByReference()) {
+    // A piece of a 16-bit rope may lie in an 8-bit part of it.
+    bool mayHaveNarrowParts = !base->is8Bit() && base->isRope() && !base->isSubstring();
+    if (length < storage.minLengthAppendedByReference() && !mayHaveNarrowParts) {
         auto view = base->view(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (view->is8Bit()) {
@@ -1070,11 +1258,9 @@ static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage
             storage.append(globalObject, view->span8().subspan(start, length));
             return;
         }
-        // One wide character anywhere makes a whole source text wide. Most pieces of it are plain.
-        std::span<const char16_t> units = view->span16().subspan(start, length);
-        if (WTF::charactersAreAllLatin1(units)) {
+        if (std::optional<NarrowPart> part = narrowPartOf(view->span16().subspan(start, length))) {
             scope.release();
-            storage.append(globalObject, units);
+            storage.append(globalObject, part->span());
             return;
         }
     }
@@ -1092,7 +1278,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendStringRange, void, (Inst
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty))
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty, EncodedJSValue encodedHolder))
 {
     constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSON;
     AOT_OPERATION_BEGIN(instance, entry);
@@ -1101,10 +1287,60 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance*
     if (!property.isNumber() && !property.isString()) [[unlikely]]
         crashOnWrongOperand(entry);
     uint32_t checkpoint = storage->length();
-    bool isAppended = appendJSONTextOfProperty(globalObject, *storage, JSValue::decode(value), property);
+    JSValue holder = JSValue::decode(encodedHolder);
+    JSONHolderRecord innermost { const_cast<JSONHolderRecord*>(storage->jsonHolders()), encodedHolder };
+    bool isAppended = appendJSONTextOfProperty(globalObject, *storage, JSValue::decode(value), property, holder.isCell() ? &innermost : storage->jsonHolders());
+    ensureStillAliveHere(holder);
     if (!isAppended)
         storage->rollBack(checkpoint);
     OPERATION_RETURN(scope, isAppended);
+}
+
+// Writes the members of an object from one name of a list on, with commas between them. True if it wrote any.
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSONMembers, size_t, (Instance* instance, JSCell* builder, EncodedJSValue encodedObject, EncodedJSValue encodedNames, uint32_t start, EncodedJSValue encodedHolder))
+{
+    constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSONMembers;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, entry);
+    JSValue holder = JSValue::decode(encodedHolder);
+    JSValue namesValue = JSValue::decode(encodedNames);
+    JSArray* names = namesValue.isCell() ? dynamicDowncast<JSArray>(namesValue.asCell()) : nullptr;
+    if (!names || !JSValue::decode(encodedObject).isObject()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    JSObject* object = asObject(JSValue::decode(encodedObject));
+    JSONHolderRecord innermost { const_cast<JSONHolderRecord*>(storage->jsonHolders()), encodedHolder };
+    const JSONHolderRecord* holders = holder.isCell() ? &innermost : storage->jsonHolders();
+
+    bool hasWrittenMember = false;
+    for (unsigned index = start; index < names->length(); ++index) {
+        JSValue name = names->getIndex(globalObject, index);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (!name.isString()) [[unlikely]]
+            crashOnWrongOperand(entry);
+        Identifier identifier = asString(name)->toIdentifier(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        JSValue value = object->get(globalObject, identifier);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+
+        uint32_t checkpoint = storage->length();
+        StringBuilder key;
+        if (hasWrittenMember)
+            key.append(',');
+        key.appendQuotedJSONString(identifier.string());
+        key.append(':');
+        auto appendedKey = key.is8Bit() ? storage->append(globalObject, key.span8()) : storage->append(globalObject, key.span16());
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (appendedKey != StringBuilderStorage::AppendResult::Appended) [[unlikely]]
+            crashOnWrongOperand(entry);
+        bool isAppended = appendJSONTextOfProperty(globalObject, *storage, value, name, holders);
+        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+        if (isAppended)
+            hasWrittenMember = true;
+        else
+            storage->rollBack(checkpoint);
+    }
+    ensureStillAliveHere(holder);
+    OPERATION_RETURN(scope, hasWrittenMember);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* instance, JSCell* builder, uint64_t size))
@@ -1112,6 +1348,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
     OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONEnterWatchedLevel, size_t, (Instance*, JSCell* builder, EncodedJSValue holder, void* frame))
+{
+    return cellArgument<StringBuilderStorage>(builder, Entry::operationAOTJSONEnterWatchedLevel)->enterWatchedLevel(holder, frame);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Instance*, JSCell* builder, uint32_t checkpoint))
@@ -1185,9 +1426,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_
     size_t room = byteCast<uint8_t>(reinterpret_cast<StackStringBuilder*>(builder)->limit) - cursor;
     if (impl && !impl->is8Bit() && start >= 0 && start <= end && static_cast<unsigned>(end) <= impl->length() && static_cast<size_t>(end - start) <= std::min<size_t>(room, StackStringBuilder::minLengthAppendedByReference - 1)) {
         size_t length = end - start;
-        std::span<const char16_t> units = impl->span16().subspan(start, length);
-        if (WTF::charactersAreAllLatin1(units)) {
-            StringImpl::copyCharacters(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length }, units);
+        if (std::optional<NarrowPart> part = narrowPartOf(impl->span16().subspan(start, length))) {
+            StringImpl::copyCharacters(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length }, part->span());
             return { cursor + length, nullptr };
         }
     }

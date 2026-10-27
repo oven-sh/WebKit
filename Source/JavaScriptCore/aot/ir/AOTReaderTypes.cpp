@@ -511,7 +511,7 @@ bool Reader::computeDeclaredMembers()
         m_typeParametersWithoutFamily = BitVector(numberOfLayouts);
         m_viewsWithoutLayouts = BitVector(numberOfLayouts);
         for (size_t index = 0; index < numberOfRecords<LayoutID>(); ++index)
-            m_declaredMembers.append(m_program.types.intern(LayoutSet { { LayoutID(index) }, true }));
+            m_declaredMembers.append(m_program.types.intern(LayoutSet::complete({ LayoutID(index) })));
         return true;
     }
 
@@ -540,7 +540,7 @@ bool Reader::computeDeclaredMembers()
     Vector<uint8_t> isViewWithoutLayouts(FillWith { }, numberOfLayouts, static_cast<uint8_t>(0));
     forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(numberOfLayoutIDs), [&](unsigned index) {
         if (index >= numberOfLayouts) {
-            sets[index] = LayoutSet { { LayoutID(index) }, true };
+            sets[index] = LayoutSet::complete({ LayoutID(index) });
             return;
         }
         Vector<LayoutID>& members = families.members[index];
@@ -551,7 +551,7 @@ bool Reader::computeDeclaredMembers()
             isViewWithoutLayouts[index] = 1;
             members.append(LayoutID(index));
         }
-        sets[index] = LayoutSet { WTF::move(members), true };
+        sets[index] = LayoutSet::complete(WTF::move(members));
         canonicalize(sets[index]);
     });
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -692,7 +692,7 @@ Failure Reader::computeFunctionFamilies()
         for (size_t index = chunk * functionsPerChunk, end = std::min<size_t>(numberOfFunctions, index + functionsPerChunk); index < end; ++index) {
             if (isSignature(m_sections.functions[index]))
                 m_build.statistics().count(statisticForFamilyOf(families[index].size() + builtinMembers[index].size(), m_build.limit(LimitID::MaxDispatchCases)), 1);
-            sets[index] = CalleeSet { WTF::move(families[index]), WTF::move(builtinMembers[index]), true };
+            sets[index] = CalleeSet::complete(WTF::move(families[index]), WTF::move(builtinMembers[index]));
             canonicalize(sets[index]);
         }
     });
@@ -777,29 +777,26 @@ bool Reader::readsAsAnything(std::span<const LayoutID> named) const
     });
 }
 
-void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named, bool hasMembersWithoutLayout) const
+void Reader::addLayouts(TypeAsRead& result, std::span<const LayoutID> named) const
 {
-    if (result.type.anyObject || (named.empty() && !hasMembersWithoutLayout))
+    if (result.type.anyObject || named.empty())
         return;
     if (m_form != IRForm::AsRead) {
-        result.layoutsToIntern = LayoutSet { Vector<LayoutID>(named), true, hasMembersWithoutLayout };
+        result.layoutsToIntern = LayoutSet::complete(Vector<LayoutID>(named));
         return;
     }
 
     if (named.size() == 1) {
-        LayoutSetID family = m_declaredMembers[named[0].index()];
-        if (!hasMembersWithoutLayout || m_program.at(family).hasMembersWithoutLayout) {
-            result.type.layouts = family;
-            return;
-        }
+        result.type.layouts = m_declaredMembers[named[0].index()];
+        return;
     }
 
-    LayoutSet families { { }, true, hasMembersWithoutLayout };
+    Vector<LayoutID> members;
     for (LayoutID layout : named) {
         const LayoutSet& family = m_program.at(m_declaredMembers[layout.index()]);
-        families.members.appendVector(family.members);
-        families.hasMembersWithoutLayout |= family.hasMembersWithoutLayout;
+        members.append(family.completeMembers().value());
     }
+    LayoutSet families = LayoutSet::complete(WTF::move(members));
     canonicalize(families);
     result.layoutsToIntern = WTF::move(families);
 }
@@ -819,13 +816,13 @@ void Reader::addFunctions(Type& type, std::span<const FunctionID> named) const
     Vector<BuiltinID, 4> builtinMembers(type.builtins.span());
     for (FunctionID function : named) {
         type.anyFunction |= isSignature(m_sections.functions[function.index()]);
-        const CalleeSet& family = m_program.at(m_functionFamilies[function.index()]);
-        if (family.functions.isEmpty() && family.builtins.isEmpty()) {
+        Callees family = *m_program.at(m_functionFamilies[function.index()]).all();
+        if (family.isEmpty()) {
             type.anyFunction = true;
             return;
         }
-        members.appendVector(family.functions);
-        builtinMembers.appendVector(family.builtins);
+        members.append(family.functions);
+        builtinMembers.append(family.builtins);
     }
     if (members.size() > m_build.limit(LimitID::MaxFunctionsInType) || builtinMembers.size() > m_build.limit(LimitID::MaxBuiltinsInType)) {
         type.anyFunction = true;
@@ -912,7 +909,7 @@ bool Reader::readTypes()
                 uint32_t index = typesAtDepth[position];
                 Type& type = types[index];
                 for (size_t classIndex = 0; classIndex < type.classes.size(); ++classIndex) {
-                    auto& contents = type.classes[classIndex].contents;
+                    auto& contents = type.classes[classIndex].writtenContents;
                     std::span<const uint32_t> earlierTypes = contentsOf(index, classIndex);
                     contents.reserveInitialCapacity(earlierTypes.size());
                     for (uint32_t earlierType : earlierTypes) {
@@ -932,7 +929,7 @@ bool Reader::readTypes()
             return;
         bool hasChanged = false;
         for (ClassPart& part : types[index].classes) {
-            for (TypeID& contents : part.contents) {
+            for (TypeID& contents : part.writtenContents) {
                 if (!TypeTable::isProvisional(contents))
                     continue;
                 contents = interning.idAt(contents.index() & ~TypeTable::provisionalBit);
@@ -1020,7 +1017,7 @@ Failure Reader::readType(uint32_t index, TypeAsRead& result) const
     }
     if (m_form == IRForm::AsRead && std::ranges::any_of(layouts, [&](LayoutID layout) { return m_viewsWithoutLayouts.get(layout.index()); }))
         type.anyObject = true;
-    addLayouts(result, layouts.span(), flags.contains(TypeFlags::HasMembersWithoutLayout));
+    addLayouts(result, layouts.span());
     addFunctions(type, functions.span());
     if (result.layoutsToIntern) {
         canonicalize(*result.layoutsToIntern);
@@ -1062,7 +1059,7 @@ TypeID Reader::internType(uint32_t index, TypeAsRead&& read)
     Wire::Span checkedClasses = m_sections.types[index].classes;
     for (size_t position = 0; position < type.classes.size(); ++position) {
         Wire::Span checkedContents = m_sections.classParts[checkedClasses.start + position].contents;
-        auto& contents = type.classes[position].contents;
+        auto& contents = type.classes[position].writtenContents;
         contents.reserveInitialCapacity(checkedContents.count);
         for (uint32_t earlierType : m_sections.words.subspan(checkedContents.start, checkedContents.count))
             contents.append(m_types[earlierType]);
@@ -1087,9 +1084,9 @@ static void internStringTagKeys(Program& program, const ParallelLoops& loops)
 {
     Vector<StringID> literals = collectInParallel<StringID>(loops, program.layouts.size(), [&](unsigned index, Vector<StringID>& found) {
         for (const Field& field : program.layouts[index].fields) {
-            if (!field.declared.type)
+            if (!field.declared.written())
                 continue;
-            for (StringID literal : program.at(field.declared.type).stringLiterals)
+            for (StringID literal : program.at(field.declared.written()).stringLiterals)
                 found.append(literal);
         }
     });
@@ -1150,7 +1147,7 @@ bool Reader::checkTypesAgainstLayouts()
         for (size_t index = chunk * recordsPerChunk, end = std::min<size_t>(isNamedByType.size(), index + recordsPerChunk); index < end; ++index) {
             if (!isNamedByType[index])
                 continue;
-            for (LayoutID layout : m_program.at(LayoutSetID(static_cast<uint32_t>(index))).members) {
+            for (LayoutID layout : m_program.at(LayoutSetID(static_cast<uint32_t>(index))).written()) {
                 if (m_program.at(layout).isEnvironment()) {
                     environmentInSet[index] = layout;
                     break;

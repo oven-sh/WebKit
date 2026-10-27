@@ -109,7 +109,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
         addAt(nodes.of(id), seenByAll);
 
     auto forEachSourceOfSet = [&](const LayoutSet& set, const auto& functor) {
-        for (LayoutID member : set.members)
+        for (LayoutID member : set.written())
             functor(nodes.of(member));
     };
     auto forEachSourceOfType = [&](const Type& type, const auto& functor) {
@@ -118,7 +118,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
         if (type.layouts)
             functor(nodes.of(type.layouts));
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents) {
+            for (TypeID contents : part.writtenContents) {
                 if (contents)
                     functor(nodes.of(contents));
             }
@@ -151,7 +151,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
         Mark mark = 0;
         if (value.type)
             mark |= markAt(nodes.of(value.type));
-        if (TypeID expected = value.expected())
+        if (TypeID expected = value.expected().predicted())
             mark |= markAt(nodes.of(expected));
         return mark;
     };
@@ -224,7 +224,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
                 return !protocolsOf(value.opcode, index).isEmpty();
             });
         case EffectRule::Call:
-            if (!OperandPosition::newTarget(value.opcode) && calleesOfCall(program, value).builtins.isEmpty())
+            if (!OperandPosition::newTarget(value.opcode) && calleesOfCall(program, value).listed().builtins.empty())
                 return 0;
             [[fallthrough]];
         case EffectRule::Builtin:

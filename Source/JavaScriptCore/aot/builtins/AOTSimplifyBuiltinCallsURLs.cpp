@@ -501,7 +501,7 @@ unsigned leaveURLsUnbuilt(FunctionPassContext& context)
     Function& function = context.function;
     Vector<UnbuiltObject> objects;
     for (const ValueSite& site : context.sitesIn(SiteList::ConstructionsAndBuiltinCalls)) {
-        if (function.at(site.block).frequency != BlockFrequency::Normal)
+        if (function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
             continue;
         if (std::optional<UnbuiltObject> object = matchUnbuiltObject(context, site.value))
             objects.append(WTF::move(*object));

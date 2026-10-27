@@ -168,7 +168,7 @@ function f15 name="storesIntoParameterAndVariable" parameters=[{type=L1}, {type=
 # CHECK-LABEL: function f15 name="storesIntoParameterAndVariable"
 
 function f16 name="checkNobodyUses" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Return v0
 # CHECK: b0(
 # CHECK-NEXT: Return v0

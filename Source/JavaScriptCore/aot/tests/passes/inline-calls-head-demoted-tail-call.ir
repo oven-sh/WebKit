@@ -22,15 +22,15 @@ function f1 name="tailSite" parameters=[{type=anything}] results=[{type=anything
     v1 = CallDirect v0 function=f0 @9
     ReturnCall v1
 # CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: = {{*}}@{{*}} tail
 # CHECK: [[full1]]: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9
 # CHECK-NEXT: ReturnCall [[full1]]
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: = {{*}}@{{*}} tail
 }
 
 function f2 name="markedSite" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = CallDirect v0 function=f0 [isDemotedTailCall] @9
+    v1 = CallDirect v0 function=f0 @9 tail
     Return v1
 # CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
-# CHECK: anything = CallDirect v0 function=f0 [isAfterInlinedHead, isDemotedTailCall] @9
+# CHECK: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9 tail
 }

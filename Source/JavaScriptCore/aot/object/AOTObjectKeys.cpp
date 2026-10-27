@@ -41,7 +41,7 @@ static bool isPresent(VM& vm, const Object& object, const FieldData& field)
 
 static bool isExtraKey(State& state, const Object& object, UniquedStringImpl* name)
 {
-    return state.objects->layouts.hasPositionAmongKeys(object.layout(), name) && !object.fieldNamed(state, name);
+    return !PropertyName(name).isPrivateName() && !object.fieldNamed(state, name);
 }
 
 static bool canPositionEveryKey(const LayoutData& layout, Structure* extraPropertiesStructure)
@@ -77,11 +77,6 @@ bool Object::isInKeyOrder(State& state, const FieldData& field) const
     if (index < keys.size() && keys[index] == index)
         return true;
     return WTF::find16(keys.data(), index, keys.size());
-}
-
-bool Object::hasPositionAmongKeys(UniquedStringImpl* name) const
-{
-    return state().objects->layouts.hasPositionAmongKeys(layout(), name);
 }
 
 Vector<UniquedStringImpl*, 16> Object::extraKeyNames() const
@@ -152,6 +147,11 @@ static std::optional<uint32_t> findOrdinalByWalk(State& state, const Object& obj
     if (ordinal >= numberOfPositionedKeys)
         return std::nullopt;
     return ordinal;
+}
+
+bool Object::keyOrderCountsExtraKeys() const
+{
+    return !countPositionedExtraKeys(state(), *this).isEmpty();
 }
 
 std::optional<uint32_t> Object::extraKeyOrdinal(PropertyName name) const
@@ -293,11 +293,9 @@ static uint32_t countExtraKeys(State& state, const Object& object, JSObject* ext
     }
     auto countByWalk = [&](bool mayHoldFields) {
         uint32_t count = 0;
-        const RuntimeLayoutTable& layouts = state.objects->layouts;
-        const LayoutData& layout = object.layout();
         extra->structure()->forEachProperty(object.vm(), [&](const auto& property) {
             ASSERT(mayHoldFields || !object.fieldNamed(state, property.key()));
-            count += mayHoldFields ? isExtraKey(state, object, property.key()) : layouts.hasPositionAmongKeys(layout, property.key());
+            count += mayHoldFields ? isExtraKey(state, object, property.key()) : !PropertyName(property.key()).isPrivateName();
             return true;
         });
         return count;
@@ -649,17 +647,19 @@ const Vector<PropertyListEntry>* Object::fieldsAndExtraPropertiesInKeyOrder(VM& 
     return listing ? &listing->properties : nullptr;
 }
 
-JSCellButterfly* Object::keys(VM& vm) const
+JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
 {
     validateKeyListing(vm, *this);
     if (hasExtraProperties() || !hasNumberedKeyOrder(*this))
         return nullptr;
     State& state = this->state();
-    uint32_t shapeWord = this->shapeWord();
+    if (!hasKeyListsInTable(kind, state.tables.numberOfShapes))
+        return state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
+    uint32_t shapeWord = keyListWordOf(this->shapeWord(), kind);
     auto& cacheEntry = state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord())];
     if (cacheEntry.shapeWord == shapeWord && cacheEntry.orderWord == orderWord())
         return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
-    JSCellButterfly* list = state.objects->keyOrders.keysInOrder(vm, layout(), orderWord() & orderAndCountMask);
+    JSCellButterfly* list = state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
     if (list)
         cacheEntry = { orderWord(), shapeWord, list };
     return list;

@@ -140,7 +140,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     for (size_t index = 0; index < sets.size(); ++index) {
         if (index && sets[index] == sets[index - 1])
             continue;
-        for (FunctionID callee : m_program.at(sets[index]).functions)
+        for (FunctionID callee : m_program.at(sets[index]).followed().value())
             add(callee);
     }
 
@@ -162,7 +162,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     if (mayHoldExpectedTypes(m_program, id)) {
         Vector<TypeID>& types = m_references.expectedFunctionTypes;
         for (const Value& value : m_program.at(id).values) {
-            TypeID expected = value.expected();
+            TypeID expected = value.expected().predicted();
             if (expected && (types.isEmpty() || types.last() != expected) && !m_program.at(expected).functions.isEmpty())
                 types.append(expected);
         }
@@ -343,7 +343,7 @@ static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const Paral
         Vector<uint32_t> peeled = collectInParallel<uint32_t>(loops, remaining.size(), [&](unsigned position, Vector<uint32_t>& chunk) {
             uint32_t index = remaining[position];
             FunctionID function(index);
-            uint8_t reachesUnknownCode = graph.calleeSet(function) != CalleeSetState::Complete;
+            uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
             for (FunctionID callee : graph.calleesOf(function)) {
                 if (!isRanked[callee.index()])
                     return;
@@ -377,7 +377,7 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
         uint32_t index = remaining[node];
         FunctionID function(index);
         nodeIndex[index] = node;
-        uint8_t reachesUnknownCode = graph.calleeSet(function) != CalleeSetState::Complete;
+        uint8_t reachesUnknownCode = !graph.allCalleesOf(function);
         uint32_t numberOfSuccessors = 0;
         for (FunctionID callee : graph.calleesOf(function)) {
             if (isRanked[callee.index()])
@@ -503,8 +503,8 @@ static void verifyRanks(const CallGraph& graph)
         if (node == unknownCodeNode)
             return { graph.functionsCalledByUnknownCode(), std::nullopt };
         FunctionID function(node);
-        if (graph.calleeSet(function) == CalleeSetState::Complete)
-            return { graph.calleesOf(function), std::nullopt };
+        if (std::optional<ProvenValue<std::span<const FunctionID>>> all = graph.allCalleesOf(function))
+            return { *all, std::nullopt };
         return { graph.calleesOf(function), unknownCodeNode };
     });
     for (unsigned index = 0; index < unknownCodeNode; ++index) {
@@ -620,6 +620,30 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         }
     });
     const bool someRecordLooksDifferentToCallers = recordLooksDifferentToCallers.contains(1);
+    // What an operation runs is also read from the records of the functions that the type of an operand lists.
+    Vector<uint8_t> typeListsRecordThatLooksDifferent;
+    if (someRecordLooksDifferentToCallers) {
+        typeListsRecordThatLooksDifferent.grow(program.types.size());
+        forEachIndexInParallel(loops, typeListsRecordThatLooksDifferent.size(), [&](unsigned index) {
+            typeListsRecordThatLooksDifferent[index] = std::ranges::any_of(program.at(TypeID(index)).functions, [&](FunctionID listed) {
+                return listed.index() < numberOfKeptBodies && recordLooksDifferentToCallers[listed.index()];
+            });
+        });
+    }
+    auto namesOnlyRecordsThatLookTheSame = [&](FunctionID id, const ReferencesOfBody& body) {
+        bool callsOne = std::ranges::any_of(body.callees, [&](FunctionID callee) {
+            return recordLooksDifferentToCallers[callee.index()];
+        });
+        if (callsOne)
+            return false;
+        BodyIndex* index = program.bodyIndex();
+        std::optional<NamesInBody> names = index && program.at(id).hasBody() ? index->namesIn(program, id) : std::nullopt;
+        if (!names)
+            return !program.at(id).hasBody();
+        return std::ranges::none_of(names->types, [&](TypeID type) {
+            return type.index() >= typeListsRecordThatLooksDifferent.size() || typeListsRecordThatLooksDifferent[type.index()];
+        });
+    };
     const bool checksKeptBodies = build.options().verifiesAfterEveryPass;
     growWithRoomToSpareInParallel(loops, bodies.m_bodies, count);
     std::atomic<uint64_t> numberOfBodiesCollected { 0 };
@@ -629,11 +653,8 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     forEachIndexInParallel(loops, count, largeFunctions(program, loops).span(), [&](unsigned index) {
         ReferencesOfBody& body = bodies.m_bodies[index];
         bool stillHolds = index < numberOfKeptBodies && !bodies.m_isChanged[index] && !recordLooksDifferent[index];
-        if (stillHolds && someRecordLooksDifferentToCallers) {
-            stillHolds = std::ranges::none_of(body.callees, [&](FunctionID callee) {
-                return recordLooksDifferentToCallers[callee.index()];
-            });
-        }
+        if (stillHolds && someRecordLooksDifferentToCallers)
+            stillHolds = namesOnlyRecordsThatLookTheSame(FunctionID(index), body);
         if (stillHolds) {
             RELEASE_ASSERT(!checksKeptBodies || body == collectReferencesOf(program, flow, FunctionID(index), entriesThatRunNoCode));
             return;
@@ -702,7 +723,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         uint32_t numberOfSites = calleeSetCallSites[index];
         if (!numberOfSites)
             return;
-        for (FunctionID callee : program.at(CalleeSetID(index)).functions)
+        for (FunctionID callee : program.at(CalleeSetID(index)).followed().value())
             WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
     });
     times.didFinish("addUpReferences"_s);
@@ -804,7 +825,7 @@ void CallGraph::dump(PrintStream& out, const Program& program) const
         printFunctions(calleesOf(function));
         out.print(" | callers");
         printFunctions(callersOf(function));
-        out.print(" | sites ", numberOfDirectCallSites(function), " | callers ", enumName(callerSet(function)), " | callees ", enumName(calleeSet(function)), " | entries ", enumName(entrySet(function)), " | ", enumName(recursion(function)), " | rank ", bottomUpRank(function), " | call sites ", numberOfCallSites(function), " ", enumName(callSiteSet(function)));
+        out.print(" | sites ", numberOfDirectCallSites(function), " | callers ", enumName(callerSet(function)), " | callees ", allCalleesOf(function) ? "Complete"_s : "Unknown"_s, " | entries ", enumName(entrySet(function)), " | ", enumName(recursion(function)), " | rank ", bottomUpRank(function), " | call sites ", numberOfCallSites(function), " ", enumName(callSiteSet(function)));
         out.println(isExpectedByCode(function) ? " | expected by code"_s : ""_s);
     }
 }

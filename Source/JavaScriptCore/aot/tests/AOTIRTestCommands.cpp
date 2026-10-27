@@ -88,13 +88,19 @@ static void printRoundTripComparison(PrintStream& out, const String& firstText, 
 
 static void runRoundTrip(TestCommandContext& context)
 {
-    if (!context.arguments.empty()) {
-        printBadArgument(context.out, context.arguments.front());
+    std::span<const String> words = context.arguments;
+    PrintedFields fields = PrintedFields::All;
+    if (!words.empty() && words.front() == "wire"_s) {
+        fields = PrintedFields::WireOnly;
+        words = words.subspan(1);
+    }
+    if (!words.empty()) {
+        printBadArgument(context.out, words.front());
         return;
     }
 
     StringPrintStream first;
-    printProgram(first, *context.program);
+    printProgram(first, *context.program, fields);
     String firstText = first.toString();
     context.out.print(firstText);
 
@@ -104,7 +110,7 @@ static void runRoundTrip(TestCommandContext& context)
         return;
     }
     StringPrintStream second;
-    printProgram(second, *again);
+    printProgram(second, *again, fields);
     printRoundTripComparison(context.out, firstText, second.toString());
 }
 
@@ -161,7 +167,7 @@ static void printTypeAndExpectedType(PrintStream& out, const TypingContext& typi
     const Value& value = typing.function.at(id);
     out.print("v"_s, id.index(), ": "_s);
     printType(out, typing.program, value.type);
-    if (TypeID expected = value.expected()) {
+    if (TypeID expected = value.expected().predicted()) {
         out.print(" ~ "_s);
         printType(out, typing.program, expected);
     }
@@ -244,7 +250,7 @@ static void printInt32BoundsOfFunction(TestCommandContext& context, FunctionID i
     for (const Block& block : function.blocks) {
         for (ValueID value : block.values) {
             const Value& request = function.at(value);
-            if (request.opcode != Opcode::Convert || !request.declared().flags.contains(PositionFlags::IsInt32Promise))
+            if (request.opcode != Opcode::Convert || !request.declared().has(PositionFlags::IsInt32Promise))
                 continue;
             context.out.print("v"_s, value.index(), ": "_s);
             printBounds(context.out, prover.boundsOf(request.valueOperand()));

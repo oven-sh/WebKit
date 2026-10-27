@@ -11,14 +11,14 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="everyAccessWithReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=L0
+    v2 = Check v0 expectedType=L0
     v3 = PropGet v0 key="x"
     PropSet v0, v1 key="x"
     v5 = PropHas v0 key="x"
     v6 = ElemGet v0, v1
     ElemSet v0, v1, v1
     Return v3
-# CHECK: = Check v0 castType=L0
+# CHECK: = Check v0 expectedType=L0
 # CHECK-NEXT: = PropGet v2 key="x"
 # CHECK-NEXT: PropSet v2, v1 key="x"
 # CHECK-NEXT: = PropHas v2 key="x"
@@ -28,26 +28,27 @@ function f0 name="everyAccessWithReceiver" parameters=[{type=anything}, {type=an
 
 function f1 name="narrowerCastComesSecond" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = RequireObjectCoercible v0 nullishAccess=Read name="x"
-    v2 = Check v0 castType=L0
+    v2 = Check v0 expectedType=L0
     v3 = PropGet v0 key="x"
     Return v3
-# CHECK: = Check v1 castType=L0
+# CHECK: = Check v1 expectedType=L0
 # CHECK-NEXT: = PropGet v2 key="x"
 }
 
 function f2 name="widerCastComesSecond" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = RequireObjectCoercible v0 nullishAccess=Read name="x"
     v3 = PropGet v0 key="x"
     Return v3
-# CHECK: = Check v0 castType=L0
-# CHECK-NOT: RequireObjectCoercible
-# CHECK: = PropGet v1 key="x"
+# The wider cast takes the check as its operand. It is a test of the language: it stays while the check stands, which answers it in the typed version alone.
+# CHECK: = Check v0 expectedType=L0
+# CHECK-NEXT: = RequireObjectCoercible v1 name="x"
+# CHECK-NEXT: = PropGet v1 key="x"
 }
 
 function f3 name="receiverIsWiderCast" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = RequireObjectCoercible v0 nullishAccess=Read name="x"
-    v2 = Check v1 castType=L0
+    v2 = Check v1 expectedType=L0
     v3 = PropGet v1 key="x"
     Return v3
 # CHECK: = PropGet v2 key="x"
@@ -57,7 +58,7 @@ function f4 name="underShapeGuard" parameters=[{type=object}] results=[{type=any
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = Check v0 castType=L0
+    v3 = Check v0 expectedType=L0
     v4 = PropGet v0 key="x"
     Return v4
   b2():
@@ -68,7 +69,7 @@ function f4 name="underShapeGuard" parameters=[{type=object}] results=[{type=any
 
 function f5 name="castInCoveredBlock" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     Jump -> next b1()
   b1():
     v2 = PropGet v0 key="x"
@@ -85,7 +86,7 @@ function f5 name="castInCoveredBlock" parameters=[{type=anything}] results=[{typ
 
 function f6 name="receiverIsNarrowestCast" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = RequireObjectCoercible v0 nullishAccess=Read name="x"
-    v2 = Check v1 castType=L0
+    v2 = Check v1 expectedType=L0
     v3 = PropGet v2 key="x"
     Return v3
 # CHECK: = PropGet v2 key="x"
@@ -93,13 +94,13 @@ function f6 name="receiverIsNarrowestCast" parameters=[{type=anything}] results=
 
 function f7 name="castFollowsAccess" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="x"
-    v2 = Check v0 castType=L0
+    v2 = Check v0 expectedType=L0
     Return v1
 # CHECK: = PropGet v0 key="x"
 }
 
 function f8 name="castOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v1 castType=L0
+    v2 = Check v1 expectedType=L0
     v3 = PropGet v0 key="x"
     Return v3
 # CHECK: = PropGet v0 key="x"
@@ -108,7 +109,7 @@ function f8 name="castOfAnotherValue" parameters=[{type=anything}, {type=anythin
 function f9 name="castOnOnePathToAccess" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v2 = Check v0 castType=L0
+    v2 = Check v0 expectedType=L0
     Jump -> next b3()
   b2():
     Jump -> next b3()
@@ -121,7 +122,7 @@ function f9 name="castOnOnePathToAccess" parameters=[{type=anything}, {type=bool
 
 function f10 name="accessReachedThroughHandlerAsWell" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     Jump -> next b1()
   b1():
     Jump -> next b3()

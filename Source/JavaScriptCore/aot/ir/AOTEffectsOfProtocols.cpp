@@ -19,12 +19,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void CalleeList::add(FunctionID function)
 {
-    insertInUniquedSortedVector(functions, function);
+    insertInUniquedSortedVector(m_functions, function);
 }
 
 void CalleeList::add(BuiltinID builtin)
 {
-    insertInUniquedSortedVector(builtins, builtin);
+    insertInUniquedSortedVector(m_builtins, builtin);
 }
 
 void CalleeList::dump(PrintStream& out) const
@@ -35,23 +35,20 @@ void CalleeList::dump(PrintStream& out) const
     }
     const BuiltinTable& table = BuiltinTable::singleton();
     CommaPrinter comma;
-    for (FunctionID function : functions)
+    for (FunctionID function : m_functions)
         out.print(comma, "f"_s, function.index());
-    for (BuiltinID builtin : builtins)
+    for (BuiltinID builtin : m_builtins)
         out.print(comma, table.tokenOf(builtin));
-    if (!isComplete)
+    if (!m_isComplete)
         out.print(comma, "?"_s);
 }
 
 CalleeList calleesOf(const Program&, const Type& callee)
 {
-    CalleeList result = CalleeList::none();
     if (!callee.hasObjects())
-        return result;
-    result.functions.append(callee.functions.span());
-    result.builtins.append(callee.builtins.span());
-    result.isComplete = callee.hasOnlyKnownCallees() && !callee.layouts;
-    return result;
+        return CalleeList::none();
+    Callees listed { callee.functions.span(), callee.builtins.span() };
+    return callee.hasOnlyKnownCallees() && !callee.layouts ? CalleeList::complete(listed) : CalleeList::open(listed);
 }
 
 CalleeList calleesOf(const Program& program, CalleeSetID id)
@@ -59,11 +56,7 @@ CalleeList calleesOf(const Program& program, CalleeSetID id)
     if (!id)
         return CalleeList::unknown();
     const CalleeSet& set = program.at(id);
-    CalleeList result;
-    result.functions.append(set.functions.span());
-    result.builtins.append(set.builtins.span());
-    result.isComplete = set.isComplete;
-    return result;
+    return set.listsEveryCallee() ? CalleeList::complete(set.written()) : CalleeList::open(set.written());
 }
 
 namespace {
@@ -72,31 +65,26 @@ enum class FoundValue : uint8_t { IsOnlyRead, IsConverted, IsCalled };
 
 } // anonymous namespace
 
-static bool mayBeMemberWithoutLayout(const Program& program, const Type& type)
+static bool hasOnlyLayoutObjects(const Type& type)
 {
-    return type.layouts && program.at(type.layouts).hasMembersWithoutLayout;
-}
-
-static bool hasOnlyLayoutObjects(const Program& program, const Type& type)
-{
-    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty() && !mayBeMemberWithoutLayout(program, type);
+    return !type.anyObject && !type.anyFunction && type.classes.isEmpty() && type.functions.isEmpty() && type.builtins.isEmpty();
 }
 
 static bool mayBeCallable(const Program& program, const Type& type)
 {
-    return type.mayBeFunction() || mayBeMemberWithoutLayout(program, type) || mayContainAnyCallable(program.builtins(), type);
+    return type.mayBeFunction() || mayContainAnyCallable(program.builtins(), type);
 }
 
 static bool mayReadFromField(const Program& program, const Type& operand, PropertyKeyID key, NOESCAPE const Invocable<bool(const Type&)> auto& predicate)
 {
-    if (!hasOnlyLayoutObjects(program, operand))
+    if (!hasOnlyLayoutObjects(operand))
         return true;
     return std::ranges::any_of(membersOf(program, operand), [&](LayoutID member) {
         std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);
         if (!field)
             return program.at(member).kind == LayoutKind::ModuleNamespace;
         const DeclaredType& declared = fieldAt(program, *field).declared;
-        return !declared.type || declared.flags.contains(PositionFlags::IsExpected) || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
+        return !declared.written() || declared.isExpected() || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
     });
 }
 
@@ -121,7 +109,7 @@ static bool mayFindUnlistedCallable(const Program& program, const Type& operand,
 static void addRead(const Program& program, const Type& operand, const ProvenAccess& read, FoundValue found, CalleeList& result)
 {
     if (!read.isComplete) {
-        result.isComplete = false;
+        result.addUnknownCallees();
         return;
     }
     for (FunctionID accessor : read.accessors)
@@ -131,7 +119,7 @@ static void addRead(const Program& program, const Type& operand, const ProvenAcc
         return;
     case FoundValue::IsConverted:
         if (mayFindObject(program, operand, read))
-            result.isComplete = false;
+            result.addUnknownCallees();
         return;
     case FoundValue::IsCalled:
         break;
@@ -141,7 +129,7 @@ static void addRead(const Program& program, const Type& operand, const ProvenAcc
     for (BuiltinID builtin : read.builtins)
         result.add(builtin);
     if (mayFindUnlistedCallable(program, operand, read))
-        result.isComplete = false;
+        result.addUnknownCallees();
 }
 
 static bool mayBeBoundFunction(const Program& program, const Type& receivers)
@@ -170,7 +158,7 @@ static bool findsNothing(const ProvenAccess& read)
 static void addTwoStepRead(const ProvenAccess& read, CalleeList& result)
 {
     if (!findsNothing(read))
-        result.isComplete = false;
+        result.addUnknownCallees();
 }
 
 static constexpr uint16_t objectCoerciblePrimitives = Primitive::Defined & ~(Primitive::UndefinedOrNull | Primitive::Absent);
@@ -218,7 +206,7 @@ CalleeList membersRunBy(const Program& program, const Type& operand, Protocols p
 {
     CalleeList result = CalleeList::none();
     if (!declaredProtocols.containsAll(protocols))
-        result.isComplete = false;
+        result.addUnknownCallees();
     protocols = protocols & declaredProtocols;
 
     const BuiltinTable& table = program.builtins();
@@ -260,13 +248,13 @@ CalleeList membersRunBy(const Program& program, const Type& operand, Protocols p
             break;
         case Protocol::Named:
             if (namedMembers.empty())
-                result.isComplete = false;
+                result.addUnknownCallees();
             for (BuiltinName name : namedMembers)
                 addReadOf(name, valueFoundByNamed(protocols, namedMemberUse));
             break;
         case Protocol::CallsNamed:
             if (calledMembers.empty())
-                result.isComplete = false;
+                result.addUnknownCallees();
             for (BuiltinName name : calledMembers)
                 addReadOf(name, FoundValue::IsCalled);
             break;

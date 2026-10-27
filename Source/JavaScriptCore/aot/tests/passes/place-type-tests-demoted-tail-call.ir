@@ -9,18 +9,18 @@ function f0 name="plain" kind=Arrow parameters=[{type=anything}] results=[{type=
 }
 function f1 name="marked-call" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0, v1: anything):
-    v2 = Call v0, -, v1 [isDemotedTailCall]
+    v2 = Call v0, -, v1 @0 tail
     Return v2
 # CHECK: = IsClosureOf v0 function=f0
-# CHECK: anything = CallDirect v1 function=f0 [isDemotedTailCall]
+# CHECK: anything = CallDirect v1 function=f0 [calleeIsPredicted] @0 tail
 # CHECK: frequency=Unlikely:
-# CHECK-NEXT: anything = Call {{*}}, -, v1 [isDemotedTailCall]
+# CHECK-NEXT: anything = Call {{*}}, -, v1 @0 tail
 }
 function f2 name="ordinary-call" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ f0, v1: anything):
     v2 = Call v0, -, v1
     Return v2
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: anything = CallDirect v1 function=f0
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }

@@ -251,7 +251,7 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     const auto [subject, saved, count, cursor, word, second] = registers;
     const GPRReg source = cursor;
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWords()), count);
-    jit.load8(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
+    jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
 #if CPU(X86_64)
     constexpr int32_t offsetOfBottom = sizeof(void*);
     RELEASE_ASSERT(subject == X86Registers::esi && second == X86Registers::edi && count == X86Registers::ecx);
@@ -319,35 +319,32 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
     jit.add32(TrustedImm32(1), version);
 }
 
-// SavedFrame::skippedAtTopOf as code.
-static void emitLoadNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWord, GPRReg result, GPRReg scratch)
+// Takes SavedFrame::skippedAtTopOf off the number.
+static void emitSubtractNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWord, GPRReg number, GPRReg scratch)
 {
 #if CPU(X86_64)
     constexpr uint32_t bothRegisters = SavedFrame::functionSavesPreservedRegister | SavedFrame::functionSavesR15;
     static_assert(SavedFrame::skippedAtTopOf(bothRegisters) == 2 && !SavedFrame::skippedAtTopOf(SavedFrame::functionSavesPreservedRegister) && !SavedFrame::skippedAtTopOf(SavedFrame::functionSavesR15) && !SavedFrame::skippedAtTopOf(0));
     jit.and32(TrustedImm32(bothRegisters), siteWord, scratch);
-    jit.move(TrustedImm32(0), result);
     Jump savesFewer = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(bothRegisters));
-    jit.move(TrustedImm32(2), result);
+    jit.sub32(TrustedImm32(2), number);
     savesFewer.link(&jit);
 #elif CPU(ARM64)
     static_assert(SavedFrame::skippedAtTopOf(3u << SavedFrame::liveSlotMapOffsetBits) == 6 && SavedFrame::skippedAtTopOf(1u << SavedFrame::liveSlotMapOffsetBits) == 2);
-    UNUSED_PARAM(scratch);
-    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, result);
-    jit.lshift32(TrustedImm32(1), result);
+    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, scratch);
+    jit.lshift32(TrustedImm32(1), scratch);
+    jit.sub32(scratch, number);
 #endif
 }
 
 AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, CoroutineKind kind, GPRReg siteWord, const NewSavedFrameRegisters& registers, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
-    constexpr unsigned sizeStepShift = getLSBSet(MarkedSpace::sizeStep);
     const auto [saved, count, allocator, scratch] = registers;
-    const GPRReg skippedAtTop = allocator;
     const GPRReg skippedAtBottom = scratch;
     static_assert(hasOneBitSet(MarkedSpace::sizeStep) && sizeof(Allocator) == sizeof(void*));
     static_assert(JSObject::butterflyOffset() == sizeof(uint64_t));
-    static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtTop() == SavedFrame::offsetOfNumberOfWords() + 2 && SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 3);
+    static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 2);
     static_assert(SavedFrame::offsetOfVersion() == SavedFrame::offsetOfNumberOfWords() + 4 && !(SavedFrame::offsetOfNumberOfWords() % sizeof(uint64_t)));
     static_assert(SavedFrame::offsetOfContinuation() == SavedFrame::offsetOfKind() + 1 && SavedFrame::offsetOfNumberOfSavedRegisterPairs() == SavedFrame::offsetOfKind() + 2 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3);
     static_assert(SavedFrame::offsetOfPromiseOrWaiter() == SavedFrame::offsetOfResumeAddress() + 8 && SavedFrame::offsetOfAsyncContext() == SavedFrame::offsetOfPreservedRegister() + 8);
@@ -358,28 +355,55 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     needsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFramesAreListed))));
 
 #if CPU(X86_64)
-    jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
+    jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(void*))), fp, count);
+    jit.sub64(sp, count);
 #else
     jit.move(sp, scratch);
-#endif
     jit.sub64(fp, scratch, count);
+#endif
     jit.urshift64(TrustedImm32(3), count);
-    emitLoadNumberOfWordsSkippedAtTop(jit, siteWord, skippedAtTop, saved);
-    extractBits(jit, siteWord, SavedFrame::skippedAtBottomShift, SavedFrame::skippedAtBottomBits, skippedAtBottom);
-    jit.sub32(skippedAtTop, count);
+    emitSubtractNumberOfWordsSkippedAtTop(jit, siteWord, count, saved);
+    extractBits(jit, siteWord, SavedFrame::skippedPairsShift, SavedFrame::skippedPairsBits, skippedAtBottom);
+    Jump skipsManyPairs = jit.branch32(CCallHelpers::Equal, skippedAtBottom, TrustedImm32(SavedFrame::manySkippedPairs));
+    Label hasSkippedPairs = jit.label();
+    jit.addOutOfLinePart([skipsManyPairs, hasSkippedPairs, siteWord, skippedAtBottom](StubAssembler& jit) {
+        skipsManyPairs.link(&jit);
+        jit.urshift64(siteWord, TrustedImm32(SavedFrame::manySkippedPairsShift), skippedAtBottom);
+        jit.jump().linkTo(hasSkippedPairs, &jit);
+    });
+    jit.lshift32(TrustedImm32(1), skippedAtBottom);
     jit.sub32(skippedAtBottom, count);
     needsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(SavedFrame::maxWordsAllocatedInStub)));
 
-    // From here on count has the three counts as the cell has them.
-    jit.lshift32(TrustedImm32(16), skippedAtTop);
-    jit.lshift32(TrustedImm32(24), skippedAtBottom);
-    jit.or32(skippedAtTop, skippedAtBottom);
-    jit.lshift32(count, TrustedImm32(3), allocator);
-    jit.add32(TrustedImm32(sizeof(SavedFrame) + MarkedSpace::sizeStep - 1), allocator);
-    jit.urshift32(TrustedImm32(sizeStepShift), allocator);
+    // What SavedFrame::create does to the lowest of the words kept.
+    Jump clearsNothing = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::maxClearedWords << SavedFrame::clearedWordsShift));
+    const GPRReg belowWordsKept = saved;
+    const GPRReg wordsToClear = allocator;
+#if CPU(X86_64)
+    jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), belowWordsKept);
+#else
+    jit.move(sp, belowWordsKept);
+    jit.addLeftShift64(belowWordsKept, skippedAtBottom, TrustedImm32(3), belowWordsKept);
+    jit.subPtr(TrustedImm32(sizeof(uint64_t)), belowWordsKept);
+#endif
+    extractBits(jit, siteWord, SavedFrame::clearedWordsShift, SavedFrame::clearedWordsBits, wordsToClear);
+    Label clearsNext = jit.label();
+#if CPU(ARM64)
+    jit.store64(ARM64Registers::zr, BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
+#else
+    jit.store64(TrustedImm32(0), BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
+#endif
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), wordsToClear).linkTo(clearsNext, &jit);
+    clearsNothing.link(&jit);
+
+    // A pair of words is a size step, and the number of words is even.
+    static_assert(MarkedSpace::sizeStep == 2 * sizeof(uint64_t) && !(sizeof(SavedFrame) % MarkedSpace::sizeStep));
+    constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, count, CCallHelpers::TimesFour, offsetOfAllocatorWithoutWords), allocator);
+    // From here on count has the two counts as the cell has them.
+    jit.lshift32(TrustedImm32(16), skippedAtBottom);
     jit.or32(skippedAtBottom, count);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), scratch);
-    jit.loadPtr(BaseIndex(scratch, allocator, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
     needsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, saved, allocator, scratch, needsOperation);
 
@@ -393,27 +417,31 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.store64(TrustedImm32(0), Address(saved, JSObject::butterflyOffset()));
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfResumeAddress()));
     jit.store64(saved, Address(saved, SavedFrame::offsetOfPromiseOrWaiter()));
-    jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfPreservedRegister()));
+    // Nobody reads the word of the preserved register before a save has written it.
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfAsyncContext()));
 #endif
     // The upper half of the register is zero, and so is the version.
     jit.store64(count, Address(saved, SavedFrame::offsetOfNumberOfWords()));
-    jit.store32(TrustedImm32(0), Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, scratch);
-    jit.lshift32(TrustedImm32(16), scratch);
-    if (static_cast<int32_t>(kind))
+    // One word: no offset of a map, the kind, no continuation, the saved registers or pairs, no flags.
+    static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && !(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() % sizeof(uint64_t)) && SavedFrame::liveSlotMapOffsetBits >= 16);
+    jit.and32(TrustedImm32(((1 << SavedFrame::savedRegisterBits) - 1) << SavedFrame::liveSlotMapOffsetBits), siteWord, scratch);
+    if (static_cast<int32_t>(kind)) {
+        jit.urshift32(TrustedImm32(SavedFrame::liveSlotMapOffsetBits - 16), scratch);
         jit.or32(TrustedImm32(static_cast<int32_t>(kind)), scratch);
-    jit.store32(scratch, Address(saved, SavedFrame::offsetOfKind()));
+        jit.lshift64(TrustedImm32(32), scratch);
+    } else
+        jit.lshift64(TrustedImm32(32 + 16 - SavedFrame::liveSlotMapOffsetBits), scratch);
+    jit.store64(scratch, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
 
     if (kind == CoroutineKind::AsyncFunction) {
         const GPRReg promise = scratch;
-        jit.urshift64(siteWord, TrustedImm32(SavedFrame::promiseLocationShift), promise);
-        jit.zeroExtend32ToWord(promise, promise);
+        extractBits(jit, siteWord, SavedFrame::promiseLocationShift, SavedFrame::promiseLocationBits, promise);
 #if CPU(X86_64)
         static_assert(!SavedFrame::locationInRegister);
-        Jump isInRegister = jit.branchTest32(CCallHelpers::Zero, promise);
-#endif
+        Jump isInRegister = jit.branchNeg64(CCallHelpers::Zero, promise);
+#else
         jit.neg64(promise);
+#endif
         jit.load64(BaseIndex(fp, promise, CCallHelpers::TimesEight), promise);
 #if CPU(X86_64)
         Jump isLoaded = jit.jump();
@@ -449,10 +477,10 @@ static void emitBarrierPreservingOperands(StubAssembler& jit, GPRReg owner, GPRR
 }
 
 // registers.awaited is a promise of the realm. Nothing is stored before the last exit.
-static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& needsOperation, uint64_t reactionBits = resumeReactionBits)
+static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& takesNoInlineReaction, JumpList& needsOperation, uint64_t reactionBits = resumeReactionBits)
 {
     const auto [savedFrame, promise, word, other] = registers;
-    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, registers, needsOperation);
+    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, registers, takesNoInlineReaction);
     jit.move(TrustedImm64(static_cast<int64_t>(reactionBits)), other);
     jit.or64(other, word);
     // The reaction keeps the context where that of a task with a cell keeps the cell: JSPromise::performPromiseThenWithInternalMicrotask.
@@ -471,7 +499,7 @@ static void emitResumeWhenPromiseSettles(StubAssembler& jit, const AwaitRegister
 }
 
 // registers.awaited is a cell that a call without a promise returned.
-static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& needsOperation)
+static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& registers, JumpList& isResultOfCallee, JumpList& takesNoInlineReaction, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
     const auto [waiter, awaited, word, other] = registers;
@@ -485,7 +513,7 @@ static void emitResumeWhenCallSettles(StubAssembler& jit, const AwaitRegisters& 
     jit.loadPtr(Address(awaited, SavedFrame::offsetOfPromiseOrWaiter()), awaited);
 
     isPromise.link(&jit);
-    emitResumeWhenPromiseSettles(jit, registers, needsOperation);
+    emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, needsOperation);
     Jump isRegistered = jit.jump();
 
     hasNoContinuation.link(&jit);
@@ -623,10 +651,12 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         JumpList isResumedByJob;
         JumpList isResumedByOthers;
         JumpList isOtherObjectInSavedFrame;
+        JumpList takesNoInlineReaction;
+        const GPRReg promise = awaitsCallWithoutPromise ? second : awaited;
         isResumedByJob.append(jit.branchIfNotCell(awaited));
         if (awaitsCallWithoutPromise) {
             jit.move(awaited, second);
-            emitResumeWhenCallSettles(jit, { savedFrame, second, word, other }, isResumedByJob, needsOperation);
+            emitResumeWhenCallSettles(jit, { savedFrame, second, word, other }, isResumedByJob, takesNoInlineReaction, needsOperation);
             emitBarrierPreservingOperands(jit, second, result, siteWord, word);
         } else {
             Jump isObject = jit.branchIfObject(awaited);
@@ -635,7 +665,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
             isResumedByJob.append(jit.jump());
             isObject.link(&jit);
             emitBranchUnlessHolds(jit, awaitedHasPromiseStructure, registers, isOtherObjectInSavedFrame);
-            emitResumeWhenPromiseSettles(jit, registers, needsOperation);
+            emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, needsOperation);
             emitBarrierPreservingOperands(jit, awaited, result, siteWord, word);
         }
         isResumedByOthers.link(&jit);
@@ -649,8 +679,18 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         Label queuesJob = jit.label();
         const JobRegisters job { count, word, other, second };
         emitReserveJob(jit, job, needsOperation);
+        Label fillsJob = jit.label();
         emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, awaited, savedFrame, JobAsyncContext::Current }, job);
         jit.jump().linkTo(isRegistered, &jit);
+
+        // The job of a fulfilled promise is queued at once too, with what the promise holds. The operation wants the awaited value as it came.
+        RELEASE_ASSERT(noOverlap(result, awaited, savedFrame, siteWord, count, word, other, second));
+        takesNoInlineReaction.link(&jit);
+        emitBranchUnlessHolds(jit, awaitedIsFulfilled, { savedFrame, promise, word, other }, needsOperation);
+        jit.load64(Address(promise, JSPromise::offsetOfSlot()), result);
+        emitReserveJob(jit, job, needsOperation);
+        jit.move(result, awaited);
+        jit.jump().linkTo(fillsJob, &jit);
 
         if (!isOtherObjectInSavedFrame.empty()) {
             isOtherObjectInSavedFrame.link(&jit);
@@ -691,15 +731,24 @@ void emitRunGeneratorJobWhenSettled(StubAssembler& jit, InternalMicrotask task, 
     isLeftToEngine.append(branchIfWatchpointSetIsNotWatched(jit, Address(other, OBJECT_OFFSETOF(JSGlobalObject, m_promiseSpeciesWatchpointSet)), other));
     if (!siteWord)
         isLeftToEngine.append(branchIfBarrierIsNeeded(jit, awaited, other));
-    emitResumeWhenPromiseSettles(jit, registers, isLeftToEngine, inlineReactionBitsOf(task));
+    JumpList takesNoInlineReaction;
+    emitResumeWhenPromiseSettles(jit, registers, takesNoInlineReaction, isLeftToEngine, inlineReactionBitsOf(task));
     if (siteWord)
         emitBarrierPreservingOperands(jit, awaited, awaited, *siteWord, word);
     Jump isRegistered = jit.jump();
+
+    // The job of a fulfilled promise takes what the promise holds.
+    takesNoInlineReaction.link(&jit);
+    emitBranchUnlessHolds(jit, awaitedIsFulfilled, registers, isLeftToEngine);
+    emitReserveJob(jit, job, isLeftToEngine);
+    jit.load64(Address(awaited, JSPromise::offsetOfSlot()), awaited);
+    Jump fillsJob = jit.jump();
 
     isOtherObject.link(&jit);
     emitBranchIfMayBeThenable(jit, awaited, word, other, isLeftToEngine);
     isResumedByJob.link(&jit);
     emitReserveJob(jit, job, isLeftToEngine);
+    fillsJob.link(&jit);
     emitFillJob(jit, { task, JSPromise::Status::Fulfilled, awaited, generator, JobAsyncContext::Current }, job);
 
     isRegistered.link(&jit);
@@ -807,6 +856,9 @@ void generateSuspendGenerator(StubAssembler& jit)
         emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
         jit.move(value, awaited);
         emitLoadSettledValue(jit, registers, value, mustSuspend, mustSuspend);
+        // Whoever stepped the body waits for the step from here on, and a stack trace lists nobody who waits.
+        jit.load64(Address(generator, JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(JSAsyncGenerator::Field::Frame))), cursor);
+        jit.store8(TrustedImm32(SavedFrame::hasPassedAwaitOnStackFlag), Address(cursor, SavedFrame::offsetOfFlags()));
         emitReturnAwaitedValue(jit, siteWord);
         mustSuspend.link(&jit);
     }

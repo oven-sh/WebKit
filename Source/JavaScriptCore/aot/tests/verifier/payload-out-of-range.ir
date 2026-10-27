@@ -25,7 +25,7 @@ function f2 name="goodKeyConstants" results=[{type=undefined}] {
     Return
 }
 function f3 name="badCheckOfProvenContents" parameters=[{type=anything}] results=[{type=undefined}] {
-    v1 = Check v0 castType=Array<number, proven>
+    v1 = Check v0 expectedType=Array<number, proven>
     Return
 }
 function f4 name="badTestOfProvenContents" parameters=[{type=anything}] results=[{type=undefined}] {
@@ -35,7 +35,7 @@ function f4 name="badTestOfProvenContents" parameters=[{type=anything}] results=
 function f5 name="goodCheckAndTest" parameters=[{type=anything}] results=[{type=undefined}] {
     v1 = TypeTest v0 testedType=Array<number>
     v2 = TypeTest v0 testedType=L3
-    v3 = Check v0 castType=Array<number>
+    v3 = Check v0 expectedType=Array<number>
     Return
 }
 function f6 name="badCaptureIndex" parameters=[{type=f36}] results=[{type=undefined}] {
@@ -183,11 +183,11 @@ function f34 name="badStoreToDataView" parameters=[{type=object}, {type=number}]
     PutTypedArrayElement v0, v1, v1 typedArrayType=13
     Return
 }
-function f35 name="goodTypedArrayTypes" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
-    v2 = GetTypedArrayLength v0 typedArrayType=1
-    v3 = GetTypedArrayElement v0, v1 typedArrayType=12
-    PutTypedArrayElement v0, v1, v1 typedArrayType=10
-    v5 = GetTypedArrayLength v0 typedArrayType=0
+function f35 name="goodTypedArrayTypes" parameters=[{type=object}, {type=number}, {type=Int8Array}, {type=BigUint64Array}, {type=Float64Array}] results=[{type=undefined}] {
+    v5 = GetTypedArrayLength v2 typedArrayType=1
+    v6 = GetTypedArrayElement v3, v1 typedArrayType=12
+    PutTypedArrayElement v4, v1, v1 typedArrayType=10
+    v8 = GetTypedArrayLength v0 typedArrayType=0
     Return
 }
 function f36 name="closure" captures=[{type=number}] results=[{type=undefined}]

@@ -23,7 +23,7 @@ function f3 name="collects" flags=[HasRestParameter] parameters=[{type=Array<any
 function f4 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=L0|L1}] {
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
-    v5 = AssumeType v4 castType=L0|L1
+    v5 = AssumeType v4 provenType=L0|L1
     Return v5
 }
 function f5 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -65,7 +65,7 @@ function f8 name="superCallForwardsList" parameters=[{type=f4}, {type=anything},
 # CHECK-NEXT: = SuperConstruct v0, v1, {{*}}, {{*}} layout=L1
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = SuperConstructList v0, v1, v2 layout=L1
-# TWICE: = CallDirect v1, {{*}}, {{*}} function=f4 [isConstruction]
+# TWICE: = CallDirect v1, {{*}}, {{*}} function=f4 [isConstruction, calleeIsPredicted]
 # TWICE-NOT: = SuperConstruct v0
 }
 
@@ -139,7 +139,7 @@ function f18 name="mayLeaveByTheCall" parameters=[{type=f0}, {type=Array<anythin
     v2 = CallList v0, -, v1
     ReturnCall v2 requirement=Allowed
 # CHECK-COUNT-2: = ElemGet v1,
-# CHECK-NEXT: [[returned18]]: anything = Call v0, -, {{*}}, {{*}} [isDemotedTailCall]
+# CHECK-NEXT: [[returned18]]: anything = Call v0, -, {{*}}, {{*}} @0 tail
 # CHECK-NEXT: Return [[returned18]]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: [[left18]]: anything = CallList v0, -, v1

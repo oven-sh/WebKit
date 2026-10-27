@@ -24,13 +24,6 @@ class JSONRuntime;
 struct Instance;
 struct State;
 
-struct UnmappedArgumentsShape {
-    Structure* initialStructure { nullptr };
-    Structure* structure { nullptr };
-    PropertyOffset offsetOfCallee { invalidOffset };
-    PropertyOffset offsetOfIterator { invalidOffset };
-};
-
 struct BuiltinFamilyState {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(BuiltinFamilyState);
     WTF_MAKE_NONCOPYABLE(BuiltinFamilyState);
@@ -43,7 +36,6 @@ struct BuiltinFamilyState {
     Instance& instance;
     std::unique_ptr<JSONRuntime> json;
     std::unique_ptr<BuiltinLocationWatch> locationWatch;
-    UnmappedArgumentsShape unmappedArguments;
 };
 
 } // namespace AOT

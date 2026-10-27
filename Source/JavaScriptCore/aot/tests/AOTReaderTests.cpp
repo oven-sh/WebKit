@@ -35,7 +35,7 @@ void testAcceptsFixture()
     AOT_TEST_CHECK(parsedText.toString() == readText.toString());
 
     AOT_TEST_CHECK(program->form() == IRForm::AsRead);
-    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency == BlockFrequency::Unlikely);
+    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency.predicted() == BlockFrequency::Unlikely);
     AOT_TEST_CHECK(program->at(f8).blocks[1].handler && program->at(f8).blocks[1].handler->block == BlockID(3u));
     AOT_TEST_CHECK(program->at(f8).blocks[3].role == BlockRole::CatchHandler);
     AOT_TEST_CHECK(hasElements(program->at(f8).blocks[0].terminator.taken().proofs, { 0u }));
@@ -205,7 +205,7 @@ void testPropertyKeys()
         { "text key without text"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, text)), Wire::none, Kind::InvalidPropertyKey },
         { "text key with an owner"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, owner)), L0.index(), Kind::InvalidPropertyKey },
         { "text key with a symbol"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, symbol)), 0, Kind::InvalidPropertyKey },
-        { "text key with a position"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, position)), 0, Kind::InvalidPropertyKey },
+        { "text key with the number of a call"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, callNumber)), 0, Kind::InvalidPropertyKey },
         { "private name without an owner"_s, keyOffset(fixture, privateName, offsetof(Wire::PropertyKey, owner)), Wire::none, Kind::InvalidPropertyKey },
         { "well-known symbol without a symbol"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, kind)), static_cast<uint32_t>(PropertyKeyKind::WellKnownSymbol), Kind::InvalidPropertyKey },
         { "created symbol without a module"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, kind)), static_cast<uint32_t>(PropertyKeyKind::CreatedSymbol), Kind::InvalidPropertyKey },
@@ -284,10 +284,10 @@ void testTypesAreCanonicalized()
         AOT_TEST_CHECK(printed == expected);
         expectAccepted(name, readBytes(storage.span()));
     };
-    auto typeOfLiterals = [](const Program& program) { return program.variables[0].declared.type; };
-    auto typeOfInt32 = [](const Program& program) { return program.layouts[0].fields[0].declared.type; };
-    auto typeOfNumber = [](const Program& program) { return program.layouts[2].fields[0].declared.type; };
-    auto typeOfObjects = [](const Program& program) { return program.variables[1].declared.type; };
+    auto typeOfLiterals = [](const Program& program) { return program.variables[0].declared.written(); };
+    auto typeOfInt32 = [](const Program& program) { return program.layouts[0].fields[0].declared.written(); };
+    auto typeOfNumber = [](const Program& program) { return program.layouts[2].fields[0].declared.written(); };
+    auto typeOfObjects = [](const Program& program) { return program.variables[1].declared.written(); };
     auto primitives = [](Wire::Primitives first, Wire::Primitives second) { return static_cast<uint32_t>(first) | static_cast<uint32_t>(second); };
 
     size_t literalPrimitives = typeOffset(fixture, types.literals, offsetof(Wire::Type, primitives));
@@ -319,14 +319,14 @@ void testPositionsKeepTheirLayouts()
     ReaderFixture fixture(declaredLayoutsText);
     auto program = fixture.read();
     auto expectPosition = [&](const DeclaredType& declared, ASCIILiteral type, OptionSet<PositionFlags> flags) {
-        AOT_TEST_CHECK(printedType(*program, declared.type) == type);
-        AOT_TEST_CHECK(declared.flags == flags);
+        AOT_TEST_CHECK(printedType(*program, declared.written()) == type);
+        AOT_TEST_CHECK(declared.writtenFlags() == flags);
     };
     expectPosition(program->variables[0].declared, "undefined|L0|L1|L2"_s, { });
     expectPosition(program->variables[1].declared, "L0|L1|L2"_s, { PositionFlags::IsExpected });
     expectPosition(program->variables[2].declared, "L2"_s, { });
     expectPosition(program->functions[0].parameters[0], "L1"_s, { });
-    AOT_TEST_CHECK(program->functions[0].at(ValueID(0u)).type == program->functions[0].parameters[0].type);
+    AOT_TEST_CHECK(program->functions[0].at(ValueID(0u)).type == program->functions[0].parameters[0].written());
     expectAccepted("declared layouts"_s, readBytes(fixture.bytes.span()));
 
     ReadResult prepared = readBytesInForm(fixture.bytes.span(), IRForm::Prepared);
@@ -348,7 +348,7 @@ void testLongListsAreNotWidened()
     ReaderFixture fixture(text.toString());
     auto program = Program::read(fixture.bytes.span(), build);
     AOT_TEST_CHECK(program);
-    AOT_TEST_CHECK(membersOf(*program, program->at(program->variables[0].declared.type)).size() == numberOfLayouts);
+    AOT_TEST_CHECK(membersOf(*program, program->at(program->variables[0].declared.written())).size() == numberOfLayouts);
     AOT_TEST_CHECK(build.takeLosses(program.get()).isEmpty());
 }
 
@@ -361,7 +361,7 @@ void testFormParameter()
     expectAccepted("request in the first form"_s, readBytesInForm(fixtureWithRequest.bytes.span(), IRForm::AsRead));
     expectRejected("request in the second form"_s, readBytesInForm(fixtureWithRequest.bytes.span(), IRForm::Prepared), Kind::RequiredPassLeftOperation);
 
-    String textWithoutRequest = makeStringByReplacingAll(String(readerFixtureText), "Convert v9 declared={type=number flags=[IsExpected]}"_s, "Check v9 castType=number"_s);
+    String textWithoutRequest = makeStringByReplacingAll(String(readerFixtureText), "Convert v9 declared={type=number flags=[IsExpected]}"_s, "Check v9 expectedType=number"_s);
     AOT_TEST_CHECK(textWithoutRequest != readerFixtureText);
     ReaderFixture fixture(textWithoutRequest);
     expectAccepted("fixture in the first form"_s, readBytesInForm(fixture.bytes.span(), IRForm::AsRead));

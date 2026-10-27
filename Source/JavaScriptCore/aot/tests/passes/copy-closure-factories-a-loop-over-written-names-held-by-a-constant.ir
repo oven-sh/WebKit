@@ -1,0 +1,41 @@
+# const names = ["a", "b"];   for (const name of names) object[name] = function () { return name; };
+# The written names are expected to be what the constant of the module holds. A turn asks which of them it was handed.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[name]]{{*}} = ResultAt {{*}} index=1
+# CHECK: [[a]]{{*}} = String string="a"
+# CHECK-NEXT: StrictEq [[name]], [[a]]
+# CHECK: = NewClosure [[a]] function=f2
+# CHECK: = NewClosure {{*}} function=f3
+# CHECK: = NewClosure {{*}} function=f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+variable g0 name="names" module=m0 declared={type=anything} flags=[IsImmutable]
+data d0 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]} module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Data data=d0
+    PutModuleVariable v1 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    v5 = IteratorResume v4
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = NewClosure v7 function=f1
+    ElemSet v0, v7, v8
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

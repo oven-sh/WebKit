@@ -21,10 +21,12 @@
 #include "AOTIRBuilder.h"
 #include "AOTInterningPhases.h"
 #include "AOTMethodTableEntrypoints.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTRepresentation.h"
 #include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -48,7 +50,7 @@ Function createDerivedHeader(const Function& target, FunctionID targetID, Functi
     header.flags = target.flags & FunctionFlags::IsChecked;
     header.length = target.length;
     header.enclosingRuntimeFunction = target.enclosingRuntimeFunction;
-    header.thisType = DeclaredType { .type = TypeTable::anything };
+    header.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     header.capabilities = capabilitiesOf(role);
     header.derivation = Derivation { .source = targetID, .parameter = keyParameter };
     return header;
@@ -85,10 +87,133 @@ static bool mayBeReadWithItsFunction(const Variable& variable)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
+{
+    while (FunctionID source = program.at(id).derivation.source)
+        id = source;
+    return id;
+}
+
+// A function under a key in brackets takes its name from the key where its object is made. One key names the function as it is written.
+static BitVector findWrittenFunctionsNamedBySeveralKeys(const Program& program, const ParallelLoops& loops)
+{
+    struct NameTaken {
+        FunctionID written;
+        // None for an async function: the tables of names leave those out.
+        ConstantKey key;
+        MethodKind kind;
+    };
+    Vector<NameTaken> names = collectInParallel<NameTaken>(loops, program.functions.size(), [&](unsigned index, Vector<NameTaken>& found) {
+        const Function& function = program.functions[index];
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& operation = function.at(id);
+                if (operation.opcode != Opcode::SetFunctionName)
+                    continue;
+                ConstantKey key = constantKeyOf(program, program.typeOf(function, operation.operand(OperandIndex::SetFunctionName::computedKey)));
+                for (FunctionID named : program.typeOf(function, operation.operand(OperandIndex::SetFunctionName::function)).functions)
+                    found.append({ writtenFunctionOf(program, named), program.at(named).has(FunctionFlags::IsAsync) ? ConstantKey { } : key, operation.methodKind() });
+            }
+        }
+    });
+    BitVector functions(program.functions.size());
+    UncheckedKeyHashMap<uint32_t, const NameTaken*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstNames;
+    for (const NameTaken& name : names) {
+        const NameTaken& first = *firstNames.add(name.written.index(), &name).iterator->value;
+        if (!name.key || first.key.kind != name.key.kind || first.key.text != name.key.text || first.key.symbol != name.key.symbol || first.kind != name.kind)
+            functions.quickSet(name.written.index());
+    }
+    return functions;
+}
+
+// A stack frame shows the name that the function object has when the stack is read. One function object stands for every frame of the function as it is written.
+static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
+{
+    const Program& program = editor.program();
+    auto writtenFunctionOf = [&](FunctionID id) {
+        return Typed::writtenFunctionOf(program, id);
+    };
+    BitVector namedBySeveralKeys = findWrittenFunctionsNamedBySeveralKeys(program, loops);
+    auto hasClosures = [&](const Function& function) {
+        return function.hasBody() && canBeCalledByValueOf(function.role);
+    };
+    Vector<PropertyKeyID, 2> keysOfNames { program.keyOf(BuiltinNames::name) };
+    if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
+        if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
+            keysOfNames.append(*key);
+    }
+    // What stands behind the tests at the head of a function runs under the function object of the tests.
+    BitVector standsBehindEntryChecks(program.functions.size());
+    for (const Function& function : program.functions) {
+        if (const auto* record = function.creator.tryAs<CreatorRecord::EntryChecks>()) {
+            standsBehindEntryChecks.quickSet(record->body.index());
+            standsBehindEntryChecks.quickSet(record->fallback.index());
+        }
+    }
+    BitVector hasBody(program.functions.size());
+    BitVector hasForm(program.functions.size());
+    BitVector hasSeveralForms(program.functions.size());
+    BitVector recordsFromTheStart(program.functions.size());
+    Vector<FunctionID> marked;
+    Vector<FunctionID> writtenWithClosuresOutOfSight;
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (!program.functions[index].hasBody())
+            continue;
+        uint32_t written = writtenFunctionOf(FunctionID(index)).index();
+        hasBody.quickSet(written);
+        // No function object is made of a form that is only called directly.
+        if (hasClosures(program.functions[index]) && !program.functions[index].hasOnlyDirectCallers() && !standsBehindEntryChecks.quickGet(index) && hasForm.set(written))
+            hasSeveralForms.quickSet(written);
+    }
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        FunctionID id(index);
+        // Nothing enters a function that has no body in any form, so no frame shows a name of its function objects and the run time keeps none.
+        if (FunctionID written = writtenFunctionOf(id); !hasBody.quickGet(written.index())) {
+            if (canBeCalledByValueOf(function.role) && flow.closuresMayBeRenamed(id))
+                editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
+            continue;
+        }
+        // The body of a generator, and of an async function that may wait, runs under a function object of its own.
+        bool mayWait = function.role == FunctionRole::CoroutineRamp && function.creator.as<CreatorRecord::Coroutine>().worker != function.creator.as<CreatorRecord::Coroutine>().body;
+        if (!hasClosures(function) || mayWait || function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::IsHiddenInStackTraces }))
+            continue;
+        FunctionID written = writtenFunctionOf(id);
+        if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index())) {
+            if (flow.closuresGoOutOfSightUnnamed(id) && (!flow.closureIsMadeOnce(id) || hasSeveralForms.quickGet(written.index())))
+                writtenWithClosuresOutOfSight.append(written);
+            continue;
+        }
+        // A static field is stored without a word to the run time.
+        bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
+        if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !isNamedByStaticField)
+            continue;
+        editor.at(id).capabilities.add(FunctionCapabilities::RecordsCallee);
+        editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
+        marked.append(id);
+        if (!flow.closuresMayBeRenamedOnlyWhereNobodySees(id) || namedBySeveralKeys.quickGet(written.index()))
+            recordsFromTheStart.quickSet(written.index());
+    }
+    // The run time sees the write that renames such a function object, and has the calls by value record their callees from then on.
+    for (FunctionID id : marked) {
+        FunctionID written = writtenFunctionOf(id);
+        if (recordsFromTheStart.quickGet(written.index()))
+            continue;
+        editor.at(id).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
+        editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
+    }
+    // Without RecordsCallee: the calls by value do the same, and nothing in compiled code asks.
+    for (FunctionID written : writtenWithClosuresOutOfSight) {
+        if (!program.at(written).has(FunctionCapabilities::RecordsCallee))
+            editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
+    }
+}
+
 void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build)
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
+    markFunctionsThatRecordTheirCallee(editor, inputs.flow, loops);
     AnalysisContext context { build, program, &inputs.flow, nullptr };
     size_t numberOfFunctionsBefore = program.functions.size();
 
@@ -158,29 +283,10 @@ void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, 
 
 static constexpr OptionSet<FunctionFlags> flagsOfUnboundTargets { FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest, FunctionFlags::HasArgumentCount, FunctionFlags::TakesCallee };
 
-static bool canBeBound(FunctionKind kind)
-{
-    switch (kind) {
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Plain:
-        return true;
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-    case FunctionKind::Initializer:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 bool canCreateBoundFunction(const Program& program, FunctionID targetID)
 {
     const Function& target = program.at(targetID);
-    return canBeBound(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
+    return canBeBoundOf(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectlyOrThroughEntrypoint(program, targetID);
 }
 
 // instanceof asks the target of a bound function.
@@ -200,17 +306,21 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     uint32_t numberOfBoundArguments = key.parameter;
     const Function& target = program.at(targetID);
     RELEASE_ASSERT(!target.hasAny(flagsOfUnboundTargets));
+    bool callsTargetByValue = !mayBeCalledDirectly(program, targetID);
 
     CreatorRecord::BoundFunction record {
         .target = targetID,
         .numberOfBoundArguments = numberOfBoundArguments,
         .numberOfCapturedArguments = std::min<uint32_t>(numberOfBoundArguments, target.numberOfPositionalParameters()),
-        .capturesTargetClosure = !answersInstanceOfWithAnyClosure(program, inputs.flow, targetID),
+        .capturesTargetClosure = callsTargetByValue || !answersInstanceOfWithAnyClosure(program, inputs.flow, targetID),
     };
     Function bound = createDerivedHeader(target, targetID, FunctionRole::BoundFunction, numberOfBoundArguments);
     bound.length = target.length > numberOfBoundArguments ? target.length - numberOfBoundArguments : 0;
     bound.flags = target.flags & OptionSet<FunctionFlags> { FunctionFlags::IsAsync, FunctionFlags::IsChecked };
-    bound.results = target.results;
+    if (callsTargetByValue)
+        bound.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
+    else
+        bound.results = target.results;
     bound.creator = record;
 
     IRBuilder builder({ inputs.build, program, &inputs.flow, nullptr }, bound, inputs.types);
@@ -219,8 +329,8 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     auto addEntryParameter = [&](const DeclaredType& declared) {
         TypeID proven = TypingContext { program, bound, inputs.types }.typeIDOf(declared);
         ValueID parameter = builder.addParameter(block, proven);
-        if (declared.type != proven)
-            bound.edit(parameter, ValueEdit::Type).setExpected(declared.type);
+        if (declared.expected().predicted() != proven)
+            bound.edit(parameter, ValueEdit::Type).setExpected(declared.expected());
         return parameter;
     };
     auto addCapture = [&](const DeclaredType& capture) {
@@ -228,9 +338,12 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
         return addEntryParameter(capture);
     };
 
+    // A bound function that holds the closure of its target reads the captures out of it.
     Vector<ValueID, 8> targetCaptures;
-    for (const DeclaredType& capture : target.captures)
-        targetCaptures.append(addCapture(capture));
+    if (!record.capturesTargetClosure) {
+        for (const DeclaredType& capture : target.captures)
+            targetCaptures.append(addCapture(capture));
+    }
     ValueID boundThis;
     if (target.has(FunctionFlags::HasThis))
         boundThis = addCapture(target.thisType);
@@ -241,22 +354,36 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     for (uint32_t i = 0; i < record.numberOfCapturedArguments; ++i) {
         if (isConstructedByRunTime && !holdsCells(declaredRepresentationOf(program, target.parameters[i]))) {
             argumentsHeldAsValues.append(i);
-            arguments.append(addCapture(DeclaredType { .type = TypeTable::anything }));
+            arguments.append(addCapture(DeclaredType(Proven::byPosition(TypeTable::anything))));
             continue;
         }
         arguments.append(addCapture(target.parameters[i]));
     }
-    // The body does not use the target closure. The run time reads it for instanceof.
+    // The run time reads the target closure for instanceof.
+    ValueID targetClosure;
     if (record.capturesTargetClosure)
-        addCapture(DeclaredType { .type = TypeTable::function });
+        targetClosure = addCapture(DeclaredType(Proven::byPosition(inputs.types.intern(Type::forFunction(targetID)))));
     for (size_t i = record.numberOfCapturedArguments; i < target.parameters.size(); ++i) {
         bound.parameters.append(target.parameters[i]);
         arguments.append(addEntryParameter(target.parameters[i]));
     }
 
     builder.moveToEndOf(block);
+    if (callsTargetByValue) {
+        Value call = IRBuilder::make(Opcode::Call);
+        call.setCalleeOperand(targetClosure);
+        call.setThisValueOperand(boundThis ? boundThis : builder.appendUndefined());
+        call.setArgumentsOperands(arguments.span());
+        // The entrypoint takes the place of this frame, so what it records stands for the call of the bound function.
+        Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { builder.append(WTF::move(call)) });
+        terminator.setRequirement(TailCallRequirement::Required);
+        builder.emitTerminator(WTF::move(terminator));
+        return bound;
+    }
+    if (targetClosure)
+        targetCaptures = appendCaptures(builder, targetID, targetClosure);
     for (uint32_t i : argumentsHeldAsValues)
-        arguments[i] = builder.append(makeAssumeType(arguments[i], TypingContext { program, bound, inputs.types }.typeIDOf(target.parameters[i])));
+        arguments[i] = builder.append(makeAssumeType(arguments[i], Proven::byPosition(TypingContext { program, bound, inputs.types }.typeIDOf(target.parameters[i]))));
     ValueID result = appendDirectCall(builder, {
         .callee = targetID,
         .captures = targetCaptures.span(),
@@ -347,7 +474,7 @@ Vector<TypeID, 4> parameterTypesOf(const Program& program, TypeArena& types, Met
             for (uint32_t index = 0; index < selector.numberOfArguments; ++index) {
                 // An argument that goes into a list, or that the method may find among `arguments`, is any value.
                 bool isDeclared = index < numberOfPositionalParameters && !method.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest });
-                declared[index] = declared[index].unionWith(isDeclared ? program.at(method.parameters[index].type) : Type::anything(), types);
+                declared[index] = declared[index].unionWith(isDeclared ? program.at(method.parameters[index].expected().predicted()) : Type::anything(), types);
             }
             return false;
         });
@@ -373,10 +500,10 @@ bool canHaveTableEntrypoint(const Program& program, TypeArena& types, FunctionID
         return false;
     const Vector<DeclaredType>& parameters = program.at(method).parameters;
     for (size_t index = 0; index < parameters.size(); ++index) {
-        if (parameters[index].flags.contains(PositionFlags::IsExpected))
+        if (parameters[index].isExpected())
             continue;
         Type passed = index < given.size() ? types.at(given[index]) : Type::fromPrimitives(Primitive::Undefined);
-        if (!passed.isSubsetOf(types.at(parameters[index].type), program))
+        if (!passed.isSubsetOf(types.at(*parameters[index].established()), program))
             return false;
     }
     return true;
@@ -402,11 +529,11 @@ struct FoundEntrypoints {
 static void declareTableConvention(const Program& program, Function& function, TypeArena& types, MethodSelector selector)
 {
     function.flags.add(FunctionFlags::HasThis);
-    function.thisType = DeclaredType { .type = types.intern(Type::object()) };
+    function.thisType = DeclaredType(Proven::byPosition(types.intern(Type::object())));
     function.length = selector.numberOfArguments;
     for (TypeID parameter : parameterTypesOf(program, types, selector))
-        function.parameters.append(DeclaredType { .type = parameter });
-    function.results.append(DeclaredType { .type = TypeTable::anything });
+        function.parameters.append(DeclaredType(Proven::byPosition(parameter)));
+    function.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
 }
 
 static TableParameters addEntryBlock(IRBuilder& builder)
@@ -416,9 +543,9 @@ static TableParameters addEntryBlock(IRBuilder& builder)
     builder.moveToEndOf(block);
 
     TableParameters parameters;
-    parameters.thisValue = builder.addParameter(block, function.thisType.type);
+    parameters.thisValue = builder.addParameter(block, *function.thisType.established());
     for (const DeclaredType& parameter : function.parameters)
-        parameters.arguments.append(builder.addParameter(block, parameter.type));
+        parameters.arguments.append(builder.addParameter(block, *parameter.established()));
     return parameters;
 }
 
@@ -444,7 +571,7 @@ Function buildTableEntrypoint(const DerivedFunctionKey& key, DerivedFunctionInpu
         TypeID instances = inputs.types.intern(Type::forLayoutSet(inputs.types.completeLayoutSet(receivers.span())));
         if (inputs.build.validates())
             builder.append(makeValidateType(receiver, instances));
-        receiver = builder.append(makeAssumeType(receiver, instances));
+        receiver = builder.append(makeAssumeType(receiver, Proven::byPosition(instances)));
     }
 
     ValueID result = appendDirectCall(builder, {
@@ -522,7 +649,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
             CalleeCandidates candidates = calleeCandidates(program, function, callee);
             for (FunctionID listed : program.typeOf(function, candidates.value).functions)
                 found[0].typedCallees.append({ site, listed });
-            for (FunctionID listed : candidates.expected)
+            for (FunctionID listed : candidates.expected().predicted())
                 found[0].typedCallees.append({ site, listed });
         });
     });
@@ -595,9 +722,9 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                 const Type& type = program.typeOf(function, candidates.value);
                 for (FunctionID listed : type.functions)
                     foundHere.append({ FoundKind::Function, listed.index() });
-                if (!admitsUnlistedFunctions(program, type) && type.classes.isEmpty())
+                if (!admitsUnlistedFunctions(type) && type.classes.isEmpty())
                     return;
-                for (FunctionID listed : candidates.expected)
+                for (FunctionID listed : candidates.expected().predicted())
                     foundHere.append({ FoundKind::Function, listed.index() });
             }
             if (CalleeSetID stamp = call.callees())
@@ -645,7 +772,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
         case FoundKind::Set:
             if (isVisitedSet.quickSet(entry.index))
                 break;
-            for (FunctionID function : program.at(CalleeSetID(entry.index)).functions)
+            for (FunctionID function : program.at(CalleeSetID(entry.index)).followed().value())
                 mayBeEntered.set(function.index());
             break;
         }
@@ -669,17 +796,17 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
             parameterTypes.append(entrypoint.at(parameter).type);
         entrypoint.editAllBlocks().clear();
         entrypoint.editAllValues().clear();
+        entrypoint.writtenPositions.clear();
         entrypoint.inlineFrames.clear();
 
         IRBuilder builder(context, entrypoint, arenas.types);
         builder.setOrigin({ entrypoint.position, 0 });
-        BlockID block = builder.addBlock();
+        BlockID block = builder.addBlock(BlockFrequency::Rare);
         builder.moveToEndOf(block);
         for (TypeID type : parameterTypes)
             builder.addParameter(block, type);
         Value error = IRBuilder::make(Opcode::NewRuntimeError);
         error.setRuntimeError(RuntimeErrorKind::LeftOutOfExecutable);
-        error.setName(entrypoint.name);
         builder.emitThrow(builder.append(WTF::move(error)));
     });
     build.statistics().count(StatisticID::UnreachableFunctionsRemoved, entrypoints.size());

@@ -43,6 +43,8 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     case Representation::Int64:
         return { Primitive::Integer, Range::full() };
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return { Primitive::Number, Range::full() };
     case Representation::OptionalInt64:
         return { Primitive::Integer | representedMarkerPrimitives, Range::full() };
@@ -53,7 +55,7 @@ static constexpr RepresentableSet representableSetOf(Representation representati
     case Representation::Cell32:
         return { cellPrimitives | representedMarkerPrimitives, Range::empty(), true };
     case Representation::JSValue:
-        return { Primitive::Defined, Range::full(), true };
+        return { Primitive::Defined & ~Primitive::Unspecified, Range::full(), true };
     case Representation::LiteralString:
         return { Primitive::AnyString | representedMarkerPrimitives };
     }
@@ -85,6 +87,8 @@ static bool canHoldInternalValue(Representation representation, Representation i
 
 Representation defaultRepresentationOf(const Type& type)
 {
+    if (type.mayBeUnspecified()) [[unlikely]]
+        return defaultRepresentationOf(type.withoutPrimitives(Primitive::Unspecified));
     if (auto internal = internalRepresentationOf(type)) {
         if (*internal == Representation::Cell && type.primitives)
             return Representation::JSValue;
@@ -111,6 +115,7 @@ Representation representationOf(OpaqueKind kind)
 {
     switch (kind) {
     case OpaqueKind::Guard:
+    case OpaqueKind::Fact:
         return Representation::Void;
     case OpaqueKind::IteratorState:
     case OpaqueKind::Enumerator:
@@ -122,6 +127,7 @@ Representation representationOf(OpaqueKind kind)
     case OpaqueKind::Cursor:
     case OpaqueKind::KeyOrder:
     case OpaqueKind::CodeAddress:
+    case OpaqueKind::JSONHolders:
     case OpaqueKind::BuilderCursor:
         return Representation::RawWord;
     }
@@ -212,6 +218,8 @@ bool isLegalRepresentation(const Type& type, Representation representation)
 {
     if (representation == Representation::Unchosen)
         return false;
+    if (type.mayBeUnspecified()) [[unlikely]]
+        return isLegalRepresentation(type.withoutPrimitives(Primitive::Unspecified), representation);
     if (type.isNever())
         return true;
     if (auto internal = internalRepresentationOf(type))
@@ -239,6 +247,8 @@ static RepresentationSet representationsThat(const Predicate& holds)
 
 RepresentationSet legalRepresentationsOf(const Type& type)
 {
+    if (type.mayBeUnspecified()) [[unlikely]]
+        return legalRepresentationsOf(type.withoutPrimitives(Primitive::Unspecified));
     if (type.isNever()) {
         return representationsThat([](Representation) {
             return true;
@@ -291,6 +301,8 @@ SlotRepresentation defaultSlotRepresentationOf(const Type& type)
     case Representation::RawWord:
         return SlotRepresentation::Int64;
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return SlotRepresentation::Double;
     case Representation::OptionalInt64:
         return SlotRepresentation::OptionalInt64;

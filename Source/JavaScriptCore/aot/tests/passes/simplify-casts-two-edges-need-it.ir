@@ -6,24 +6,24 @@
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number}] {
+function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v1)
   b2():
     Jump -> next b3(v2)
   b3(v3):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Return v4
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3(v2)
 # CHECK-NEXT: b3(v3: anything):
-# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 expectedType=number
 }
 
-function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number}] {
+function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number flags=[IsExpected]}] {
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     Jump -> next b4(v1)
@@ -32,7 +32,7 @@ function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {typ
   b3():
     Jump -> next b4(v3)
   b4(v4):
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     Return v5
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b4(v1)
@@ -41,10 +41,10 @@ function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {typ
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Jump -> next b4(v3)
 # CHECK-NEXT: b4(v4: anything):
-# CHECK-NEXT: v5: number = Check v4 castType=number
+# CHECK-NEXT: v5: number = Check v4 expectedType=number
 }
 
-function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=number}] results=[{type=number}] {
+function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=number}] results=[{type=number flags=[IsExpected]}] {
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     Jump -> next b4(v1)
@@ -53,23 +53,23 @@ function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anyt
   b3():
     Jump -> next b4(v2)
   b4(v3):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Return v4
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b4(v1)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b4(v1)
 # CHECK: b4(v3: anything):
-# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 expectedType=number
 }
 
-function f3 name="onlyEdge" parameters=[{type=anything}] results=[{type=number}] {
+function f3 name="onlyEdge" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     Jump -> next b1(v0)
   b1(v1):
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     Return v2
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v1: anything):
-# CHECK-NEXT: v2: number = Check v1 castType=number
+# CHECK-NEXT: v2: number = Check v1 expectedType=number
 }

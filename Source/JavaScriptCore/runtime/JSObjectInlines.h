@@ -519,6 +519,7 @@ ALWAYS_INLINE void JSObject::setStructureForAddedProperty(VM& vm, Structure* pre
     slot.setNewProperty(this, offset);
 }
 
+template<bool notifiesCompiledClosure>
 ALWAYS_INLINE void JSObject::didAddPropertyWithTransition(VM& vm, PropertyName propertyName)
 {
     if (mayBePrototype()) [[unlikely]] {
@@ -526,9 +527,10 @@ ALWAYS_INLINE void JSObject::didAddPropertyWithTransition(VM& vm, PropertyName p
         return;
     }
 #if ENABLE(AOT)
-    // A class object of compiled code reports what its method table is asked for, and native code may put a property on one without asking.
-    if (type() == CompiledClosureType) [[unlikely]]
-        AOT::PropertyWalk::didAddPropertyToClosure(vm, this, propertyName.uid());
+    if constexpr (notifiesCompiledClosure) {
+        if (type() == CompiledClosureType) [[unlikely]]
+            AOT::PropertyWalk::didPutDirectOnClosure(vm, this, propertyName.uid());
+    }
 #endif
 }
 
@@ -567,11 +569,22 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
+#if ENABLE(AOT)
+    if constexpr (mode == PutModeDefineOwnProperty) {
+        if (type() == CompiledClosureType) [[unlikely]]
+            return putDirectToCompiledClosure(vm, propertyName, value, newAttributes, slot);
+    }
+#endif
+
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
     if (structure->isImmutableProperty(propertyName.uid())) [[unlikely]] {
-        if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
+        if (mode != PutModePut && structure->hasFrozenElementsInPlace()) {
+            moveFrozenElementsToSparseMap(vm);
+            structureID = this->structureID();
+            structure = structureID.decode();
+        } else if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
             return ReadonlyPropertyChangeError;
     }
     if (structure->isDictionary()) {
@@ -609,7 +622,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
             // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
             // https://bugs.webkit.org/show_bug.cgi?id=214342
-            if ((mode == PutModeDefineOwnProperty) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+            if ((mode != PutModePut) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (mayBePrototype()) [[unlikely]]
@@ -626,7 +639,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
-        didAddPropertyWithTransition(vm, propertyName);
+        didAddPropertyWithTransition<mode == PutModePut>(vm, propertyName);
         return { };
     }
 
@@ -649,7 +662,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             putDirectOffset(vm, offset, value);
             setStructureForAddedProperty(vm, structure, newStructure, offset, slot);
-            didAddPropertyWithTransition(vm, propertyName);
+            didAddPropertyWithTransition<mode == PutModePut>(vm, propertyName);
             return { };
         }
     }
@@ -665,7 +678,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
-        if ((mode == PutModeDefineOwnProperty) && (newAttributes != currentAttributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+        if ((mode != PutModePut) && (newAttributes != currentAttributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
             // We want the structure transition watchpoint to fire after this object has switched structure.
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
@@ -712,7 +725,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     setStructureForAddedProperty(vm, structure, newStructure, offset, slot);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
-    didAddPropertyWithTransition(vm, propertyName);
+    didAddPropertyWithTransition<mode == PutModePut>(vm, propertyName);
     return { };
 }
 

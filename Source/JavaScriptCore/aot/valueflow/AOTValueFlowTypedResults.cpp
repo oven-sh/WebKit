@@ -37,7 +37,7 @@ namespace {
 
 TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
 {
-    return array.contentsAt(program.builtins(), ContentsSlot::Element);
+    return array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
 }
 
 void followTypes(const Program& program, ValueFlowTypedResult& result)
@@ -66,7 +66,7 @@ void followTypes(const Program& program, ValueFlowTypedResult& result)
             isNamed.set(index);
             for (const Field& field : program.at(layout).fields) {
                 if (field.key)
-                    visit(expectationOf(field.declared));
+                    visit(expectationOf(field.declared).predicted());
             }
         }
     }
@@ -207,7 +207,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         if (type.primitives & Primitive::AnySymbol)
             members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
 
-        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && program.at(type.layouts).hasMembersWithoutLayout);
+        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty();
         std::span<const LayoutID> layoutsOfType = membersOf(program, type);
         for (size_t index = 0; index < result.layouts.size() && !layoutsOfType.empty(); ++index) {
             if (std::ranges::binary_search(layoutsOfType, result.layouts[index]))
@@ -227,9 +227,9 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         return admitsPlainObjects ? context.maker().unite(value, context.maker().intersect(plainData(), universe.objects())) : value;
     };
     auto fillField = [&](ClimbingSet object, const Field& field) {
-        ValueFlowNodeID node = context.written(object, program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
-        context.add(node, valueOf(expectationOf(field.declared)));
-        if (!field.declared.type || program.at(field.declared.type).primitives & Primitive::Undefined)
+        ValueFlowNodeID node = context.written(object, ValueFlowName::property(program, field.key));
+        context.add(node, valueOf(expectationOf(field.declared).predicted()));
+        if (!field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined)
             context.add(node, universe.undefinedValue());
     };
 
@@ -276,7 +276,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
     const ValueFlowUniverse& universe = inputs.universe();
     FlowApplication& application = *tables.application;
 
-    inputs.sets().forEachMember(inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
         application.layouts[universe.layoutOf(record).index()].flow.observedUses.add(ObservedUse::ReachesTypedParse);
     });
 
@@ -419,7 +419,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
                     if (facts)
-                        node.arrayStorage = facts->arrayStorageToldToCreator;
+                        node.arrayStorage = facts->arrayStorage;
                     if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
                         if (!positions)
                             positions.emplace(inputs, arena, counts, index);

@@ -19,6 +19,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static_assert(!std::is_convertible_v<ValueFlowName, ValueFlowCellName>);
+static_assert(!std::is_invocable_v<decltype(&ValueFlowRuleContext::read), ValueFlowRuleContext&, ClimbingSet, ValueFlowName>);
+static_assert(std::is_invocable_v<decltype(&ValueFlowRuleContext::read), ValueFlowRuleContext&, ClimbingSet, ValueFlowCellName>);
+
 std::span<const NativeTest> valueFlowCoreTests();
 
 namespace {
@@ -1105,10 +1109,10 @@ static void runToyRule(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(statement.result, context.maker().of(ValueFlowObjectID(payload)));
         return;
     case ToyOperation::Load:
-        context.connect(context.read(context.valueOf(operands[0]), ValueFlowName::property(PropertyKeyID(payload))), statement.result);
+        context.connect(context.readWhatWasWritten(context.valueOf(operands[0]), ValueFlowName::property(PropertyKeyID(payload))), statement.result);
         return;
     case ToyOperation::LoadEveryProperty:
-        context.connect(context.read(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::EveryProperty, 0 }), statement.result);
+        context.connect(context.readWhatWasWritten(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::EveryProperty, 0 }), statement.result);
         return;
     case ToyOperation::StoreUnderUnknownKey:
         context.connect(operands[1], context.written(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::UnknownKey, 0 }));
@@ -1327,7 +1331,7 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
             ValueFlowSolver solver(input, sets, runToyRule, loops, way.rounds);
             AOT_TEST_CHECK(solver.solve());
             for (uint32_t node = 0; node < program.numberOfNodes(); ++node)
-                AOT_TEST_CHECK(holdsTheSame(sets, solver.valueOf(ValueFlowNodeID(node)), expected.values[node]));
+                AOT_TEST_CHECK(holdsTheSame(sets, solver.possibleValuesOf(ValueFlowNodeID(node)), expected.values[node]));
             for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
                 AOT_TEST_CHECK(solver.isReached(FunctionID(function)) == expected.isReached[function]);
             for (uint32_t object = 0; object < program.numberOfObjects; ++object)
@@ -1343,11 +1347,11 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
                 AOT_TEST_CHECK(sets.contains(solver.keyOf(witness).set, ValueFlowObjectID(function)));
             }
             for (uint32_t node = 0; node < program.numberOfNodes(); node += 3) {
-                sets.forEachMember(solver.valueOf(ValueFlowNodeID(node)), [&](ValueFlowObjectID member) {
+                sets.forEachMember(solver.possibleValuesOf(ValueFlowNodeID(node)), [&](ValueFlowObjectID member) {
                     Vector<ValueFlowNodeID> way = solver.explain(ValueFlowNodeID(node), member);
                     AOT_TEST_CHECK(way.size() >= 2 && way[0] == ValueFlowNodeID(node));
                     for (ValueFlowNodeID step : way)
-                        AOT_TEST_CHECK(sets.contains(solver.valueOf(step), member));
+                        AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(step), member));
                     const ValueFlowNodeKey* key = solver.keyOfMadeNode(way.last());
                     AOT_TEST_CHECK(key && key->kind == ValueFlowMadeNodeKind::Constant);
                     ValueFlowStatementID allocation = solver.statementThatLogged(ValueFlowEdge { way.last(), way[way.size() - 2] });
@@ -1419,7 +1423,7 @@ static void whatATurnMakesAndReachesRunsInThatTurn()
         AOT_TEST_CHECK(solver.solve());
         for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
             AOT_TEST_CHECK(solver.isReached(FunctionID(function)));
-        AOT_TEST_CHECK(sets.contains(solver.valueOf(program.node(host, 3)), ValueFlowObjectID(4u)));
+        AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(program.node(host, 3)), ValueFlowObjectID(4u)));
         for (const ValueFlowSolver::Round& round : solver.rounds())
             AOT_TEST_CHECK(round.turns <= 1);
     }
@@ -1493,8 +1497,8 @@ static void valueFlowSolverFindsObjectsOutsideDeclaredTypes()
 
     ValueFlowSolver solver(input, sets, [](const ValueFlowStatement&, ValueFlowRuleContext&) { }, loops);
     AOT_TEST_CHECK(solver.solve());
-    AOT_TEST_CHECK(solver.valueOf(takingStranger) == setOf({ 0, 3, 5 }));
-    AOT_TEST_CHECK(solver.valueOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
+    AOT_TEST_CHECK(solver.possibleValuesOf(takingStranger) == setOf({ 0, 3, 5 }));
+    AOT_TEST_CHECK(solver.possibleValuesOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
     AOT_TEST_CHECK(solver.holdsObjectOutsideFamily(takingStranger) && !solver.holdsObjectOutsideFamily(takingPlaceholders));
     AOT_TEST_CHECK(!solver.holdsObjectOutsideFamily(withStranger));
     AOT_TEST_CHECK(solver.counters().nodesHoldingObjectsOutsideFamily == 1);
@@ -1543,7 +1547,7 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
             AOT_TEST_CHECK(solver.solve());
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
-            AOT_TEST_CHECK(solver.valueOf(statements[0].result) == ValueSets::nothing);
+            AOT_TEST_CHECK(solver.possibleValuesOf(statements[0].result) == ValueSets::nothing);
         }
     }
 }
@@ -1586,10 +1590,45 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
         runsOfStatementThatAsksLast = 0;
         ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
         AOT_TEST_CHECK(solver.solve());
-        AOT_TEST_CHECK(sets.size(solver.valueOf(statements[0].result)) == numberOfObjects);
-        AOT_TEST_CHECK(solver.valueOf(statements[1].result) == solver.valueOf(statements[0].result));
+        AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statements[0].result)) == numberOfObjects);
+        AOT_TEST_CHECK(solver.possibleValuesOf(statements[1].result) == solver.possibleValuesOf(statements[0].result));
         AOT_TEST_CHECK(solver.rounds().size() > numberOfObjects);
         AOT_TEST_CHECK(runsOfStatementThatAsksLast == 2);
+    }
+}
+
+static void numbersByKeyAgreeWithAHashMap()
+{
+    // The second kind of key is picked as a shard of watches picks its sets: by the high bits of a product with the golden ratio.
+    for (bool arePickedByHighBitsOfProduct : { false, true }) {
+        WeakRandom random(7);
+        ValueFlowNumbersByKey numbers;
+        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> expected;
+        AOT_TEST_CHECK(!numbers.find(0));
+        uint32_t next = 0;
+        while (expected.size() < 50000) {
+            uint32_t low = arePickedByHighBitsOfProduct ? next++ : random.getUint32();
+            if (arePickedByHighBitsOfProduct && low * 0x9E3779B1u >> 28 != 5)
+                continue;
+            uint64_t key = static_cast<uint64_t>(arePickedByHighBitsOfProduct ? 3 : random.getUint32(1000)) << 32 | low;
+            uint32_t number = expected.size();
+            auto added = numbers.add(key, number);
+            auto addedToExpected = expected.add(key, number);
+            AOT_TEST_CHECK(added.isNew == addedToExpected.isNewEntry);
+            AOT_TEST_CHECK(added.number == addedToExpected.iterator->value);
+            if (!(number % 3)) {
+                added.number += 7;
+                addedToExpected.iterator->value += 7;
+            }
+        }
+        for (auto [key, number] : expected) {
+            const uint32_t* found = numbers.find(key);
+            AOT_TEST_CHECK(found && *found == number);
+            AOT_TEST_CHECK(!!numbers.find(key + 1) == expected.contains(key + 1));
+        }
+        AOT_TEST_CHECK(numbers.bytesInUse() == expected.size() * 12);
+        AOT_TEST_CHECK(numbers.memoryInBytes() <= numbers.bytesInUse() * 3 + 12);
+        AOT_TEST_CHECK(numbers.longestRunOfSlotsInUse() < 256);
     }
 }
 
@@ -1597,7 +1636,7 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue)
+    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

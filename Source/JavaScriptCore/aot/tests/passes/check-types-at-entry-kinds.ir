@@ -59,7 +59,7 @@ function f1 name="Point" module=m0 position=5 kind=BaseConstructor flags=[HasNew
 # CHECK: b0(v0: anything, v1: anything ~ undefined|null|number):
 # CHECK-NEXT: = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: = NewObject {{*}} layout=L0
-# CHECK-NEXT: [[x]]: undefined|null|number = Check v1 castType=undefined|null|number site=w0 @10
+# CHECK-NEXT: [[x]]: undefined|null|number = Check v1 expectedType=undefined|null|number site=w0 @10
 # CHECK: PropSet {{*}}, [[x]] key="x"
 
 function f2 name="Point3" module=m0 position=25 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked] length=1 parameters=[{type=undefined|null|number site=w2}] results=[{type=object flags=[IsFromCompiler]}] {
@@ -68,7 +68,7 @@ function f2 name="Point3" module=m0 position=25 kind=DerivedConstructor flags=[H
     PropSet v4, v2 key="z"
     Return v4
 # CHECK: b0(v0: function, v1: anything, v2: anything ~ undefined|null|number):
-# CHECK-NEXT: [[z]]: undefined|null|number = Check v2 castType=undefined|null|number site=w2 @30
+# CHECK-NEXT: [[z]]: undefined|null|number = Check v2 expectedType=undefined|null|number site=w2 @30
 # CHECK: = SuperConstruct {{*}}, v1, [[z]] layout=L1
 }
 
@@ -78,7 +78,7 @@ function f3 name="later" module=m0 position=35 flags=[IsAsync, IsChecked] length
     Return v1
 }
 # CHECK-LABEL: function f3 name="later" module=m0 position=35 flags=[IsAsync, IsChecked]
-# CHECK: [[awaited]]: undefined|null|number = Check v0 castType=undefined|null|number site=w3 @40
+# CHECK: [[awaited]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w3 @40
 # CHECK-NEXT: = Await [[awaited]]
 
 function f4 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, IsChecked] length=1 parameters=[{type=undefined|null|number site=w4}] results=[{type=anything}] {
@@ -88,7 +88,7 @@ function f4 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, 
     Return v4
 }
 # CHECK-LABEL: function f4 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, IsChecked]
-# CHECK: [[yielded]]: undefined|null|number = Check v1 castType=undefined|null|number site=w4 @50
+# CHECK: [[yielded]]: undefined|null|number = Check v1 expectedType=undefined|null|number site=w4 @50
 # CHECK-NEXT: InitialYield
 # CHECK-NEXT: = Yield [[yielded]]
 
@@ -101,7 +101,7 @@ function f5 name="makesClass" module=m0 position=55 flags=[IsChecked] length=1 p
     PutModuleVariable v5 variable=g0
     v7 = FinishClass v2 layout=L2
     Return v7
-# CHECK: [[start]]: undefined|null|number = Check v0 castType=undefined|null|number site=w5 @60
+# CHECK: [[start]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w5 @60
 # CHECK-NEXT: = NewClosure [[start]] function=f6
 # CHECK-NEXT: = NewClass {{*}} layout=L2
 # CHECK: PutModuleVariable [[start]] variable=g0
@@ -129,8 +129,8 @@ function f8 name="evaluates" module=m0 position=85 flags=[IsChecked] length=2 pa
     v3 = Undefined
     v4 = DirectEval v1, v3, -, v2 evalScope=e0
     Return v4
-# CHECK: [[value]]: undefined|null|number = Check v0 castType=undefined|null|number site=w7 @90
-# CHECK-NEXT: [[text]]: undefined|null|string = Check v1 castType=undefined|null|string site=w8 @95
+# CHECK: [[value]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w7 @90
+# CHECK-NEXT: [[text]]: undefined|null|string = Check v1 expectedType=undefined|null|string site=w8 @95
 # CHECK-NEXT: = NewObject -, [[value]] layout=L3 fields=[0]
 # CHECK: = DirectEval [[text]], {{*}} evalScope=e0
 }
@@ -141,13 +141,13 @@ function f9 name="iterates" module=m0 position=105 flags=[IsChecked] length=1 pa
 }
 # CHECK-LABEL: function f9 name="iterates" {{*}}parameters=[{type=undefined|null|ArrayIterator site=w9 flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ undefined|null|ArrayIterator):
-# CHECK-NEXT: = Check v0 castType={{*}} site=w9 @110
+# CHECK-NEXT: = Check v0 expectedType={{*}} site=w9 @110
 
 function f10 name="again" module=m0 position=125 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number site=w10}] results=[{type=anything}] {
     v1 = NewClosure function=f10
     v2 = Add v0, v0
     Return v1
-# CHECK: [[number]]: undefined|null|number = Check v0 castType=undefined|null|number site=w10 @130
+# CHECK: [[number]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w10 @130
 # CHECK-NEXT: = NewClosure function=f10
 # CHECK-NEXT: = Add [[number]], [[number]]
 # CHECK-NOT: function f11

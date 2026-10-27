@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTCellFormat.h"
 #include "AOTClassTable.h"
@@ -41,6 +42,7 @@
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/RawHex.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -287,6 +289,9 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
         // `{ 0: x }` defines a property under the name "0". Whoever reads an element of an object that is no array reads its named properties too.
         if (!isArray && (difference.change == OperandChange::ElementsChanged || difference.change == OperandChange::ArrayStorageChanged))
             heaps.add(AbstractHeap::NamedProperties);
+        // Only an array has a storage that is read apart from its elements.
+        if (!isArray && difference.change == OperandChange::ArrayStorageChanged)
+            heaps.add(AbstractHeap::Elements);
         if (heaps.isEmpty() || written.containsAny(heaps))
             continue;
         String message = makeString("operand "_s, position, ": "_s, describe(difference), ", the call writes "_s, describeMembers(written), " through it, not "_s, describeMembers(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');
@@ -330,6 +335,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountStopsForCollector, uint64_t, 
     return instance->vm->heap.mutatorExecutionVersion();
 #endif
 }
+
+#if ASSERT_ENABLED
+thread_local CallerFrameAndPC* NoCollectionGuard::s_frameRecord;
+#endif
 
 OperationPermissions permissionsOf(Entry entry)
 {
@@ -483,8 +492,12 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
         // A slot that cannot say "absent" holds zero until its first store.
         if (bits == (traits.hasAbsent ? traits.absentBits : 0))
             continue;
-        if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits))
+        if ((traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits)) {
+            JSValue marker = bits == traits.undefinedBits ? jsUndefined() : jsNull();
+            if (!state.objects->layouts.slotAdmits(field, marker))
+                return SlotOutsideType { &field, bits, true, marker };
             continue;
+        }
 
         const RuntimeType& type = state.objects->layouts.typeOf(field);
         if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
@@ -572,6 +585,7 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))
 {
     VM& vm = *instance->vm;
+    LeafOperationScope leaf(vm);
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
     JSGlobalObject* globalObject = instance->globalObject;

@@ -14,17 +14,21 @@
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include <optional>
+#include <utility>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class FunctionRemap;
+class ReasonsForOperationsThatWent;
 class StringRemap;
 class TypeRemap;
 
 enum class ConstructorForm : uint8_t { NotConstructor, Base, Derived };
 
 struct Function;
+
+void didReplaceBody(ReasonsForOperationsThatWent&);
 
 template<typename T, size_t minCapacity>
 class BodyTable {
@@ -63,17 +67,24 @@ public:
     ChangeLogOfFunction() = default;
     ChangeLogOfFunction(const ChangeLogOfFunction&) { }
     ChangeLogOfFunction(ChangeLogOfFunction&& other)
-        : valuesAreTypedAsDefined(other.valuesAreTypedAsDefined)
+        : reasonsForOperationsThatWent(std::exchange(other.reasonsForOperationsThatWent, nullptr))
+        , valuesAreTypedAsDefined(other.valuesAreTypedAsDefined)
     {
     }
     ChangeLogOfFunction& operator=(const ChangeLogOfFunction&)
     {
         didEditEverything();
+        if (reasonsForOperationsThatWent) [[unlikely]]
+            didReplaceBody(*reasonsForOperationsThatWent);
         return *this;
     }
     ChangeLogOfFunction& operator=(ChangeLogOfFunction&& other)
     {
         didEditEverything();
+        if (reasonsForOperationsThatWent) [[unlikely]]
+            didReplaceBody(*reasonsForOperationsThatWent);
+        else
+            reasonsForOperationsThatWent = std::exchange(other.reasonsForOperationsThatWent, nullptr);
         valuesAreTypedAsDefined = other.valuesAreTypedAsDefined;
         return *this;
     }
@@ -92,8 +103,23 @@ public:
     }
 
     ChangeLog* log { nullptr };
+    mutable ReasonsForOperationsThatWent* reasonsForOperationsThatWent { nullptr };
     uint32_t numberOfEdits { 0 };
     bool valuesAreTypedAsDefined { false };
+};
+
+struct WrittenPosition {
+    ValueID value;
+    uint32_t position { 0 };
+};
+
+struct ConstructionStart {
+    uint32_t reported { 0 };
+    uint32_t start { 0 };
+    // Reflect.construct(..), which calls the host function where it cannot construct.
+    bool isWrittenAsCall { false };
+    // No construction: an operation that reports its own errors at one place, and at `start` whatever it calls.
+    bool isForCallers { false };
 };
 
 struct Function : FunctionRecord {
@@ -102,6 +128,9 @@ struct Function : FunctionRecord {
 
     Blocks blocks;
     Values values;
+    // Sorted by value. A value's position is where an error is reported; only a value that the source text has elsewhere is listed.
+    Vector<WrittenPosition> writtenPositions;
+    Vector<ConstructionStart> constructionStarts;
     bool representationsAreChosen { false };
     bool bodyIsReleased { false };
 
@@ -120,7 +149,7 @@ struct Function : FunctionRecord {
         Value& value = values.m_storage.mutableSpan().data()[id.index()];
         m_changes.didEdit();
         if (m_changes.log)
-            m_changes.log->didEdit(id, edits, value.type, value.expectedForTyping());
+            m_changes.log->didEdit(id, edits, value.type, value.expectedForTyping().predicted());
         return value;
     }
     Block& edit(BlockID id, OptionSet<BlockEdit> edits = anyBlockEdit)
@@ -204,6 +233,8 @@ struct Function : FunctionRecord {
         RELEASE_ASSERT(m_changes.log == &log);
         m_changes.log = nullptr;
     }
+    ReasonsForOperationsThatWent* listenerForOperationsThatGo() const { return m_changes.reasonsForOperationsThatWent; }
+    void setListenerForOperationsThatGo(ReasonsForOperationsThatWent* listener) const { m_changes.reasonsForOperationsThatWent = listener; }
     uint32_t numberOfEdits() const { return m_changes.numberOfEdits; }
     bool valuesAreTypedAsDefined() const { return m_changes.valuesAreTypedAsDefined; }
     void setValuesAreTypedAsDefined() { m_changes.valuesAreTypedAsDefined = true; }
@@ -212,6 +243,8 @@ struct Function : FunctionRecord {
 
     bool isModuleBody() const;
     bool isUnsplitCoroutine() const;
+    // A stack frame shows the property `name` of the function object from the first look for it on. Before that it shows the displayName, and the name of an accessor without "get " or "set ".
+    bool framesTellWhetherNameWasLookedFor() const { return has(FunctionCapabilities::NotesLooksForName) || kind == FunctionKind::Getter || kind == FunctionKind::Setter; }
     bool runsOnlyBehindFailedTest() const { return role == FunctionRole::GenericVersion || has(FunctionFlags::IsSplitOffGenericVersion); }
     ConstructorForm constructorForm() const;
 
@@ -225,6 +258,8 @@ struct Function : FunctionRecord {
 
     Wire::SourceLocation locationOf(ValueID) const;
     Wire::SourceLocation locationOf(Origin) const;
+    std::optional<uint32_t> writtenPositionOf(ValueID) const;
+    Wire::SourceLocation writtenLocationOf(ValueID) const;
     Wire::SourceLocation declarationLocation() const;
 
     unsigned numberOfEntryParameters() const;
@@ -247,6 +282,8 @@ private:
 };
 
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function&);
+// Callers and closures name a function by its id. What is known of them holds for whatever stands under that id.
+OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept = { });
 
 struct Renumbering {
     BlockID newIDOf(BlockID block) const { return blocks.isEmpty() ? block : blocks[block.index()]; }

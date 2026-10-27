@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <tuple>
+#include <wtf/HashFunctions.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -27,6 +28,7 @@ struct FrequencyInputs {
     const CFG& cfg;
     const BlockCycles& cycles;
     bool ignoresBranchHints;
+    std::optional<uint32_t> seedOfShuffledHeat { };
 };
 
 struct BranchCondition {
@@ -39,6 +41,30 @@ struct BranchCondition {
 static bool areBranchHintsIgnored(const AnalysisContext& context)
 {
     return context.build.recordedOptions().has(TestingSwitch::IgnoreBranchHints);
+}
+
+std::optional<uint32_t> seedOfShuffledHeat(const BuildContext& build)
+{
+    if (build.recordedOptions().heat() != HeatOverride::Shuffled) [[likely]]
+        return std::nullopt;
+    return build.recordedOptions().layoutSeed;
+}
+
+uint32_t drawForShuffledHeat(uint32_t seed, uint32_t first, uint32_t second, uint32_t numberOfChoices)
+{
+    return WTF::pairIntHash(WTF::pairIntHash(seed, first), second) % numberOfChoices;
+}
+
+void shuffleRecordedFrequencies(Program& program, const BuildContext& build)
+{
+    std::optional<uint32_t> seed = seedOfShuffledHeat(build);
+    if (!seed) [[likely]]
+        return;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        Function& function = program.at(FunctionID(index));
+        for (uint32_t block = 1; block < function.blocks.size(); ++block)
+            function.edit(BlockID(block), BlockEdit::Rest).frequency = drawFrequency(*seed, index, block);
+    }
 }
 
 static BranchSide oppositeOf(BranchSide side)
@@ -69,12 +95,32 @@ static bool isForwardEdge(const CFG& cfg, BlockID from, BlockID to)
     return cfg.reversePostOrderIndex(from) < cfg.reversePostOrderIndex(to);
 }
 
+// Each operand of a condition reaches the arm through a block of its own, which only narrows or names values and jumps on. Such a block is a part of the edge.
+static bool isPartOfEdgeToUnlikelyBlock(const Function& function, BlockID id)
+{
+    const Block& block = function.at(id);
+    if (id == entryBlock || block.terminator.targets.size() != 1 || function.at(block.terminator.targets[0].block).frequency.predicted() != BlockFrequency::Unlikely)
+        return false;
+    return std::ranges::all_of(block.values, [&](ValueID valueID) {
+        const Value& value = function.at(valueID);
+        return isCastThatProvesNothing(value.opcode) || value.opcode == Opcode::AssumeType || isRematerializable(value);
+    });
+}
+
+static BlockFrequency recordedFrequencyOf(const Function& function, BlockID id)
+{
+    BlockFrequency recorded = function.at(id).frequency.predicted();
+    if (recorded == BlockFrequency::Normal && isPartOfEdgeToUnlikelyBlock(function, id))
+        return BlockFrequency::Unlikely;
+    return recorded;
+}
+
 static bool isEnteredByJumpFromLikelierBlock(const Function& function, const CFG& cfg, BlockID block)
 {
     return std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
         if (edge.isHandlerEdge() || !hasSingleTarget(function, edge.from) || !isForwardEdge(cfg, edge.from, block))
             return false;
-        switch (function.at(edge.from).frequency) {
+        switch (recordedFrequencyOf(function, edge.from)) {
         case BlockFrequency::Normal:
             return true;
         case BlockFrequency::Unlikely:
@@ -88,7 +134,7 @@ static bool isEnteredByJumpFromLikelierBlock(const Function& function, const CFG
 
 RecordedFrequencyUse recordedFrequencyUseOf(const Function& function, const CFG& cfg, BlockID id, bool ignoresBranchHints)
 {
-    switch (function.at(id).frequency) {
+    switch (function.at(id).frequency.predicted()) {
     case BlockFrequency::Normal:
         return RecordedFrequencyUse::NotRecorded;
     case BlockFrequency::Unlikely:
@@ -103,7 +149,7 @@ RecordedFrequencyUse recordedFrequencyUseOf(const Function& function, const CFG&
 
 static BlockFrequency appliedFrequencyOf(const FrequencyInputs& inputs, std::span<const FrequencyFacts::BlockFacts> blocks, BlockID id)
 {
-    BlockFrequency recorded = inputs.function.at(id).frequency;
+    BlockFrequency recorded = recordedFrequencyOf(inputs.function, id);
     if (recorded != BlockFrequency::Unlikely)
         return recorded;
     if (inputs.ignoresBranchHints)
@@ -197,7 +243,7 @@ static std::pair<BranchSide, BranchSide> findRarerSides(const FrequencyInputs& i
         return integerConstantThroughCasts(inputs.program, function, value) || inputs.program.typeOf(function, value).singleStringLiteral();
     };
     auto isMaskedByConstant = [&](ValueID value) {
-        while (function.at(value).opcode == Opcode::Upcast || function.at(value).opcode == Opcode::AssumeType)
+        while (isCastThatProvesNothing(function.at(value).opcode) || function.at(value).opcode == Opcode::AssumeType)
             value = function.at(value).operand(0);
         auto& bits = function.at(value);
         return bits.opcode == Opcode::BitAnd && (integerConstantThroughCasts(inputs.program, function, bits.operand(0)) || integerConstantThroughCasts(inputs.program, function, bits.operand(1)));
@@ -259,10 +305,19 @@ static FrequencyFacts collectFacts(const FrequencyInputs& inputs)
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         FrequencyFacts::BlockFacts& blockFacts = facts.blocks[id.index()];
-        blockFacts.recorded = block.frequency;
+        blockFacts.recorded = recordedFrequencyOf(function, id);
+        blockFacts.isPartOfEdge = blockFacts.recorded != block.frequency.predicted();
         blockFacts.applied = appliedFrequencyOf(inputs, facts.blocks.span(), id);
         blockFacts.isInherentlyRare = isInherentlyRare(function, block);
         blockFacts.isNormalExit = isNormalExit(block.terminator);
+    }
+    for (BlockID id : cfg.reversePostOrder()) {
+        if (facts.blocks[id.index()].isPartOfEdge && facts.blocks[function.at(id).terminator.targets[0].block.index()].applied == BlockFrequency::Normal)
+            facts.blocks[id.index()].applied = BlockFrequency::Normal;
+    }
+    if (inputs.seedOfShuffledHeat) [[unlikely]] {
+        for (uint32_t index = 1; index < facts.blocks.size(); ++index)
+            facts.blocks[index].applied = drawFrequency(*inputs.seedOfShuffledHeat, function.blocks.size(), index);
     }
     for (unsigned index = 0; index < cfg.numNodes(); ++index) {
         BlockID id(index);
@@ -319,7 +374,7 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
 {
     if (sharedCycles.hasCycleWithSeveralEntries())
         m_cyclesByLikelihood.emplace(cfg, &function);
-    m_facts = collectFacts(FrequencyInputs { context.program, function, cfg, cycles(), areBranchHintsIgnored(context) });
+    m_facts = collectFacts(FrequencyInputs { context.program, function, cfg, cycles(), areBranchHintsIgnored(context), seedOfShuffledHeat(context.build) });
 
     std::span<const BlockID> order = cfg.reversePostOrder();
     size_t numberOfEdges = cfg.successorsOfAllBlocks().size();
@@ -333,17 +388,21 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
     m_weights.fill(FullWeight, cfg.numNodes());
     uint8_t* weights = m_weights.mutableSpan().data();
     bool hasHandlers = cfg.hasHandlers();
+    bool hasBlockEndingInThrow = false;
     for (BlockID block : order) {
+        hasBlockEndingInThrow |= facts[block.index()].isInherentlyRare;
         switch (facts[block.index()].unlikelySide) {
         case BranchSide::Unknown:
             break;
         case BranchSide::Taken:
-            edges[firstSuccessor[block.index()]] = rarerOf(edges[firstSuccessor[block.index()]], BlockFrequency::Unlikely);
+            edges[firstSuccessor[block.index()]] = rarerOf(edges[firstSuccessor[block.index()]], BlockFrequency::Unlikely).predicted();
             break;
         case BranchSide::NotTaken:
-            edges[firstSuccessor[block.index()] + 1] = rarerOf(edges[firstSuccessor[block.index()] + 1], BlockFrequency::Unlikely);
+            edges[firstSuccessor[block.index()] + 1] = rarerOf(edges[firstSuccessor[block.index()] + 1], BlockFrequency::Unlikely).predicted();
             break;
         }
+        if (facts[block.index()].isPartOfEdge)
+            edges[firstSuccessor[block.index()]] = BlockFrequency::Normal;
         if (hasHandlers && cfg.hasHandler(block))
             edges[firstSuccessor[block.index() + 1] - 1] = BlockFrequency::Rare;
         if (facts[block.index()].isRare())
@@ -374,6 +433,15 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
             weight = std::max(weight, weightLevelOfEdge(weights[successors[edge].index()], edges[edge]));
         }
     };
+    auto findWhetherAlwaysEndsInThrow = [&](BlockID block) ALWAYS_INLINE_LAMBDA {
+        unsigned index = block.index();
+        std::span<const BlockID> targets { successors + firstSuccessor[index], successors + firstSuccessor[index + 1] - (hasHandlers && cfg.hasHandler(block) ? 1 : 0) };
+        bool leadsOnlyToSuchBlocks = !targets.empty() && std::ranges::all_of(targets, [&](BlockID target) {
+            return m_blocksEndingInThrow.quickGet(target.index());
+        });
+        if (facts[index].isInherentlyRare || leadsOnlyToSuchBlocks)
+            m_blocksEndingInThrow.quickSet(index);
+    };
     auto markRareEdges = [&](BlockID block) ALWAYS_INLINE_LAMBDA {
         unsigned index = block.index();
         if (weights[index] == RareWeight || facts[index].isNormalExit)
@@ -397,6 +465,20 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
     }
     for (BlockID block : order.subspan(1))
         m_blocks[block.index()] = classOfWeightLevel(weights[block.index()]);
+
+    if (!hasBlockEndingInThrow)
+        return;
+    m_blocksEndingInThrow.ensureSize(cfg.numNodes());
+    if (!hasCycle) {
+        for (size_t index = order.size(); index--;)
+            findWhetherAlwaysEndsInThrow(order[index]);
+    } else {
+        for (BlockID block : forest->nodesInPostOrder())
+            findWhetherAlwaysEndsInThrow(block);
+    }
+    // Such a function has no other way, so nothing in it runs less often than the function is entered.
+    if (m_blocksEndingInThrow.quickGet(cfg.root().index()))
+        m_blocksEndingInThrow.clearAll();
 }
 
 BlockFrequencies::~BlockFrequencies() = default;
@@ -407,7 +489,7 @@ bool BlockFrequencies::describes(const AnalysisContext& context, const Function&
     for (BlockID id : m_cfg.reversePostOrder()) {
         const Block& block = function.at(id);
         const FrequencyFacts::BlockFacts& known = m_facts.blocks[id.index()];
-        if (block.frequency != known.recorded || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
+        if (recordedFrequencyOf(function, id) != known.recorded || (known.recorded != block.frequency.predicted()) != known.isPartOfEdge || isNormalExit(block.terminator) != known.isNormalExit || isInherentlyRare(function, block) != known.isInherentlyRare)
             return false;
     }
 
@@ -446,13 +528,13 @@ void BlockFrequencies::computeClassesOfBlocks() const
         for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
             unsigned block = order[orderIndex].index();
             if (orderIndex)
-                classes[block] = rarerOf(likeliestWayIn[block], classOfWeightLevel(m_weights[block]));
+                classes[block] = rarerOf(likeliestWayIn[block], classOfWeightLevel(m_weights[block])).predicted();
             BlockFrequency classOfBlock = classes[block];
             for (uint32_t edge = firstSuccessor[block]; edge < firstSuccessor[block + 1]; ++edge) {
                 BlockID target = successors[edge];
                 BlockFrequency& wayIn = likeliestWayIn[target.index()];
-                BlockFrequency wayInFromHere = rarerOf(classOfBlock, edges[edge]);
-                if (!isRarerThan(wayIn, wayInFromHere))
+                BlockFrequency wayInFromHere = rarerOf(classOfBlock, edges[edge]).predicted();
+                if (!isRarerThan(wayIn, wayInFromHere).predicted())
                     continue;
                 wayIn = wayInFromHere;
                 hasLikelierWayInFromBehind |= m_cfg.reversePostOrderIndex(target) <= orderIndex;
@@ -631,21 +713,21 @@ void BlockFrequencies::estimateCounts() const
     }
 }
 
-double BlockFrequencies::frequencyOf(BlockID block) const
+Expected<double> BlockFrequencies::frequencyOf(BlockID block) const
 {
     if (!m_hasCounts) [[unlikely]]
         estimateCounts();
     return block.index() < m_frequencies.size() ? m_frequencies[block.index()] : 0;
 }
 
-BlockFrequency BlockFrequencies::classOf(BlockID block) const
+Expected<BlockFrequency> BlockFrequencies::classOf(BlockID block) const
 {
     if (!m_hasClassesOfBlocks) [[unlikely]]
         computeClassesOfBlocks();
     return block.index() < m_blocks.size() ? m_blocks[block.index()] : BlockFrequency::Normal;
 }
 
-BlockFrequency BlockFrequencies::classOf(Edge edge) const
+Expected<BlockFrequency> BlockFrequencies::classOf(Edge edge) const
 {
     size_t from = edge.from.index();
     if (from >= m_blocks.size())
@@ -664,14 +746,14 @@ BlockFrequency BlockFrequencies::classOf(Edge edge) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-BlockFrequency BlockFrequencies::classForBlockOrder(Edge edge) const
+Expected<BlockFrequency> BlockFrequencies::classForBlockOrder(Edge edge) const
 {
-    BlockFrequency frequency = classOf(edge);
+    BlockFrequency frequency = classOf(edge).predicted();
     if (frequency != BlockFrequency::Normal || edge.isHandlerEdge() || edge.from.index() >= m_facts.blocks.size())
         return frequency;
     if (!isOnSide(edge.targetIndex, m_facts.blocks[edge.from.index()].sideOffUsualPath))
         return frequency;
-    if (classOf(Edge { edge.from, 1 - edge.targetIndex }) != BlockFrequency::Normal)
+    if (classOf(Edge { edge.from, 1 - edge.targetIndex }).predicted() != BlockFrequency::Normal)
         return frequency;
     return BlockFrequency::Unlikely;
 }

@@ -204,7 +204,7 @@ static std::optional<TypeID> parseTypeUnderTest(const Program& program, StringVi
     std::optional<uint32_t> index = parseTestNumber<uint32_t>(word.substring(1));
     if (!index || *index >= parameters.size())
         return std::nullopt;
-    return parameters[*index].type;
+    return parameters[*index].written();
 }
 
 static std::optional<Representation> parseChosenRepresentation(StringView word)

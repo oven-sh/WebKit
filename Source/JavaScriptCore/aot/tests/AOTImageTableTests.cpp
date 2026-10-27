@@ -26,6 +26,7 @@
 #include <span>
 #include <utility>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -310,6 +311,35 @@ static void testFrameRanges()
         AOT_TEST_CHECK(parts.hasFrameAt(offset));
     for (uint32_t offset : { 0u, 2 * unit - 1, 7 * unit, 8 * unit, 9 * unit - 1, 300 * unit, 1000 * unit })
         AOT_TEST_CHECK(!parts.hasFrameAt(offset));
+}
+
+static void testCallsOfOwnFunctionObjects()
+{
+    static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
+    static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
+    static constexpr std::array<uint32_t, 4> listed { 1, 2, 130, 70000 };
+
+    SideTableInputs inputs { };
+    inputs.handlers = handlers;
+    inputs.callSites = callSites;
+    Vector<uint8_t> without;
+    SideTableParts::append(without, inputs);
+    AOT_TEST_CHECK(!inputs.flags().contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects));
+    SideTableParts none = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), without.span().data());
+    for (uint32_t site : { 0u, 1u, 130u })
+        AOT_TEST_CHECK(!none.callsOwnFunctionObjectAt(site));
+
+    inputs.callsOfOwnFunctionObjects = listed;
+    Vector<uint8_t> stream;
+    SideTableParts::append(stream, inputs);
+    AOT_TEST_CHECK(inputs.flags().contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects));
+    SideTableParts parts = SideTableParts::read(ImageFunction::create(0, 0, inputs.flags()), stream.span().data());
+    for (uint32_t site : listed)
+        AOT_TEST_CHECK(parts.callsOwnFunctionObjectAt(site));
+    for (uint32_t site : { 0u, 3u, 129u, 131u, 69999u, 70001u })
+        AOT_TEST_CHECK(!parts.callsOwnFunctionObjectAt(site));
+    AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));
+    AOT_TEST_CHECK(parts.callSites && std::ranges::equal(unsafeMakeSpan(parts.callSites, callSites.size()), callSites));
 }
 
 static Vector<uint8_t> streamWithFrameChanges(std::initializer_list<uint32_t> changes)
@@ -820,10 +850,10 @@ static void testSlotHandlerOffsets()
 {
     const Image& loaded = *smallImage().image;
     std::span<const uint32_t> offsets = loaded.slotHandlerOffsets();
-    AOT_TEST_CHECK(offsets.size() == numberOfSlotHandlerTables * numberOfSlotKinds);
+    AOT_TEST_CHECK(offsets.size() == numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     for (SlotHandlerTable table : allSlotHandlerTables) {
-        for (Slot::Kind kind : allSlotKinds) {
-            uint32_t offset = offsets[static_cast<unsigned>(table) * numberOfSlotKinds + static_cast<unsigned>(kind)];
+        for (Slot::Kind kind : slotKindsWithHandlers) {
+            uint32_t offset = offsets[static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers + static_cast<unsigned>(kind)];
             const void* address = loaded.stubAddress(slotHandlerFor(table, kind));
             AOT_TEST_CHECK(address ? address == loaded.sharedCodeCopy(0) + offset : offset == offsetOfAbsentStub);
         }
@@ -1028,6 +1058,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/format/side-table-parts-without-groups"_s, testSideTablePartsWithoutGroups },
         { "image/format/frame-ranges"_s, testFrameRanges },
         { "image/format/frame-range-without-end"_s, testFrameRangeWithoutEnd },
+        { "image/format/calls-of-own-function-objects"_s, testCallsOfOwnFunctionObjects },
         { "image/format/register-packing"_s, testRegisterPacking },
         { "image/format/image-frame-bits"_s, testImageFrameBits },
         { "image/format/function-record-words"_s, testFunctionRecordWords },

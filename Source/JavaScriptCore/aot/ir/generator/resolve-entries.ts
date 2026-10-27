@@ -20,7 +20,7 @@ import type {
   SchemaEnum,
   SchemaFile,
 } from "./model.ts";
-import { effectRules, forms, heapMarks, payloadWordsOf } from "./model.ts";
+import { effectRules, forms, heapMarks, payloadWordsOf, typeHolders } from "./model.ts";
 import { upperFirst } from "./names.ts";
 import type { DeclarationInFile } from "./parse.ts";
 import { resolveResult, resolveTargets, type EntryParts } from "./resolve-results.ts";
@@ -391,10 +391,14 @@ function resolvePayloadField(scope: Scope, syntax: PayloadSyntax, entry: EntryHe
   if (syntax.isVariadic) scope.errors.add(name.location, `payload field ${name.text} of ${entry.name} is variadic`);
   const kind = resolveKind(scope, syntax.kind, "payload");
   const writtenElement = syntax.kind.element;
+  const heldAs = typeHolders.find(holder => holder === syntax.heldAs?.text) ?? null;
+  if (syntax.heldAs !== null && (heldAs === null || kind.tag !== "Id" || kind.id.name !== "Type" || syntax.isOptional))
+    scope.errors.add(syntax.heldAs.location, `payload field ${name.text} of ${entry.name} is no Type that ${syntax.heldAs.text} holds`);
   return {
     tag: "Payload",
     name: name.text,
     kind,
+    heldAs,
     payloadKind: resolvePayloadKind(scope, kind, syntax.kind),
     elementPayloadKind:
       kind.tag === "List" && writtenElement !== null ? resolvePayloadKind(scope, kind.element, writtenElement) : null,

@@ -101,7 +101,7 @@ struct TypingContext {
     {
         if (level == TypeLevel::Proven)
             return value.type;
-        return seesValuesExpectedNever ? value.expectedOrTypeForTyping() : value.expectedOrType();
+        return seesValuesExpectedNever ? value.expectedOrTypeForTyping().predicted() : value.expectedOrType().predicted();
     }
     TypeID typeIDOf(ValueID id) const { return typeIDOf(function.at(id)); }
     const Type& typeOf(ValueID id) const { return types.at(typeIDOf(id)); }
@@ -120,7 +120,7 @@ std::optional<Type> tryWidestNaturalTypeOf(const Value&);
 const OpcodeSet& opcodesTypedFromNarrowedRecords();
 
 TypeID resultTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
-TypeID expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
+ExpectedType expectedTypeOf(const Program&, const Function&, const Value&, TypeArena&, TypingMemo* = nullptr);
 
 inline constexpr OpcodeSet opcodesThatMayHaveSeveralResults = []() consteval {
     OpcodeSet opcodes;
@@ -164,7 +164,8 @@ const OpcodeSet& opcodesWithRequiredOperandTypes();
 TypeID requiredTypeOfOperand(const TypingContext&, const Value& user, uint32_t operandIndex);
 TypeID requiredTypeOfOperand(const TypingContext&, const Terminator& user, uint32_t operandIndex);
 
-enum class RequiredTypeHolder : uint8_t { StoredSlot, InitializedSlot, PositionThatFlowFollows };
+// What flow says of a position leaves out what the checks in front of its stores turn away. What it says of the contents of a literal is cut by no check.
+enum class RequiredTypeHolder : uint8_t { StoredSlot, InitializedSlot, PositionThatFlowFollows, ContentsOfLiteral };
 RequiredTypeHolder holderOfRequiredTypes(const Program&, const Value& user);
 TypeID declaredEntryTypeOf(const TypingContext&, const Function& callee, unsigned entryParameterIndex);
 

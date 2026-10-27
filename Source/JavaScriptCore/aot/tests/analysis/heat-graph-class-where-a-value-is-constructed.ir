@@ -1,0 +1,36 @@
+# class Made {}  unseen = new Function(text)  unseen(new Made())  unseen(new Made())  unseen(value => new value())
+# Where the application constructs a value that nobody knows, that value may be a class whose callers are not all known: where classes are estimated the host enters the class as often as a loop would
+# FORM: AsRead
+# RUN: heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Construct v6
+    v8 = Call v3, -, v7
+    v9 = Construct v6
+    v10 = Call v3, -, v9
+    v11 = NewClosure function=f2
+    v12 = Call v3, -, v11
+    Return
+}
+function f1 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="constructsValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+}
+# CHECK: f2 size 2: unknown*1.000000
+# CHECK: host: f0*1.000000 f1*10.000000

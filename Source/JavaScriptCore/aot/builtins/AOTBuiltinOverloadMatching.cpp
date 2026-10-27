@@ -57,14 +57,14 @@ static TypeFit provenFitOf(const OverloadQuery& query, const BuiltinDispatchNode
     return fitOfEveryPosition;
 }
 
-static TypeID expectedWithin(const OverloadQuery& query, BuiltinOperand operand, TypeID current)
+static ExpectedType expectedWithin(const OverloadQuery& query, BuiltinOperand operand, TypeID current)
 {
-    TypeID expected = query.expected.at(operand);
+    TypeID expected = query.expected.predicted().at(operand);
     if (!expected || expected == query.proven.at(operand))
         return { };
     TypeArena& types = query.context.types;
     TypeID met = types.intern(withoutClassProofs(types.at(expected)).intersectWith(types.at(current), types));
-    return met == TypeTable::never ? TypeID() : met;
+    return ExpectedType(met == TypeTable::never ? TypeID() : met);
 }
 
 namespace {
@@ -242,7 +242,7 @@ OperandDecision OverloadWalk::decideOperand(BuiltinOperand operand, BuiltinTypeI
         return { operand, proven.fit, { }, proven.unprovenPristine };
 
     OperandDecision undecided { operand, TypeFit::Unknown, { }, { } };
-    TypeID expected = expectedWithin(m_query, operand, current);
+    TypeID expected = expectedWithin(m_query, operand, current).predicted();
     if (!expected)
         return undecided;
 
@@ -293,6 +293,8 @@ BuiltinOverloadID OverloadWalk::firstReachableOverload(BuiltinDispatchTarget tar
 
 OverloadMatch matchOverload(const OverloadQuery& query)
 {
+    if (query.context.program.mayBeTrimmed(query.builtin))
+        return { };
     std::optional<BuiltinDispatchTarget> root = dispatchRootOf(query);
     if (!root)
         return { };

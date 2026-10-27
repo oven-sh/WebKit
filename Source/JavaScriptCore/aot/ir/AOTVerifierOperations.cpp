@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTFrameAllocationPointers.h"
@@ -34,6 +35,7 @@ static bool isPrivateKind(PropertyKeyKind kind)
 {
     switch (kind) {
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return true;
     case PropertyKeyKind::Text:
@@ -220,12 +222,16 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             verifyClassOperation(block, id, value);
         else if (opcode == Opcode::NewArray || Value::opcodesWithKeyIsIntegral.contains(opcode))
             verifyElementOperation(block, id, value);
+        else if (opcode == Opcode::NewObject)
+            verifyFormsOfListedFields(block, id, value);
         return;
     case OperationFamily::Constant:
         if (opcode == Opcode::NewClosure)
             verifyClosureOperation(block, id, value);
         else if (opcode == Opcode::Builtin || opcode == Opcode::ModuleBuiltin)
             verifyBuiltinOperation(block, id, value);
+        else if (opcode == Opcode::Data)
+            verifyElementOperation(block, id, value);
         else if (opcode == Opcode::KeyConstant && isPrivateKind(m_program.at(value.key()).kind))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
@@ -325,23 +331,36 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::Upcast:
         need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
+    case Opcode::Expect:
+        if (hasClassProofs(m_program.at(value.expectedType().predicted())))
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+        return;
     case Opcode::Check:
     case Opcode::TypeTest: {
         bool isCheck = value.opcode == Opcode::Check;
-        const Type& tested = m_program.at(isCheck ? value.castType() : value.testedType());
+        const Type& tested = m_program.at(isCheck ? value.expectedType().predicted() : value.testedType());
         if (hasClassProofs(tested) || (isCheck && hasUntestableBuiltins(tested)))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
     case Opcode::ReportMismatch: {
-        const Type& expected = m_program.at(value.expectedType());
+        const Type& expected = m_program.at(value.expectedType().predicted());
         if (hasClassProofs(expected) || hasUntestableBuiltins(expected))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
+    case Opcode::AssumeType: {
+        // Nobody tests storage for numbers alone where a type proves it. A literal is born with such storage only where it names it.
+        const ClassPart* part = m_program.at(value.provenType()).singleBuiltinClass();
+        if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
+            return;
+        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()));
+        if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
+            fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
+        return;
+    }
     case Opcode::Convert:
     case Opcode::NarrowByField:
-    case Opcode::AssumeType:
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
@@ -409,11 +428,11 @@ void FunctionVerifier::verifyTerminatorOperation(BlockID block, const Terminator
         Vector<LayoutID, 16> members;
         for (LayoutSetID id : terminator.layoutSets()) {
             const LayoutSet& set = m_program.at(id);
-            if (!set.isComplete || set.members.isEmpty()) {
+            if (!set.all() || set.written().isEmpty()) {
                 fail(InternalErrorKind::PayloadOutOfRange, block);
                 return;
             }
-            members.appendVector(set.members);
+            members.appendVector(set.written());
         }
         if (hasDuplicates(members.span()))
             fail(InternalErrorKind::DuplicateListEntry, block);
@@ -461,7 +480,7 @@ void FunctionVerifier::verifyReturnCall(BlockID block, const Terminator& termina
     Type returned = typeOf(call);
     for (TailCast cast : terminator.casts()) {
         DeclaredType target = cast.declared;
-        target.type = targetOfConvert(context, target);
+        target.changeType(Proven::byPosition(targetOfConvert(context, target)));
         const Type& declared = context.typeOf(target);
         bool narrowsWithoutProof = !canNarrow(cast.resolution) && !returned.isSubsetOf(declared, m_program);
         if (!isLegalIn(cast.resolution, m_form) || narrowsWithoutProof) {
@@ -505,14 +524,14 @@ void FunctionVerifier::verifyFormRules(BlockID blockID, const Block& block)
     }
 
     for (ValueID parameter : block.parameters) {
-        if (m_function.at(parameter).expected()) {
+        if (m_function.at(parameter).expected().predicted()) {
             fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, parameter);
             return;
         }
     }
     for (ValueID id : block.values) {
         const Value& value = m_function.at(id);
-        if (value.expected()) {
+        if (value.expected().predicted()) {
             fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, id);
             return;
         }

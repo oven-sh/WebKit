@@ -294,7 +294,7 @@ static bool isFilledArrayOfHoles(const Function& function, const Value& allocati
     return allocation.opcode == Opcode::TruncateNewArray && function.at(allocation.arrayOperand()).opcode == Opcode::NewContiguousArray;
 }
 
-static ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& function, const Value& allocation)
+ArrayStorage arrayStorageOfNewArray(const Program& program, const Function& function, const Value& allocation)
 {
     ArrayStorage named = program.at(allocation.type).singleBuiltinClass()->arrayStorage;
     if (named != ArrayStorage::Other)
@@ -304,7 +304,7 @@ static ArrayStorage arrayStorageOfNewArray(const Program& program, const Functio
     return allocation.opcode == Opcode::NewArray ? arrayStorageOfLiteral(program, allocation) : named;
 }
 
-static bool allocatesWritableStorage(const Function& function, const Value& allocation)
+bool allocatesWritableStorage(const Function& function, const Value& allocation)
 {
     return allocation.opcode == Opcode::NewArray || isFilledArrayOfHoles(function, allocation);
 }
@@ -351,6 +351,16 @@ bool leavesSlotsAsTested(const Program& program, const Function& function, const
     return stored && fillsSlot(writer.operand(*stored));
 }
 
+// The definition adds a property, or gives one that is there another value. Where the object takes no property it throws.
+bool definesPropertyBesideFields(const Program& program, const Value& writer, const Effects& effectsOfWriter, const Value& object)
+{
+    if (writer.opcode != Opcode::PropDefine || effectsOfWriter.mayRunOtherCode())
+        return false;
+    if (!Value::opcodesWithLayout.contains(object.opcode) || !object.layout() || !allocatesOwnLayout(program, object))
+        return false;
+    return !findField(program, object.layout(), writer.key(), BaseChain::Proven) && !findField(program, object.layout(), writer.key(), BaseChain::Predicted);
+}
+
 static bool listsFieldWithKey(const Program& program, const Value& value, PropertyKeyID key)
 {
     if (!Value::opcodesWithFields.contains(value.opcode))
@@ -369,7 +379,7 @@ bool allocationProves(const Program& program, const Function& function, const Va
     const ClassPart* allocatedClass = allocation.type ? program.at(allocation.type).singleBuiltinClass() : nullptr;
     switch (proof) {
     case Proof::Shape:
-        return std::ranges::binary_search(program.at(test.layouts()).members, allocation.layout());
+        return std::ranges::binary_search(program.at(test.layouts()).completeMembers(), allocation.layout());
     case Proof::SlotFilled:
         return !holdsDeclaredType(test) && listsFieldWithKey(program, allocation, test.key());
     case Proof::NoExtraProperties:
@@ -455,16 +465,14 @@ static bool isInsideLength(const Value& user)
     return Value::opcodesWithIsInsideView.contains(user.opcode) && user.isInsideView();
 }
 
-static bool admitsLayouts(const Program& program, const Value& user, std::span<const LayoutID> sortedLayouts, bool isComplete)
+static bool admitsLayouts(const Program& program, const Value& user, std::span<const LayoutID> sortedLayouts)
 {
     if (!Value::opcodesWithReceivers.contains(user.opcode))
         return true;
     LayoutSetID receivers = user.receivers();
-    if (!receivers || !program.at(receivers).isComplete)
+    if (!receivers || !program.at(receivers).listsEveryLayout())
         return true;
-    if (!isComplete)
-        return false;
-    const Vector<LayoutID>& admitted = program.at(receivers).members;
+    std::span<const LayoutID> admitted = program.at(receivers).completeMembers();
     if (sortedLayouts.size() <= admitted.size() && std::ranges::includes(admitted, sortedLayouts))
         return true;
     return std::ranges::all_of(sortedLayouts, [&](LayoutID member) {
@@ -472,11 +480,11 @@ static bool admitsLayouts(const Program& program, const Value& user, std::span<c
     });
 }
 
-static bool admitsLayoutSet(const Program& program, const Value& user, LayoutSetID layouts, bool isComplete)
+static bool admitsLayoutSet(const Program& program, const Value& user, LayoutSetID layouts)
 {
     if (Value::opcodesWithReceivers.contains(user.opcode) && user.receivers() == layouts)
         return true;
-    return admitsLayouts(program, user, program.at(layouts).members.span(), isComplete);
+    return admitsLayouts(program, user, program.at(layouts).completeMembers());
 }
 
 static LayoutSetID layoutSetTestedBy(const Function& function, const GuardOrigin& origin)
@@ -502,7 +510,7 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     if (type.isNever())
         return true;
     if (proof == Proof::Shape)
-        return type.hasOnlyLayouts(program) && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts, program.at(type.layouts).isComplete);
+        return type.hasOnlyLayouts() && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts);
     if (proof == Proof::NotThenable)
         return !protocolMayFindMember(program, type, Protocol::Thenable);
     if (proof != Proof::Pristine && proof != Proof::ArrayStorage)
@@ -596,22 +604,25 @@ static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
     return constant && constant == integerConstantThroughCasts(analyses.program(), analyses.function(), b);
 }
 
-static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
+static bool isPositionTestForUser(const Function& function, const GuardOrigin& origin, const Value& user)
 {
     if (origin.source != GuardSource::Test)
         return false;
-    const Value& test = analyses.function().at(origin.test);
+    const Value& test = function.at(origin.test);
     if (readsPresentElement(user) && test.opcode != Opcode::IsElementPresent)
         return false;
-    if (Value::opcodesWithIsInsideView.contains(user.opcode) != (test.opcode == Opcode::IsInsideView))
-        return false;
-    return isSamePosition(analyses, test.positionOperand(), user.positionOperand());
+    return Value::opcodesWithIsInsideView.contains(user.opcode) == (test.opcode == Opcode::IsInsideView);
+}
+
+static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
+{
+    return isPositionTestForUser(analyses.function(), origin, user) && isSamePosition(analyses, analyses.function().at(origin.test).positionOperand(), user.positionOperand());
 }
 
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
 {
     bool needsRawValue = holdsDeclaredType(slotOperation);
-    return std::ranges::all_of(program.at(slotOperation.receivers()).members, [&](LayoutID layout) {
+    return std::ranges::all_of(program.at(slotOperation.receivers()).completeMembers(), [&](LayoutID layout) {
         std::optional<FieldReference> field = findField(program, layout, slotOperation.key(), BaseChain::Proven);
         if (!field)
             return false;
@@ -621,8 +632,9 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
-static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, PropertyKeyID key)
+static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, const Value& user)
 {
+    PropertyKeyID key = user.key();
     const Program& program = analyses.program();
     const Function& function = analyses.function();
     const Value& allocation = function.at(allocationID);
@@ -630,9 +642,6 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
         return false;
     auto mayBeMarker = [&](ValueID stored) {
         return program.typeOf(function, stored).mayBeUndefinedOrNull();
-    };
-    auto mayStoreIntoWhatIsMade = [&](const Value& store) {
-        return analyses.escape().mayAlias(store.objectOperand(), allocationID);
     };
     std::span<const uint32_t> fields = allocation.fields();
     std::span<const ValueID> values = allocation.variadicOperands();
@@ -643,23 +652,53 @@ static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID alloca
     }
     if (!listsValue)
         return false;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
+
+    struct MarkerStore {
+        BlockID block;
+        ValueID id;
+        bool followsUserInBlock;
+    };
+    BlockID blockOfAllocation;
+    BlockID blockOfUser;
+    Vector<MarkerStore, 4> markerStores;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
             const Value& store = function.at(id);
+            if (id == allocationID)
+                blockOfAllocation = block;
+            if (&store == &user)
+                blockOfUser = block;
             if (store.opcode == Opcode::PutSlots) {
                 PayloadListView<PlacedKey> keys = store.placedKeys();
                 std::span<const ValueID> stored = store.variadicOperands();
                 for (uint32_t index = 0; index < keys.size() && index < stored.size(); ++index) {
-                    if (keys[index].key == key && mayBeMarker(stored[index]) && mayStoreIntoWhatIsMade(store))
-                        return false;
+                    if (keys[index].key == key && mayBeMarker(stored[index]))
+                        markerStores.append({ block, id, blockOfUser == block });
                 }
                 continue;
             }
-            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)) && mayStoreIntoWhatIsMade(store))
-                return false;
+            if ((store.opcode == Opcode::PutSlot || store.opcode == Opcode::PutSlotOrAdd) && store.key() == key && mayBeMarker(store.operand(OperandIndex::PutSlot::value)))
+                markerStores.append({ block, id, blockOfUser == block });
         }
     }
-    return true;
+    if (markerStores.isEmpty())
+        return true;
+    // Who names the allocation means the object that it made last. From a store that can be reached without making one, every way to such a user makes a new one.
+    bool namesAllocation = blockOfAllocation && analyses.identityOf(guardedOperandOf(user)) == analyses.identityOf(allocationID);
+    BitVector blocksThatMakeAnother;
+    if (namesAllocation)
+        blocksThatMakeAnother.set(blockOfAllocation.index());
+    // A store from which no way leads to the user has not run when the user does.
+    auto mayRunBeforeUser = [&](const MarkerStore& store) {
+        if (!blockOfUser)
+            return true;
+        if (!store.followsUserInBlock)
+            return analyses.cfg().blocksReachableFrom(store.block, blocksThatMakeAnother).get(blockOfUser.index());
+        return namesAllocation ? analyses.cfg().isInCycleAvoiding(blockOfUser, blockOfAllocation) : analyses.isInCycle(blockOfUser);
+    };
+    return std::ranges::none_of(markerStores, [&](const MarkerStore& store) {
+        return (!namesAllocation || analyses.dominators().dominates(blockOfAllocation, store.block)) && analyses.escape().mayAlias(function.at(store.id).objectOperand(), allocationID) && mayRunBeforeUser(store);
+    });
 }
 
 static bool provesSlotFilledForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
@@ -667,7 +706,7 @@ static bool provesSlotFilledForUser(FunctionAnalyses& analyses, const GuardOrigi
     if (!holdsDeclaredType(user))
         return true;
     if (origin.source == GuardSource::Allocation)
-        return fillsSlotWithDeclaredType(analyses, origin.test, user.key());
+        return fillsSlotWithDeclaredType(analyses, origin.test, user);
     if (origin.source != GuardSource::Test)
         return false;
     const Value& test = analyses.function().at(origin.test);
@@ -684,8 +723,8 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
         return false;
     if (proof == Proof::Shape) {
         if (hasOneTestedLayoutSet(fact))
-            return admitsLayoutSet(program, user, layoutSetTestedBy(function, fact.origins[0]), true);
-        return admitsLayouts(program, user, layoutsProvenBy(program, function, fact).span(), true);
+            return admitsLayoutSet(program, user, layoutSetTestedBy(function, fact.origins[0]));
+        return admitsLayouts(program, user, layoutsProvenBy(program, function, fact).span());
     }
 
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
@@ -699,6 +738,75 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
             return provesInBoundsForUser(analyses, origin, user);
         return true;
     });
+}
+
+void forEachGuardOrigin(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, ValueID guard, NOESCAPE const GuardOriginVisitor& visitor)
+{
+    Vector<ValueID, 8> worklist { guard };
+    auto enqueue = [&](ValueID value) {
+        if (value && !worklist.contains(value))
+            worklist.append(value);
+    };
+    for (size_t index = 0; index < worklist.size(); ++index) {
+        ValueID current = worklist[index];
+        const Value& value = function.at(current);
+        if (VariadicOperandPosition::guards(value.opcode)) {
+            std::ranges::for_each(value.guardsOperands(), enqueue);
+            continue;
+        }
+        if (value.opcode != Opcode::Parameter) {
+            if (!opcodesThatMayMakeObject().contains(value.opcode))
+                continue;
+            bool stops = false;
+            proofsOfAllocation(program, function, value).forEach([&](Proof proof) {
+                stops = stops || visitor(proof, GuardOrigin { GuardSource::Allocation, current, { }, 0 }) == IterationStatus::Done;
+            });
+            if (stops)
+                return;
+            continue;
+        }
+        ValueLocation location = locate(current);
+        if (location.placement != ValuePlacement::Parameter)
+            continue;
+        for (Edge edge : cfg.incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(function, edge, location.index);
+            if (incoming.kind == IncomingValue::Kind::Argument) {
+                enqueue(incoming.argument);
+                continue;
+            }
+            std::optional<EdgeResult> result = tryGetEdgeResult(function, incoming.result);
+            if (!result || result->kind != EdgeResultKind::Guard)
+                continue;
+            GuardOrigin origin = result->caseIndex ? GuardOrigin { GuardSource::SwitchCase, { }, edge.from, *result->caseIndex } : GuardOrigin { GuardSource::Test, result->test, { }, 0 };
+            if (visitor(result->proof, origin) == IterationStatus::Done)
+                return;
+        }
+    }
+}
+
+bool hasGuardForElementProofs(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, const Value& access)
+{
+    bool needsStorage = namesArrayStorage(access);
+    bool needsPosition = isInsideLength(access);
+    if (!needsStorage && !needsPosition)
+        return true;
+    const Type& type = program.typeOf(function, guardedOperandOf(access));
+    if (type.isNever())
+        return true;
+    needsStorage = needsStorage && !isProvenByType(program, access, Proof::ArrayStorage, type);
+    if (!needsStorage && !needsPosition)
+        return true;
+    if (!access.guardOperand())
+        return false;
+
+    forEachGuardOrigin(program, function, cfg, locate, access.guardOperand(), [&](Proof proof, const GuardOrigin& origin) {
+        if (proof == Proof::ArrayStorage)
+            needsStorage = needsStorage && !provesArrayStorageForUser(program, function, origin, access);
+        else if (proof == Proof::InBounds)
+            needsPosition = needsPosition && !isPositionTestForUser(function, origin, access);
+        return needsStorage || needsPosition ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    return !needsStorage && !needsPosition;
 }
 
 static Vector<MemoryLocation, 2> declaredReadsOf(const auto& provingOperation, Proof proof)
@@ -747,12 +855,12 @@ static std::optional<MemoryLocation> findShapeWordsOf(const Program& program, co
 {
     if (!Value::opcodesWithLayout.contains(allocation.opcode) || !allocation.layout())
         return std::nullopt;
-    for (TypeID type : { allocation.type, allocation.expected() }) {
+    for (TypeID type : { allocation.type, allocation.expected().predicted() }) {
         LayoutSetID layouts = type ? program.at(type).layouts : LayoutSetID();
         if (!layouts)
             continue;
-        const LayoutSet& set = program.at(layouts);
-        if (set.isComplete && set.members.size() == 1 && set.members.first() == allocation.layout())
+        auto all = program.at(layouts).all();
+        if (all && all->value().size() == 1 && all->value().front() == allocation.layout())
             return MemoryLocation::shapeWords(layouts);
     }
     return std::nullopt;
@@ -774,7 +882,7 @@ static GuardFacts factsOfAllocation(FunctionAnalyses& analyses, ValueID id)
             std::ranges::replace(locations, MemoryLocation(AbstractHeap::ShapeWords), *shapeWords);
 
         auto existing = std::ranges::find_if(result.facts, [&](const GuardFact& fact) {
-            return fact.dependsOn == locations;
+            return fact.dependsOn == locations && areLeftByPropertiesBesideFields(fact.proofs) == proofsLeftByPropertiesBesideFields.contains(proof);
         });
         if (existing != result.facts.end()) {
             existing->proofs.add(proof);
@@ -827,20 +935,37 @@ void GuardAvailability::computeFacts()
         RELEASE_ASSERT_NOT_REACHED();
     };
 
+    bool awaitsEdgesThatSpecifyObjects = true;
+    bool didAwaitEdge = false;
+    auto leaveSameParameterUnspecified = [&](std::span<const Edge> edges, BlockID block) {
+        return std::ranges::any_of(m_function.at(block).parameters, [&](ValueID parameter) {
+            return std::ranges::all_of(edges, [&](Edge edge) {
+                return leavesUnspecified(edge, parameter);
+            });
+        });
+    };
+
     auto factsOfParameter = [&](BlockID block, uint32_t parameterIndex) -> std::optional<GuardFacts> {
         if (block == entryBlock)
             return GuardFacts { };
         Vector<Edge, 4> edges;
         Vector<GuardFacts, 4> factsAfterEdges;
+        bool hasPendingEdge = false;
         for (Edge edge : cfg.incomingEdges(block)) {
             std::optional<GuardFacts> incoming = factsOnEdge(edge, parameterIndex);
-            if (!incoming)
+            if (!incoming) {
+                hasPendingEdge = true;
                 continue;
+            }
             edges.append(edge);
             factsAfterEdges.append(WTF::move(*incoming));
         }
         if (edges.isEmpty())
             return std::nullopt;
+        if (hasPendingEdge && awaitsEdgesThatSpecifyObjects && leaveSameParameterUnspecified(edges.span(), block)) {
+            didAwaitEdge = true;
+            return std::nullopt;
+        }
         if (edges.size() == 1)
             return WTF::move(factsAfterEdges.first());
         return meetFactsAfterEdges(edges.span(), factsAfterEdges.span());
@@ -874,6 +999,7 @@ void GuardAvailability::computeFacts()
 
     for (bool didChange = true; didChange;) {
         didChange = false;
+        didAwaitEdge = false;
         for (uint32_t index = 0; index < m_guards.size(); ++index) {
             if (!isGuardValue(m_function, m_guards[index]))
                 continue;
@@ -889,6 +1015,10 @@ void GuardAvailability::computeFacts()
             isComputed.quickSet(index);
             didChange = true;
         }
+        if (!didChange && didAwaitEdge) {
+            awaitsEdgesThatSpecifyObjects = false;
+            didChange = true;
+        }
     }
 }
 
@@ -900,7 +1030,7 @@ const GuardFacts& GuardAvailability::factsOf(ValueID guard) const
 
 static std::span<const LayoutID> layoutsTestedBy(const Program& program, const Function& function, const GuardOrigin& origin)
 {
-    return program.at(layoutSetTestedBy(function, origin)).members.span();
+    return program.at(layoutSetTestedBy(function, origin)).completeMembers();
 }
 
 Vector<LayoutID, 4> layoutsProvenBy(const Program& program, const Function& function, const GuardFact& fact)

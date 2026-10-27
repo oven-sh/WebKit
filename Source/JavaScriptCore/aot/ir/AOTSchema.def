@@ -1,20 +1,33 @@
 constant Magic = 0x52495442
 constant MaxTrackedInteger = 4611686018427387903
+constant WrittenPositionFollows = 0x80000000
+constant StandsInTailPosition = 0x40000000
+constant WrittenPositionIsForCallers = 0x20000000
 
 enum IRForm { | engine AsRead Prepared Selected Placed }
 enum ResultRule { | engine None Constant Natural Allocation Declared Unknown Cast Results }
-enum EffectRule { | engine Declared Operator Access Call Builtin Inline }
+enum EffectRule (| engine callsBuiltin: Bool) {
+    | engine Declared(false) Operator(false) Access(false) Call(false) Builtin(true) Inline(true)
+}
 enum RetainedIn { | engine UnknownMemory Result Operand }
 enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
 enum Interpretation { | engine None Allocation Cast Read Store Test List Guards }
 enum ValueFlowEdgeClass { | engine Unsound Allocates Copies TableProves Checks }
+enum FlowRule { | engine General Arithmetic Await Call ConversionToObject Convert DefineMethod Generator Heap InstanceOf Iteration Module NewClass NewDictionary Promise ReadOfPrototypeProperty StepOfLibrary ToPropertyKey }
 enum BoundTo { | engine Nothing Frame Function Site }
 enum ProgramEvent { | engine None EvaluatesText LoadsModule }
 enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
 enum FunctionReferenceKind { Call Closure Constructor Dispatch }
 enum ModuleReferenceKind { Target Referrer }
-enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
+enum Representation (holdsCells: Bool, isPassedInFPR: Bool, canBeKey: Bool, canBeNamedByThrowWords: Bool) {
+    | engine
+    Unchosen(false, false, false, false) Void(false, false, false, false) Boolean(false, false, false, false)
+    Int32(false, false, true, false) Int64(false, false, true, true) Double(false, true, true, true)
+    DoubleWithPayload(false, true, true, true) ImpureDouble(false, true, true, true) OptionalInt64(false, false, false, true)
+    OptionalDouble(false, true, false, true) Cell(true, false, false, true) Cell32(true, false, false, false)
+    JSValue(true, false, true, true) LiteralString(true, false, false, false) RawWord(false, false, false, false)
+}
 
 enum ProofLifetime { | engine Forever Stretch }
 enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
@@ -29,8 +42,8 @@ enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
 
 enum OperandKind (wants: Representation) {
     Any(JSValue) Boolean(Boolean) Integer(Int64) Number(Double) String(Cell) PropertyKey(JSValue) Object(Cell) Callable(Cell) Array(Cell) Layout(Cell)
-    Declared(Unchosen) Environment(Cell) EvalOperand(JSValue) Results(Void)
-    | engine Guard(Void) Convertible(Unchosen)
+    Declared(Unchosen) Environment(Cell) EvalOperand(JSValue) Results(Void) Convertible(Unchosen)
+    | engine Guard(Void)
 }
 
 enum PayloadKind (isId: Bool, words: UInt32) {
@@ -93,7 +106,7 @@ effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProp
 opaque IteratorState Enumerator Exception ClassToken
 opaque StringBuilder engine
 opaque Cursor KeyOrder engine directCallsOnly
-opaque Guard FlatString CodeAddress engine functionLocal
+opaque Guard Fact FlatString CodeAddress JSONHolders engine functionLocal
 opaque BuilderCursor engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
@@ -108,6 +121,7 @@ external BuiltinOverload : id, engine = BuiltinOverloadID
 external BuiltinLayout : id, engine = BuiltinLayoutID { IteratorResult }
 external BuiltinSlot : id, engine = BuiltinSlotID
 external TypedArrayType : enum, engine = JSC::TypedArrayType ; below "static_cast<uint32_t>(JSC::TypeDataView) + 1"
+external HandlerType : enum, engine = JSC::HandlerType ; below "static_cast<uint32_t>(JSC::HandlerType::SynthesizedFinally) + 1"
 external IterationKind : enum, engine = JSC::IterationKind ; below "static_cast<uint32_t>(JSC::IterationKind::Entries) + 1"
 
 column access : Access
@@ -115,7 +129,10 @@ column receiver : Operand
 column stored : Operand
 column interpreted : Interpretation
 column flow : ValueFlowEdgeClass
+column flowRule : FlowRule
+column flowsWithoutRule : Bool
 column boundTo : BoundTo
+column isUniqueInFunction : Bool
 column proves : Proof
 column relies : Proofs
 column guarded : Operand
@@ -135,6 +152,13 @@ column allocatesInline : Bool
 column allocatesAfterLastSafepoint : Bool
 column runsOwnerBarrier : Bool
 column remembersOwner : Bool
+column runsBeforeCallee : Bool
+column canStartRegion : Bool
+column canEndInteriorBlock : Bool
+column canEndHeadBlock : Bool
+column canEndBlockOfHead : Bool
+column hasKnownValueRule : Bool
+column hasOwnFoldingRule : Bool
 
 include "schema/types.def"
 include "schema/program-records.def"
@@ -150,6 +174,7 @@ include "schema/selected-operations.def"
 include "schema/placed-operations.def"
 include "schema/inline-builtins.def"
 include "schema/runtime-records.def"
+include "schema/image-tables.def"
 include "schema/runtime-operations.def"
 include "schema/runtime-property-operations.def"
 include "schema/runtime-builtin-operations.def"

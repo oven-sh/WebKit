@@ -30,19 +30,19 @@ static bool isCompactAtEveryFrequencyUpToEntry(FunctionPassContext& pass)
 
 static CodeShape computeCodeShape(FunctionPassContext& pass, BlockID block, std::optional<bool>& isCompactEverywhere)
 {
-    BlockFrequency recordedFrequency = pass.function.at(block).frequency;
-    if (recordedFrequency == BlockFrequency::Rare || !pass.analyses.cfg().isReachable(block) || pass.runsAtMostOnce(block))
+    Expected<BlockFrequency> recordedFrequency = pass.function.at(block).frequency;
+    if (recordedFrequency.predicted() == BlockFrequency::Rare || !pass.analyses.cfg().isReachable(block) || pass.runsAtMostOnce(block))
         return CodeShape::Compact;
     if (!isCompactEverywhere)
         isCompactEverywhere = isCompactAtEveryFrequencyUpToEntry(pass) && runsNoBlockMoreOftenThanEntry(pass.analyses.cfg());
-    if (*isCompactEverywhere)
+    if (*isCompactEverywhere || pass.analyses.blockFrequencies().alwaysEndsInThrow(block))
         return CodeShape::Compact;
     // The long forms in line pay where the code is at hand when it runs. Of a very large program most is not, and most never runs.
-    double heat = pass.heatOf(block);
+    Expected<double> heat = pass.heatOf(block);
     CodeShape shape = codeShapeFor(heat, false, recordedFrequency, pass.inputs.heat.leastHeatOfFastCode(pass.program, pass.id, pass.analyses.blockFrequencies().frequencyOf(block)));
-    if (pass.inputs.heat.isAmongHottestCode(heat))
+    if (pass.inputs.heat.isAmongHottestCode(heat).predicted())
         return shape;
-    if (recordedFrequency != BlockFrequency::Normal)
+    if (recordedFrequency.predicted() != BlockFrequency::Normal)
         return CodeShape::Compact;
     return shape == CodeShape::Fast ? CodeShape::Balanced : shape;
 }

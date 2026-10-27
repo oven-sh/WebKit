@@ -15,6 +15,6 @@ function f1 name="badConvertToExpectedType" parameters=[{type=anything}] results
     Return v2
 }
 function f2 name="goodResolved" parameters=[{type=anything}] results=[{type=number}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Return v1
 }

@@ -11,6 +11,12 @@
         RUN(testPatchArgRolesAreStable()); \
         RUN(testInterferenceGraphsAgree()); \
         RUN(testDenseInterferenceLimit()); \
+        RUN(testManySlotsShareCells()); \
+        RUN(testSlotsLiveAcrossManyBlocks()); \
+        RUN(testDeadCodeEliminationFollowsLongChainInAnyBlockOrder()); \
+        RUN(testManySlotsDropMovesToThemselves()); \
+        RUN(testManySlotsInRandomGraphs()); \
+        RUN(testManySlotsOfMixedSizes()); \
         RUN(testFirstFitSizes()); \
         RUN(testNoEmptyInstAfterStackAllocation()); \
         RUN(testValuesSurviveRandomClobbers()); \
@@ -372,6 +378,269 @@ void testDenseInterferenceLimit()
     Vector<intptr_t> offsetsFromSets = allocateSpillSlotChain(slotCount, fewSlotsLiveTogether, limit, InterferenceGraphForm::Sparse);
     Vector<intptr_t> offsetsFromRows = allocateSpillSlotChain(slotCount, fewSlotsLiveTogether, slotCount, InterferenceGraphForm::Dense);
     CHECK(offsetsFromSets == offsetsFromRows);
+}
+
+// One more slot than an interference graph with 16-bit indexes holds.
+constexpr unsigned slotCountBeyondGraphs = std::numeric_limits<uint16_t>::max();
+
+static size_t countDistinctOffsets(Code& code)
+{
+    HashSet<intptr_t> offsets;
+    for (StackSlot* slot : code.stackSlots())
+        offsets.add(slot->offsetFromFP());
+    return offsets.size();
+}
+
+static void appendSlotStoreAndLoad(BasicBlock* block, StackSlot* slot)
+{
+    block->append(Move, nullptr, argumentTmp(0), Arg::stack(slot));
+    block->append(Move, nullptr, Arg::stack(slot), argumentTmp(1));
+}
+
+void testManySlotsShareCells()
+{
+    for (unsigned slotsLiveTogether : { 1u, 8u, 100u }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        // With the most slots, liveness is solved in slices.
+        buildSpillSlotChain(code, slotsLiveTogether == 100 ? 2 * slotCountBeyondGraphs : slotCountBeyondGraphs, slotsLiveTogether);
+        code.resetReachability();
+        allocateStackByGraphColoring(code);
+        checkLiveSlotsDoNotOverlap(code);
+        CHECK(countDistinctOffsets(code) == slotsLiveTogether + 1);
+    }
+
+    {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        buildSpillSlotChain(code, slotCountBeyondGraphs, slotCountBeyondGraphs);
+        code.resetReachability();
+        allocateStackByGraphColoring(code);
+        CHECK(countDistinctOffsets(code) == slotCountBeyondGraphs);
+    }
+
+    // The first two slots are dead while the others are used, so every slot fits into one cell.
+    {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        Vector<StackSlot*> slots;
+        for (unsigned i = 0; i < slotCountBeyondGraphs; ++i)
+            slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+        BasicBlock* block = code.addBlock();
+        for (unsigned i = 0; i < slots.size(); ++i) {
+            if (i && !(i % 64)) {
+                BasicBlock* next = code.addBlock();
+                appendJump(block, next);
+                block = next;
+            }
+            appendSlotStoreAndLoad(block, slots[i]);
+        }
+        appendSlotStoreAndLoad(block, slots[1]);
+        appendSlotStoreAndLoad(block, slots[0]);
+        appendReturn(block);
+        code.resetReachability();
+        allocateStackByGraphColoring(code);
+        checkLiveSlotsDoNotOverlap(code);
+        CHECK(countDistinctOffsets(code) == 1);
+    }
+}
+
+// Each slot is stored to in a block of its own and then loaded in a block of its own, so that about half of them are live in each block.
+void testSlotsLiveAcrossManyBlocks()
+{
+    constexpr size_t slotCount = 40000;
+    static_assert(slotCount < slotCountBeyondGraphs);
+    static_assert(slotCount * (slotCount / 64) > B3::AirLimits::maxWordsOfLivenessAtTails);
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    Vector<StackSlot*> slots;
+    for (size_t i = 0; i < slotCount; ++i)
+        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+
+    BasicBlock* block = code.addBlock();
+    auto startNextBlock = [&] {
+        BasicBlock* next = code.addBlock();
+        appendJump(block, next);
+        block = next;
+    };
+    block->append(Move, nullptr, Arg::imm(0), returnTmp());
+    for (StackSlot* slot : slots) {
+        block->append(Move, nullptr, argumentTmp(0), Arg::stack(slot));
+        startNextBlock();
+    }
+    for (StackSlot* slot : slots) {
+        block->append(Move, nullptr, Arg::stack(slot), argumentTmp(1));
+        block->append(Add64, nullptr, argumentTmp(1), returnTmp());
+        startNextBlock();
+    }
+    appendReturn(block);
+    code.resetReachability();
+    allocateStackByGraphColoring(code);
+    CHECK(countDistinctOffsets(code) == slotCount);
+}
+
+// Each link of the chain stands in a block of its own, and the blocks alternate between the two ends of the list of blocks,
+// so that one pass over the blocks in either direction finds two more links.
+void testDeadCodeEliminationFollowsLongChainInAnyBlockOrder()
+{
+    constexpr unsigned chainLength = 60000;
+    B3::Procedure proc;
+    Code& code = proc.code();
+    Vector<BasicBlock*> blocks;
+    for (unsigned i = 0; i < chainLength + 1; ++i)
+        blocks.append(code.addBlock());
+    auto blockOfLink = [&](unsigned link) {
+        return blocks[1 + (link % 2 ? chainLength - 1 - link / 2 : link / 2)];
+    };
+
+    Tmp used = code.newTmp(GP);
+    Tmp unused = code.newTmp(GP);
+    blocks[0]->append(Move, nullptr, argumentTmp(0), used);
+    blocks[0]->append(Move, nullptr, argumentTmp(0), unused);
+    appendJump(blocks[0], blockOfLink(0));
+    for (unsigned link = 0; link < chainLength; ++link) {
+        BasicBlock* block = blockOfLink(link);
+        Tmp nextUsed = code.newTmp(GP);
+        Tmp nextUnused = code.newTmp(GP);
+        block->append(Move, nullptr, used, nextUsed);
+        block->append(Move, nullptr, unused, nextUnused);
+        used = nextUsed;
+        unused = nextUnused;
+        if (link + 1 < chainLength)
+            appendJump(block, blockOfLink(link + 1));
+        else {
+            block->append(Move, nullptr, used, returnTmp());
+            appendReturn(block);
+        }
+    }
+    code.resetReachability();
+
+    CHECK(eliminateDeadCode(code));
+    size_t moveCount = 0;
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block)
+            moveCount += inst.kind.opcode == Move;
+    }
+    CHECK(moveCount == chainLength + 2);
+    CHECK(!eliminateDeadCode(code));
+}
+
+void testManySlotsDropMovesToThemselves()
+{
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    Vector<StackSlot*> slots;
+    for (unsigned i = 0; i < slotCountBeyondGraphs; ++i)
+        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+    BasicBlock* block = code.addBlock();
+    for (unsigned i = 0; i < slots.size(); ++i) {
+        if (i && !(i % 64)) {
+            BasicBlock* next = code.addBlock();
+            appendJump(block, next);
+            block = next;
+        }
+        block->append(Move, nullptr, argumentTmp(0), Arg::stack(slots[i]));
+        block->append(Move, nullptr, Arg::stack(slots[i]), Arg::stack(slots[i]), argumentTmp(2));
+        block->append(Move, nullptr, Arg::stack(slots[i]), argumentTmp(1));
+    }
+    appendReturn(block);
+    code.resetReachability();
+    allocateStackByGraphColoring(code);
+    checkLiveSlotsDoNotOverlap(code);
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block)
+            CHECK(inst.args().size() != 3);
+    }
+}
+
+void testManySlotsInRandomGraphs()
+{
+    constexpr unsigned sharedSlotCount = 48;
+    for (unsigned seed = 1; seed <= 4; ++seed) {
+        // With the most blocks, liveness is solved in slices.
+        const unsigned blockCount = seed % 2 ? 256 : 2048;
+        const unsigned slotsPerBlock = (slotCountBeyondGraphs + blockCount - 1) / blockCount;
+        WeakRandom random(seed);
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        Vector<StackSlot*> sharedSlots;
+        for (unsigned i = 0; i < sharedSlotCount; ++i)
+            sharedSlots.append(code.addStackSlot(8, StackSlotKind::Spill));
+        Vector<BasicBlock*> blocks;
+        for (unsigned i = 0; i < blockCount; ++i)
+            blocks.append(code.addBlock());
+        for (unsigned i = 0; i < blockCount; ++i) {
+            BasicBlock* block = blocks[i];
+            for (unsigned k = 0; k < slotsPerBlock; ++k) {
+                appendSlotStoreAndLoad(block, code.addStackSlot(8, StackSlotKind::Spill));
+                if (random.getUint32(8))
+                    continue;
+                StackSlot* shared = sharedSlots[random.getUint32(sharedSlotCount)];
+                if (random.getUint32(2))
+                    block->append(Move, nullptr, argumentTmp(0), Arg::stack(shared));
+                else
+                    block->append(Move, nullptr, Arg::stack(shared), argumentTmp(1));
+            }
+            if (i + 1 == blockCount)
+                appendReturn(block);
+            else if (random.getUint32(3))
+                appendBranchTest(block, argumentTmp(0), blocks[i + 1], blocks[1 + random.getUint32(blockCount - 1)]);
+            else
+                appendJump(block, blocks[i + 1]);
+        }
+        code.resetReachability();
+        CHECK(code.stackSlots().size() >= slotCountBeyondGraphs);
+        allocateStackByGraphColoring(code);
+        checkLiveSlotsDoNotOverlap(code);
+        CHECK(countDistinctOffsets(code) <= sharedSlotCount + 1);
+    }
+}
+
+void testManySlotsOfMixedSizes()
+{
+    for (bool areLiveTogether : { false, true }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        Vector<StackSlot*> slots;
+        for (unsigned i = 0; i < slotCountBeyondGraphs; ++i)
+            slots.append(code.addStackSlot(i % 3 ? i % 3 * 4 : 16, StackSlotKind::Spill));
+        constexpr unsigned usedSlotCount = 300;
+        BasicBlock* root = code.addBlock();
+        auto opcodeFor = [](StackSlot* slot) {
+            return slot->byteSize() == 4 ? Move32 : Move;
+        };
+        for (unsigned i = 0; i < usedSlotCount; ++i) {
+            root->append(opcodeFor(slots[i]), nullptr, argumentTmp(0), Arg::stack(slots[i]));
+            if (!areLiveTogether)
+                root->append(opcodeFor(slots[i]), nullptr, Arg::stack(slots[i]), argumentTmp(1));
+        }
+        for (unsigned i = 0; areLiveTogether && i < usedSlotCount; ++i)
+            root->append(opcodeFor(slots[i]), nullptr, Arg::stack(slots[i]), argumentTmp(1));
+        appendReturn(root);
+        code.resetReachability();
+        allocateStackByGraphColoring(code);
+
+        intptr_t lowestOffset = 0;
+        for (StackSlot* slot : slots) {
+            CHECK(slot->offsetFromFP() < 0);
+            CHECK(!(slot->offsetFromFP() % static_cast<intptr_t>(slot->alignment())));
+            lowestOffset = std::min(lowestOffset, slot->offsetFromFP());
+        }
+        Vector<StackSlot*> slotAtByte(FillWith { }, static_cast<size_t>(-lowestOffset), nullptr);
+        for (unsigned i = 0; areLiveTogether && i < usedSlotCount; ++i) {
+            for (unsigned byte = 0; byte < slots[i]->byteSize(); ++byte)
+                CHECK(!std::exchange(slotAtByte[-slots[i]->offsetFromFP() - 1 - byte], slots[i]));
+        }
+        if (!areLiveTogether)
+            CHECK(-lowestOffset <= 16 + 8 + 4 + 16);
+    }
 }
 
 enum class SlotLifetimes : uint8_t { Overlapping, Disjoint };

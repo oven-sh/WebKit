@@ -9,6 +9,7 @@
 #include <bit>
 #include <limits>
 #include <optional>
+#include <span>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
@@ -56,6 +57,13 @@ public:
     void free(void*);
     void releaseFreeMemory();
 
+    struct Pieces {
+        size_t size;
+        unsigned count;
+    };
+    // Whether each of so many threads that have taken nothing from the range yet can take all these. Takes address space if that is what it needs.
+    bool tryEnsureRoomForNewThreads(unsigned numberOfThreads, std::span<const Pieces>);
+
 private:
     enum class BackEnd : uint8_t { Malloc, Granules };
 
@@ -63,6 +71,7 @@ private:
         BackEnd backEnd { BackEnd::Granules };
         void* mallocHeap { nullptr };
         size_t size { 0 };
+        void* mallocArena { nullptr };
     };
 
     ReservedRangeHeap(uintptr_t start, size_t, const Backing&, const Request&);
@@ -78,8 +87,9 @@ private:
     void* tryAllocateGranules(size_t);
     void freeGranules(void*);
     size_t granuleCountOfRun(size_t firstGranule) WTF_REQUIRES_LOCK(m_lock);
+    void setAccess(size_t firstGranule, size_t count, bool isAccessible) WTF_REQUIRES_LOCK(m_lock);
     static void commitGranules(void*, size_t);
-    static void decommitGranules(void*, size_t);
+    static void decommitGranules(void*, size_t, bool removesAccess);
 
     const uintptr_t m_start;
     const size_t m_size;
@@ -93,9 +103,11 @@ private:
 
     Lock m_lock;
     Vector<void*, 4> m_segmentHeaps WTF_GUARDED_BY_LOCK(m_lock);
+    Vector<void*, 4> m_segmentArenas WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_segmentsEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     BitVector m_usedGranules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_firstGranulesOfRuns WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_accessibleGranules WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_firstGranuleToSearch WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 

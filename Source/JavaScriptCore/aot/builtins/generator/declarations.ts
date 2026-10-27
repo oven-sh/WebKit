@@ -7,6 +7,7 @@ import type {
   Capability,
   ClassColumns,
   ClassName,
+  ConstructedOperand,
   EntryColumns,
   FeatureName,
   FunctionRef,
@@ -71,6 +72,8 @@ export interface SignatureDeclaration extends SignatureColumns {
   /** It throws, and it has no step of its own that does: see b.propagated. */
   onlyPropagatesErrors?: boolean;
   isUndeclared: boolean;
+  /** All that a signature which is not declared says about its operands: see b.otherwiseConstructs. */
+  constructs?: ConstructedOperand;
 }
 
 export type DispatchDeclaration =
@@ -370,6 +373,12 @@ export interface SeenCodeOnlyDeclaration {
   nativeFiles: readonly string[];
 }
 
+/** The same as `namesDefinedOnNewInstances: []` in the declaration of each class. */
+export interface InstancesWithoutOwnNamesDeclaration {
+  declares: "InstancesWithoutOwnNames";
+  classes: readonly ClassName[];
+}
+
 export type Declaration =
   | NamespaceDeclaration
   | StaticTableDeclaration
@@ -400,7 +409,8 @@ export type Declaration =
   | NamedMemberCallDeclaration
   | HostMethodCallDeclaration
   | StartupDeclaration
-  | SeenCodeOnlyDeclaration;
+  | SeenCodeOnlyDeclaration
+  | InstancesWithoutOwnNamesDeclaration;
 
 export interface SourcedDeclaration {
   declaration: Declaration;

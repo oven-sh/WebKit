@@ -24,7 +24,9 @@
 #include "config.h"
 #include "Error.h"
 
+#include "AOTCallSiteTable.h"
 #include "AOTCompiledFrame.h"
+#include "AOTStackTrace.h"
 #include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
@@ -195,7 +197,7 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
 #endif
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
-        auto* callerFrame = startCallFrame->callerFrame(entryFrame);
+        auto* callerFrame = startCallFrame->callerFrameUnlessCompiled(vm, entryFrame);
         if (callerFrame)
             startCallFrame = callerFrame;
     }
@@ -216,10 +218,11 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
         StackFrame& frame = stackTrace->at(i);
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) [[unlikely]] {
-            lineColumn = frame.computeLineAndColumn();
-            if (!lineColumn.line)
+            auto position = frame.representsHostFunction() ? std::nullopt : frame.compiledPosition();
+            if (!position || !position->lineColumn.line)
                 continue;
-            sourceURL = frame.sourceURLStripped(vm);
+            lineColumn = position->lineColumn;
+            sourceURL = AOT::sourceProviderURLOf(position->source);
             return true;
         }
 #endif
@@ -259,6 +262,15 @@ bool addErrorInfo(VM& vm, Vector<StackFrame>* stackTrace, JSObject* obj)
 void addErrorInfo(JSGlobalObject* globalObject, JSObject* obj, bool useCurrentFrame)
 {
     VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && useCurrentFrame) [[unlikely]] {
+        Vector<StackFrame> stackTrace;
+        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, stackTrace, 0, *stackTraceLimit)) {
+            addErrorInfo(vm, &stackTrace, obj);
+            return;
+        }
+    }
+#endif
     std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, obj, useCurrentFrame);
     addErrorInfo(vm, stackTrace.get(), obj);
 }
@@ -386,7 +398,7 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
 #if USE(BUN_JSC_ADDITIONS)
 String withAOTErrorNote(const String& message)
 {
-    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s;
+    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"_s;
     size_t endOfFirstLine = message.find('\n');
     if (endOfFirstLine == notFound)
         return makeString(message, note);

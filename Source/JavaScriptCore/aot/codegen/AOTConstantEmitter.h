@@ -29,7 +29,7 @@ public:
     void generateAbsent(const ValueContext& value) { define(value, constantOf(JSValue(), value.representation())); }
     void generateBoolean(const ValueContext& value) { define(value, constantOf(jsBoolean(value->boolean()), value.representation())); }
     void generateInteger(const ValueContext&);
-    void generateDouble(const ValueContext& value) { define(value, constantOf(jsNumber(purifyNaN(value->number())), value.representation())); }
+    void generateDouble(const ValueContext& value) { define(value, constantOf(jsNumber(withoutPayload(value->number())), value.representation())); }
     void generateString(const ValueContext&);
     void generateBigInt(const ValueContext& value) { defineCell(value, bigIntConstant(value, value->digits())); }
     void generateBuiltin(const ValueContext&);

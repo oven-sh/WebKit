@@ -139,9 +139,9 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     return { };
 }
 
-static CodeBand bandOf(HeatClass heatClass)
+static CodeBand bandOf(Typed::Expected<HeatClass> heatClass)
 {
-    switch (heatClass) {
+    switch (heatClass.predicted()) {
     case HeatClass::Hot:
         return CodeBand::Hot;
     case HeatClass::Warm:
@@ -244,7 +244,7 @@ static Vector<uint32_t, 32> collectOffsetsAskedForFrame(const CompiledCode& code
     for (const ReturnSite& site : code.body.returnSites)
         addReturnOffset(site.offset);
     for (const FaultingAccess& access : code.sites.faultingAccesses)
-        addReturnOffset(access.codeOffset + static_cast<uint32_t>(sizeOfNearCall));
+        offsets.append(access.codeOffset);
     for (const PollSite& poll : code.sites.pollSites)
         addReturnOffset(poll.returnOffset());
     AOT::sort(offsets);
@@ -343,6 +343,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
     SideTables result;
     result.frames = WTF::move(frameTable->frames);
     result.frameMapWords.grow(numberOfWords);
+    result.flags.grow(functions.size());
     Vector<Vector<uint8_t>> streams(functions.size());
     Vector<Vector<uint8_t>> positions(functions.size());
     Vector<SideTablePartSizes> partSizes(functions.size());
@@ -359,16 +360,19 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         Vector<uint8_t> handlers;
         encodeHandlers(handlers, sites.handlers.span());
         if (hasPositions) {
-            encodePositions(positions[position], sites, position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
+            encodePositions(positions[position], sites, callSites[position].span().data(), position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
             numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
         }
-        SideTableParts::append(streams[position], {
+        SideTableInputs inputs {
             .frameRanges = frameRanges.span(),
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
+            .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
             .callSites = callSites[position].span(),
-        });
+        };
+        SideTableParts::append(streams[position], inputs);
+        result.flags[position] = inputs.flags();
         partSizes[position] = { static_cast<uint32_t>(frameRanges.size()), static_cast<uint32_t>(handlers.size()), static_cast<uint32_t>(callSites[position].size()) };
     });
     context.statistics().count(StatisticID::SitePositionsEmitted, numberOfPositions.loadRelaxed());
@@ -412,9 +416,9 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
 {
     Vector<uint32_t> offsets;
-    offsets.reserveInitialCapacity(numberOfSlotHandlerTables * numberOfSlotKinds);
+    offsets.reserveInitialCapacity(numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     for (SlotHandlerTable table : allSlotHandlerTables) {
-        for (Slot::Kind kind : allSlotKinds)
+        for (Slot::Kind kind : slotKindsWithHandlers)
             offsets.append(blob.offsetOf(slotHandlerFor(table, kind)).value_or(offsetOfAbsentStub));
     }
     return bytesOf(offsets);
@@ -938,7 +942,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     if (diagnostics.hasErrors())
         return result;
     sections[ImageSection::ProgramTables] = WTF::move(inputs.programTables);
-    EncodedFunctionTables functionTables = encodeFunctionTables({ functions, result.aliases, result.layout, index, callSites.span(), sideTables.offsets.span(), sections.programTables(), !context.options().obfuscates() }, context);
+    EncodedFunctionTables functionTables = encodeFunctionTables({ functions, result.aliases, result.layout, index, sideTables.flags.span(), sideTables.offsets.span(), sections.programTables(), !context.options().obfuscates() }, context);
     context.destroyLater(WTF::move(callSites));
     times.didFinish("encode function tables"_s);
     if (diagnostics.hasErrors())

@@ -12,6 +12,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <utility>
@@ -19,11 +20,6 @@
 #include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static constexpr OpcodeSet namedAccesses {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
-};
 
 static constexpr bool isPrivateAccess(Opcode opcode) { return familyOf(opcode) == OperationFamily::PrivateAccess; }
 
@@ -159,7 +155,7 @@ bool isUnfinishedAllocationLeavingOut(const Program& program, const Function& fu
 
 static FunctionID expectedClassObjectOf(const Program& program, const Function& function, ValueID value)
 {
-    TypeID expected = function.at(value).expected();
+    TypeID expected = function.at(value).expected().predicted();
     if (!expected || !classOfClassObject(program, program.at(expected)))
         return { };
     return program.at(expected).singleFunction();
@@ -175,6 +171,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
     query.access = accessOf(opcode);
     query.key = keyOfNamedAccess(program, access);
     query.isOwnLookup = opcode == Opcode::PropHasOwn;
+    query.asksForDeclaredMember = opcode == Opcode::FindsDeclaredMember;
     query.site = access.accessSite();
     query.module = function.module;
     if (std::optional<uint8_t> stored = storedOf(opcode))
@@ -198,7 +195,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
         query.start = MemberStart::ClassObject;
         query.expectedClassObject = classObject;
         query.receivers.level = KnowledgeLevel::Expected;
-        query.receivers.predicted.add(program.at(classObject).constructedClass);
+        query.receivers.expected = LayoutList { program.at(classObject).constructedClass };
         return query;
     }
 
@@ -208,7 +205,7 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
         query.receivers = receiverCandidates(program, function, receiver, stamp);
     } else {
         query.receivers = candidatesOf(program, receiverType, nullptr, { });
-        query.receivers.predicted.clear();
+        query.receivers.expected = LayoutList();
     }
     query.isListedByAllocation = isAllocationListing(program, function, receiver, query.key);
     query.isLeftOutByUnfinishedAllocation = isUnfinishedAllocationLeavingOut(program, function, receiver, query.key);
@@ -260,7 +257,7 @@ PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const Pro
             setConstant(Opcode::Boolean, true);
     };
 
-    switch (answer.kind) {
+    switch (query.asksForDeclaredMember && !isMemberOfClass(answer) ? MemberKind::Unknown : answer.kind) {
     case MemberKind::Unknown:
         break;
     case MemberKind::Absent:
@@ -331,9 +328,9 @@ static MemberSelection selectMembers(const PropertyAccessQuery& query)
     const ReceiverCandidates& receivers = query.receivers;
     if (receivers.isProven())
         return receivers.proven.isEmpty() ? MemberSelection { } : MemberSelection { MemberSource::Proven };
-    if (receivers.predicted.isEmpty())
+    if (receivers.expected.predicted().isEmpty())
         return { MemberSource::None, UnprovenCause::UnknownObject };
-    if (receivers.predicted.size() > query.maxMembers)
+    if (receivers.expected.predicted().size() > query.maxMembers)
         return { MemberSource::None, UnprovenCause::LimitReached, LimitID::MaxAccessPlanMembers };
     return { MemberSource::Expected };
 }
@@ -394,6 +391,8 @@ static MemberPartition partitionFor(const PropertyAccessContext& context, const 
         if (query.isOwnLookup)
             return partitionOwnMembers(context, members.span(), query.key);
         MemberPartition partition = partitionMembers(context, members.span(), query.key, query.access);
+        if (query.receivers.proof != ReceiverProof::Type)
+            mergeArmsWithSameMember(partition, query.receivers.isProven() ? ArmsToMerge::All : ArmsToMerge::WhereFewerAreProven);
         if (query.access == Access::Store && query.stored)
             separateSlotsThatHoldOneValue(context.program, query, partition);
         return partition;
@@ -421,6 +420,18 @@ static UnprovenCause causeOfRest(const PropertyAccessContext& context, const Pro
     return findMember(context, memberQueryFor(query, partition.rest[0])).cause;
 }
 
+AOT_THRESHOLD(size_t, maxOtherReceiversForEachTestedOneInLibrary, 3);
+
+// A function of the library is handed the objects of all its callers, and which of them come often is not known. Where few of them find the name in one place, a test for those few fails for the others, which go by name behind it.
+static bool isTestedForFewOfManyReceiversOfLibrary(const Program& program, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
+{
+    if (query.module && program.at(query.module).kind != ModuleKind::RuntimeSource && !program.at(query.module).flags.contains(ModuleFlags::IsLibrary))
+        return false;
+    size_t tested = plan.receivers.size();
+    size_t expected = query.receivers.expected.predicted().size();
+    return expected > tested && tested * maxOtherReceiversForEachTestedOneInLibrary < expected - tested;
+}
+
 static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberPartition& partition)
 {
     PropertyAccessPlan heaviest;
@@ -433,7 +444,7 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
             return context.program.at(layout).module == query.module;
         });
         bool hasLayoutOfExpectedType = std::ranges::any_of(plan.receivers, [&](LayoutID layout) {
-            return query.receivers.ofExpectedType.contains(layout);
+            return query.receivers.ofExpectedType.predicted().contains(layout);
         });
         std::tuple<bool, bool, size_t, bool> weight { arm.answer.kind != MemberKind::Absent, hasLayoutOfExpectedType, plan.receivers.size(), hasLayoutOfModule };
         if (weight <= weightOfHeaviest)
@@ -441,6 +452,8 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
         heaviest = WTF::move(plan);
         weightOfHeaviest = weight;
     }
+    if (heaviest.isResolved() && isTestedForFewOfManyReceiversOfLibrary(context.program, query, heaviest))
+        heaviest = PropertyAccessPlan();
     if (!heaviest.isResolved()) {
         heaviest.cause = partition.arms.isEmpty() ? causeOfRest(context, query, partition) : partition.arms[0].answer.cause;
         return heaviest;
@@ -515,7 +528,7 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
         memberLevel = receivers.level;
         break;
     case MemberSource::Expected:
-        partition = partitionFor(context, query, receivers.predicted);
+        partition = partitionFor(context, query, receivers.expected.predicted());
         plan = planExpectedMembers(context, query, partition);
         memberLevel = KnowledgeLevel::Expected;
         break;

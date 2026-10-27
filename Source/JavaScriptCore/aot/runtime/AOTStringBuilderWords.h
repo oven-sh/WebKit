@@ -17,6 +17,7 @@ class StringBuilderStorage;
 struct StringBuilderWords {
     StringBuilderStorage* freeStorage;
     bool isPoolRegistered;
+    uint32_t capacityOfLastLargeBuffer;
 };
 
 static_assert(std::is_trivially_default_constructible_v<StringBuilderWords>);

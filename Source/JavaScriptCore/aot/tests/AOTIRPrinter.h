@@ -63,6 +63,7 @@ public:
     void print(StringID);
     void print(PropertyKeyID);
     void print(TypeID);
+    void print(ExpectedType expected) { print(expected.predicted()); }
     void print(LayoutSetID);
     void print(CalleeSetID);
     template<typename Tag> void print(ID<Tag> id) { m_out.print(id.index()); }

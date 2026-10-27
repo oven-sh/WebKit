@@ -14,6 +14,7 @@ namespace JSC { namespace AOT {
 
 enum class ConstructSyntax : uint8_t { NewExpression, SuperCall };
 
+PreludeExit emitCreatePromisePrelude(StubAssembler&);
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler&);
 PreludeExit emitGetSuperBasePrelude(StubAssembler&);
 

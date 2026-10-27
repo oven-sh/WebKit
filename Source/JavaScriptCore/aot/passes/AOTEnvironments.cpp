@@ -8,20 +8,26 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTBodyIndex.h"
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTClaims.h"
 #include "AOTDominators.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocation.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
+#include "AOTKnownValue.h"
 #include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
 #include "AOTProgramPasses.h"
@@ -30,6 +36,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -53,6 +60,8 @@ struct PlannedCapture {
     bool isRemoved { false };
     // What the function reads in its place.
     VariableID variable;
+    // The primitive that every closure of the function captures.
+    KnownValue constant;
 };
 
 struct PromotedCaptureSource {
@@ -112,15 +121,18 @@ struct CaptureSupplier {
     FunctionID callee;
     FunctionID function;
     ValueID site;
+    // Nothing takes the closure, so it holds what it captures for nobody.
+    bool isUnused { false };
     Vector<SuppliedCapture, 2> captures;
 };
 
 struct PromotionScan {
-    bool isEmpty() const { return allocations.isEmpty() && suppliers.isEmpty() && layoutsWithOtherUses.isEmpty() && functionsWithOtherReferences.isEmpty(); }
+    bool isEmpty() const { return allocations.isEmpty() && suppliers.isEmpty() && layoutsWithOtherUses.isEmpty() && capturedLayouts.isEmpty() && functionsWithOtherReferences.isEmpty(); }
 
     Vector<EnvironmentAllocation, 1> allocations;
     Vector<CaptureSupplier, 4> suppliers;
     Vector<LayoutID, 1> layoutsWithOtherUses;
+    Vector<LayoutID, 1> capturedLayouts;
     Vector<FunctionID, 1> functionsWithOtherReferences;
 };
 
@@ -163,7 +175,7 @@ static bool isRewrittenUse(const Program& program, const Value& user, uint32_t o
         return true;
     if (user.opcode == Opcode::CallDirect)
         return *user.variadicOperandIndex(operandIndex) < program.at(user.function()).captures.size();
-    return false;
+    return isHeldOperand(user, operandIndex);
 }
 
 static PromotionScan scanForPromotion(const Program& program, const FlowResults& flow, BuildContext& build, const EnvironmentTypes& types, FunctionID id)
@@ -192,6 +204,19 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         BlockID block = definingBlocks[value.index()];
         return block && (runsAtMostOnce(block) || build.isSabotaged(Sabotage::PromotedEnvironmentsAreMadeOften));
     };
+    auto isUsed = [&](auto& isUsed, ValueID value) -> bool {
+        return std::ranges::any_of(analyses->useLists().usesOf(value), [&](const Use& use) {
+            return use.kind != Use::Kind::Operand || !isCastWithoutTest(function.at(use.user).opcode) || isUsed(isUsed, use.user);
+        });
+    };
+    // Only where code runs once does a variable outlive what a closure would have held.
+    auto isUnusedClosure = [&](ValueID site, const Value& value) {
+        if (value.opcode != Opcode::NewClosure || !flow.runsAtMostOnce(program, id))
+            return false;
+        if (!analyses)
+            analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
+        return !isUsed(isUsed, site);
+    };
     auto scanFunctionReference = [&](ValueID site, const Value& value) {
         FunctionID callee = value.function();
         // A closure that is made on demand lists no captures: the object that holds it keeps what it captures.
@@ -203,7 +228,7 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         if (!numberOfCaptures)
             return;
 
-        CaptureSupplier supplier { callee, id, site, { } };
+        CaptureSupplier supplier { callee, id, site, isUnusedClosure(site, value), { } };
         supplier.captures.reserveInitialCapacity(numberOfCaptures);
         for (ValueID captured : value.variadicOperands().first(numberOfCaptures)) {
             SuppliedCapture description { .supplied = captured, .isComputedAtMostOnce = isComputedAtMostOnce(captured) };
@@ -223,11 +248,11 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         scan.suppliers.append(WTF::move(supplier));
     };
 
-    addUse(function.thisType.type);
+    addUse(function.thisType.written());
     for (const DeclaredType& parameter : function.parameters)
-        addUse(parameter.type);
+        addUse(parameter.written());
     for (const DeclaredType& result : function.results)
-        addUse(result.type);
+        addUse(result.written());
 
     bool holdsEnvironment = function.values.containsIf([&](const Value& value) {
         return !!types.environmentOf(value.type);
@@ -254,6 +279,8 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
                 LayoutID layout = types.environmentOf(function, operand);
                 if (layout && !isRewrittenUse(program, value, operandIndex))
                     scan.layoutsWithOtherUses.append(layout);
+                else if (layout && Value::opcodesWithFunction.contains(value.opcode) && !isUnusedClosure(listed, value))
+                    scan.capturedLayouts.append(layout);
             });
         }
         block.terminator.forEachOperand([&](ValueID operand, uint32_t) {
@@ -321,69 +348,24 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
     return variable;
 }
 
-static void appendSourcesOfParameter(const Function& function, ValueID parameter, Vector<ValueID, 8>& sources)
-{
-    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        size_t index = function.blocks[blockIndex].parameters.find(parameter);
-        if (index == notFound)
-            continue;
-        for (const Block& from : function.blocks) {
-            if (from.handler && from.handler->block == BlockID(blockIndex) && index < from.handler->arguments.size())
-                sources.append(from.handler->arguments[index]);
-            for (const Target& target : from.terminator.targets) {
-                if (target.block != BlockID(blockIndex))
-                    continue;
-                if (index < target.arguments.size()) {
-                    sources.append(target.arguments[index]);
-                    continue;
-                }
-                from.terminator.forEachOperand([&](ValueID operand, uint32_t) {
-                    if (!operand)
-                        return;
-                    sources.append(operand);
-                    function.at(operand).forEachOperand([&](ValueID tested, uint32_t) {
-                        if (tested)
-                            sources.append(tested);
-                    });
-                });
-            }
-        }
-        return;
-    }
-}
-
-static bool restsOnCheck(const Function& function, ValueID value)
-{
-    BitVector visited;
-    Vector<ValueID, 8> pending { value };
-    while (!pending.isEmpty()) {
-        CastChain chain(function, pending.takeLast());
-        for (ValueID cast : chain) {
-            if (visited.set(cast.index()))
-                break;
-            if (function.at(cast).opcode == Opcode::Check)
-                return true;
-            if (cast == chain.last() && function.at(cast).opcode == Opcode::Parameter)
-                appendSourcesOfParameter(function, cast, pending);
-        }
-    }
-    return false;
-}
-
 // Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
-static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture)
+static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture)
 {
     const Value& value = function.at(id);
     Variable variable;
     variable.module = function.module;
     // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
-    bool isOnlyExpected = value.type == TypeTable::anything && value.expected();
-    variable.declared.type = isOnlyExpected ? value.expected() : value.type;
-    if (isOnlyExpected || restsOnCheck(function, id) || capture.flags.contains(PositionFlags::IsExpected))
-        variable.declared.flags.add(PositionFlags::IsExpected);
+    bool isOnlyExpected = value.type == TypeTable::anything && value.expected().predicted();
+    std::optional<ProvenInEveryVersion> proven = Proven::byRules(predicted, id, value.type).inEveryVersion();
+    if (isOnlyExpected)
+        variable.declared.expect(value.expected());
+    else if (!proven || capture.isExpected())
+        variable.declared.expect(ExpectedType(value.type));
+    else
+        variable.declared.establish(*proven);
     variable.flags.add(VariableFlags::IsImmutable);
-    variable.flow.writers = WriterState::AllKnown;
-    variable.flow.stores = StoreCount::AtMostOnce;
+    variable.flow.writers = writerStateOf(writersOfVariableThatPassFillsOnce()).state;
+    variable.flow.stores = storeCountOf(writersOfVariableThatPassFillsOnce()).state;
     variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
     return variable;
 }
@@ -418,6 +400,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     Vector<EnvironmentAllocation> allocations;
     Vector<CaptureSupplier> suppliers;
     BitVector layoutsWithOtherUses;
+    BitVector capturedLayouts;
     BitVector functionsWithOtherReferences;
     for (PromotionScan& scan : collectInParallel<PromotionScan>(loops, numberOfFunctions, [&](unsigned index, Vector<PromotionScan>& found) {
         PromotionScan scan = scanForPromotion(program, flow, build, types, FunctionID(index));
@@ -428,6 +411,8 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         suppliers.appendVector(WTF::move(scan.suppliers));
         for (LayoutID layout : scan.layoutsWithOtherUses)
             layoutsWithOtherUses.set(layout.index());
+        for (LayoutID layout : scan.capturedLayouts)
+            capturedLayouts.set(layout.index());
         for (FunctionID function : scan.functionsWithOtherReferences)
             functionsWithOtherReferences.set(function.index());
     }
@@ -508,10 +493,10 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     });
     addUsesIn(program.layouts.size(), [&](unsigned index, const auto& addUse) {
         for (const Field& field : program.layouts[index].fields)
-            addUse(field.declared.type);
+            addUse(field.declared.written());
     });
     addUsesIn(program.variables.size(), [&](unsigned index, const auto& addUse) {
-        addUse(program.variables[index].declared.type);
+        addUse(program.variables[index].declared.written());
     });
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -523,7 +508,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         if (!hasFixedCaptures(FunctionID(index)))
             return;
         for (const DeclaredType& capture : program.functions[index].captures)
-            addUse(capture.type);
+            addUse(capture.written());
     });
 
     // An environment of which there is one instance at most.
@@ -534,7 +519,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     for (auto sites : allocations.span() | std::views::chunk_by([](const EnvironmentAllocation& a, const EnvironmentAllocation& b) { return a.layout == b.layout; })) {
         auto [layoutID, function, runsAtMostOnce] = sites.front();
         const Layout& layout = program.at(layoutID);
-        if (sites.size() != 1 || !runsAtMostOnce || layout.kind != LayoutKind::Environment || layoutsWithOtherUses.get(layoutID.index()) || !isEnabled(function))
+        if (sites.size() != 1 || !runsAtMostOnce || layout.kind != LayoutKind::Environment || layoutsWithOtherUses.get(layoutID.index()) || !capturedLayouts.get(layoutID.index()) || !isEnabled(function))
             continue;
         ModuleID module = layout.module ? layout.module : program.at(function).module;
         plan.promotedLayouts.set(layoutID.index());
@@ -548,7 +533,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             return;
         const auto& captures = program.functions[index].captures;
         for (uint32_t capture = 0; capture < captures.size(); ++capture) {
-            LayoutID layout = types.environmentOf(captures[capture].type);
+            LayoutID layout = types.environmentOf(captures[capture].written());
             if (layout && plan.isPromoted(layout))
                 found.append({ FunctionID(index), capture });
         }
@@ -576,6 +561,8 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             // It hands on its own capture.
             if (plan.closureFunctionOf(supplier.function) == closureFunction && supplier.captures[capture].entryParameter == capture)
                 continue;
+            if (supplier.isUnused)
+                continue;
             PromotedCaptureSource source = findSource(supplier, capture);
             if (!source || (common && common != source))
                 return { };
@@ -592,12 +579,27 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             return fits(entry.second);
         });
     };
+    auto findConstant = [&](FunctionID closureFunction, uint32_t capture) {
+        auto constantIn = [&](FunctionID function) {
+            return knownValueOfType(program.at(program.provenTypeOf(program.at(function).captures[capture])));
+        };
+        KnownValue constant = constantIn(closureFunction);
+        bool isSameInVersions = std::ranges::all_of(std::ranges::equal_range(versions, closureFunction, { }, &std::pair<FunctionID, FunctionID>::first), [&](const auto& entry) {
+            return constantIn(entry.second) == constant;
+        });
+        return isSameInVersions && !constant.isObject() ? constant : KnownValue();
+    };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PredictedValues>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> predictedValuesOfFunctions;
     auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
         if (source.variable)
             return source.variable;
         return variablesByValue.ensure(static_cast<uint64_t>(source.function.index()) << 32 | source.value.index(), [&] {
-            VariableID variable = addVariable(createValueVariable(program.at(source.function), source.value, capture));
+            const Function& function = program.at(source.function);
+            const PredictedValues& predicted = *predictedValuesOfFunctions.ensure(source.function.index(), [&] {
+                return makeUniqueWithoutFastMallocCheck<PredictedValues>(function, CFG(function));
+            }).iterator->value;
+            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture));
             plan.storedValues.append({ variable, source.function, source.value });
             return variable;
         }).iterator->value;
@@ -613,12 +615,19 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             const auto& captures = program.at(closureFunction).captures;
             for (uint32_t capture = 0; capture < captures.size(); ++capture) {
                 std::span<const PlannedCapture> planned = plan.capturesOf(closureFunction);
-                if ((!planned.empty() && planned[capture].isRemoved) || !program.at(captures[capture].type).isJavaScriptValue())
+                const Type& captured = program.at(captures[capture].written());
+                if ((!planned.empty() && planned[capture].isRemoved) || !(captured.isJavaScriptValue() || captured.isOpaque(OpaqueKind::ClassToken)))
                     continue;
+                if (KnownValue constant = findConstant(closureFunction, capture); constant.isKnown()) {
+                    plannedCapture(closureFunction, capture) = { true, { }, constant };
+                    ++plan.numberOfPromotedCaptures;
+                    didChange = true;
+                    continue;
+                }
                 PromotedCaptureSource source = findCommonSource(closureFunction, capture, suppliersOfFunction);
                 if (!source || !fitsCapture(source, closureFunction, capture))
                     continue;
-                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]) };
+                plannedCapture(closureFunction, capture) = { true, ensureVariable(source, captures[capture]), { } };
                 ++plan.numberOfPromotedCaptures;
                 didChange = true;
             }
@@ -712,6 +721,15 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
                 value.become(Opcode::PutModuleVariable);
                 value.setVariable(variable);
                 value.setValueOperand(stored);
+            } else if (numberOfHeldOperandsOf(value)) {
+                // The variables hold what the environment held.
+                Vector<ValueID, 8> held;
+                for (ValueID listed : heldOperandsOf(value)) {
+                    LayoutID environment = program.typeOf(function, listed).environment;
+                    if (!environment || !plan.isPromoted(environment))
+                        held.append(listed);
+                }
+                setHeldOperands(value, held.span());
             }
             rewritten.append(id);
             appendCapturedValueStore(rewritten, id);
@@ -736,8 +754,13 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
     BlockValues values;
     Vector<ValueID, 4> replacedParameters;
     Vector<Value, 4> reads;
+    Vector<std::pair<ValueID, KnownValue>, 2> constants;
     const auto& parameters = function.at(entryBlock).parameters;
     for (size_t capture = 0; capture < planned.size(); ++capture) {
+        if (planned[capture].constant.isKnown()) {
+            values.append(parameters[capture]);
+            constants.append({ parameters[capture], planned[capture].constant });
+        }
         if (!planned[capture].variable)
             continue;
         Value read = function.at(parameters[capture]);
@@ -745,13 +768,12 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
         read.become(Opcode::GetModuleVariable);
         read.setVariable(planned[capture].variable);
         // One variable stands for the captures of several functions, and is only expected as soon as one of them is. What is proven of this capture is then said by a cast.
-        if (program.at(planned[capture].variable).declared.flags.contains(PositionFlags::IsExpected) && provenType != TypeTable::anything) {
+        if (program.at(planned[capture].variable).declared.isExpected() && provenType != TypeTable::anything) {
             builder.setOrigin(read.origin());
             ValueID readOfVariable = builder.addDetached(WTF::move(read));
             values.append(readOfVariable);
-            read = IRBuilder::make(Opcode::AssumeType, { readOfVariable });
+            read = makeAssumeType(readOfVariable, Proven::byPosition(provenType));
             read.setOrigin(function.at(readOfVariable).origin());
-            read.setCastType(provenType);
             read.type = provenType;
         }
         values.append(parameters[capture]);
@@ -762,6 +784,8 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
     removeEntryParameters(function, removedCaptures);
     for (size_t index = 0; index < reads.size(); ++index)
         function.edit(replacedParameters[index]) = WTF::move(reads[index]);
+    for (auto [parameter, constant] : constants)
+        becomeConstant(program, function, builder.types(), parameter, constant);
     values.appendVector(function.at(entryBlock).values);
     function.edit(entryBlock, BlockEdit::Values).values = WTF::move(values);
 }
@@ -783,6 +807,7 @@ void promoteEnvironmentsToVariables(ProgramEditor& editor, FlowResults& flow, Bu
         if (function.hasBody()) {
             IRBuilder builder(AnalysisContext { build, program, &flow, nullptr, id }, function, arenas.types);
             promoteInBody(plan, builder, id, removedCaptures);
+            settleProofsBehindOperandsThatWereOnlyKept(function);
         } else
             removeEntryParameters(function, removedCaptures);
         for (ParameterOrigin& origin : function.derivation.parameterMap) {
@@ -873,6 +898,63 @@ struct CaptureCandidateTable {
     BitVector layouts;
 };
 
+// An entry parameter that every caller fills with the closure of a candidate, or with undefined where its type allows that, and that is only taken apart or asked whether it is there. What the closures of the function capture there is the same value.
+struct ClosureParameter {
+    FunctionID function;
+    uint32_t index { 0 };
+    uint32_t candidate { noCandidate };
+
+    friend auto operator<=>(const ClosureParameter&, const ClosureParameter&) = default;
+};
+
+struct ClosureParameterTable {
+    std::span<const ClosureParameter> parametersOf(FunctionID function) const
+    {
+        if (!functions.get(function.index()))
+            return { };
+        auto range = std::ranges::equal_range(parameters, function, { }, &ClosureParameter::function);
+        return { range.begin(), range.end() };
+    }
+
+    uint32_t candidateOf(FunctionID function, uint32_t index) const
+    {
+        std::span<const ClosureParameter> ofFunction = parametersOf(function);
+        auto found = std::ranges::find(ofFunction, index, &ClosureParameter::index);
+        return found != ofFunction.end() ? found->candidate : noCandidate;
+    }
+
+    void removeAllMatching(NOESCAPE const Invocable<bool(const ClosureParameter&)> auto& matches)
+    {
+        parameters.removeAllMatching(matches);
+        functions.clearAll();
+        capturesOneValue.clearAll();
+        for (const ClosureParameter& parameter : parameters) {
+            functions.set(parameter.function.index());
+            if (parameter.candidate >= firstCandidateWithoutField)
+                capturesOneValue.set(functionsWithOneCapture[parameter.candidate - firstCandidateWithoutField].index());
+        }
+    }
+
+    // The candidate that a closure of the function is wherever it is made.
+    uint32_t candidateMadeOf(FunctionID function) const
+    {
+        if (!capturesOneValue.get(function.index()))
+            return noCandidate;
+        return firstCandidateWithoutField + static_cast<uint32_t>(std::ranges::lower_bound(functionsWithOneCapture, function) - functionsWithOneCapture.begin());
+    }
+
+    // Ascending.
+    Vector<ClosureParameter> parameters;
+    BitVector functions;
+    // Ascending. A closure over one value stands for that value and needs no field. These are the candidates behind those of the fields.
+    Vector<FunctionID> functionsWithOneCapture;
+    // Those of them that a parameter is left of.
+    BitVector capturesOneValue;
+    uint32_t firstCandidateWithoutField { 0 };
+    // The functions that have such a parameter, and those that name a function that has one.
+    BitVector users;
+};
+
 struct FoundCaptures {
     enum class Kind : uint8_t { Store, Reader, Callee, ReadAsValue, Obstacle };
 
@@ -918,22 +1000,36 @@ static ValueID findSecond(std::span<const std::pair<ValueID, ValueID>> ascending
     return found != ascendingPairs.end() && found->first == first ? found->second : ValueID();
 }
 
-// The values of a function that are the closure in a candidate field: the reads, the closure where it is made, their casts, and the block parameters that such values reach.
+// The values of a function that are the closure of a candidate: the reads, the closure where it is made, their casts, the block parameters that such values reach, and what a test proves of them.
 struct ClosureWebs {
     struct Cause {
         uint32_t candidate;
         Opcode user;
     };
 
-    ClosureWebs(const Function& function, NOESCAPE const Invocable<uint32_t(const Value&)> auto& candidateReadBy, NOESCAPE const Invocable<uint32_t(const Value&)> auto& candidateStoredBy)
+    ClosureWebs(const Program& program, const Function& function, FunctionID functionID, const ClosureParameterTable& closureParameters, NOESCAPE const Invocable<uint32_t(const Value&)> auto& candidateReadBy, NOESCAPE const Invocable<uint32_t(const Value&)> auto& candidateStoredBy)
     {
         candidates.fill(noCandidate, function.values.size());
+        for (const ClosureParameter& parameter : closureParameters.parametersOf(functionID)) {
+            candidates[function.at(entryBlock).parameters[parameter.index].index()] = parameter.candidate;
+            isEmpty = false;
+        }
         for (const Block& block : function.blocks) {
             for (uint32_t index = 0; index < block.values.size(); ++index) {
                 ValueID id = block.values[index];
                 const Value& value = function.at(id);
                 if (value.opcode == Opcode::GetEnvironmentField) {
                     candidates[id.index()] = candidateReadBy(value);
+                    isEmpty &= candidateOf(id) == noCandidate;
+                    continue;
+                }
+                if (value.opcode == Opcode::GetCapture) {
+                    candidates[id.index()] = closureParameters.candidateOf(value.function(), value.index());
+                    isEmpty &= candidateOf(id) == noCandidate;
+                    continue;
+                }
+                if (value.opcode == Opcode::NewClosure && !value.isMadeOnDemand()) {
+                    candidates[id.index()] = closureParameters.candidateMadeOf(value.function());
                     isEmpty &= candidateOf(id) == noCandidate;
                     continue;
                 }
@@ -952,7 +1048,20 @@ struct ClosureWebs {
         AOT::sort(closuresWithStores);
         objects.ensureSize(function.values.size());
 
-        // From what is cast to the cast, and from an argument to the block parameter.
+        // What a parameter of the target is on this edge: an argument, or what the test in front of the branch has asked. Nothing for a guard.
+        auto givenOnEdge = [&](const Block& block, const Target& target, uint32_t index) -> ValueID {
+            if (index < target.arguments.size())
+                return target.arguments[index];
+            if (block.terminator.kind != TerminatorKind::Branch)
+                return { };
+            const Value& test = function.at(block.terminator.conditionOperand());
+            if (test.opcode != Opcode::ToBoolean && test.opcode != Opcode::TypeTest)
+                return { };
+            // Among the closures of several functions the test picks one out, and what it proves is no name of them all.
+            ValueID asked = test.operand(target.proofs[index - target.arguments.size()]);
+            return candidateOf(asked) == noCandidate || program.typeOf(function, asked).singleFunction() ? asked : ValueID();
+        };
+        // From what is cast to the cast, and from what an edge gives to the block parameter.
         auto forEachLink = [&](const Invocable<void(ValueID, ValueID)> auto& functor) {
             for (const Block& block : function.blocks) {
                 for (ValueID id : block.values) {
@@ -961,8 +1070,10 @@ struct ClosureWebs {
                 }
                 block.forEachTarget([&](const Target& target) {
                     const auto& parameters = function.at(target.block).parameters;
-                    for (uint32_t index = 0; index < target.arguments.size(); ++index)
-                        functor(target.arguments[index], parameters[index]);
+                    for (uint32_t index = 0; index < target.arguments.size() + target.proofs.size(); ++index) {
+                        if (ValueID given = givenOnEdge(block, target, index))
+                            functor(given, parameters[index]);
+                    }
                 });
             }
         };
@@ -984,19 +1095,45 @@ struct ClosureWebs {
             block.forEachTarget([&](const Target& target) {
                 const auto& parameters = function.at(target.block).parameters;
                 for (uint32_t index = 0; index < parameters.size(); ++index) {
-                    if (index < target.arguments.size() && candidateOf(target.arguments[index]) == candidateOf(parameters[index]))
+                    ValueID given = index < target.arguments.size() + target.proofs.size() ? givenOnEdge(block, target, index) : ValueID();
+                    if (given && candidateOf(given) == candidateOf(parameters[index]))
                         continue;
                     noteObject(parameters[index], Opcode::Undefined);
-                    if (index < target.arguments.size())
-                        noteObject(target.arguments[index], Opcode::Undefined);
+                    if (given)
+                        noteObject(given, Opcode::Undefined);
                 }
             });
             for (ValueID id : block.values) {
                 const Value& value = function.at(id);
                 if (value.opcode == Opcode::GetCapture || (value.opcode == Opcode::PutEnvironmentField && storeOf(value.valueOperand()) == id))
                     continue;
+                if ((value.opcode == Opcode::ToBoolean || value.opcode == Opcode::TypeTest) && candidateOf(value.operand(0)) != noCandidate && asksForClosure(program, function, value))
+                    continue;
+                if ((value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure) && closureParameters.functions.get(value.function().index())) {
+                    std::span<const ValueID> given = value.variadicOperands();
+                    for (uint32_t position = 0; position < given.size(); ++position) {
+                        if (given[position] && candidateOf(given[position]) != closureParameters.candidateOf(value.function(), position))
+                            noteObject(given[position], value.opcode);
+                    }
+                    continue;
+                }
+                if (numberOfHeldOperandsOf(value)) {
+                    // A closure holds its environment, and the environment holds whatever else the closure captures.
+                    for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+                        ValueID operand = value.operand(operandIndex);
+                        if (!operand)
+                            continue;
+                        if (isHeldOperand(value, operandIndex) && candidateOf(operand) != noCandidate && function.at(operand).opcode == Opcode::NewClosure)
+                            isHeld = true;
+                        else
+                            noteObject(operand, value.opcode);
+                    }
+                    continue;
+                }
+                // What stands for a closure that may be missing does not pass for one that is there.
+                bool isLink = isCast(value.opcode) && (program.typeOf(function, id).primitives || !program.typeOf(function, value.operand(0)).primitives);
                 value.forEachChild([&](ValueID operand) {
-                    if (candidateOf(id) == noCandidate || candidateOf(id) != candidateOf(operand) || !isCast(value.opcode))
+                    if (candidateOf(id) == noCandidate || candidateOf(id) != candidateOf(operand) || !isLink)
                         noteObject(operand, value.opcode);
                 });
             }
@@ -1017,8 +1154,22 @@ struct ClosureWebs {
         }
     }
 
-    static bool isCast(Opcode opcode) { return opcode == Opcode::AssumeType || opcode == Opcode::Upcast; }
-    uint32_t candidateOf(ValueID id) const { return candidates[id.index()]; }
+    static bool isCast(Opcode opcode) { return opcode == Opcode::AssumeType || isCastThatProvesNothing(opcode); }
+
+    // Of a test of what is a closure or undefined: whether it holds for the closure alone, or for undefined alone. Nothing for any other operation.
+    static std::optional<bool> asksForClosure(const Program& program, const Function& function, const Value& test)
+    {
+        if (test.opcode == Opcode::ToBoolean)
+            return true;
+        if (test.opcode != Opcode::TypeTest)
+            return std::nullopt;
+        const Type& tested = program.at(test.testedType());
+        bool holdsForClosure = program.typeOf(function, test.operand(0)).withoutPrimitives(Primitive::Undefined).isSubsetOf(tested, program);
+        bool holdsForUndefined = tested.primitives & Primitive::Undefined;
+        return holdsForClosure != holdsForUndefined ? std::optional(holdsForClosure) : std::nullopt;
+    }
+    // Nothing that was added behind the scan belongs to a web.
+    uint32_t candidateOf(ValueID id) const { return id.index() < candidates.size() ? candidates[id.index()] : noCandidate; }
     bool isObject(ValueID id) const { return objects.quickGet(id.index()); }
     bool standsForCapturesOnly(ValueID id) const { return candidateOf(id) != noCandidate && !isObject(id); }
 
@@ -1031,6 +1182,8 @@ struct ClosureWebs {
     BitVector objects;
     Vector<Cause, 4> causes;
     bool isEmpty { true };
+    // A suspension lists a closure that belongs to a web because of where it is made.
+    bool isHeld { false };
 };
 
 struct PlannedClosure {
@@ -1042,6 +1195,8 @@ struct PlannedClosure {
     Value closure;
     LayoutID layout;
     TypeID typeOfEnvironment;
+    // For a place that holds undefined where there is no closure.
+    TypeID typeOfEnvironmentOrAbsent;
     // The field of the layout that holds each capture. No field for the environment itself.
     Vector<uint32_t, 4> fields;
     // The first capture that is the environment itself.
@@ -1100,8 +1255,8 @@ static CaptureCandidateTable findCandidates(const Program& program)
             continue;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             const DeclaredType& declared = layout.fields[field].declared;
-            const Type& type = program.at(declared.type);
-            if (declared.flags.contains(PositionFlags::IsExpected) || type.primitives || !type.singleFunction())
+            const Type& type = program.at(declared.written());
+            if (declared.isExpected() || type.primitives || !type.singleFunction())
                 continue;
             candidates.fields.append({ LayoutID(index), field });
             candidates.layouts.quickSet(index);
@@ -1202,7 +1357,217 @@ static void rejectWhatMayBeFilledAgain(const Function& function, Vector<FoundCap
     }
 }
 
-static void scanFunction(const Program& program, const BuildContext& build, const CaptureCandidateTable& candidates, FunctionID id, Vector<FoundCaptures>& found)
+// `filled` gets the parameters that a call or a closure in the function fills as the table says.
+static void refuteClosureParameters(const Program& program, const BuildContext& build, const CaptureCandidateTable& candidates, const ClosureParameterTable& table, FunctionID id, Vector<ClosureParameter>& refuted, Vector<ClosureParameter>& filled)
+{
+    const Function& function = program.at(id);
+    Vector<ValueID, 8> users;
+    auto namesFunctionWithParameter = [&](NameKind kind, uint32_t index) {
+        return kind == NameKind::Function && table.functions.get(index);
+    };
+    forEachListedValueNaming(program, id, Value::opcodesWithFunction, namesFunctionWithParameter, [&](BlockID, ValueID valueID, const Value&) {
+        users.append(valueID);
+    });
+    std::span<const ClosureParameter> own = table.parametersOf(id);
+    if (own.empty() && users.isEmpty())
+        return;
+    if (!build.isEnabled(PassID::ReadCapturesFromEnvironments, id)) {
+        refuted.append(own);
+        for (ValueID user : users)
+            refuted.append(table.parametersOf(function.at(user).function()));
+        return;
+    }
+
+    auto candidateNamedBy = [&](const Value& access) {
+        return candidates.find(access.layout(), access.field()).value_or(noCandidate);
+    };
+    ClosureWebs webs(program, function, id, table, candidateNamedBy, candidateNamedBy);
+    auto isTakenApart = [&](ValueID value, uint32_t candidate) {
+        return value && webs.candidateOf(value) == candidate && !webs.isObject(value);
+    };
+    for (const ClosureParameter& parameter : own) {
+        if (!isTakenApart(function.at(entryBlock).parameters[parameter.index], parameter.candidate))
+            refuted.append(parameter);
+    }
+    for (ValueID user : users) {
+        const Value& value = function.at(user);
+        std::span<const ClosureParameter> parameters = table.parametersOf(value.function());
+        // A test and a fact name the function and take nothing from a closure of it.
+        if (value.opcode == Opcode::IsClosureOf || value.opcode == Opcode::Entered)
+            continue;
+        if (value.opcode == Opcode::GetCapture) {
+            for (const ClosureParameter& parameter : parameters) {
+                if (parameter.index == value.index() && !isTakenApart(user, parameter.candidate))
+                    refuted.append(parameter);
+            }
+            continue;
+        }
+        if (value.opcode != Opcode::CallDirect && value.opcode != Opcode::NewClosure) {
+            refuted.append(parameters);
+            continue;
+        }
+        std::span<const ValueID> given = value.variadicOperands();
+        for (const ClosureParameter& parameter : parameters) {
+            if (parameter.index >= given.size()) {
+                if (value.opcode == Opcode::CallDirect)
+                    refuted.append(parameter);
+                continue;
+            }
+            ValueID operand = given[parameter.index];
+            if (isTakenApart(operand, parameter.candidate))
+                filled.append(parameter);
+            else if (value.opcode != Opcode::CallDirect || !operand || function.at(operand).type != TypeTable::undefined)
+                refuted.append(parameter);
+        }
+    }
+}
+
+// A closure that goes into a call, or into another closure, only to be taken apart there need not be made for that. The guess is that every parameter of the type of such a closure is one. What the bodies and the callers do decides.
+static ClosureParameterTable findClosureParameters(const Program& program, const BuildContext& build, const CaptureCandidateTable& candidates)
+{
+    const ParallelLoops& loops = build.parallelLoops();
+    ClosureParameterTable table;
+    table.firstCandidateWithoutField = candidates.fields.size();
+    // Ascending. A function that lies in several fields is left out.
+    Vector<std::pair<FunctionID, uint32_t>> candidatesOfFunctions;
+    for (uint32_t candidate = 0; candidate < candidates.fields.size(); ++candidate) {
+        FieldReference reference = candidates.fields[candidate];
+        candidatesOfFunctions.append({ program.at(program.at(reference.layout).fields[reference.field].declared.written()).singleFunction(), candidate });
+    }
+    AOT::sort(candidatesOfFunctions);
+    BitVector liesInOneField(program.functions.size());
+    BitVector liesInField(program.functions.size());
+    for (auto fieldsOfFunction : candidatesOfFunctions.span() | std::views::chunk_by([](const auto& a, const auto& b) { return a.first == b.first; })) {
+        liesInField.quickSet(fieldsOfFunction[0].first.index());
+        if (fieldsOfFunction.size() == 1)
+            liesInOneField.quickSet(fieldsOfFunction[0].first.index());
+    }
+    constexpr OptionSet<FunctionCapabilities> needed { FunctionCapabilities::HasOrdinaryFrame, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::MayChangeSignature };
+    // What is captured can stand for the closure if it is told from a missing closure, and is not itself something that another value comes to stand for. A function that somebody unseen may call has closures that are objects.
+    auto capturesOneValue = [&](FunctionID closure) {
+        const auto& captures = program.at(closure).captures;
+        if (liesInField.quickGet(closure.index()) || captures.size() != 1 || captures[0].isExpected() || !program.at(closure).capabilities.containsAll(needed))
+            return false;
+        const Type& captured = program.at(captures[0].written());
+        return !(captured.primitives & Primitive::Absent) && !captured.singleFunction();
+    };
+
+    table.parameters = collectInParallel<ClosureParameter>(loops, program.functions.size(), [&](unsigned index, Vector<ClosureParameter>& found) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || !function.capabilities.containsAll(needed))
+            return;
+        const auto& parameters = function.at(entryBlock).parameters;
+        for (uint32_t position = 0; position < parameters.size(); ++position) {
+            const Type& type = program.typeOf(function, parameters[position]);
+            FunctionID closure = type.primitives & ~Primitive::Undefined ? FunctionID() : type.singleFunction();
+            if (!closure)
+                continue;
+            EntryParameter kind = function.entryParameterKind(position);
+            if (kind != EntryParameter::Capture && kind != EntryParameter::Parameter)
+                continue;
+            if (liesInOneField.quickGet(closure.index()))
+                found.append({ FunctionID(index), position, std::ranges::lower_bound(candidatesOfFunctions, closure, { }, &std::pair<FunctionID, uint32_t>::first)->second });
+            else if (capturesOneValue(closure))
+                found.append({ FunctionID(index), position, table.firstCandidateWithoutField + closure.index() });
+        }
+    });
+    // So far such a candidate is numbered by its function.
+    for (const ClosureParameter& parameter : table.parameters) {
+        if (parameter.candidate >= table.firstCandidateWithoutField)
+            table.functionsWithOneCapture.append(FunctionID(parameter.candidate - table.firstCandidateWithoutField));
+    }
+    AOT::sort(table.functionsWithOneCapture);
+    removeRepeatedElements(table.functionsWithOneCapture);
+    for (FunctionID closure : table.functionsWithOneCapture)
+        table.capturesOneValue.set(closure.index());
+    for (ClosureParameter& parameter : table.parameters) {
+        if (parameter.candidate >= table.firstCandidateWithoutField)
+            parameter.candidate = table.candidateMadeOf(FunctionID(parameter.candidate - table.firstCandidateWithoutField));
+    }
+    AOT::sort(table.parameters);
+    table.removeAllMatching([](const ClosureParameter&) {
+        return false;
+    });
+
+    if (table.parameters.isEmpty())
+        return table;
+
+    auto isOrNamesOneOf = [&](const BitVector& functions, unsigned index) {
+        bool isFound = functions.get(index);
+        if (!isFound && program.functions[index].hasBody()) {
+            auto namesOne = [&](NameKind kind, uint32_t name) {
+                return !isFound && kind == NameKind::Function && functions.get(name);
+            };
+            forEachListedValueNaming(program, FunctionID(index), Value::opcodesWithFunction, namesOne, [&](BlockID, ValueID, const Value&) {
+                isFound = true;
+            });
+        }
+        return isFound;
+    };
+    auto isUser = [&](unsigned index) {
+        return isOrNamesOneOf(table.functions, index);
+    };
+    Vector<uint32_t> users = findIndicesInParallel(loops, program.functions.size(), isUser);
+
+    // What a function says of a parameter: that it fills it as the table says, or that the table is wrong.
+    struct Evidence {
+        uint32_t user;
+        bool isFilled;
+        ClosureParameter parameter;
+    };
+    Vector<Evidence> evidence;
+    Vector<uint32_t> asked = users;
+    // A parameter that falls takes with it those that hand their value on to it.
+    AOT_THRESHOLD(unsigned, maxRounds, 8);
+    for (unsigned round = 0; !table.parameters.isEmpty(); ++round) {
+        BitVector isAsked(program.functions.size());
+        for (uint32_t user : asked)
+            isAsked.quickSet(user);
+        evidence.removeAllMatching([&](const Evidence& entry) {
+            return isAsked.quickGet(entry.user);
+        });
+        evidence.appendVector(collectInParallel<Evidence>(loops, asked.size(), [&](unsigned index, Vector<Evidence>& evidenceInFunction) {
+            Vector<ClosureParameter> refuted;
+            Vector<ClosureParameter> filled;
+            refuteClosureParameters(program, build, candidates, table, FunctionID(asked[index]), refuted, filled);
+            for (const ClosureParameter& parameter : refuted)
+                evidenceInFunction.append({ asked[index], false, parameter });
+            for (const ClosureParameter& parameter : filled)
+                evidenceInFunction.append({ asked[index], true, parameter });
+        }));
+        Vector<ClosureParameter> refuted;
+        Vector<ClosureParameter> filled;
+        for (const Evidence& entry : evidence)
+            (entry.isFilled ? filled : refuted).append(entry.parameter);
+        AOT::sort(refuted);
+        AOT::sort(filled);
+        if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]]
+            dataLogLn("round ", round, ": ", table.parameters.size(), " parameters of ", table.functions.bitCount(), " functions, ", table.capturesOneValue.bitCount(), " functions with one capture, ", asked.size(), " of ", users.size(), " functions asked");
+        // Nothing is known of a parameter that nobody fills.
+        BitVector lostParameter(program.functions.size());
+        table.removeAllMatching([&](const ClosureParameter& parameter) {
+            bool falls = round + 1 == maxRounds || std::ranges::binary_search(refuted, parameter) || !std::ranges::binary_search(filled, parameter);
+            if (falls)
+                lostParameter.quickSet(parameter.function.index());
+            return falls;
+        });
+        if (lostParameter.isEmpty())
+            break;
+        // Nobody else can answer otherwise than before.
+        asked = findIndicesInParallel(loops, users.size(), [&](unsigned index) {
+            return isOrNamesOneOf(lostParameter, users[index]);
+        }).map([&](uint32_t index) {
+            return users[index];
+        });
+    }
+    for (uint32_t index : users) {
+        if (isUser(index))
+            table.users.set(index);
+    }
+    return table;
+}
+
+static void scanFunction(const Program& program, const BuildContext& build, const CaptureCandidateTable& candidates, const ClosureParameterTable& closureParameters, FunctionID id, Vector<FoundCaptures>& found)
 {
     using Kind = FoundCaptures::Kind;
     const Function& function = program.at(id);
@@ -1275,14 +1640,14 @@ static void scanFunction(const Program& program, const BuildContext& build, cons
     bool hasClosureWithOtherUses = std::ranges::any_of(found.span().subspan(firstFound), [](const FoundCaptures& entry) {
         return entry.kind == Kind::Store && entry.indexOfClosure && entry.closureHasOtherUses;
     });
-    if (!hasRead && !hasClosureWithOtherUses)
+    if (!hasRead && !hasClosureWithOtherUses && !closureParameters.users.get(id.index()))
         return;
 
     found.append({ .kind = Kind::Reader, .function = id });
     auto candidateNamedBy = [&](const Value& access) {
         return candidates.find(access.layout(), access.field()).value_or(noCandidate);
     };
-    ClosureWebs webs(function, candidateNamedBy, candidateNamedBy);
+    ClosureWebs webs(program, function, id, closureParameters, candidateNamedBy, candidateNamedBy);
     for (FoundCaptures& entry : found.mutableSpan().subspan(firstFound)) {
         if (entry.kind == Kind::Store && entry.indexOfClosure)
             entry.closureHasOtherUses = webs.isObject(entry.closure);
@@ -1299,18 +1664,36 @@ static void scanFunction(const Program& program, const BuildContext& build, cons
                 found.append({ .kind = Kind::ReadAsValue, .user = userOf(webs.candidateOf(valueID)), .candidate = webs.candidateOf(valueID) });
             if (value.opcode != Opcode::GetCapture)
                 continue;
-            if (uint32_t candidate = webs.candidateOf(value.operand(0)); candidate != noCandidate)
+            if (uint32_t candidate = webs.candidateOf(value.operand(0)); candidate < candidates.fields.size())
                 found.append({ .kind = Kind::Callee, .candidate = candidate, .callee = value.function() });
         }
     }
 }
 
-static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCandidateTable& candidates, Vector<FoundCaptures>&& found)
+// The type of what stands for a value of the given type, which is the closure, undefined, or either.
+static TypeID typeInPlaceOf(const PlannedClosure& planned, const Type& type)
+{
+    if (!type.primitives)
+        return planned.typeOfEnvironment;
+    return type.hasObjects() ? planned.typeOfEnvironmentOrAbsent : TypeTable::absent;
+}
+
+static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCandidateTable& candidates, ClosureParameterTable& closureParameters, Vector<FoundCaptures>&& found)
 {
     using Stores = std::span<const FoundCaptures>;
     const Program& program = editor.program();
     CaptureReadPlan plan;
-    plan.closures.grow(candidates.fields.size());
+    plan.closures.grow(candidates.fields.size() + closureParameters.functionsWithOneCapture.size());
+    for (FunctionID closure : closureParameters.functionsWithOneCapture) {
+        uint32_t candidate = closureParameters.candidateMadeOf(closure);
+        if (candidate == noCandidate)
+            continue;
+        PlannedClosure& planned = plan.closures[candidate];
+        planned.fate = Fate::IsNeverMade;
+        planned.callee = closure;
+        planned.typeOfEnvironment = program.at(closure).captures[0].written();
+        planned.fields.append(noField);
+    }
     BitVector isReadAsValue(candidates.fields.size());
     BitVector isUsedWhereItIsMade(candidates.fields.size());
     auto reject = [&](uint32_t candidate, Obstacle obstacle, Opcode user = Opcode::Undefined) {
@@ -1375,6 +1758,25 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
         Vector<uint32_t, 2> runs;
         uint32_t candidate;
     };
+    // Ascending. The closures that are made in front of their stores, with the environments that they are stored in.
+    Vector<std::tuple<FunctionID, ValueID, ValueID>> environmentsOfClosures;
+    // What a value that is only taken apart becomes.
+    auto environmentInPlaceOf = [&](FunctionID id, ValueID closure) {
+        const Function& function = program.at(id);
+        while (ClosureWebs::isCast(function.at(closure).opcode))
+            closure = function.at(closure).operand(0);
+        if (function.at(closure).opcode == Opcode::GetEnvironmentField)
+            return function.at(closure).operand(0);
+        if (function.at(closure).opcode != Opcode::NewClosure)
+            return closure;
+        if (closureParameters.candidateMadeOf(function.at(closure).function()) != noCandidate)
+            return function.at(closure).variadicOperands()[0];
+        auto made = std::ranges::lower_bound(environmentsOfClosures, std::pair { id, closure }, { }, [](const auto& entry) {
+            return std::pair { std::get<0>(entry), std::get<1>(entry) };
+        });
+        RELEASE_ASSERT(made != environmentsOfClosures.end() && std::get<0>(*made) == id && std::get<1>(*made) == closure);
+        return std::get<2>(*made);
+    };
     auto planGroup = [&](LayoutID layout, std::span<const Stores> runsOfLayout, std::span<const Member> group, uint32_t& nextField) {
         std::span<const uint32_t> runs = group[0].runs.span();
         // A field serves the captures that every run fills with one value and that are declared alike.
@@ -1391,14 +1793,17 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
             const auto& declaredCaptures = program.at(planned.callee).captures;
             for (uint32_t index = 0; index < declaredCaptures.size(); ++index) {
                 FieldOfGroup wanted { nextField, declaredCaptures[index], { }, { } };
+                uint32_t capturedClosure = closureParameters.candidateOf(planned.callee, index);
+                if (capturedClosure != noCandidate)
+                    wanted.declared.changeType(Proven::byPosition(typeInPlaceOf(plan.closures[capturedClosure], program.at(wanted.declared.written()))));
                 bool isEnvironmentItself = true;
                 for (uint32_t run : runs) {
                     const FoundCaptures& store = *std::ranges::find(runsOfLayout[run], member.candidate, &FoundCaptures::candidate);
                     std::span<const ValueID> captured = program.at(store.function).at(store.closure).variadicOperands();
                     RELEASE_ASSERT(index < captured.size());
-                    wanted.operands.append(captured[index]);
+                    wanted.operands.append(capturedClosure != noCandidate ? environmentInPlaceOf(store.function, captured[index]) : captured[index]);
                     wanted.indexesInBlocks.append(store.indexOfFirstUse());
-                    isEnvironmentItself &= captured[index] == store.environment;
+                    isEnvironmentItself &= wanted.operands.last() == store.environment;
                 }
                 if (isEnvironmentItself) {
                     planned.environment = std::min<size_t>(planned.environment, index);
@@ -1414,9 +1819,9 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     Field field;
                     field.declared = wanted.declared;
                     field.flags = fieldOfClosure.flags | OptionSet<FieldFlags> { FieldFlags::IsHidden, FieldFlags::IsAddedLate };
-                    field.flow.location.writers = WriterState::AllKnown;
+                    field.flow.location.writers = writerStateOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.stores = fieldOfClosure.flow.location.stores;
-                    field.flow.location.storeNaming = StoreNaming::EveryStoreNamesLocation;
+                    field.flow.location.storeNaming = storeNamingOf(writersOfFieldThatPassAdds()).state;
                     field.flow.location.initialization = fieldOfClosure.flow.location.initialization;
                     field.flow.occupancy = fieldOfClosure.flow.occupancy;
                     field.flow.stability = fieldOfClosure.flow.stability;
@@ -1441,42 +1846,39 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
         }
     };
 
-    for (Stores stores : found.span() | std::views::chunk_by([&](const FoundCaptures& a, const FoundCaptures& b) { return layoutOf(a) == layoutOf(b); })) {
-        LayoutID layout = layoutOf(stores[0]);
-        // The stores of one block into one environment.
-        Vector<Stores, 2> runs;
-        for (auto run : stores | std::views::chunk_by([](const FoundCaptures& a, const FoundCaptures& b) { return a.function == b.function && a.environment == b.environment && a.block == b.block; }))
-            runs.append(Stores(run));
+    auto haveSameLayout = [&](const FoundCaptures& a, const FoundCaptures& b) {
+        return layoutOf(a) == layoutOf(b);
+    };
+    auto forEachLayout = [&](NOESCAPE const Invocable<void(LayoutID, Stores, std::span<const Stores>, Vector<Member, 16>&)> auto& functor) {
+        for (Stores stores : found.span() | std::views::chunk_by(haveSameLayout)) {
+            LayoutID layout = layoutOf(stores[0]);
+            // The stores of one block into one environment.
+            Vector<Stores, 2> runs;
+            for (auto run : stores | std::views::chunk_by([](const FoundCaptures& a, const FoundCaptures& b) { return a.function == b.function && a.environment == b.environment && a.block == b.block; }))
+                runs.append(Stores(run));
 
-        Vector<Member, 16> members;
-        candidates.forEachCandidateOf(layout, [&](uint32_t candidate) {
-            if (plan.closures[candidate].obstacle != Obstacle::None)
-                return;
-            Member member { { }, candidate };
-            for (uint32_t index = 0; index < runs.size(); ++index) {
-                size_t numberOfStores = std::ranges::count(runs[index], candidate, &FoundCaptures::candidate);
-                if (numberOfStores > 1) {
-                    reject(candidate, Obstacle::IsFilledTwiceInOneBlock);
+            Vector<Member, 16> members;
+            candidates.forEachCandidateOf(layout, [&](uint32_t candidate) {
+                if (plan.closures[candidate].obstacle != Obstacle::None)
                     return;
+                Member member { { }, candidate };
+                for (uint32_t index = 0; index < runs.size(); ++index) {
+                    size_t numberOfStores = std::ranges::count(runs[index], candidate, &FoundCaptures::candidate);
+                    if (numberOfStores > 1) {
+                        reject(candidate, Obstacle::IsFilledTwiceInOneBlock);
+                        return;
+                    }
+                    if (numberOfStores)
+                        member.runs.append(index);
                 }
-                if (numberOfStores)
-                    member.runs.append(index);
-            }
-            members.append(WTF::move(member));
-        });
-        if (members.isEmpty())
-            continue;
+                members.append(WTF::move(member));
+            });
+            if (!members.isEmpty())
+                functor(layout, stores, runs.span(), members);
+        }
+    };
 
-        // Closures that are stored at the same places can share the fields for what they capture.
-        AOT::sort(members, [](const Member& a, const Member& b) {
-            if (a.runs != b.runs)
-                return std::ranges::lexicographical_compare(a.runs, b.runs);
-            return a.candidate < b.candidate;
-        });
-        uint32_t nextField = program.at(layout).fields.size();
-        for (std::span<const Member> group : members.span() | std::views::chunk_by([](const Member& a, const Member& b) { return a.runs == b.runs; }))
-            planGroup(layout, runs.span(), group, nextField);
-
+    forEachLayout([&](LayoutID layout, Stores stores, std::span<const Stores>, Vector<Member, 16>& members) {
         for (const Member& member : members) {
             PlannedClosure& planned = plan.closures[member.candidate];
             planned.layout = layout;
@@ -1486,13 +1888,43 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
             else
                 planned.fate = isUsedWhereItIsMade.quickGet(member.candidate) ? Fate::IsMadeAsBefore : Fate::IsMadeAtFirstUse;
         }
+    });
+    // A closure that is made as before is an object wherever it goes.
+    closureParameters.removeAllMatching([&](const ClosureParameter& parameter) {
+        Fate fate = plan.closures[parameter.candidate].fate;
+        return fate != Fate::IsNeverMade && fate != Fate::IsMadeAtFirstUse;
+    });
+    if (!closureParameters.parameters.isEmpty()) {
+        for (const FoundCaptures& store : found) {
+            if (store.indexOfClosure)
+                environmentsOfClosures.append({ store.function, store.closure, store.environment });
+        }
+        AOT::sort(environmentsOfClosures);
+    }
+    for (const ClosureParameter& parameter : closureParameters.parameters) {
+        PlannedClosure& planned = plan.closures[parameter.candidate];
+        if (!planned.typeOfEnvironmentOrAbsent)
+            planned.typeOfEnvironmentOrAbsent = editor.types().intern(program.at(planned.typeOfEnvironment).withPrimitives(Primitive::Absent));
+    }
+
+    forEachLayout([&](LayoutID layout, Stores stores, std::span<const Stores> runs, Vector<Member, 16>& members) {
+        // Closures that are stored at the same places can share the fields for what they capture.
+        AOT::sort(members, [](const Member& a, const Member& b) {
+            if (a.runs != b.runs)
+                return std::ranges::lexicographical_compare(a.runs, b.runs);
+            return a.candidate < b.candidate;
+        });
+        uint32_t nextField = program.at(layout).fields.size();
+        for (std::span<const Member> group : members.span() | std::views::chunk_by([](const Member& a, const Member& b) { return a.runs == b.runs; }))
+            planGroup(layout, runs, group, nextField);
+
         for (const FoundCaptures& store : stores) {
             if (plan.closures[store.candidate].fate != Fate::IsMadeAtFirstUse)
                 continue;
             plan.closures[store.candidate].closure = program.at(store.function).at(store.closure);
             plan.removedStores.append({ store.function, store.store, candidates.fields[store.candidate].field, store.closure });
         }
-    }
+    });
 
     AOT::sort(plan.addedStores, [](const AddedStore& a, const AddedStore& b) {
         if (a.function != b.function)
@@ -1507,18 +1939,21 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     AOT::sort(plan.editedFunctions);
     removeRepeatedElements(plan.editedFunctions);
 
-    // Only the operations of the program and the scopes of eval reach a field of an environment, and the scan has seen them all.
+    // The scan has looked at the operations of every body and at the scopes of evaluated text. What it found in the way of a closure that is never made goes with the closure.
+    constexpr OptionSet<Actor> asked { Actor::Statements, Actor::Creation, Actor::UnseenCode };
+    Writers writersLeft { { }, actorsThatCanWrite(PlaceKind::EnvironmentField) - asked };
+    Readers readersLeft { { }, actorsThatCanRead(PlaceKind::EnvironmentField) - asked };
     for (uint32_t candidate = 0; candidate < candidates.fields.size(); ++candidate) {
         FieldReference reference = candidates.fields[candidate];
         if (plan.closures[candidate].fate == Fate::IsNeverMade) {
             LocationFlow& location = editor.at(reference.layout).fields[reference.field].flow.location;
-            location.writers = WriterState::AllKnown;
-            location.storeNaming = StoreNaming::EveryStoreNamesLocation;
-            location.reads = ReadState::NeverRead;
+            location.writers = writerStateOf(writersLeft).state;
+            location.storeNaming = storeNamingOf(writersLeft).state;
+            location.reads = readStateOf(readersLeft).state;
         }
         if (plan.closures[candidate].fate == Fate::IsMadeAtFirstUse) {
             Field& field = editor.at(reference.layout).fields[reference.field];
-            field.declared.type = editor.types().intern(editor.program().at(field.declared.type).withPrimitives(Primitive::Absent));
+            field.declared.changeType(Proven::byPosition(editor.types().intern(editor.program().at(field.declared.written()).withPrimitives(Primitive::Absent))));
             field.flags.remove({ FieldFlags::IsRequired, FieldFlags::IsImmutable });
             field.flow.location.stores = StoreCount::Unknown;
             field.flow.location.initialization = InitializationState::Unknown;
@@ -1584,16 +2019,60 @@ static void removeStores(const CaptureReadPlan& plan, FunctionID id, IRBuilder& 
     eraseListedValues(builder, erasedValues);
 }
 
-static void readCaptures(const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
+// Where a call hands undefined to a parameter that takes what stands for a closure, it hands over the mark of a missing one.
+static void giveAbsentInPlaceOfUndefined(const ClosureParameterTable& closureParameters, const ClosureWebs& webs, IRBuilder& builder)
+{
+    Function& function = builder.function();
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const BlockValues& values = function.at(BlockID(blockIndex)).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID call = values[index];
+            if (function.at(call).opcode != Opcode::CallDirect)
+                continue;
+            for (const ClosureParameter& parameter : closureParameters.parametersOf(function.at(call).function())) {
+                ValueID given = function.at(call).operand(parameter.index);
+                if (webs.standsForCapturesOnly(given))
+                    continue;
+                RELEASE_ASSERT(function.at(given).type == TypeTable::undefined);
+                builder.setOrigin(function.at(call).origin());
+                ValueID absent = builder.insertBefore({ BlockID(blockIndex), index }, IRBuilder::make(Opcode::Absent));
+                function.edit(call).setOperand(parameter.index, absent);
+            }
+        }
+    }
+    if (builder.hasInsertions())
+        builder.applyInsertions();
+}
+
+static void readCaptures(const Program& program, const CaptureCandidateTable& candidates, const CaptureReadPlan& plan, const ClosureWebs& webs, IRBuilder& builder)
 {
     Function& function = builder.function();
     ValueSubstitution substitution(function);
+    auto typeInPlaceOfValue = [&](ValueID id) {
+        return typeInPlaceOf(plan.closures[webs.candidateOf(id)], program.typeOf(function, id));
+    };
+    // While what they ask still has the type of the closure.
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (function.at(id).opcode != Opcode::ToBoolean && function.at(id).opcode != Opcode::TypeTest)
+                continue;
+            ValueID asked = function.at(id).operand(0);
+            if (!webs.standsForCapturesOnly(asked))
+                continue;
+            bool asksForClosure = *ClosureWebs::asksForClosure(program, function, function.at(id));
+            Value& test = function.edit(id);
+            test.become(Opcode::TypeTest);
+            test.setOperand(0, asked);
+            TypeID whatIsThere = plan.closures[webs.candidateOf(asked)].typeOfEnvironment;
+            test.setTestedType(!asksForClosure ? TypeTable::absent : program.at(whatIsThere).isJavaScriptValue() ? TypeTable::anything : whatIsThere);
+        }
+    }
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
         for (ValueID parameter : function.at(block).parameters) {
             if (!webs.standsForCapturesOnly(parameter))
                 continue;
-            function.edit(parameter, ValueEdit::Type).type = plan.closures[webs.candidateOf(parameter)].typeOfEnvironment;
+            function.edit(parameter, ValueEdit::Type).type = typeInPlaceOfValue(parameter);
             function.edit(parameter, ValueEdit::Type).setExpected({ });
         }
 
@@ -1602,7 +2081,10 @@ static void readCaptures(const CaptureCandidateTable& candidates, const CaptureR
         for (uint32_t index = 0; index < values.size(); ++index) {
             ValueID id = values[index];
             Value& value = function.edit(id);
-            if (webs.standsForCapturesOnly(id)) {
+            if (webs.standsForCapturesOnly(id) && value.opcode == Opcode::GetCapture) {
+                value.type = typeInPlaceOfValue(id);
+                value.setExpected({ });
+            } else if (webs.standsForCapturesOnly(id)) {
                 ValueID store = webs.storeOf(id);
                 substitution.replace(id, store ? function.at(store).operand(0) : value.operand(0));
                 erasedIndexes.set(index);
@@ -1633,6 +2115,20 @@ static void readCaptures(const CaptureCandidateTable& candidates, const CaptureR
             builder.eraseValues(block, erasedIndexes);
     }
     substitution.apply(function, nullptr);
+    if (!webs.isHeld)
+        return;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            std::span<const ValueID> listed = heldOperandsOf(function.at(id));
+            Vector<ValueID, 8> held;
+            for (ValueID operand : listed) {
+                if (!held.contains(operand))
+                    held.append(operand);
+            }
+            if (held.size() != listed.size())
+                setHeldOperands(function.edit(id), held.span());
+        }
+    }
 }
 
 // The field holds nothing until somebody wants the object. It stays the same object from then on.
@@ -1912,7 +2408,7 @@ static void doubtOwnCaptures(const Program& program, const OwnCapturesTable& tab
         return kind == NameKind::Function && table[index];
     };
     forEachListedValueNaming(program, id, Value::opcodesWithFunction, namesFunctionWithClaim, [&](BlockID block, ValueID valueID, const Value& value) {
-        if (value.opcode == Opcode::GetCapture || value.opcode == Opcode::IsClosureOf)
+        if (value.opcode == Opcode::GetCapture || value.opcode == Opcode::IsClosureOf || value.opcode == Opcode::Entered)
             return;
         const OwnCaptures* claim = table[value.function().index()];
         if (!claim)
@@ -2178,14 +2674,28 @@ void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow
 {
     const Program& program = editor.program();
     CaptureCandidateTable candidates = findCandidates(program);
+    ClosureParameterTable closureParameters;
     CaptureReadPlan plan;
     if (!candidates.fields.isEmpty()) {
-        plan = planCaptureReads(editor, candidates, collectInParallel<FoundCaptures>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FoundCaptures>& found) {
+        closureParameters = findClosureParameters(program, build, candidates);
+        plan = planCaptureReads(editor, candidates, closureParameters, collectInParallel<FoundCaptures>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FoundCaptures>& found) {
             if (program.functions[index].hasBody())
-                scanFunction(program, build, candidates, FunctionID(index), found);
+                scanFunction(program, build, candidates, closureParameters, FunctionID(index), found);
         }));
-        if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]]
+        for (const ClosureParameter& parameter : closureParameters.parameters) {
+            DeclaredType& declared = *editor.at(parameter.function).declaredEntryParameter(parameter.index);
+            declared.changeType(Proven::byPosition(typeInPlaceOf(plan.closures[parameter.candidate], program.at(declared.written()))));
+        }
+        if (build.options().logging.dumpedPass == PassID::ReadCapturesFromEnvironments) [[unlikely]] {
             dump(program, candidates, plan, WTF::dataFile());
+            for (const ClosureParameter& parameter : closureParameters.parameters) {
+                dataLog("takes the environment in place of the closure: f", parameter.function.index(), " entry parameter ", parameter.index);
+                if (parameter.candidate < candidates.fields.size())
+                    dataLogLn(", L", candidates.fields[parameter.candidate].layout.index(), " field ", candidates.fields[parameter.candidate].field);
+                else
+                    dataLogLn(", what f", plan.closures[parameter.candidate].callee.index(), " captures");
+            }
+        }
     }
     bool takesAny = plan.closures.containsIf([](const PlannedClosure& planned) {
         return planned.fate != Fate::IsLeftAlone;
@@ -2193,12 +2703,8 @@ void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow
     if (takesAny) {
         editFunctionsInParallel(editor, build, plan.editedFunctions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             IRBuilder builder(AnalysisContext { build, program, &flow, nullptr, id }, function, arenas.types);
-            for (const AddedStore& added : entriesIn(plan.addedStores, id)) {
-                builder.setOrigin(function.at(function.at(added.block).values[added.indexInBlock]).origin());
-                ValueID store = builder.addDetached(makeFieldAccess(Opcode::PutEnvironmentField, { added.environment, added.value }, added.layout, added.field));
-                function.edit(added.block, BlockEdit::Values).values.insert(added.indexInBlock + 1, store);
-            }
-            ClosureWebs webs(function, [&](const Value& read) {
+            // Of the body that the scan saw: a store that is added for a capture is no use of what it stores.
+            ClosureWebs webs(program, function, id, closureParameters, [&](const Value& read) {
                 auto candidate = candidates.find(read.layout(), read.field());
                 return candidate && plan.closures[*candidate].fate != Fate::IsLeftAlone ? *candidate : noCandidate;
             }, [&](const Value& store) {
@@ -2206,8 +2712,16 @@ void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow
                 auto candidate = candidates.find(store.layout(), store.field());
                 return candidate && (plan.closures[*candidate].fate == Fate::IsNeverMade || plan.closures[*candidate].fate == Fate::IsMadeAtFirstUse) ? *candidate : noCandidate;
             });
+            for (const ClosureParameter& parameter : closureParameters.parametersOf(id))
+                RELEASE_ASSERT(webs.standsForCapturesOnly(function.at(entryBlock).parameters[parameter.index]));
+            for (const AddedStore& added : entriesIn(plan.addedStores, id)) {
+                builder.setOrigin(function.at(function.at(added.block).values[added.indexInBlock]).origin());
+                ValueID store = builder.addDetached(makeFieldAccess(Opcode::PutEnvironmentField, { added.environment, added.value }, added.layout, added.field));
+                function.edit(added.block, BlockEdit::Values).values.insert(added.indexInBlock + 1, store);
+            }
+            giveAbsentInPlaceOfUndefined(closureParameters, webs, builder);
             if (!webs.isEmpty)
-                readCaptures(candidates, plan, webs, builder);
+                readCaptures(program, candidates, plan, webs, builder);
             removeStores(plan, id, builder);
             if (!webs.isEmpty)
                 makeClosuresAtReads(candidates, plan, webs, builder);
@@ -2372,11 +2886,11 @@ static void classifyHolders(const AnalysisContext& context, const EffectContext&
             const Function& callee = program.at(user.function());
             std::optional<uint32_t> entryParameter = entryParameterOf(callee, user, operandIndex);
             const DeclaredType* declared = callee.hasBody() && entryParameter ? callee.declaredEntryParameter(*entryParameter) : nullptr;
-            return declared && types.environmentOf(declared->type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
+            return declared && types.environmentOf(declared->written()) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
         }
         // One of several results goes to the caller under its declared type, and the caller's uses of it are classified like any other. What holds the results in between is followed like the environment itself.
         if (user.opcode == Opcode::Results)
-            return operandIndex < function.results.size() && types.environmentOf(function.results[operandIndex].type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
+            return operandIndex < function.results.size() && types.environmentOf(function.results[operandIndex].written()) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
         // No operation reads the hidden field that holds the environment. The closures that the object makes on demand do: they are cells of the heap wherever the object lies.
         if (user.opcode == Opcode::NewObject) {
             std::optional<uint32_t> field = program.at(user.layout()).flow.closureEnvironmentField;
@@ -2477,7 +2991,7 @@ static bool holdsAmongSeveralResults(const Program& program, const EnvironmentTy
         return false;
     auto& results = program.at(value.function()).results;
     return results.size() > 1 && results.containsIf([&](const auto& result) {
-        return types.environmentOf(result.type) == layout;
+        return types.environmentOf(result.written()) == layout;
     });
 }
 
@@ -2490,7 +3004,7 @@ static void findResultsMadeHere(const AnalysisContext& context, const Environmen
     const Function& function = context.program.at(context.id);
     BitVector madeHere;
     for (unsigned index = 0; index < function.results.size(); ++index) {
-        if (types.environmentOf(function.results[index].type))
+        if (types.environmentOf(function.results[index].written()))
             madeHere.set(index);
     }
     if (madeHere.isEmpty())
@@ -2617,6 +3131,8 @@ static void findReleasePoints(const AnalysisContext& context, const EnvironmentT
                 bool wasLive = std::exchange(isLive, isAnyLive(calc));
                 // Nothing stands between a tail call and the end of the block, and the callee still has the environment.
                 if (wasLive || !isLive || (block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index]))
+                    continue;
+                if (hasNeverResult(function.at(block.values[index])))
                     continue;
                 if (ValueID environment = findReleasableEnvironment(calc))
                     plan.releases.append({ std::nullopt, { blockID, index + 1 }, environment, layout });

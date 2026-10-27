@@ -39,13 +39,16 @@ struct GeneratedCode {
     Vector<OperationCounts> operationCountsByFunction;
 };
 
-CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput&, BuildContext&);
+// A test that generates code for a program written in a later form writes no tables: not every such program has what they describe.
+enum class ProgramTablesUse : bool { Written, NeverWritten };
+CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput&, BuildContext&, ProgramTablesUse = ProgramTablesUse::Written);
 Typed::CodeGenerationInputs createCodeGenerationInputs(const Typed::PipelineOutput&, const CodeGenerationPlan&);
 
 class CodeGenerationJob {
     WTF_MAKE_NONCOPYABLE(CodeGenerationJob);
 public:
     // Takes the bodies out of the program, so no other thread may be reading its functions.
+    // The caches of the program and its open interning phase last as long as the job: threads may read the program beside run().
     CodeGenerationJob(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&, const BitVector* bodiesWithoutCode = nullptr);
     ~CodeGenerationJob();
 

@@ -409,7 +409,7 @@ StubCallResult RuntimeCallEmitter::callOperationReturningPair(const OperationCon
 Operand RuntimeCallEmitter::callWithoutSite(RuntimeOperation operation, std::span<const Operand> arguments, Representation result, const CallOptions& options)
 {
     Effects effects = AOT::effectsOf(entryOf(operation));
-    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && !effects.mayCollect);
+    RELEASE_ASSERT(!isLeaf(operation) && !effects.mayExitSideways() && (!effects.mayCollect || options.followsThrow));
     return callChecked(nullptr, operation, arguments, result, options);
 }
 
@@ -531,7 +531,7 @@ bool RuntimeCallEmitter::leavesRegistersForHostFrame(std::span<const LValue> arg
     return countGPRArguments(arguments) <= directCalleeArgumentIndex;
 }
 
-LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
+LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame, BuiltinID calledBuiltin)
 {
     Effects effects = context.effects().onAnyEdge();
     bool isLeaf = !effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode;
@@ -550,7 +550,9 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
     }
 
     DirectFunctionCall form = isLeaf ? DirectFunctionCall::Leaf : hostFrame ? DirectFunctionCall::WithHostFrame : DirectFunctionCall::WithFrame;
-    return emitCall(&context, requestOfDirectFunction(form, number, arguments, keptAlive)).first;
+    CallRequest request = requestOfDirectFunction(form, number, arguments, keptAlive);
+    request.options.calledBuiltin = calledBuiltin;
+    return emitCall(&context, request).first;
 }
 
 RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createRequest(StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const
@@ -590,9 +592,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
-    RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
+    RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
-    if (effects.mayCollect)
+    if (effects.mayCollect && context)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
     bool validates = generator().validates() && context;
@@ -630,7 +632,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : CellConversions::AsEffectsSay);
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -763,13 +765,21 @@ B3::Air::StackSlot* RuntimeCallEmitter::ensureRegisterStorage(B3::Air::StackSlot
 
 RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context, const CallOptions& options)
 {
-    bool isTailCall = options.isTailCall;
-    if (!isTailCall && context.valueID()) {
-        // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
-        const Value& value = m_function.at(context.valueID());
-        isTailCall = builtinCallOpcodes.contains(value.opcode) && value.isDemotedTailCall();
-    }
-    return { .origin = options.origin.value_or(context.origin()), .constructs = options.constructs, .isTailCall = isTailCall };
+    // Whatever a built-in runs, its function object, its inline code or an operation, runs after the tail call.
+    Origin origin = options.origin.value_or(context.origin());
+    const Value* value = context.valueID() ? &m_function.at(context.valueID()) : nullptr;
+    BuiltinID calledBuiltin = options.calledBuiltin;
+    if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
+        calledBuiltin = value->calledBuiltin();
+    // No stack trace lists a function that only built-in code can name.
+    if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
+        calledBuiltin = { };
+    bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
+    // A call, and the read of the method that it calls, can throw before the callee begins.
+    bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
+    std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
+    RELEASE_ASSERT(kind);
+    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .callsOwnFunctionObject = options.callsOwnFunctionObject };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)
@@ -784,9 +794,10 @@ uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const Call
 
 LValue RuntimeCallEmitter::transientBuffer(size_t bytes)
 {
-    if (!m_transientBuffer)
+    if (!m_transientBuffer) {
         m_transientBuffer = m_proc.addStackSlot(bytes);
-    else
+        m_transientBuffer->setIsDeadAtSuspensions(true);
+    } else
         m_transientBuffer->ensureSize(bytes);
     return m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_transientBuffer);
 }

@@ -1,6 +1,9 @@
-enum LayoutKind { Record Instance Container Environment | engine Closure CoroutineFrame BuiltinResult ModuleNamespace }
+enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObjectLayout: Bool, hasOrdinaryOwnKeys: Bool, supportsRemoval: Bool, hasObjectsThatCodeAlters: Bool) {
+    Record(false, true, true, true, true, true) Instance(false, false, true, true, true, true) Container(false, false, true, false, false, true) Environment(true, false, false, false, true, false)
+    | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
+}
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -24,10 +27,12 @@ record Variable wire {
     | engine flow: LocationFlow
 }
 
-enum FunctionKind { Plain Arrow Method Getter Setter BaseConstructor DerivedConstructor Initializer Module CommonJsModule }
+enum FunctionKind (| engine canBeBound: Bool, isClassConstructor: Bool) {
+    Plain(true, false) Arrow(true, false) Method(true, false) Getter(false, false) Setter(false, false) BaseConstructor(false, true) DerivedConstructor(false, true) Initializer(false, false) Module(false, false) CommonJsModule(false, false)
+}
 flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
-    HasExplicitName IsNakedConstructor IsNamedBySymbol
+    HasExplicitName IsNakedConstructor IsNamedByComputedKey
     | engine AllocatesOwnThis IsSplitOffGenericVersion
 }
 enum EntryParameter (presentWith: FunctionFlags) {
@@ -36,7 +41,7 @@ enum EntryParameter (presentWith: FunctionFlags) {
 record SourceRange wire { start: UInt32 end: UInt32 }
 record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
 record Function wire extendedEngine {
-    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32
+    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 hasWrittenAwait: Bool
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredType> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
     | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>
@@ -54,7 +59,9 @@ record EvalBinding wire {
 }
 record EvalScope wire { mode: ECMAMode flags: EvalScopeFlags bindings: Span<EvalBinding> }
 
-enum ModuleKind { SourceText CommonJs Data RuntimeSource Runtime External }
+enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Bool, isProgramModule: Bool, canOwnVariables: Bool, isEvaluatedAtMostOnce: Bool, hasExportTable: Bool) {
+    SourceText(true, true, true, true, true, true) CommonJs(true, true, true, true, true, false) Data(false, true, true, true, true, true) RuntimeSource(true, true, false, true, true, false) Runtime(false, false, false, false, false, false) External(false, false, false, false, false, false)
+}
 enum CommonJsParameter { Exports Require Module Filename Dirname }
 enum ExternalKind { UncompiledCode HostValue }
 enum SyntheticExportRule { None CommonJs CommonJsIgnoringAnnotation RuntimeModule }
@@ -63,12 +70,12 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns
     | engine EvaluatesItself IsEvaluatedByRequire
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
 record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> }
-record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool }
+record ModuleRequest wire { target: Module(Target) phase: ImportPhase isDynamicStarExport: Bool kind: ModuleRequestKind completes: Bool isHoisted: Bool }
 record ModuleExport wire {
     name: String kind: ModuleExportKind variable: Variable? module: Module(Target)? importName: String? phase: ImportPhase isFromStarExport: Bool
 }
@@ -107,7 +114,7 @@ enum RuntimeErrorKind {
     UninitializedBinding ConstantAssignment UninitializedThis ThisAlreadyBound DeleteSuperProperty UnresolvableReference ImportAssignment NotDestructurable
     DerivedConstructorResult StaticPrototypeKey IteratorResultNotObject IteratorWithoutThrowMethod IteratorIsNotAnObject InvalidPrivateRead
     InvalidPrivateWrite InvalidPrivateBrand PrivateFieldExists PrivateMethodWrite PrivateAccessorWithoutGetter PrivateAccessorWithoutSetter PrivateStaticTestOfNonObject
-    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled
+    SpreadResultNotObject LeftOutOfExecutable FunctionNotCompiled NoSyncIteratorForAsyncIteration SyncIteratorForAsyncIterationIsNotAnObject
 }
 flags RegExpFlags { HasIndices Global IgnoreCase Multiline DotAll Unicode UnicodeSets Sticky }
 

@@ -138,6 +138,8 @@ static bool canAccessBufferInline(const InlineBuiltinSite& site)
 InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
+    case InlineBuiltin::DataViewByteLength:
+        return InlineForm::TwoWay;
     case InlineBuiltin::DataViewGet:
         return twoWayIf(site, canAccessDataViewInline(site));
     case InlineBuiltin::DataViewSet:
@@ -155,7 +157,7 @@ static bool canAllocateTypedArrayInline(const InlineBuiltinSite& site)
 {
     const BuiltinTable& table = site.context.program().builtins();
     BuiltinClassID constructedClass = table.at(site.overload.builtin).instanceClass;
-    return constructedClass && isTypedView(table.at(constructedClass).typedArrayType) && isNumberArgument(site, 0);
+    return constructedClass && table.typedArrayClassOf(constructedClass) == constructedClass && isNumberArgument(site, 0);
 }
 
 static bool canCopyTypedArrayInline(const InlineBuiltinSite& site)

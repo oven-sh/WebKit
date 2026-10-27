@@ -141,7 +141,7 @@ bool hasValidReferences(const Program& program, const Type& type, ReferenceCheck
         checker(literal.pattern);
     for (const ClassPart& part : type.classes) {
         checker(part.builtinClass);
-        for (TypeID contents : part.contents)
+        for (TypeID contents : part.writtenContents)
             checker.checkIfSet(contents);
     }
     checker.checkIfSet(type.layouts);
@@ -161,9 +161,9 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
-        if (!set.isComplete || (set.members.isEmpty() && !set.hasMembersWithoutLayout))
+        if (!set.listsEveryLayout() || set.written().isEmpty())
             return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
-        for (LayoutID member : set.members) {
+        for (LayoutID member : set.written()) {
             if (!member || program.at(member).isEnvironment())
                 return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = member, .count = id.index() };
         }
@@ -180,17 +180,17 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
 bool isValidPosition(const Program& program, const DeclaredType& declared)
 {
-    if (!declared.type)
+    if (!declared.written())
         return false;
-    if (!declared.flags.contains(PositionFlags::IsInt32Promise))
+    if (!declared.has(PositionFlags::IsInt32Promise))
         return true;
-    const Type& type = program.at(declared.type);
-    return !declared.flags.contains(PositionFlags::IsExpected) && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
+    const Type& type = program.at(declared.written());
+    return !declared.isExpected() && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
 }
 
 bool canOutliveActivation(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 
@@ -369,27 +369,15 @@ std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step
 
 } // anonymous namespace
 
-bool hoistsFunctionsIntoVariables(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Data:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+bool hoistsFunctionsIntoVariables(ModuleKind kind) { return hoistsFunctionsIntoVariablesOf(kind); }
 
 bool isValidPropertyKey(const PropertyKey& key)
 {
-    bool hasCreationSite = key.module || key.position || key.site;
+    bool hasCreationSite = key.module || key.callNumber || key.site;
     switch (key.kind) {
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::RegisteredSymbol:
         return key.text && !key.owner && !key.symbol && !hasCreationSite;
     case PropertyKeyKind::PrivateName:
@@ -397,7 +385,7 @@ bool isValidPropertyKey(const PropertyKey& key)
     case PropertyKeyKind::WellKnownSymbol:
         return key.symbol && !key.text && !key.owner && !hasCreationSite;
     case PropertyKeyKind::CreatedSymbol:
-        return key.module && key.position && !key.owner && !key.symbol;
+        return key.module && key.callNumber && !key.owner && !key.symbol;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -411,6 +399,14 @@ ProgramVerifier::ProgramVerifier(const Program& program, IRForm form, BuildConte
 }
 
 bool ProgramVerifier::run()
+{
+    if (!runRecords())
+        return false;
+    verifyFunctionBodies();
+    return !hasFailed();
+}
+
+bool ProgramVerifier::runRecords()
 {
     using Group = void (ProgramVerifier::*)();
     static constexpr Group groups[] = {
@@ -429,7 +425,6 @@ bool ProgramVerifier::run()
         &ProgramVerifier::verifySmallRecords,
         &ProgramVerifier::verifyFunctionHeaders,
         &ProgramVerifier::verifyDerivationChains,
-        &ProgramVerifier::verifyFunctionBodies,
     };
     for (Group verifyGroup : groups) {
         (this->*verifyGroup)();
@@ -637,6 +632,11 @@ bool verifyProgram(const Program& program, IRForm form, BuildContext& build, con
 {
     RELEASE_ASSERT(form != IRForm::Placed || inputs.placed);
     return ProgramVerifier(program, form, build, inputs).run();
+}
+
+bool verifyRecords(const Program& program, IRForm form, BuildContext& build, const VerifierInputs& inputs)
+{
+    return ProgramVerifier(program, form, build, inputs).runRecords();
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -52,11 +52,11 @@ record FunctionFlow engine {
     reachability: FunctionReachability callers: CallerState executions: ExecutionCount closureUse: ClosureUse
     cause: UnprovenCause witness: Witness
 }
-record ModuleFlow engine { namespaceUse: NamespaceUse }
+record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> }
 record BuiltinLocationFlow engine { holder: Builtin key: PropertyKey state: BuiltinLocationState witness: Witness }
 
-record LayoutSet engine { members: List<Layout> isComplete: Bool hasMembersWithoutLayout: Bool }
-record CalleeSet engine { functions: List<Function(Call)> builtins: List<Builtin> isComplete: Bool }
+record LayoutSet engine handwrittenStruct { members: List<Layout> isComplete: Bool }
+record CalleeSet engine handwrittenStruct { functions: List<Function(Call)> builtins: List<Builtin> isComplete: Bool }
 record AccessSite engine { function: Function(Dispatch) location: SourceLocation kind: AccessKind }
 record AllocationSite engine { function: Function(Dispatch) layout: Layout? builtinClass: BuiltinClass? allocationClass: AllocationClass? location: SourceLocation }
 record AllocationClass engine {

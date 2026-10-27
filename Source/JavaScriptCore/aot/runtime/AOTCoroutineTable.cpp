@@ -36,6 +36,7 @@
 #include "SlotVisitorInlines.h"
 #include "VMInlines.h"
 #include <wtf/CompactPointerTuple.h>
+#include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -58,7 +59,7 @@ CoroutineTable::CoroutineTable(State& state)
     m_instance.coroutines.emptyAsyncGeneratorPrototypeStructureID = createEmptyPrototypeStructure(vm, globalObject->asyncGeneratorPrototype());
     initializeCoroutineWords(vm);
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
-    state.caches->add(CacheKind::WeakByKey, "saved frames under validation"_s, *this);
+    state.caches->add(CacheKind::WeakByKey, "saved frames"_s, *this);
 }
 
 uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
@@ -110,12 +111,35 @@ template void CoroutineTable::visitRoots(SlotVisitor&);
 
 size_t CoroutineTable::removeDeadEntries(VM& vm, CollectionScope)
 {
+    // A dead word goes back onto the stack with the frame. There it must not name the next tenant of a cell that this collection frees.
+    const uint64_t replacement = validatesRuntime(vm) ? SavedFrame::poisonedWord : 0;
+    for (ListOfVisitedFrames& list : m_visitedFramesWithDeadWords) {
+        Locker locker { list.lock };
+        constexpr size_t prefetchDistance = 8;
+        for (size_t index = 0; index < list.frames.size(); ++index) {
+            if (index + prefetchDistance < list.frames.size()) {
+                __builtin_prefetch(list.frames[index + prefetchDistance].frame, 1);
+                __builtin_prefetch(list.frames[index + prefetchDistance].frame + 1, 1);
+            }
+            const VisitedFrameWithDeadWords& visited = list.frames[index];
+            visited.frame->overwriteDeadWords(visited.version, SavedFrameMap::fromFirstWord(visited.firstWordOfMap), replacement);
+        }
+        list.frames.clear();
+    }
+
     size_t numberOfDeadFrames = m_savedFramesForValidation.removeAllMatching([&](SavedFrame* frame) {
         return !vm.heap.isMarked(frame);
     });
     for (SavedFrame* frame : m_savedFramesForValidation)
         frame->poisonDeadUnlistedWords(vm);
     return numberOfDeadFrames;
+}
+
+void CoroutineTable::didVisitFrameWithDeadWords(SavedFrame* frame, uint32_t version, const uint32_t* firstWordOfMap)
+{
+    ListOfVisitedFrames& list = m_visitedFramesWithDeadWords[Thread::currentSingleton().uid() % m_visitedFramesWithDeadWords.size()];
+    Locker locker { list.lock };
+    list.frames.append({ frame, firstWordOfMap, version });
 }
 
 void CoroutineTable::didCreateSavedFrame(VM& vm, SavedFrame* frame)
@@ -144,11 +168,11 @@ SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
 
-SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords, uint32_t skippedAtTop, uint32_t skippedAtBottom)
+SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, size_t numberOfWords, uint32_t savedRegistersOrPairs, uint32_t skippedAtBottom)
 {
-    RELEASE_ASSERT(numberOfWords <= maxNumberOfWords && skippedAtTop <= UINT8_MAX && skippedAtBottom <= UINT8_MAX);
+    RELEASE_ASSERT(numberOfWords <= maxNumberOfWords && !(savedRegistersOrPairs >> savedRegisterBits) && skippedAtBottom <= maxNumberOfWords);
     CoroutineTable& coroutineTable = *instance.state->coroutines;
-    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, coroutineTable.savedFrameStructure(), kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(skippedAtTop), static_cast<uint8_t>(skippedAtBottom));
+    SavedFrame* saved = new (NotNull, allocateCell<SavedFrame>(vm, allocationSize(numberOfWords))) SavedFrame(vm, coroutineTable.savedFrameStructure(), kind, static_cast<uint16_t>(numberOfWords), static_cast<uint8_t>(savedRegistersOrPairs), static_cast<uint16_t>(skippedAtBottom));
     saved->finishCreation(vm);
     saved->m_promiseOrWaiter = saved;
     coroutineTable.didCreateSavedFrame(vm, saved);
@@ -158,7 +182,11 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, s
 SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, const SuspendedMachineFrame& machineFrame)
 {
     uint64_t siteWord = machineFrame.words->siteWord;
-    return create(vm, instance, kind, machineFrame.numberOfWords(), skippedAtTopOf(siteWord), skippedAtBottomOf(siteWord));
+    size_t numberOfWords = machineFrame.numberOfWords();
+    RELEASE_ASSERT(clearedWordsOf(siteWord) <= numberOfWords);
+    // What an earlier call left at their addresses would be kept, and every resumption would put it back on the stack.
+    std::ranges::fill(std::span { const_cast<uint64_t*>(machineFrame.firstSavedWord()), clearedWordsOf(siteWord) }, 0);
+    return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
@@ -172,7 +200,6 @@ SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const
         saved->m_promiseOrWaiter = std::bit_cast<JSCell*>(promise);
         saved->m_continuation = Continuation::Promise;
     }
-    saved->m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
     return saved;
 }
 
@@ -190,7 +217,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
     size_t numberOfWords = machineFrame.numberOfWords();
     uint64_t siteWord = machineFrame.words->siteWord;
     RELEASE_ASSERT(m_numberOfWords == numberOfWords && !m_liveSlotMapOffsetPlusOne);
-    RELEASE_ASSERT(m_numberOfWordsSkippedAtTop == skippedAtTopOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
+    RELEASE_ASSERT(m_numberOfSavedRegisterPairs == savedRegistersOrPairsOf(siteWord) && m_numberOfWordsSkippedAtBottom == skippedAtBottomOf(siteWord));
     willWrite();
     uint64_t* words = this->words();
     const uint64_t* source = machineFrame.firstSavedWord();
@@ -198,7 +225,6 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
         words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
-    m_numberOfSavedRegisterPairs = static_cast<uint8_t>(savedRegistersOrPairsOf(siteWord));
     m_resumeAddress = machineFrame.resumeAddress;
     m_flags = kind == SuspensionKind::Yield ? isSuspendedAtYieldFlag : 0;
     m_liveSlotMapOffsetPlusOne = liveSlotMapOffsetOf(siteWord) + 1;
@@ -213,7 +239,26 @@ std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) con
     CodeLocation where = image->locate(static_cast<const uint8_t*>(m_resumeAddress) - 1);
     if (where.kind != CodeKind::Function)
         return std::nullopt;
-    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), offsetPlusOne - 1);
+    return SavedFrameMap::tryCreate(image->frameMapWords(where.function), (offsetPlusOne & ~hasNoDeadWordsToOverwrite) - 1);
+}
+
+void SavedFrame::overwriteDeadWordsAtEndOfCollection(uint32_t versionAtVisit, const SavedFrameMap& map)
+{
+    Instance::of(realm())->state->coroutines->didVisitFrameWithDeadWords(this, versionAtVisit, map.firstWord());
+}
+
+void SavedFrame::overwriteDeadWords(uint32_t versionAtVisit, const SavedFrameMap& map, uint64_t replacement)
+{
+    if (m_version != versionAtVisit)
+        return;
+    RELEASE_ASSERT(!isOnStack());
+    willWrite();
+    forEachDeadWord(map, [&](uint64_t& word) {
+        word = replacement;
+        return true;
+    });
+    m_liveSlotMapOffsetPlusOne |= hasNoDeadWordsToOverwrite;
+    didWrite();
 }
 
 template<typename Visitor>
@@ -236,13 +281,13 @@ void SavedFrame::poisonDeadUnlistedWords(VM& vm)
     auto poisonDeadUnlistedWord = [&](uint32_t location) {
         if (map->listsValue(location) || map->listsNarrowReference(2 * location) || (location != locationInRegister && map->listsNarrowReference(2 * location - 1)))
             return;
-        uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + m_numberOfWordsSkippedAtTop - location];
+        uint64_t& word = location == locationInRegister ? m_preservedRegister : words()[m_numberOfWords + numberOfWordsSkippedAtTop() - location];
         if (HeapUtil::classifyWord(vm.heap, std::bit_cast<const void*>(word)) == HeapUtil::WordKind::UnmarkedCell)
             word = poisonedWord;
     };
     willWrite();
-    uint32_t lastLocation = m_numberOfWords + m_numberOfWordsSkippedAtTop;
-    for (uint32_t location = m_numberOfWordsSkippedAtTop + 1; location <= lastLocation; ++location)
+    uint32_t lastLocation = m_numberOfWords + numberOfWordsSkippedAtTop();
+    for (uint32_t location = numberOfWordsSkippedAtTop() + 1; location <= lastLocation; ++location)
         poisonDeadUnlistedWord(location);
     if constexpr (preservedRegister != InvalidGPRReg)
         poisonDeadUnlistedWord(locationInRegister);
@@ -286,13 +331,24 @@ void SavedFrame::setCombinatorElement(VM& vm, JSCell* globalContext, uint32_t in
     vm.writeBarrier(this);
 }
 
+// For a function that waits for a settled result of a call. A synchronous module load resumes the body of a module before it returns.
+void SavedFrame::queueResumeJob(JSGlobalObject* globalObject, VM& vm, JSValue resolution, bool isRejected, JSValue asyncContext)
+{
+    auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
+    if (vm.m_synchronousModuleQueue && isSuspendedModuleBody(vm, this)) [[unlikely]] {
+        vm.m_synchronousModuleQueue->tasks.append({ InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext });
+        return;
+    }
+    globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), resolution, this, asyncContext);
+}
+
 void SavedFrame::settle(JSGlobalObject* globalObject, VM& vm, JSValue value, bool isRejected)
 {
     auto status = static_cast<uint8_t>(isRejected ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
     switch (continuation()) {
     case Continuation::Waiter: {
         auto* waiter = uncheckedDowncast<SavedFrame>(m_promiseOrWaiter);
-        globalObject->queueMicrotask(vm, InternalMicrotask::CompiledAsyncFunctionResume, status, jsUndefined(), value, waiter, JSValue::decode(waiter->m_asyncContext));
+        waiter->queueResumeJob(globalObject, vm, value, isRejected, JSValue::decode(waiter->m_asyncContext));
         return;
     }
     // The job that the promise of the function would queue, had Promise.all been given one.

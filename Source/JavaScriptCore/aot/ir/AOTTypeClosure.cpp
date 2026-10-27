@@ -34,10 +34,10 @@ bool includesData(const Program& program, const Type& type, const DataNode& node
     case DataNode::Kind::BigInt:
         return type.primitives & Primitive::BigInt;
     case DataNode::Kind::Array:
-        return type.anyObject || type.findClassPart(BuiltinClasses::Array) || hasMembersWithoutLayout(program, type);
+        return type.anyObject || type.findClassPart(BuiltinClasses::Array);
     case DataNode::Kind::Object: {
         LayoutID layout = node.as<DataNode::Object>().layout;
-        return type.anyObject || (layout && type.layouts && std::ranges::binary_search(program.at(type.layouts).members, layout));
+        return type.anyObject || (layout && type.layouts && std::ranges::binary_search(program.at(type.layouts).completeMembers(), layout));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -56,7 +56,7 @@ void expectFieldsFilledWithOtherData(Program& program, BuildContext& build)
                 if (!field)
                     continue;
                 const DeclaredType& declared = layout.fields[*field].declared;
-                if (!declared.flags.contains(PositionFlags::IsExpected) && !includesData(program, program.at(slotTypeOf(program, layout.fields[*field])), member.value))
+                if (!declared.isExpected() && !includesData(program, program.at(slotTypeOf(program, layout.fields[*field])), member.value))
                     found.append({ object->layout, *field });
             }
         });
@@ -64,8 +64,8 @@ void expectFieldsFilledWithOtherData(Program& program, BuildContext& build)
     for (FieldReference filled : fields) {
         for (FieldReference field : { filled, declarationOf(program, filled) }) {
             DeclaredType& declared = program.at(field.layout).fields[field.field].declared;
-            declared.flags.add(PositionFlags::IsExpected);
-            declared.flags.remove(PositionFlags::IsInt32Promise);
+            declared.expect(declared.expected());
+            declared.remove(PositionFlags::IsInt32Promise);
         }
     }
 }

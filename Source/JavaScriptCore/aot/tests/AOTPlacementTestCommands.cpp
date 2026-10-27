@@ -64,6 +64,7 @@ enum class PlacementMutation : uint8_t {
     FieldType,
     RunTimeAllocation,
     PrivateDefinition,
+    AccessorField,
 };
 
 struct NamedMutation {
@@ -327,7 +328,7 @@ static void printVariables(IRPrinter& printer, const Placement& placement)
         out.print(" offset="_s, variable.offset, " representation="_s, nameOf(variable.representation), " encoding="_s, nameOf(variable.encoding), " region="_s, nameOf(variable.region), " initial="_s);
         out.printf("0x%016" PRIx64, variable.initialWord);
         out.print(" type="_s);
-        printer.print(program.at(id).declared.type);
+        printer.print(program.at(id).declared.written());
         out.print("\n"_s);
     }
 }
@@ -531,6 +532,7 @@ static std::optional<PlacementMutation> parseMutation(StringView word)
         { "field-type"_s, PlacementMutation::FieldType },
         { "run-time-allocation"_s, PlacementMutation::RunTimeAllocation },
         { "private-definition"_s, PlacementMutation::PrivateDefinition },
+        { "accessor-field"_s, PlacementMutation::AccessorField },
     };
     const NamedMutation* found = findView(std::span<const NamedMutation> { mutations }, word);
     if (!found)
@@ -767,13 +769,19 @@ static bool mutate(const MutationContext& context, PlacementMutation mutation)
         return mutateFirstField(context, [](const Layout&, const PlacedSlot& slot) {
             return slot.representation == SlotRepresentation::Int32;
         }, [](Field& field) {
-            field.declared.type = TypeTable::number;
+            field.declared.establish(Proven::byPosition(TypeTable::number));
         });
     case PlacementMutation::RunTimeAllocation:
         return makeFirstLiteralLayoutConstructedBy(context, context.editor.program().at(ModuleID(0u)).body);
     case PlacementMutation::PrivateDefinition:
         return mutateValues(context, MutatedValues::First, [&](Value& value) {
             return defineFieldWithoutAbsentState(placement, value);
+        });
+    case PlacementMutation::AccessorField:
+        return mutateFirstField(context, [](const Layout& layout, const PlacedSlot&) {
+            return isObjectLayout(layout.kind);
+        }, [](Field& field) {
+            field.form.add(FieldForm::IsAccessor);
         });
     }
     RELEASE_ASSERT_NOT_REACHED();

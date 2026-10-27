@@ -12,7 +12,7 @@ function f0 name="castToText" parameters=[{type=boolean}, {type=anything}] resul
     v4 = Undefined
     Branch v0 -> taken b1(v3), notTaken b1(v4)
   b1(v5):
-    v6 = AssumeType v5 castType=undefined|null|string
+    v6 = AssumeType v5 provenType=undefined|null|string
     v7 = Call v1, -, v6
     Return v7
 }
@@ -26,7 +26,7 @@ function f1 name="plannedCastToText" parameters=[{type=boolean}, {type=anything}
     v4 = Undefined
     Branch v0 -> taken b1(v3), notTaken b1(v4)
   b1(v5):
-    v6 = AssumeType v5 castType=undefined|null|string
+    v6 = AssumeType v5 provenType=undefined|null|string
     v7 = Call v1, -, v6
     Return v7
 }
@@ -39,7 +39,7 @@ function f2 name="plannedCastToObject" parameters=[{type=boolean}, {type=anythin
     v4 = Undefined
     Branch v0 -> taken b1(v3), notTaken b1(v4)
   b1(v5):
-    v6 = AssumeType v5 castType=undefined|null|object
+    v6 = AssumeType v5 provenType=undefined|null|object
     v7 = Call v1, -, v6
     Return v7
 }

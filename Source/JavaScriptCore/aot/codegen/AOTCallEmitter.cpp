@@ -176,6 +176,10 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     if (stackWordsToReserve)
         m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(stackWordsToReserve * sizeOfStackWord));
 
+    RELEASE_ASSERT(!options.readBeforeCall || (target.kind == TargetKind::Stub && target.immediate));
+    OptionalIndex firstReadSite;
+    if (options.readBeforeCall)
+        firstReadSite = { calls.addSite(context, { .origin = options.readBeforeCall }) };
     uint32_t site = calls.addSite(context, options);
     B3::Air::StackSlot* keptRegisterStorage = generator().checksKeptRegisters() ? calls.keptRegisterStorage() : nullptr;
     RegisterSet clobbered = request.lateClobbered;
@@ -184,7 +188,7 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     Vector<uint32_t, 3> wordsOfThrowSite;
     if (options.throwSite)
         wordsOfThrowSite = throwSiteWords(*options.throwSite, Representation::Void, 0);
-    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, firstReadSite, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<KeptRegisterCheck> check;
         if (keptRegisterStorage)
@@ -217,12 +221,12 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         case TargetKind::Stub:
             if (wordsOfThrowSite.isEmpty()) {
                 if (immediate)
-                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters);
+                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite);
                 else
                     stubCalls->call(jit, calledStub, site, keptRegisters);
             } else {
                 CCallHelpers::Label begin = jit.label();
-                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters) : stubCalls->call(jit, calledStub, site, keptRegisters);
+                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite) : stubCalls->call(jit, calledStub, site, keptRegisters);
                 records->units.pin(begin, jit.label());
                 records->traps.callThrowSites.append({ returnSite, wordsOfThrowSite });
             }
@@ -363,7 +367,8 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
         if (context.valueID()) {
             const Value& call = m_function.at(context.valueID());
             const BuiltinTable& table = m_program.builtins();
-            for (BuiltinID callee : calleesOfCall(m_program, call).builtins)
+            CalleeList callees = calleesOfCall(m_program, call);
+            for (BuiltinID callee : callees.listed().builtins)
                 expectation.name(table.canonicalID(callee));
             call.forEachOperand([&](ValueID operand, uint32_t) {
                 for (BuiltinID handed : typeOf(operand).builtins) {
@@ -385,18 +390,18 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
 }
 
 // countOperand lives as long as the call does.
-void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand)
+void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand, bool calleeIsCell)
 {
     unsigned count = static_cast<unsigned>(call.arguments.size());
     if (count > numberOfArgumentGPRs) {
         countOperand = m_out.constInt64(count);
-        call.stub = callValueWithCount();
+        call.stub = calleeIsCell ? callCellWithCount() : callValueWithCount();
         call.stubOperands = singleElementSpan(countOperand);
     } else if (isUndefinedConstant(call.thisValue)) {
-        call.stub = callValueWithoutThis(count);
+        call.stub = calleeIsCell ? callValueCellWithoutThis(count) : callValueWithoutThis(count);
         call.thisValue = nullptr;
     } else
-        call.stub = AOT::callValue(count);
+        call.stub = calleeIsCell ? callValueCell(count) : AOT::callValue(count);
 }
 
 Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& call, const CallOptions& options)
@@ -412,7 +417,7 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
         RELEASE_ASSERT(count <= numberOfArgumentGPRs && !(call.lentArguments >> count));
         conventionCall.stub = callValueLending(count, call.lentArguments);
     } else
-        chooseStubThatCallsValue(conventionCall, countOperand);
+        chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
     return callByConvention(context, conventionCall, options);
 }
 
@@ -433,11 +438,12 @@ void CallEmitter::generateCall(const ValueContext& value)
     emitter<AccessEmitter>().recordArrival(value, in<Boxed>(callee));
     ValueCall call { in<Boxed>(callee), thisOrUndefined(value->thisValueOperand()), arguments.span() };
     call.lentArguments = argumentsLentBy(m_function, value.value());
+    call.calleeIsCell = typeOf(callee).isObject();
     if (value.returnCall()) {
         tailCallValue(value, call);
         return;
     }
-    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
+    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

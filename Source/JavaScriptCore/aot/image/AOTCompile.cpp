@@ -22,6 +22,7 @@
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegExpCompiler.h"
 #include "AOTStubCatalog.h"
+#include "AOTSystemResources.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
 #include "AOTWasmModules.h"
@@ -38,7 +39,6 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/StackAllocation.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
 
@@ -424,7 +424,7 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
     auto output = makeUnique<CompileOutput>();
     // What the build leaves dies on its thread while the caller goes on.
     Box<BinarySemaphore> outputIsComplete = Box<BinarySemaphore>::create();
-    Ref<Thread> buildThread = Thread::create("AOT build"_s, [&, outputIsComplete] {
+    Ref<Thread> buildThread = startBuildThread("AOT build"_s, [&, outputIsComplete] {
         BuildContext context(options, hostPool);
         run([&](const Typed::ReaderOfFinishedBodies& readBesideLastEffectSummaries) {
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
@@ -435,7 +435,7 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
         takeResults(context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         context.parallelLoops().sendRestingThreadsBack();
         outputIsComplete->signal();
-    }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize));
+    });
 #if ASAN_ENABLED
     waitAtExitFor(WTF::move(buildThread));
 #else

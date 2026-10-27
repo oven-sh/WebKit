@@ -7,7 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTIRTestSupport.h"
+#include "AOTPredictedValues.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
@@ -25,10 +27,7 @@ namespace {
 
 DeclaredType createDeclaredType(TypeID type, OptionSet<PositionFlags> flags = { })
 {
-    DeclaredType declared;
-    declared.type = type;
-    declared.flags = flags;
-    return declared;
+    return flags.contains(PositionFlags::IsExpected) ? DeclaredType(ExpectedType(type)) : DeclaredType(Proven::byPosition(type));
 }
 
 ConstructorForm constructorFormOf(FunctionKind kind, OptionSet<FunctionFlags> flags = { })
@@ -60,7 +59,7 @@ struct RemapFixture {
             string = stringArena.intern(StringView("a string made by a pass"_s));
             key = typeArena.textKey(string);
             layouts = typeArena.completeLayoutSet(std::array<LayoutID, 1> { LayoutID(0u) });
-            callees = typeArena.intern(CalleeSet { { function }, { }, true });
+            callees = typeArena.intern(CalleeSet::complete({ function }, { }));
             firstType = typeArena.unionOf(TypeTable::string, TypeTable::boolean);
             secondType = typeArena.unionOf(TypeTable::string, TypeTable::null);
             thirdType = typeArena.unionOf(TypeTable::string, TypeTable::undefined);
@@ -193,7 +192,7 @@ static void declaredEntryTypeOfThisFollowsLevel()
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.atLevel(TypeLevel::Expected), function, 0) == TypeTable::function);
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 
-    function.thisType.flags = { };
+    function.thisType.establish(Proven::byPosition(function.thisType.written()));
     AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::function);
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 }
@@ -268,13 +267,13 @@ static void copyOfFunctionSharesNothing()
     copy.edit(entry).terminator.next().arguments.append(array);
     copy.edit(entry).handler->arguments.clear();
     copy.edit(entry).values.clear();
-    copy.parameters[0].type = TypeTable::string;
+    copy.parameters[0].establish(Proven::byPosition(TypeTable::string));
     addBlock(copy);
 
     AOT_TEST_CHECK(function.blocks.size() == 2 && hasElements(function.at(entry).values, { element, array }));
     AOT_TEST_CHECK(hasElements(function.at(array).holes(), { 1u, 2u }) && hasElements(function.at(array).variadicOperands(), { element }));
     AOT_TEST_CHECK(hasElements(function.at(entry).terminator.next().arguments, { element }) && hasElements(function.at(entry).handler->arguments, { array }));
-    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::number);
+    AOT_TEST_CHECK(function.parameters[0].written() == TypeTable::number);
 }
 
 static void declarationLocationNeedsModule()
@@ -380,16 +379,16 @@ static void remapIDsRewritesTypesOfValues()
     ValueID unlisted = addUnlistedValue(function, Opcode::Undefined);
     ValueID untouched = addUnlistedValue(function, Opcode::Undefined);
     function.edit(typed).type = fixture.firstType;
-    function.edit(typed).setExpected(fixture.secondType);
+    function.edit(typed).setExpected(ExpectedType(fixture.secondType));
     function.edit(unlisted).type = fixture.thirdType;
-    function.edit(untouched).setExpected(TypeTable::string);
+    function.edit(untouched).setExpected(ExpectedType(TypeTable::string));
 
     fixture.remap(function);
     AOT_TEST_CHECK(function.at(typed).type == fixture.types(fixture.firstType) && !TypeTable::isProvisional(function.at(typed).type));
-    AOT_TEST_CHECK(function.at(typed).expected() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).expected()));
-    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).expected());
-    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).expected());
-    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && function.at(untouched).expected() == TypeTable::string);
+    AOT_TEST_CHECK(function.at(typed).expected().predicted() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).expected().predicted()));
+    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).expected().predicted());
+    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).expected().predicted());
+    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && function.at(untouched).expected().predicted() == TypeTable::string);
     AOT_TEST_CHECK(fixture.test.program.at(function.at(typed).type).primitives == (Primitive::String | Primitive::Boolean));
 }
 
@@ -420,13 +419,13 @@ static void remapIDsClearsExpectedTypeThatBecomesTheType()
     ValueID sameType = addValue(function, entry, Opcode::Undefined);
     ValueID narrowerType = addValue(function, entry, Opcode::Undefined);
     function.edit(sameType).type = inFirstArena;
-    function.edit(sameType).setExpected(inSecondArena);
+    function.edit(sameType).setExpected(ExpectedType(inSecondArena));
     function.edit(narrowerType).type = inFirstArena;
-    function.edit(narrowerType).setExpected(narrower);
+    function.edit(narrowerType).setExpected(ExpectedType(narrower));
 
     remapIDs(function, types, strings, functions);
-    AOT_TEST_CHECK(function.at(sameType).type == types(inFirstArena) && !function.at(sameType).expected());
-    AOT_TEST_CHECK(function.at(narrowerType).type == types(inFirstArena) && function.at(narrowerType).expected() == narrower);
+    AOT_TEST_CHECK(function.at(sameType).type == types(inFirstArena) && !function.at(sameType).expected().predicted());
+    AOT_TEST_CHECK(function.at(narrowerType).type == types(inFirstArena) && function.at(narrowerType).expected().predicted() == narrower);
 }
 
 static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
@@ -442,7 +441,7 @@ static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
         ValueID typeTest = addValue(function, entry, Opcode::TypeTest);
         ValueID untouched = addValue(function, entry, Opcode::Undefined);
         function.edit(typed).type = builder.unionOf(TypeTable::string, TypeTable::boolean);
-        function.edit(typed).setExpected(builder.unionOf(TypeTable::string, TypeTable::undefined));
+        function.edit(typed).setExpected(ExpectedType(builder.unionOf(TypeTable::string, TypeTable::undefined)));
         function.edit(typeTest).type = TypeTable::boolean;
         function.edit(typeTest).setTestedType(builder.unionOf(TypeTable::string, TypeTable::boolean));
         function.edit(untouched).type = TypeTable::anything;
@@ -454,9 +453,9 @@ static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
         adoptIDs(function, optimizer);
         AOT_TEST_CHECK(!numberOfForeignIDs(function, optimizer) && numberOfForeignIDs(function, builder) == 3);
         AOT_TEST_CHECK(function.at(typed).type == computed);
-        AOT_TEST_CHECK(function.at(typed).expected() == optimizer.unionOf(TypeTable::string, TypeTable::undefined));
+        AOT_TEST_CHECK(function.at(typed).expected().predicted() == optimizer.unionOf(TypeTable::string, TypeTable::undefined));
         AOT_TEST_CHECK(function.at(typeTest).testedType() == computed && function.at(typeTest).type == TypeTable::boolean);
-        AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).expected());
+        AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).expected().predicted());
     }
     typePhase.discard();
 }
@@ -489,7 +488,7 @@ static void remapIDsRewritesPayloadsOfValues()
 
     const Program& program = fixture.test.program;
     AOT_TEST_CHECK(program.at(function.at(copy).excludedKeys()[1]).text == function.at(string).string());
-    AOT_TEST_CHECK(hasElements(program.at(function.at(call).callees()).functions, { fixture.finalFunction }));
+    AOT_TEST_CHECK(hasElements(program.at(function.at(call).callees()).written().functions, { fixture.finalFunction }));
 }
 
 static void remapIDsRewritesPayloadsOfTerminators()
@@ -534,10 +533,10 @@ static void remapIDsRewritesHeader()
     function.inlineFrames[1].callee = fixture.function;
 
     fixture.remap(function);
-    AOT_TEST_CHECK(function.name == fixture.strings(fixture.string) && function.captures[0].type == fixture.types(fixture.firstType));
+    AOT_TEST_CHECK(function.name == fixture.strings(fixture.string) && function.captures[0].written() == fixture.types(fixture.firstType));
     AOT_TEST_CHECK(function.thisType == createDeclaredType(fixture.types(fixture.secondType), PositionFlags::IsExpected));
-    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::string && function.parameters[1].type == fixture.types(fixture.thirdType));
-    AOT_TEST_CHECK(function.results[0].type == fixture.types(fixture.thirdType));
+    AOT_TEST_CHECK(function.parameters[0].written() == TypeTable::string && function.parameters[1].written() == fixture.types(fixture.thirdType));
+    AOT_TEST_CHECK(function.results[0].written() == fixture.types(fixture.thirdType));
     AOT_TEST_CHECK(function.creator.as<CreatorRecord::Version>().provenVersion == fixture.finalFunction && function.derivation.source == fixture.finalFunction);
     AOT_TEST_CHECK(!function.inlineFrames[0].callee && function.inlineFrames[1].callee == fixture.finalFunction);
 }
@@ -558,7 +557,7 @@ static void remapIDsWithIdentityRemapsChangesNothing()
     AOT_TEST_CHECK(types.isIdentity() && strings.isIdentity() && functions.isIdentity());
     remapIDs(function, types, strings, functions);
     AOT_TEST_CHECK(function.at(value).type == fixture.firstType && function.at(value).testedType() == fixture.secondType);
-    AOT_TEST_CHECK(function.captures[0].type == fixture.thirdType && function.derivation.source == fixture.function);
+    AOT_TEST_CHECK(function.captures[0].written() == fixture.thirdType && function.derivation.source == fixture.function);
 }
 
 static void logNamesWhatWasHandedOut()
@@ -638,6 +637,75 @@ static void logHoldsOneEntryForWhatWasAddedUntilItIsShown()
     function.detach(log);
 }
 
+static void countedContentsFollowLog()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    BlockID middle = addBlock(function);
+    BlockID exit = addBlock(function);
+    ValueID first = addValue(function, entry, Opcode::Undefined);
+    ValueID second = addValue(function, entry, Opcode::Null);
+    ValueID third = addValue(function, middle, Opcode::Null);
+    for (ValueID id : { first, second, third })
+        function.edit(id).type = TypeTable::boolean;
+    jump(function, entry, middle, { });
+    jump(function, middle, exit, { });
+
+    ChangeLog log;
+    function.attach(log);
+    CountedContents counted;
+    auto isUpToDate = [&] {
+        return counted.bringUpToDate(function, log) == contentsOf(function);
+    };
+    // The first question reads the body, the second counts it, and the later ones read what the log names.
+    AOT_TEST_CHECK(isUpToDate());
+    AOT_TEST_CHECK(isUpToDate());
+    AOT_TEST_CHECK(isUpToDate());
+
+    function.edit(first, ValueEdit::Definition).become(Opcode::Integer);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Undefined));
+    function.edit(first, ValueEdit::Type).type = TypeTable::never;
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).traits.contains(BodyTrait::NeverValues));
+    function.edit(first, ValueEdit::Type).type = TypeTable::boolean;
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).traits.contains(BodyTrait::NeverValues));
+
+    // One of two goes, then the other.
+    function.edit(entry, BlockEdit::Values).values.removeLast();
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).opcodes.contains(Opcode::Null));
+    function.edit(second, ValueEdit::Definition).become(Opcode::Boolean);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Boolean));
+    function.edit(middle, BlockEdit::Values).values.removeLast();
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Null));
+
+    // From one list into another, and edited there.
+    function.edit(entry, BlockEdit::Values).values.removeLast();
+    function.edit(exit, BlockEdit::Values).values.append(first);
+    function.edit(exit, BlockEdit::Values).values.append(third);
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(first, ValueEdit::Definition).become(Opcode::Undefined);
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).opcodes.contains(Opcode::Undefined));
+
+    ValueID added = function.add(Value(Opcode::Boolean));
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Boolean));
+    BlockID handler = function.addBlock();
+    function.edit(handler, BlockEdit::Values).values.append(added);
+    function.edit(handler, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.become(TerminatorKind::Unreachable);
+    function.edit(entry, BlockEdit::Edges).handler = Target { handler, { }, { } };
+    AOT_TEST_CHECK(isUpToDate() && contentsOf(function).traits.contains(BodyTrait::Handlers) && contentsOf(function).terminators.contains(TerminatorKind::Unreachable));
+    function.edit(handler, BlockEdit::Values).values.removeLast();
+    function.edit(entry, BlockEdit::Edges).handler = std::nullopt;
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).traits.contains(BodyTrait::Handlers));
+
+    function.edit(third, ValueEdit::Definition).become(Opcode::Integer);
+    log.forget();
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(third, ValueEdit::Definition).become(Opcode::Null);
+    AOT_TEST_CHECK(isUpToDate());
+    function.edit(third, ValueEdit::Definition).become(Opcode::Integer);
+    AOT_TEST_CHECK(isUpToDate() && !contentsOf(function).opcodes.contains(Opcode::Null));
+    function.detach(log);
+}
+
 static void editOfWhatWasAddedTakesItsPromiseBack()
 {
     ChangeLog log;
@@ -649,6 +717,25 @@ static void editOfWhatWasAddedTakesItsPromiseBack()
     AOT_TEST_CHECK(values.size() == 2 && values[0].edits.contains(ValueEdit::TypedByRule) && values[1].edits == ValueEdit::Added);
 }
 
+static void valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck()
+{
+    Function function;
+    BlockID entry = addBlock(function);
+    ValueID given = addParameter(function, entry);
+    ValueID check = addValue(function, entry, Opcode::Check, { given });
+    ValueID cast = addValue(function, entry, Opcode::Upcast, { check });
+    PredictedValues predicted(function);
+    AOT_TEST_CHECK(predicted.hasChecks() && predicted.isBehindCheck(check) && predicted.isBehindCheck(cast));
+    AOT_TEST_CHECK(!predicted.isBehindCheck(given) && !predicted.isBehindCheck(ValueID()));
+    AOT_TEST_CHECK(predicted.isBehindCheck(addValue(function, entry, Opcode::Upcast, { given })));
+    AOT_TEST_CHECK(predicted.isBehindCheck(addParameter(function, entry)));
+
+    Function withoutChecks = createFunction({ Opcode::Undefined });
+    PredictedValues nothingPredicted(withoutChecks);
+    AOT_TEST_CHECK(!nothingPredicted.hasChecks() && !nothingPredicted.isBehindCheck(ValueID(0u)));
+    AOT_TEST_CHECK(nothingPredicted.isBehindCheck(addValue(withoutChecks, BlockID(0u), Opcode::Check, { ValueID(0u) })));
+}
+
 #define FOR_EACH_AOT_IR_FUNCTION_TEST(v) \
     v(constructorFormOfEachKind) v(coroutinesAreNotConstructors) v(moduleBodiesByKind) \
     v(entryParameterIndexesOfEveryFlagCombination) v(implicitEntryParametersHaveNoDeclaredPosition) \
@@ -658,7 +745,8 @@ static void editOfWhatWasAddedTakesItsPromiseBack()
     v(compactKeepsBlockReachedThroughHandlerOnly) v(compactSortsBlocksWithoutEarlierPredecessor) v(compactKeepsValidBlockOrder) \
     v(remapIDsRewritesTypesOfValues) v(remapIDsClearsExpectedTypeThatBecomesTheType) v(remapIDsRewritesPayloadsOfValues) v(remapIDsRewritesPayloadsOfTerminators) v(remapIDsRewritesHeader) \
     v(remapIDsWithIdentityRemapsChangesNothing) v(adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne) \
-    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(editOfWhatWasAddedTakesItsPromiseBack)
+    v(logNamesWhatWasHandedOut) v(logHoldsOneEntryForWhatWasAddedUntilItIsShown) v(countedContentsFollowLog) v(editOfWhatWasAddedTakesItsPromiseBack) \
+    v(valuePutInBehindAnalysisOfPredictionsMayBeBehindCheck)
 
 std::span<const NativeTest> irFunctionTests()
 {

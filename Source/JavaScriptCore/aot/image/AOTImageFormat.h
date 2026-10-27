@@ -171,6 +171,7 @@ enum class ImageFunctionFlag : uint8_t {
     HasPositions = 1 << 4,
     // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
+    HasCallsOfOwnFunctionObjects = 1 << 6,
 };
 
 // function() is a FunctionID index. An image function index is a position in ImageSection::Functions.
@@ -199,6 +200,8 @@ static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == 
 // A frame is named by the place of its frame record: the word below its return address.
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
+    static constexpr unsigned unitsAboveFrameRecordShift = 6;
+    static constexpr unsigned maxUnitsAboveFrameRecord = (1u << 5) - 1;
     static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
     // Not in the table: its reader sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
     static constexpr uint16_t liesBelowSpilledArgumentsBit = 1u << 14;
@@ -220,6 +223,8 @@ struct ImageFrame {
     bool hasFrameRecord() const { return !(calleeSavesStart & hasNoFrameRecordBit); }
     // In words below the place of the frame record.
     unsigned startOfCalleeSaves() const { return calleeSavesStart & maxCalleeSavesStart; }
+    // The part of the frame that lies between the frame record and what the caller has on the stack.
+    unsigned bytesAboveFrameRecord() const { return (calleeSavesStart >> unitsAboveFrameRecordShift & maxUnitsAboveFrameRecord) * stackAlignmentBytes(); }
     bool liesBelowSpilledArguments() const { return calleeSavesStart & liesBelowSpilledArgumentsBit; }
     bool isEmpty() const { return calleeSavesStart & isEmptyBit; }
     uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 16 | frameSizeInUnits; }
@@ -248,10 +253,14 @@ static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
+    // Which parts are written. Their reader goes by these flags in the function's record.
+    OptionSet<ImageFunctionFlag> flags() const;
+
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
+    std::span<const uint32_t> callsOfOwnFunctionObjects;
     std::span<const uint8_t> callSites;
 };
 
@@ -261,12 +270,15 @@ struct SideTableParts {
     static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
+    bool callsOwnFunctionObjectAt(uint32_t site) const;
 
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
+    // Each site as its distance from the one in front.
+    std::span<const uint8_t> callsOfOwnFunctionObjects;
     const uint8_t* callSites { nullptr };
 };
 
@@ -294,26 +306,62 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
         parts.handlers = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
+    if (function.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+        size_t size = static_cast<size_t>(readVarint(cursor));
+        parts.callsOfOwnFunctionObjects = unsafeMakeSpan(cursor, size);
+        cursor += size;
+    }
     if (function.has(ImageFunctionFlag::HasCallSites))
         parts.callSites = cursor;
     return parts;
 }
 
+inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
+{
+    OptionSet<ImageFunctionFlag> flags;
+    flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
+    flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
+    flags.set(ImageFunctionFlag::HasCallsOfOwnFunctionObjects, !callsOfOwnFunctionObjects.empty());
+    flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
+    return flags;
+}
+
 inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInputs& inputs)
 {
+    OptionSet<ImageFunctionFlag> flags = inputs.flags();
     appendVarint(stream, inputs.frameRanges.size());
     stream.append(inputs.frameRanges);
     if (!inputs.frameRanges.empty())
         appendVarint(stream, inputs.frame);
-    if (inputs.frameMapRange && inputs.frameMapRange->second) {
+    if (flags.contains(ImageFunctionFlag::HasFrameMaps)) {
         appendVarint(stream, inputs.frameMapRange->first);
         appendVarint(stream, inputs.frameMapRange->second);
     }
-    if (!inputs.handlers.empty()) {
+    if (flags.contains(ImageFunctionFlag::HasHandlers)) {
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }
+    if (flags.contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+        Vector<uint8_t> distances;
+        uint32_t previous = 0;
+        for (uint32_t site : inputs.callsOfOwnFunctionObjects) {
+            RELEASE_ASSERT(site > previous);
+            appendVarint(distances, site - std::exchange(previous, site));
+        }
+        appendVarint(stream, distances.size());
+        stream.appendVector(distances);
+    }
     stream.append(inputs.callSites);
+}
+
+inline bool SideTableParts::callsOwnFunctionObjectAt(uint32_t site) const
+{
+    const uint8_t* cursor = callsOfOwnFunctionObjects.data();
+    const uint8_t* end = cursor + callsOfOwnFunctionObjects.size();
+    uint64_t listed = 0;
+    while (cursor < end && listed < site)
+        listed += readVarint(cursor);
+    return site && listed == site;
 }
 
 inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)

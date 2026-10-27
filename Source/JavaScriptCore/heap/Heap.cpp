@@ -741,7 +741,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
 #if ENABLE(AOT)
     if (vm().hasCompiledCode())
-        AOT::HeapHooks::finalize(vm(), collectionScope);
+        AOT::HeapHooks::finalize(vm(), collectionScope, m_collector->m_phaseVersion);
 #endif
 
     {
@@ -2952,19 +2952,6 @@ bool Heap::currentThreadIsDoingGCWork()
     return Thread::mayBeGCThread() || mutatorState() != MutatorState::Running;
 }
 
-void Heap::didChangeVisitedExtraMemory(size_t reported, size_t current)
-{
-    size_t* counter = &m_extraMemorySize;
-    for (;;) {
-        size_t oldSize = *counter;
-        CheckedSize checkedNewSize = oldSize - std::min(oldSize, reported);
-        checkedNewSize += current;
-        size_t newSize = checkedNewSize.hasOverflowed() ? std::numeric_limits<size_t>::max() : checkedNewSize.value();
-        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
-            return;
-    }
-}
-
 void Heap::reportExtraMemoryVisited(size_t size)
 {
     size_t* counter = &m_extraMemorySize;
@@ -3202,9 +3189,17 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
 
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 visitor.append(conservativeRoots);
+#if ENABLE(AOT)
+                if (vm().hasCompiledCode())
+                    AOT::HeapHooks::visitCalleesOfFrames(vm(), visitor, m_collector->m_phaseVersion);
+#endif
                 if (auto* verifierVisitor = m_collector->m_verifierSlotVisitor.get()) [[unlikely]] {
                     SetRootMarkReasonScope rootScope(*verifierVisitor, RootMarkReason::ConservativeScan);
                     verifierVisitor->append(conservativeRoots);
+#if ENABLE(AOT)
+                    if (vm().hasCompiledCode())
+                        AOT::HeapHooks::visitCalleesOfFrames(vm(), static_cast<AbstractSlotVisitor&>(*verifierVisitor), m_collector->m_phaseVersion);
+#endif
                 }
             }
 

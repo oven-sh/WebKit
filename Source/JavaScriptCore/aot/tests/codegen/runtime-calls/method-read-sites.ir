@@ -1,0 +1,37 @@
+# The read of a method at most 30 columns in front of its call, on the same line, has no site: the throw site of the call counts the columns. Any other read has a site
+# FORM: Selected
+# OPTIONS: limit=MaxSiteCaches:0
+# LOSS: MaxSiteCaches
+# RUN: generate-code
+# CHECK: f0: size={{*}} sites=1 {{*}} faults=1
+# CHECK-NEXT: f1: size={{*}} sites=1 {{*}} faults=1
+# CHECK-NEXT: f2: size={{*}} sites=2 {{*}} faults=1
+# CHECK-NEXT: f3: size={{*}} sites=2 {{*}} faults=1
+# CHECK-NEXT: f4: size={{*}} sites=2 {{*}} faults=0
+# CHECK-NEXT: f5: size={{*}} sites=1 {{*}} faults=1
+
+module m0 path="main.js" displayPath="main.js" positions={lineStarts=[0, 100]}
+function f0 name="twoColumns" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=10} @12
+    Return v2
+}
+function f1 name="thirtyColumns" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=10} @40
+    Return v2
+}
+function f2 name="thirtyOneColumns" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=10} @41
+    Return v2
+}
+function f3 name="twoLines" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=98} @102
+    Return v2
+}
+function f4 name="withoutThrowSite" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" readOrigin={position=10} @12
+    Return v2
+}
+function f5 name="samePosition" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=12} @12
+    Return v2
+}

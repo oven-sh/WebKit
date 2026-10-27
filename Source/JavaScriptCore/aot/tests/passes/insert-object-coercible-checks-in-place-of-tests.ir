@@ -130,7 +130,7 @@ function f7 name="underHandler" parameters=[{type=undefined|string}] results=[{t
 
 function f8 name="behindACheckThatStillStands" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=undefined|null|string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|string):
-    v1 = Check v0 castType=undefined|null|string site=w0
+    v1 = Check v0 expectedType=undefined|null|string site=w0
     v2 = TypeTest v1 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3: string):

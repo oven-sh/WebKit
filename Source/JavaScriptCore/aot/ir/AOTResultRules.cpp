@@ -42,6 +42,7 @@ static Type typeOfKeyConstant(const TypingContext& context, PropertyKeyID id)
     case PropertyKeyKind::RegisteredSymbol:
         return Type::symbolLiteral(id);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return Type::anything();
     }
@@ -88,8 +89,12 @@ Type typeOfConstant(const TypingContext& context, const Value& value)
     case Opcode::Builtin:
     case Opcode::ModuleBuiltin:
         return typeOfBuiltinEntry(context, value.builtin());
-    case Opcode::Data:
-        return typeOfData(context, context.program.at(value.data()).root);
+    case Opcode::Data: {
+        Type type = typeOfData(context, context.program.at(value.data()).root);
+        if (!type.classes.isEmpty())
+            type.classes[0].arrayStorage = value.arrayStorage();
+        return type;
+    }
     case Opcode::NewClosure:
         return Type::forFunction(value.function());
     case Opcode::KeyConstant:
@@ -214,7 +219,7 @@ static bool canLookUpField(const TypingContext& context, const Type& receiver)
 {
     switch (context.level) {
     case TypeLevel::Proven:
-        return receiver.hasOnlyLayouts(context.program);
+        return receiver.hasOnlyLayouts();
     case TypeLevel::Expected:
         return !!receiver.layouts;
     }
@@ -317,14 +322,14 @@ static Type typeOfSharedRegExpLiteral(const TypingContext& context, const Value&
 
 static bool isAssertedInt32(const Program& program, const DeclaredType& declared)
 {
-    return declared.flags.contains(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
+    return declared.has(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
 }
 
 TypeID targetOfConvert(const TypingContext& context, const DeclaredType& declared)
 {
     if (!isAssertedInt32(context.program, declared))
-        return declared.type;
-    return context.types.withPrimitives(declared.type, Primitive::Number);
+        return declared.expected().predicted();
+    return context.types.withPrimitives(declared.expected().predicted(), Primitive::Number);
 }
 
 static bool hasInstanceTest(const BuiltinTable& builtins, const ClassPart& part)
@@ -340,25 +345,20 @@ static bool hasProofs(const ClassPart& part)
 static TypeID testablePartOf(const TypingContext& context, TypeID target)
 {
     const Type& type = context.types.at(target);
-    bool hasMembersWithoutLayout = type.layouts && context.types.at(type.layouts).hasMembersWithoutLayout;
-    if (type.classes.isEmpty() && type.builtins.isEmpty() && !hasMembersWithoutLayout)
+    if (type.classes.isEmpty() && type.builtins.isEmpty())
         return target;
 
     const BuiltinTable& builtins = context.program.builtins();
     auto isUntestableBuiltin = [&](BuiltinID builtin) {
         return !isTestableBuiltin(builtins, builtin);
     };
-    bool namesOnlyWhatTestsFind = !hasMembersWithoutLayout && type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
+    bool namesOnlyWhatTestsFind = type.regExpLiteralSet.isEmpty() && std::ranges::none_of(type.builtins, isUntestableBuiltin) && std::ranges::all_of(type.classes, [&](const ClassPart& part) {
         return hasInstanceTest(builtins, part) && !hasProofs(part);
     });
     if (namesOnlyWhatTestsFind)
         return target;
 
     Type testable = type;
-    if (hasMembersWithoutLayout) {
-        const Vector<LayoutID>& members = context.types.at(type.layouts).members;
-        testable.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet { Vector<LayoutID>(members), true });
-    }
     testable.classes.removeAllMatching([&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part);
     });
@@ -377,10 +377,13 @@ static Type typeOfCheck(const TypingContext& context, const Type& source, TypeID
 
 ConvertResolution resolveConvert(const TypingContext& context, const Type& proven, const DeclaredType& declared)
 {
-    if (declared.flags.contains(PositionFlags::IsExpected))
+    if (declared.isExpected())
         return { };
 
     TypeID targetID = targetOfConvert(context, declared);
+    // Nothing tests a claim. It stays although the value has the type by now: the position or the check that gives the type may go.
+    if (declared.has(PositionFlags::IsClaim))
+        return { CastResolution::Assume, targetID };
     const Type& target = context.types.at(targetID);
     if (!proven.isSubsetOf(target, context.program))
         return { CastResolution::Check, testablePartOf(context, targetID) };
@@ -398,10 +401,10 @@ ConvertResolution resolveConvert(const TypingContext& context, const Type& prove
 Type typeOfConvert(const TypingContext& context, const Type& source, const Type& proven, const DeclaredType& declared)
 {
     TypeArena& types = context.types;
-    if (declared.flags.contains(PositionFlags::IsExpected)) {
+    if (declared.isExpected()) {
         if (context.level == TypeLevel::Proven)
             return source;
-        const Type& expected = types.at(declared.type);
+        const Type& expected = types.at(declared.expected().predicted());
         Type narrowed = source.castTo(expected, types);
         return narrowed.isNever() ? proven.castTo(expected, types) : narrowed;
     }
@@ -480,6 +483,8 @@ Type ResultRules::allocation(const Value&, BuiltinLayoutID layout)
 Type ResultRules::declared(const Value& value, VariableID variable)
 {
     Type declared = context.typeOf(context.program.at(variable).declared);
+    if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+        return declared.withPrimitives(Primitive::Unspecified);
     if (value.opcode != Opcode::GetEncodedModuleVariable || !(declared.primitives & Primitive::Undefined))
         return declared;
     return declared.withoutPrimitives(Primitive::Undefined).withPrimitives(Primitive::Absent);
@@ -631,10 +636,22 @@ Type ResultRules::unknown(const Value& value)
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
-    const Type& source = context.typeOf(value.operand(operandIndex));
+    return context.typeOf(value.operand(operandIndex)).castTo(context.types.at(castType), context.types);
+}
+
+// The one place where what is expected of a value becomes what is proven of it: a check tests. An expectation that nothing tests proves nothing.
+Type ResultRules::cast(const Value& value, uint32_t operandIndex, ExpectedType expected)
+{
+    ValueID operand = value.operand(operandIndex);
+    const Type& source = context.typeOf(operand);
     if (value.opcode == Opcode::Check)
-        return typeOfCheck(context, source, castType);
-    return source.castTo(context.types.at(castType), context.types);
+        return typeOfCheck(context, source, expected.predicted());
+    RELEASE_ASSERT(value.opcode == Opcode::Expect);
+    if (context.level == TypeLevel::Proven)
+        return source;
+    const Type& predicted = context.types.at(expected.predicted());
+    Type narrowed = source.castTo(predicted, context.types);
+    return narrowed.isNever() ? context.types.at(context.function.at(operand).type).castTo(predicted, context.types) : narrowed;
 }
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex)
@@ -810,6 +827,8 @@ struct ResultRulesWithoutType {
     TypeID declared(const Value& value, VariableID variable)
     {
         TypeID declared = context.typeIDOf(context.program.at(variable).declared);
+        if (value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore())
+            return { };
         if (value.opcode != Opcode::GetEncodedModuleVariable || !(context.types.at(declared).primitives & Primitive::Undefined))
             return idInArena(declared);
         return { };
@@ -886,6 +905,19 @@ struct ResultRulesWithoutType {
         });
     }
 
+    TypeID cast(const Value& value, uint32_t operandIndex, ExpectedType expected)
+    {
+        if (value.opcode == Opcode::Check)
+            return cast(value, operandIndex, expected.predicted());
+        ValueID operand = value.operand(operandIndex);
+        if (context.level == TypeLevel::Proven)
+            return context.typeIDOf(operand);
+        return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
+            hasher.add(context.typeIDOf(operand).index(), context.function.at(operand).type.index());
+            hasher.add(expected.predicted());
+        });
+    }
+
     TypeID cast(const Value& value, uint32_t operandIndex)
     {
         TypeID sourceID = context.typeIDOf(value.operand(operandIndex));
@@ -944,6 +976,7 @@ struct AnswerSharingRules {
 
     Result sameAs(const Value& value, uint32_t) { return value.opcode == Opcode::Convert ? SharedAnswers::AboutProgram : SharedAnswers::AboutTypes; }
     Result cast(const Value&, uint32_t, TypeID) { return SharedAnswers::AboutTypes; }
+    Result cast(const Value&, uint32_t, ExpectedType) { return SharedAnswers::AboutTypes; }
     Result cast(const Value& value, uint32_t) { return value.opcode == Opcode::NarrowByField ? SharedAnswers::AboutProgram : SharedAnswers::AboutTypes; }
 
     Result unknown(const Value& value)
@@ -1069,7 +1102,7 @@ TypeID resultTypeOf(const Program& program, const Function& function, const Valu
     return computeResultTypeID({ program, function, arena, TypeLevel::Proven, memo }, value);
 }
 
-TypeID expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
+ExpectedType expectedTypeOf(const Program& program, const Function& function, const Value& value, TypeArena& arena, TypingMemo* memo)
 {
     TypeID expected = computeResultTypeID({ program, function, arena, TypeLevel::Expected, memo }, value);
     if (expected == value.type)
@@ -1078,7 +1111,7 @@ TypeID expectedTypeOf(const Program& program, const Function& function, const Va
     Type met = type.intersectWith(arena.at(expected), arena);
     if (met.isNever() || met == type || !met.isSubsetOf(type, program))
         return { };
-    return arena.intern(met);
+    return ExpectedType(arena.intern(met));
 }
 
 } } } // namespace JSC::AOT::Typed

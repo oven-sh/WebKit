@@ -50,6 +50,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxFrameSizeInBytes, hostArchitecture()) == std::numeric_limits<decltype(ImageFrame::frameSizeInUnits)>::max() * stackAlignmentBytes());
 static_assert(B3::AirLimits::maxFrameSizeWithPushedRegisters / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
 static_assert(B3::AirLimits::maxBytesBelowFrameRecord / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
+static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
@@ -66,9 +67,9 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
-        .isCold = isCold(inputs.heat.of(inputs.program, id)),
-        .runsOnce = inputs.heat.of(inputs.program, id) == HeatClass::RunsOnce,
-        .isHot = isHot(inputs.heat.of(inputs.program, id)),
+        .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
+        .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
+        .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
         .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
     };
 }
@@ -131,22 +132,22 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
 BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
     : m_inputs(inputs)
     , m_id(id)
-    , m_activations(inputs.heat.activationsOf(inputs.program, id))
+    , m_activations(inputs.heat.activationsOf(inputs.program, id).predicted())
     // Nothing says that a compact function runs, and a failed test at an entrance is expected of no call.
-    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id) || inputs.program.at(id).runsOnlyBehindFailedTest())
+    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id).predicted() || inputs.program.at(id).runsOnlyBehindFailedTest())
 {
 }
 
 BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
 {
     double heat = m_activations * frequency;
-    HeatClass heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
+    Expected<HeatClass> heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
     // A shared sequence costs a call and a return each time it runs.
-    bool isExpectedNotToRun = isCold(heatClass) && !m_inputs.heat.isColdByLimitAlone(heat);
+    bool isExpectedNotToRun = isCold(heatClass).predicted() && !m_inputs.heat.isColdByLimitAlone(heat).predicted();
     return {
-        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass)),
+        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass).predicted()),
         // In a function that is expected to run, what lies behind a rare edge is rare by an estimate only: a test that rests on a guess fails at every call or at none.
-        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
+        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass.predicted() == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
     };
 }
 
@@ -192,7 +193,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
 {
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
-    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization());
+    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
         policy.clientPhases.append(materializeSlotBasesLate());
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -247,6 +248,7 @@ bool FunctionCodeGenerator::generateB3()
         }
         policy.clientPhases.append(guardNarrowReferences(m_numberOfLateReferenceGuards, WTF::move(origins)));
     }
+    policy.validation.keepsOriginsOfAccessesThatTakeTraps = options.validatesReferences;
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
@@ -303,6 +305,13 @@ CompiledCode FunctionCodeGenerator::emitCode()
     BuildContext& build = m_worker.build;
     const AOT::CompileOptions& options = build.options();
     B3::Procedure& proc = *m_procedure;
+
+    if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
+        overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
+    // Checks that a build adds to the generated code read addresses in ways that no product does.
+    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads;
+    if (options.validatesReferences && isX86_64() && isCodeOfProduct)
+        findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
 
     ColdAirBlocks coldBlocks = findColdAirBlocks(m_inputs, m_id, proc.code());
     m_records.units.setColdBlocks(WTF::move(coldBlocks.cold), WTF::move(coldBlocks.rarelyRun));
@@ -382,6 +391,8 @@ bool FunctionCodeGenerator::reportBackEnd()
         });
     }
     appendFindings(collected, m_narrowReferenceFindings.violations.span());
+    appendFindings(collected, m_innerPointerFindings.violations.span());
+    build.statistics().count(StatisticID::InnerPointersAcrossSafepoints, m_innerPointerFindings.numberOfPointersAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferencesAcrossSafepoints, m_narrowReferenceFindings.numberOfReferencesAcrossSafepoints);
     build.statistics().count(StatisticID::NarrowReferenceGuards, m_numberOfLateReferenceGuards);
     build.statistics().count(StatisticID::NarrowReferencesStoredInFrames, m_narrowReferenceFindings.numberOfReferencesStoredInFrame);

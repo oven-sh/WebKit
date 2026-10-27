@@ -85,6 +85,9 @@ MemberPartition partitionOwnMembers(const PropertyAccessContext&, std::span<cons
 
 bool belongToOneArm(const MemberAnswer&, const MemberAnswer&);
 void mergeIntoArm(MemberArm&, LayoutID, const MemberAnswer&);
+// One test takes the layouts of one arm. Where the receiver is tested in any case, the layouts of which a member is proven go behind the test of those of which it is expected, unless they are the greater part: those are tested for by themselves and asked nothing else.
+enum class ArmsToMerge : bool { WhereFewerAreProven, All };
+void mergeArmsWithSameMember(MemberPartition&, ArmsToMerge);
 
 } } } // namespace JSC::AOT::Typed
 

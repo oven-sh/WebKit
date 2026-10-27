@@ -292,7 +292,8 @@ void JSONParseEmitter::generateJSONKeyHasEscapes(const ValueContext& value)
 
 void JSONParseEmitter::generateJSONHasStackSpace(const ValueContext& value)
 {
-    Integer softStackLimit = loadMutable64(AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+    ptrdiff_t offsetOfMirror = value->failsAtWatchedLevels() ? AOT_INSTANCE_OFFSET(jsonLevels.limit) : AOT_INSTANCE_OFFSET(stackMirror);
+    Integer softStackLimit = loadMutable64(offsetOfMirror + StackManager::Mirror::offsetOfSoftStackLimit());
     Integer lowestAddressNeeded(m_out.sub(framePointerAtThisPoint().value(), m_out.constInt64(stackReservedForJSONParsers)));
     defineTest(value, aboveOrEqual(lowestAddressNeeded, softStackLimit));
 }

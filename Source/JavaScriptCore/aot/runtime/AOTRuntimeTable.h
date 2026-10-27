@@ -56,7 +56,8 @@ enum class BrokenClaim : uint32_t {
     reserved(operationArrayIncludesValueInt32OrContiguous) \
     v(operationAOTLookupExceptionHandler) \
     v(operationAOTFindLandingOfMisfit) \
-    v(operationAOTBytesAllocatedAtPrologueCheck)
+    v(operationAOTBytesAllocatedAtPrologueCheck) \
+    v(operationAOTCopyDataPropertiesByFieldMap)
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException)
@@ -187,6 +188,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFindLandingOfMisfit, void*, (Inst
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance*, CallFrame* hostCallFrame, uint32_t makesList));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance*, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* arguments));
+JSC_DECLARE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance*, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys));
 
 class RuntimeTable {
     WTF_MAKE_TZONE_ALLOCATED(RuntimeTable);

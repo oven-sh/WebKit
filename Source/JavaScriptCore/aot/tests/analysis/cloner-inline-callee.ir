@@ -55,7 +55,7 @@ function f3 name="tailCallee" parameters=[{type=number}] results=[{type=number}]
 # CHECK-NEXT: [[N]]: number = Add [[I]], v1
 # CHECK-NEXT: Branch [[T]] -> taken [[R]](), notTaken [[H]]([[N]])
 # CHECK-NEXT: [[R]]():
-# CHECK-NEXT: [[L]]: number = CallDirect [[N]] function=f3 [isDemotedTailCall]
+# CHECK-NEXT: [[L]]: number = CallDirect [[N]] function=f3 @0 tail
 # CHECK-NEXT: Jump -> next [[C]]([[L]])
 # CHECK-NEXT: [[X]]() role=CatchHandler:
 # CHECK-NEXT: [[Y]]: anything = CatchValue
@@ -81,7 +81,7 @@ function f3 name="tailCallee" parameters=[{type=number}] results=[{type=number}]
 # COVERED-NEXT: [[N]]: number = Add [[I]], v1
 # COVERED-NEXT: Branch [[T]] -> taken [[R]](), notTaken [[H]]([[N]])
 # COVERED-NEXT: [[R]]() handler=b1():
-# COVERED-NEXT: [[L]]: number = CallDirect [[N]] function=f3 [isDemotedTailCall]
+# COVERED-NEXT: [[L]]: number = CallDirect [[N]] function=f3 @0 tail
 # COVERED-NEXT: Jump -> next [[C]]([[L]])
 # COVERED-NEXT: [[X]]() role=CatchHandler handler=b1():
 # COVERED-NEXT: [[Y]]: anything = CatchValue

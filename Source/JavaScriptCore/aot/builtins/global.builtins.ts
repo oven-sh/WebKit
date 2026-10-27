@@ -37,7 +37,7 @@ export default b.declarations(
 
   b.name("default", "module.exports", "require", "children", "parent", "__esModule", "callee"),
   b.name("configurable", "done", "enumerable", "errors", "writable"),
-  b.name("app", "fetch", "routes"),
+  b.name("app", "fetch", "routes", "stop"),
 
   b.fn("isNaN", { ...numberTest("IsNaN"), boxedCallStub: "IsNaN" }),
   b.fn("isFinite", numberTest("IsFinite")),
@@ -90,6 +90,8 @@ export default b.declarations(
     usesFeature: realmFeatures,
     nativeSymbols: ["callShadowRealm", "constructWithShadowRealmConstructor"],
     prototypeTable: b.staticTable("runtime/ShadowRealmPrototype.cpp", "shadowRealmPrototypeTable"),
+    // ShadowRealmObject::finishCreation() puts the tag on each realm, besides the one on the prototype.
+    namesDefinedOnNewInstances: ["@@toStringTag"],
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
     construct: {
       returns: b.instance("ShadowRealm").fresh,

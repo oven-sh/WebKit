@@ -1,5 +1,5 @@
 # NarrowByField says nothing about a member that has no field under the key: the property may be among its extra properties or on a prototype.
-# The same holds for the members of a family that have no layout and for every other part of the holder's type. Only undefined and null go
+# The same holds for every other part of the holder's type. Only undefined and null go
 # FORM: Prepared
 # RUN: result-types
 
@@ -30,7 +30,7 @@ function f0 name="memberWithoutTheField" parameters=[{type=L0|L1|L2}] results=[{
 # CHECK: v6: anything ~ undefined|2
 # CHECK-NEXT: v7: L0|L1|L2 ~ L1|L2
 
-function f1 name="membersWithoutLayout" parameters=[{type=L0|L1|nolayout}] results=[{type=undefined}] {
+function f1 name="otherPartsOfTheType" parameters=[{type=undefined|string|L0|L1|Array<number>}] results=[{type=undefined}] {
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -42,12 +42,12 @@ function f1 name="membersWithoutLayout" parameters=[{type=L0|L1|nolayout}] resul
     Return
 }
 # CHECK-LABEL: function f1
-# CHECK-NEXT: v0: L0|L1|nolayout
+# CHECK-NEXT: v0: undefined|string|L0|L1|Array<number>
 # CHECK-NEXT: v1: anything ~ int[1, 2]
 # CHECK: v4: 1
-# CHECK-NEXT: v5: L0|nolayout
+# CHECK-NEXT: v5: string|L0|Array<number>
 
-function f2 name="onlyMembersWithoutLayoutAreLeft" parameters=[{type=L1|nolayout}] results=[{type=undefined}] {
+function f2 name="holderWithoutLayouts" parameters=[{type=undefined|null|object}] results=[{type=undefined}] {
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -59,38 +59,6 @@ function f2 name="onlyMembersWithoutLayoutAreLeft" parameters=[{type=L1|nolayout
     Return
 }
 # CHECK-LABEL: function f2
-# CHECK: v4: 1
-# CHECK-NEXT: v5: nolayout
-
-function f3 name="otherPartsOfTheType" parameters=[{type=undefined|string|L0|L1|Array<number>}] results=[{type=undefined}] {
-    v1 = PropGet v0 key="kind"
-    v2 = Integer integer=1
-    v3 = StrictEq v1, v2
-    Branch v3 -> taken b1(| 0), notTaken b2()
-  b1(v4):
-    v5 = NarrowByField v0, v4 key="kind"
-    Return
-  b2():
-    Return
-}
-# CHECK-LABEL: function f3
-# CHECK-NEXT: v0: undefined|string|L0|L1|Array<number>
-# CHECK-NEXT: v1: anything ~ int[1, 2]
-# CHECK: v4: 1
-# CHECK-NEXT: v5: string|L0|Array<number>
-
-function f4 name="holderWithoutLayouts" parameters=[{type=undefined|null|object}] results=[{type=undefined}] {
-    v1 = PropGet v0 key="kind"
-    v2 = Integer integer=1
-    v3 = StrictEq v1, v2
-    Branch v3 -> taken b1(| 0), notTaken b2()
-  b1(v4):
-    v5 = NarrowByField v0, v4 key="kind"
-    Return
-  b2():
-    Return
-}
-# CHECK-LABEL: function f4
 # CHECK-NEXT: v0: undefined|null|object
 # CHECK: v4: 1
 # CHECK-NEXT: v5: object

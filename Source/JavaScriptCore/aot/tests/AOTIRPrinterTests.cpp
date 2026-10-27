@@ -70,9 +70,9 @@ PropertyKey createKey(PropertyKeyKind kind, StringID text = { }, LayoutID owner 
     return { kind, text, owner, symbol, { }, { }, { } };
 }
 
-PropertyKey createSymbolKey(StringID description, ModuleID module, std::optional<uint32_t> position, AllocationSiteID site = { })
+PropertyKey createSymbolKey(StringID description, ModuleID module, std::optional<uint32_t> callNumber, AllocationSiteID site = { })
 {
-    return { PropertyKeyKind::CreatedSymbol, description, { }, { }, module, position, site };
+    return { PropertyKeyKind::CreatedSymbol, description, { }, { }, module, callNumber, site };
 }
 
 struct PrinterTest {
@@ -311,16 +311,13 @@ void testSets()
 {
     PrinterTest test;
     TypeTable& types = test.program->types;
-    expectText(test.print(types.intern(LayoutSet { { L2, L0 }, true })), "[L0, L2]"_s);
-    expectText(test.print(types.intern(LayoutSet { { L0, L2 }, false })), "[L0, L2, ..]"_s);
-    expectText(test.print(types.intern(LayoutSet { { }, false })), "[..]"_s);
-    expectText(test.print(types.intern(LayoutSet { { }, true })), "[]"_s);
-    expectText(test.print(types.intern(LayoutSet { { L2, L0 }, true, true })), "[L0, L2, nolayout]"_s);
-    expectText(test.print(types.intern(LayoutSet { { L0 }, false, true })), "[L0, nolayout, ..]"_s);
-    expectText(test.print(types.intern(LayoutSet { { }, true, true })), "[nolayout]"_s);
-    expectText(test.print(types.intern(CalleeSet { { f3, f1 }, { Builtins::GlobalThis }, true })), "[f1, f3, builtin(GlobalThis)]"_s);
-    expectText(test.print(types.intern(CalleeSet { { f1 }, { }, false })), "[f1, ..]"_s);
-    expectText(test.print(types.intern(CalleeSet { { }, { Builtins::MathMax }, false })), "[builtin(MathMax), ..]"_s);
+    expectText(test.print(types.intern(LayoutSet::complete({ L2, L0 }))), "[L0, L2]"_s);
+    expectText(test.print(types.intern(LayoutSet::open({ L0, L2 }))), "[L0, L2, ..]"_s);
+    expectText(test.print(types.intern(LayoutSet::open({ }))), "[..]"_s);
+    expectText(test.print(types.intern(LayoutSet::complete({ }))), "[]"_s);
+    expectText(test.print(types.intern(CalleeSet::complete({ f3, f1 }, { Builtins::GlobalThis }))), "[f1, f3, builtin(GlobalThis)]"_s);
+    expectText(test.print(types.intern(CalleeSet::open({ f1 }, { }))), "[f1, ..]"_s);
+    expectText(test.print(types.intern(CalleeSet::open({ }, { Builtins::MathMax }))), "[builtin(MathMax), ..]"_s);
 }
 
 void testNumbersAddedLayouts()
@@ -443,7 +440,6 @@ void testObjectTypes()
     expectSpellings(test, {
         { Type::forLayout(L2, test.types), "L2"_s, "L2"_s },
         { Type::forLayouts(layouts, test.types), "L0|L2"_s, "L0|L2"_s },
-        { Type::forLayoutSet(test.types.intern(LayoutSet { { L0, L2 }, true, true })), "L0|L2|nolayout"_s, "L0|L2|nolayout"_s },
         { Type::forEnvironment(L1), "env L1"_s, "env L1"_s },
         { Type::forEnvironment(L1).withPrimitives(Primitive::Absent), "absent|env L1"_s, "absent|env L1"_s },
         { Type::forFunction(f3), "f3"_s, "f3"_s },
@@ -559,6 +555,7 @@ void testPropertyKeys()
     };
     expectText(printKey(createKey(PropertyKeyKind::Text, name)), "\"x\""_s);
     expectText(printKey(createKey(PropertyKeyKind::EnginePrivateName, name)), "@\"x\""_s);
+    expectText(printKey(createKey(PropertyKeyKind::ModulePrivateName, name)), "@#\"x\""_s);
     expectText(printKey(createKey(PropertyKeyKind::PrivateName, name, L2)), "#\"x\"@L2"_s);
     expectText(printKey(createKey(PropertyKeyKind::WellKnownSymbol, { }, { }, WellKnownSymbol::Iterator)), "@@iterator"_s);
     expectText(printKey(createKey(PropertyKeyKind::WellKnownSymbol, { }, { }, WellKnownSymbol::AsyncDispose)), "@@asyncDispose"_s);
@@ -624,12 +621,12 @@ void addEngineFields(PrinterTest& test)
 
     Value& read = stream.edit(v9);
     read.type = TypeTable::number;
-    read.setExpected(TypeTable::int32);
+    read.setExpected(ExpectedType(TypeTable::int32));
     read.representation = Representation::Double;
     read.inlineFrame = 1;
     read.setAccessSite(AccessSiteID(4u));
-    read.setReceivers(program.types.intern(LayoutSet { { L0, L2 }, true }));
-    stream.edit(v4).setIsDemotedTailCall(true);
+    read.setReceivers(program.types.intern(LayoutSet::complete({ L0, L2 })));
+    stream.edit(v4).isTailCall = true;
     stream.edit(b0).terminator.inlineFrame = 1;
 
     program.at(L0).fields[0].flow.occupancy = Occupancy::AlwaysFilled;
@@ -645,7 +642,7 @@ void testEngineFields()
     String text = test.printProgram(PrintedFields::All);
     for (ASCIILiteral part : {
         "    v9: number ~ i32 @Double = PropGet v0 key=\"x\" accessSite=4 receivers=[L0, L2] @1009:1\n"_s,
-        "    v4 = Call v0, -, v2, v3 expectedResult=x0 [isAnnotatedPure, isDemotedTailCall] @1004\n"_s,
+        "    v4 = Call v0, -, v2, v3 expectedResult=x0 [isAnnotatedPure] @1004 tail\n"_s,
         "    Branch v1 -> taken b1(), notTaken b2() @2000:1\n"_s,
         " inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {\n"_s,
         " flags=[IsRequired] flow={occupancy=AlwaysFilled}}] ownFieldCount=1 flow={members=[L0]}\n"_s,

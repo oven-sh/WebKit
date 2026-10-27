@@ -29,6 +29,7 @@
 
 #if CPU(ADDRESS64)
 
+#include "AddressSpaceBudget.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 #include <bmalloc/bmalloc.h>
@@ -58,6 +59,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #if ASAN_ENABLED && __has_include(<sanitizer/asan_interface.h>)
 #include <sanitizer/asan_interface.h>
 #endif
+#if ASAN_ENABLED && OS(LINUX)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #endif // CPU(ADDRESS64)
 
@@ -75,9 +79,13 @@ static_assert(!(sizeStep % granuleSize));
 static constexpr size_t mallocChunkSize = 32 * MB;
 #if OS(LINUX) && USE(MIMALLOC)
 static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
+// malloc and the stacks of threads go on taking address space.
+static constexpr size_t addressSpaceToLeaveBesideSegment = 32 * MB;
 static constexpr unsigned maxSegmentPlacements = 8;
 #endif
 static constexpr unsigned maxRandomPlacements = 16;
+// The system keeps one mapping for each stretch of granules with the same access.
+static constexpr size_t maxAccessBorders = 16384;
 static constexpr uintptr_t lowestRandomAddress = 64 * GB;
 static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
 #if OS(LINUX)
@@ -133,10 +141,29 @@ static size_t findUsedGranule(const BitVector& usedGranules, size_t position, si
     return result < usedGranules.size() ? result : granuleCount;
 }
 
+static void resizeGranuleBits(BitVector& bits, size_t size)
+{
+#if ASAN_ENABLED && OS(LINUX)
+    // BitVector stores its pointer shifted, so LeakSanitizer cannot follow it. A range is never destroyed.
+    __lsan::ScopedDisabler disabler;
+#endif
+    bits.ensureSize(size);
+}
+
 static void ensureGranuleBits(BitVector& bits, size_t end, size_t granuleCount)
 {
     if (end > bits.size())
-        bits.ensureSize(std::min(std::max(end, 2 * bits.size()), granuleCount));
+        resizeGranuleBits(bits, std::min(std::max(end, 2 * bits.size()), granuleCount));
+}
+
+static std::atomic<size_t> s_accessBorderCount { 0 };
+
+static size_t countAccessBorders(const BitVector& accessibleGranules, size_t first, size_t count)
+{
+    size_t result = 0;
+    for (size_t index = first ? first - 1 : 0; index < first + count; ++index)
+        result += accessibleGranules.get(index) != accessibleGranules.get(index + 1);
+    return result;
 }
 
 static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
@@ -269,7 +296,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // same rationale as the Linux MADV_DOFORK branch above.
     vm_inherit(mach_task_self(), static_cast<vm_address_t>(start), static_cast<vm_size_t>(size), VM_INHERIT_COPY);
 #endif
-    return Backing { BackEnd::Malloc, heap, size };
+    return Backing { BackEnd::Malloc, heap, size, arena };
 #else
     UNUSED_PARAM(start);
     UNUSED_PARAM(request);
@@ -293,12 +320,13 @@ ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing
     if (m_backEnd != BackEnd::Granules) {
         Locker locker { m_lock };
         m_segmentHeaps.append(backing.mallocHeap);
+        m_segmentArenas.append(backing.mallocArena);
         m_segmentsEnd = backing.size;
         return;
     }
 
     size_t prefixGranuleCount = request.unusedPrefixSize / granuleSize;
-    m_usedGranules.ensureSize(prefixGranuleCount);
+    resizeGranuleBits(m_usedGranules, prefixGranuleCount);
     for (size_t index = 0; index < prefixGranuleCount; ++index)
         m_usedGranules.quickSet(index);
     m_firstGranuleToSearch = prefixGranuleCount;
@@ -409,6 +437,51 @@ void ReservedRangeHeap::releaseFreeMemory()
 #endif
 }
 
+bool ReservedRangeHeap::tryEnsureRoomForNewThreads(unsigned numberOfThreads, std::span<const Pieces> piecesOfThread)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    if (m_backEnd != BackEnd::Malloc)
+        return true;
+
+    // What a thread takes from a segment begins with a page for its own records in that segment, and it shares no page with another thread.
+    // So does a heap: each thread is stood in for by a heap of its own in each segment.
+    Locker locker { m_lock };
+    Vector<mi_heap_t*, 16> heaps;
+    bool hasRoom = true;
+    for (unsigned thread = 0; hasRoom && thread < numberOfThreads; ++thread) {
+        size_t firstHeapOfThread = heaps.size();
+        auto tryTakeFromSegment = [&](size_t segment, size_t size) {
+            while (heaps.size() <= firstHeapOfThread + segment)
+                heaps.append(mi_heap_new_in_arena(static_cast<mi_arena_id_t>(m_segmentArenas[heaps.size() - firstHeapOfThread])));
+            mi_heap_t* heap = heaps[firstHeapOfThread + segment];
+            return heap && mi_heap_malloc(heap, size);
+        };
+        auto tryTake = [&](size_t size) {
+            for (size_t segment = m_segmentArenas.size(); segment--;) {
+                if (tryTakeFromSegment(segment, size))
+                    return true;
+            }
+            return tryAddSegment(size) && tryTakeFromSegment(m_segmentArenas.size() - 1, size);
+        };
+        for (auto [size, count] : piecesOfThread) {
+            for (unsigned i = 0; hasRoom && i < count; ++i)
+                hasRoom = tryTake(size);
+        }
+    }
+    for (mi_heap_t* heap : heaps) {
+        if (heap)
+            mi_heap_destroy(heap);
+    }
+    for (void* heap : m_segmentHeaps)
+        mi_heap_collect(static_cast<mi_heap_t*>(heap), true);
+    return hasRoom;
+#else
+    UNUSED_PARAM(numberOfThreads);
+    UNUSED_PARAM(piecesOfThread);
+    return true;
+#endif
+}
+
 void* ReservedRangeHeap::tryAllocateSlow(size_t alignment, size_t size)
 {
 #if OS(LINUX) && USE(MIMALLOC)
@@ -439,6 +512,10 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 #if OS(LINUX) && USE(MIMALLOC)
     size_t minSize = std::max(minSegmentSize, roundUpToMultipleOf<mallocChunkSize>(allocationSize) + mallocChunkSize);
     size_t size = std::max(minSize, roundUpToMultipleOf<mallocChunkSize>(reservedSize() / 2));
+    size_t left = addressSpaceLeft();
+    if (left < minSize + addressSpaceToLeaveBesideSegment)
+        return false;
+    size = std::min(size, (left - addressSpaceToLeaveBesideSegment) / mallocChunkSize * mallocChunkSize);
     Request request { .name = m_name, .usage = m_usage, .initialAccess = InitialAccess::None };
     unsigned placements = 0;
     while (true) {
@@ -470,6 +547,7 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
             return false;
         }
         m_segmentHeaps.append(backing->mallocHeap);
+        m_segmentArenas.append(backing->mallocArena);
         m_segmentsEnd = offset + size;
         m_reservedSize.fetch_add(size, std::memory_order_relaxed);
         return true;
@@ -510,6 +588,8 @@ void* ReservedRangeHeap::tryAllocateGranules(size_t size)
         m_firstGranulesOfRuns.quickSet(first);
         if (first == m_firstGranuleToSearch)
             m_firstGranuleToSearch += count;
+        ensureGranuleBits(m_accessibleGranules, first + count, granuleCount);
+        setAccess(first, count, true);
     }
 
     void* result = std::bit_cast<void*>(m_start + first * granuleSize);
@@ -524,23 +604,36 @@ void ReservedRangeHeap::freeGranules(void* pointer)
 {
     size_t first = granuleIndexOf(m_start, m_size, pointer);
     size_t count;
+    bool removesAccess;
     {
         Locker locker { m_lock };
         RELEASE_ASSERT(m_firstGranulesOfRuns.get(first), first);
         count = granuleCountOfRun(first);
+        bool addsBorders = first && m_accessibleGranules.get(first - 1) && m_accessibleGranules.get(first + count);
+        removesAccess = !addsBorders || s_accessBorderCount.load(std::memory_order_relaxed) < maxAccessBorders;
+        if (removesAccess)
+            setAccess(first, count, false);
     }
 
     // The run stays marked as used until it is decommitted, so that nobody is handed it meanwhile.
 #if ASAN_ENABLED
     __asan_poison_memory_region(pointer, count * granuleSize);
 #endif
-    decommitGranules(pointer, count * granuleSize);
+    decommitGranules(pointer, count * granuleSize, removesAccess);
 
     Locker locker { m_lock };
     m_firstGranulesOfRuns.quickClear(first);
     for (size_t index = first; index < first + count; ++index)
         m_usedGranules.quickClear(index);
     m_firstGranuleToSearch = std::min(m_firstGranuleToSearch, first);
+}
+
+void ReservedRangeHeap::setAccess(size_t first, size_t count, bool isAccessible)
+{
+    size_t bordersBefore = countAccessBorders(m_accessibleGranules, first, count);
+    for (size_t index = first; index < first + count; ++index)
+        m_accessibleGranules.quickSet(index, isAccessible);
+    s_accessBorderCount.fetch_add(countAccessBorders(m_accessibleGranules, first, count) - bordersBefore, std::memory_order_relaxed);
 }
 
 size_t ReservedRangeHeap::granuleCountOfRun(size_t firstGranule)
@@ -559,11 +652,14 @@ void ReservedRangeHeap::commitGranules(void* address, size_t size)
     OSAllocator::commit(address, size, true, false);
 }
 
-void ReservedRangeHeap::decommitGranules(void* address, size_t size)
+void ReservedRangeHeap::decommitGranules(void* address, size_t size, bool removesAccess)
 {
     OSAllocator::decommit(address, size);
 #if OS(UNIX) && !PLATFORM(PLAYSTATION)
-    OSAllocator::protect(address, size, false, false);
+    if (removesAccess)
+        OSAllocator::protect(address, size, false, false);
+#else
+    UNUSED_PARAM(removesAccess);
 #endif
 }
 

@@ -10,6 +10,7 @@
 
 #include "AOTRuntimeValidation.h"
 #include "AOTSavedFrameEmitter.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTThrowEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -46,7 +47,7 @@ void EngineIntrinsicEmitter::generateGetByValWithThis(const ValueContext& value)
     Boxed base = boxedOperand(value, value->objectOperand());
     Boxed thisValue = boxedOperand(value, value->thisValueOperand());
     Boxed key = boxedOperand(value, value->propertyOperand());
-    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::GetByValWithThis, { base, thisValue, key }), typeOf(value.id()));
+    defineAs(value, Boxed(callStub(value, getSuperByVal(), { base.value(), key.value(), thisValue.value() }).first), typeOf(value.id()));
 }
 
 void EngineIntrinsicEmitter::generateGetOwnProperty(const ValueContext& value)
@@ -68,7 +69,7 @@ void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
 
 void EngineIntrinsicEmitter::generateThrowNewError(const ValueContext& value)
 {
-    emitter<ThrowEmitter>().throwError(value, value->errorKind(), value->message());
+    emitter<ThrowEmitter>().throwError(value, value->errorKind(), value->message(), value->throwPosition());
 }
 
 void EngineIntrinsicEmitter::generateResumeGenerator(const ValueContext& value)

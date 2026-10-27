@@ -31,10 +31,15 @@ struct TypeTestPlan;
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<Origin> origin { };
+    // The callee reads something and then calls it. What the read throws or runs is shown here.
+    std::optional<Origin> readBeforeCall { };
     std::optional<B3::PureFunction> pureFunction { };
     std::optional<ThrowSite> throwSite { };
+    // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.
+    BuiltinID calledBuiltin { };
     bool constructs { false };
     bool isTailCall { false };
+    bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
     // The callee runs code of the host, which the effects of the IR say nothing about: it may give a cell another Structure or another butterfly.
@@ -46,6 +51,8 @@ struct CallOptions {
     bool followsThrow { false };
     // The callee promises the type of its result, and the caller relies on it.
     bool hasLandingOfMisfit { false };
+    // Whatever the callee writes, no cell that exists has another header, butterfly or closure word behind it.
+    bool convertsNoCells { false };
 };
 
 struct StubCallResult {
@@ -79,6 +86,8 @@ protected:
     Representation representationOf(ValueID id) const { return m_generator.representationOf(id); }
 
     Operand get(ValueID id) const { return m_generator.get(id); }
+    // An operand that the operation took with any NaN, in the form that says so.
+    Operand getInFormOfItsNaN(ValueID) const;
     template<typename T> T in(ValueID id) const { return m_generator.getIn(id, T::representation).template as<T>(); }
     template<typename T> std::optional<T> inOptional(ValueID id) const { return id ? std::optional<T>(in<T>(id)) : std::nullopt; }
     Boxed boxed(ValueID) const;
@@ -99,6 +108,7 @@ protected:
     template<typename T> T callLeaf(RuntimeOperation, std::initializer_list<Operand> arguments);
     Operand callLeaf(RuntimeOperation, std::span<const Operand> arguments, Representation result);
 
+    BuiltinID functionOf(BuiltinOverloadID) const;
     StubCallResult callStub(const OperationContext&, StubKey, std::initializer_list<LValue> operands, const CallOptions& = { });
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
 

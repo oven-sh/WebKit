@@ -107,10 +107,12 @@ function f5 name="number" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewArray contents=anything
     AppendSpread v1, v0
     Return v1
-# CHECK: undefined = CallDirect v1, {{*}} function=f6 [isNeverInlined]
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# CHECK-NEXT: Unreachable
 # ABSENT-NOT: AppendElements
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: TypeTest
+# ABSENT-NOT: CallDirect
 }
 
 # The function is made as one spread. Its own run of the pass expands it: expand-iteration-spread-shared-function.ir.

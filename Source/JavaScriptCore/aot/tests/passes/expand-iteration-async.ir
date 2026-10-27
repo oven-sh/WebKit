@@ -56,7 +56,7 @@ function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|L0}
 # CHECK-NEXT: [[asyncIterator0]]: object = RequireObject [[made0]] runtimeError=IteratorIsNotAnObject
 # CHECK-NEXT: [[no0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[merge0]]([[asyncIterator0]], [[no0]])
-# CHECK: [[syncIterator0]]: object = RequireObject {{*}} runtimeError=IteratorIsNotAnObject
+# CHECK: [[syncIterator0]]: object = RequireObject {{*}} runtimeError=SyncIteratorForAsyncIterationIsNotAnObject
 # CHECK-NEXT: [[syncNext0]]: anything = PropGet [[syncIterator0]] key="next"
 # CHECK-NEXT: [[wrapper0]]: object = CreateAsyncFromSyncIterator [[syncIterator0]], [[syncNext0]]
 # CHECK-NEXT: [[yes0]]: true = Boolean boolean=true

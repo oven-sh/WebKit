@@ -34,6 +34,8 @@ inline LType b3TypeOf(Representation representation)
     case Representation::RawWord:
         return B3::Int64;
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
         return B3::Double;
     case Representation::Unchosen:
@@ -64,6 +66,8 @@ using Condition = Lowered<Representation::Boolean>;
 using Word32 = Lowered<Representation::Int32>;
 using Integer = Lowered<Representation::Int64>;
 using Number = Lowered<Representation::Double>;
+using NumberWithPayload = Lowered<Representation::DoubleWithPayload>;
+using ImpureNumber = Lowered<Representation::ImpureDouble>;
 using OptionalInteger = Lowered<Representation::OptionalInt64>;
 using OptionalNumber = Lowered<Representation::OptionalDouble>;
 using CellPointer = Lowered<Representation::Cell>;
@@ -89,7 +93,8 @@ struct Operand {
     template<typename T>
     T as() const
     {
-        RELEASE_ASSERT(representation == T::representation);
+        // A double with any NaN is read as a number. Only its conversions ask which NaN it may hold.
+        RELEASE_ASSERT(representation == T::representation || (T::representation == Representation::Double && holdsAnyNaN(representation)));
         return T(value);
     }
 

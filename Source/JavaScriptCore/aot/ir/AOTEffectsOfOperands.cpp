@@ -14,12 +14,16 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
+#include "JSString.h"
 #include <algorithm>
 #include <array>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -160,7 +164,15 @@ OperandBehavior declaredBehaviorOf(const BuiltinOverload& overload, BuiltinOpera
     });
     bool membersAreOfObjectsOnly = parameter->roles.contains(BuiltinOperandRole::MembersAreOfObjectsOnly);
     bool functionsAreConvertedUnderNamesOnly = parameter->roles.contains(BuiltinOperandRole::FunctionsAreConvertedUnderNamesOnly);
-    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers };
+    bool isDescribedWhenRefused = parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused);
+    bool onlyBoxedPrimitivesAreConverted = parameter->roles.contains(BuiltinOperandRole::OnlyBoxedPrimitivesAreConverted);
+    return { parameter->uses, parameter->protocols, parameter->namedMembers, parameter->calledMembers, retention.retainedIn, retention.retainingOperand, OperandDeclarer::Builtin, namedMemberUse, resultOfCallEscapes, membersAreOfObjectsOnly, functionsAreConvertedUnderNamesOnly, parameter->convertedMembers, isDescribedWhenRefused, parameter->accepted, onlyBoxedPrimitivesAreConverted };
+}
+
+const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable& table)
+{
+    auto overloads = table.overloadsOf(Builtins::PrivateGlobalsMakeErrorWithCode);
+    return overloads.empty() ? nullptr : table.parameterFor(overloads.front(), BuiltinOperand::argument(1));
 }
 
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
@@ -201,7 +213,7 @@ static void describeCalledValue(const Program& program, const Type& callee, Effe
 {
     CalleeList callees = calleesOf(program, callee);
     describeCallees(program, callees, BuiltinCallMode::Call, description);
-    if (callees.builtins.isEmpty())
+    if (callees.listed().builtins.empty())
         return;
     EnteringOperands operands;
     operands.newTarget = TypeID();
@@ -211,13 +223,14 @@ static void describeCalledValue(const Program& program, const Type& callee, Effe
 static bool mayReturnObject(const Program& program, const Type& calledValue)
 {
     CalleeList callees = calleesOf(program, calledValue);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return true;
-    return std::ranges::any_of(callees.functions, [&](FunctionID callee) {
+    return std::ranges::any_of(functions->value(), [&](FunctionID callee) {
         const Function& function = program.at(callee);
-        if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().flags.contains(PositionFlags::IsExpected))
+        if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().isExpected())
             return true;
-        TypeID type = function.result().type;
+        TypeID type = *function.result().established();
         return !type || program.at(type).hasObjects();
     });
 }
@@ -281,7 +294,7 @@ static bool mayConvertStoredValues(const Program& program, LayoutID id)
 
 static bool mayConvertStoredValues(const Program& program, const Type& operand)
 {
-    if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+    if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
         return true;
 
     bool hasConvertingInstance = std::ranges::any_of(operand.classes, [&](const ClassPart& part) {
@@ -294,7 +307,7 @@ static bool mayConvertStoredValues(const Program& program, const Type& operand)
 
 static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& operand)
 {
-    if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
+    if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty())
         return false;
     return std::ranges::none_of(membersOf(program, operand), [&](LayoutID member) {
         return mayConvertStoredValues(program, member);
@@ -303,25 +316,66 @@ static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& 
 
 static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
-static bool isTreeOfData(const Program& program, const Type& type, uint16_t admittedPrimitives, Vector<const Type*, 8>& typesAbove)
-{
-    if (type.primitives & ~admittedPrimitives)
-        return false;
-    if (!type.hasObjects())
-        return true;
-    if (typesAbove.contains(&type) || typesAbove.size() >= maxReachableTypes || !hasOnlyOrdinaryObjectsOfProgram(program, type))
-        return false;
-    std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(program, type);
-    if (!ownValues)
-        return false;
+namespace {
 
-    typesAbove.append(&type);
-    bool holdsTrees = std::ranges::all_of(*ownValues, [&](TypeID held) {
-        return isTreeOfData(program, program.at(held), admittedPrimitives, typesAbove);
-    });
-    typesAbove.removeLast();
-    return holdsTrees;
+// How long the text is that JSON.stringify makes of a value, at the most, by the types of all that the value reaches through ordinary objects of the program.
+// A type is asked once, however many fields have it. A type that is reached from itself may be that of an object that holds itself.
+class TextOfData {
+public:
+    TextOfData(const Program& program, uint16_t admittedPrimitives)
+        : m_program(program)
+        , m_admittedPrimitives(admittedPrimitives)
+    {
+    }
+
+    bool fitsInString(const Type& type) { return longestOf(type).value_or(std::numeric_limits<uint64_t>::max()) <= JSString::MaxLength; }
+
+private:
+    static constexpr uint64_t charactersOfGap = 10;
+    static constexpr uint64_t charactersOfLineStart = "\n"_s.length() + charactersOfGap * maxReachableTypes;
+
+    static uint64_t quoted(uint64_t characters) { return "\"\""_s.length() + "\\u0000"_s.length() * characters; }
+
+    std::optional<uint64_t> longestOf(const Type&);
+
+    const Program& m_program;
+    uint16_t m_admittedPrimitives;
+    UncheckedKeyHashMap<const Type*, std::optional<uint64_t>> m_longestOfObjects;
+};
+
+std::optional<uint64_t> TextOfData::longestOf(const Type& type)
+{
+    if (type.primitives & ~m_admittedPrimitives)
+        return std::nullopt;
+    if (!type.hasObjects())
+        return quoted(longestTextOf(m_program, type));
+
+    auto entry = m_longestOfObjects.add(&type, std::nullopt);
+    if (!entry.isNewEntry)
+        return entry.iterator->value;
+    if (m_longestOfObjects.size() > maxReachableTypes || !hasOnlyOrdinaryObjectsOfProgram(m_program, type))
+        return std::nullopt;
+    std::optional<Vector<const Field*, 8>> fields = provenOwnFieldsOf(m_program, Type::forLayoutSet(type.layouts));
+    if (!fields)
+        return std::nullopt;
+
+    uint64_t longest = quoted(longestTextOf(m_program, type)) + "{}"_s.length() + charactersOfLineStart;
+    for (const Field* field : *fields) {
+        if (!field->key || field->form.contains(FieldForm::IsAccessor))
+            return std::nullopt;
+        std::optional<uint64_t> value = longestOf(m_program.at(*field->declared.established()));
+        if (!value)
+            return std::nullopt;
+        StringID name = m_program.at(field->key).text;
+        longest += charactersOfLineStart + quoted(name ? m_program.string(name).size() : 0) + ": ,"_s.length() + *value;
+        if (longest > JSString::MaxLength)
+            return std::nullopt;
+    }
+    m_longestOfObjects.set(&type, longest);
+    return longest;
 }
+
+} // anonymous namespace
 
 static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const Type& operand)
 {
@@ -336,8 +390,7 @@ static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const T
         return false;
     if (!admitted.flags.contains(BuiltinTypeFlag::HasPlainData))
         return operand.hasOnlyPrimitives(primitives);
-    Vector<const Type*, 8> typesAbove;
-    return operand.isJavaScriptValue() && isTreeOfData(program, operand, primitives, typesAbove);
+    return operand.isJavaScriptValue() && TextOfData(program, primitives | Primitive::LiteralString).fitsInString(operand);
 }
 
 static bool mayRefuseChanges(const Program& program, const Type& operand, OperandUses changes)
@@ -398,7 +451,7 @@ static bool forEachProvenContents(const Program& program, const Type& operand, N
         return part.contentsAreProven && std::ranges::all_of(table.at(part.builtinClass).slots, [&](BuiltinSlotID slot) {
             std::optional<uint8_t> indexInType = table.at(slot).indexInType;
             if (indexInType)
-                functor(program.at(part.contentsAt(*indexInType)));
+                functor(program.at(*part.provenContentsAt(*indexInType)));
             return indexInType.has_value();
         });
     });
@@ -415,7 +468,7 @@ static bool holdsOnlyPrimitives(const Program& program, const Type& operand)
 
 using MembersBeingDescribed = Vector<BuiltinID, 4>;
 
-static void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, MembersBeingDescribed&, EffectDescription&);
+static void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, MembersBeingDescribed&, EffectDescription&, TypeID operandID = { });
 
 static constexpr OperandUses usesOfReaders {
     OperandUse::Inspects,
@@ -450,6 +503,17 @@ static bool admitsEveryObject(const BuiltinTable& table, BuiltinTypeID testedID,
                 && part.provenPristine.containsAll(admitting.pristine);
         });
     });
+}
+
+// A function is described by its name, and an object of a class that the parameter takes is not refused. Of any other object that it takes, native code may refuse a member.
+static bool mayBeDescribedInMessage(const BuiltinTable& table, const OperandBehavior& behavior, const Type& operand)
+{
+    if (!behavior.isDescribedWhenRefused)
+        return false;
+    if (!operand.anyObject && !operand.layouts && operand.classes.isEmpty() && operand.builtins.isEmpty())
+        return false;
+    bool takesAnyObject = !behavior.accepted || table.at(behavior.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+    return takesAnyObject || !admitsEveryObject(table, behavior.accepted, operand);
 }
 
 static void forEachOverloadCalledOn(const BuiltinTable& table, const Type& receivers, BuiltinDispatchTarget target, NOESCAPE const Invocable<void(BuiltinOverloadID)> auto& functor)
@@ -572,16 +636,17 @@ void ReachableValueWalk::visit(const UnionPart& part)
 void ReachableValueWalk::visitLayouts(const Type& layouts)
 {
     m_description.addOwn(readsOfObjectsOperandsReach);
-    runProtocolsOn(layouts, m_behavior.protocols);
 
-    std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(m_program, layouts);
-    if (!ownValues) {
+    std::optional<Vector<const Field*, 8>> fields = provenOwnFieldsOf(m_program, layouts);
+    bool areBelowNoBuiltinClass = fields.has_value();
+    runProtocolsOn(layouts, areBelowNoBuiltinClass && m_behavior.onlyBoxedPrimitivesAreConverted ? m_behavior.protocols - Protocol::ToPrimitive : m_behavior.protocols);
+    if (!fields) {
         m_description.addUnknownCode();
         return;
     }
     m_description.followsFieldsOfOperands = true;
-    for (TypeID type : *ownValues)
-        reach(m_program.at(type));
+    for (const Field* field : *fields)
+        reach(m_program.at(*field->declared.established()));
 }
 
 void ReachableValueWalk::visitInstances(const Type& instances)
@@ -610,12 +675,12 @@ void ReachableValueWalk::runProtocolsOn(const Type& receivers, Protocols protoco
     describeCallees(m_program, membersWithKeptResults, BuiltinCallMode::Call, m_description);
 
     CalleeList members = membersRunBy(m_program, receivers, protocols - protocolsKeepingResults, m_behavior.namedMembers, { }, NamedMembers::AreOnlyInspected);
-    for (BuiltinID member : members.builtins)
+    for (BuiltinID member : members.listed().builtins)
         describeCallOn(receivers, member);
-    members.builtins.clear();
+    members.removeBuiltins();
     describeCallees(m_program, members, BuiltinCallMode::Call, m_description);
 
-    bool returnsNothingReachable = membersWithKeptResults.runsNothing() && members.functions.isEmpty();
+    bool returnsNothingReachable = membersWithKeptResults.runsNothing() && members.listed().functions.empty();
     if (!returnsNothingReachable || (protocols.contains(Protocol::Named) && !findsNamedMembersInFields(receivers)))
         m_description.addUnknownCode();
 }
@@ -646,7 +711,7 @@ void ReachableValueWalk::describeCallOn(const Type& receivers, BuiltinID member)
 
 void ReachableValueWalk::describeOverloadOn(const Type& receivers, BuiltinOverloadID id)
 {
-    describeOverload(m_program, id, nullptr, { }, m_description);
+    describeOverload(m_program, id, TypeID(), { }, m_description);
 
     const BuiltinOverload& overload = m_program.builtins().at(id);
     bool isDeclaredByParameters = !overload.isUndeclared() && !overload.libraryFunction() && !isDescribedByModel(overload);
@@ -696,6 +761,22 @@ static void describeCodeOfContents(const Program& program, const Type& operand, 
         describeCallees(program, membersRunBy(program, Type::fromPrimitives(Primitive::String), behavior), BuiltinCallMode::Call, description);
 }
 
+// An object remembers that it has been a prototype, and what is done to it later goes by that.
+static constexpr Effects effectsOfBecomingPrototype = [] {
+    Effects effects = Effects::none();
+    effects.writes = AbstractHeapSet { AbstractHeap::PrototypeLinks };
+    return effects;
+}();
+
+static bool isCreatedAsPrototype(const Program& program, const Type& objects)
+{
+    if (objects.anyObject || objects.anyFunction || objects.layouts || !objects.classes.isEmpty() || !objects.functions.isEmpty())
+        return false;
+    return std::ranges::all_of(objects.builtins, [&](BuiltinID builtin) {
+        return program.builtins().at(builtin).kind == BuiltinKind::Prototype;
+    });
+}
+
 Effects effectsOfCreatingPrototypeProperty(const Program& program, const Type& functions)
 {
     Effects effects = Effects::none();
@@ -716,12 +797,78 @@ void describeOperandCode(const Program& program, const Type& operand, const Oper
     describeOperandCode(program, operand, behavior, membersBeingDescribed, description);
 }
 
-static void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
+static bool isSameList(std::span<const BuiltinName> a, std::span<const BuiltinName> b)
+{
+    return a.data() == b.data() && a.size() == b.size();
+}
+
+bool OperandBehavior::saysTheSameFromTheSameLists(const OperandBehavior& other) const
+{
+    return uses == other.uses && protocols == other.protocols && isSameList(namedMembers, other.namedMembers) && isSameList(calledMembers, other.calledMembers)
+        && retainedIn == other.retainedIn && retainingOperand == other.retainingOperand && declarer == other.declarer && namedMemberUse == other.namedMemberUse
+        && resultOfCallEscapes == other.resultOfCallEscapes && membersAreOfObjectsOnly == other.membersAreOfObjectsOnly
+        && functionsAreConvertedUnderNamesOnly == other.functionsAreConvertedUnderNamesOnly && isSameList(convertedMembers, other.convertedMembers)
+        && isDescribedWhenRefused == other.isDescribedWhenRefused && accepted == other.accepted && onlyBoxedPrimitivesAreConverted == other.onlyBoxedPrimitivesAreConverted;
+}
+
+static uint32_t hashOf(TypeID operand, const OperandBehavior& behavior, const EffectDescription& description)
+{
+    uint64_t flags = static_cast<uint64_t>(behavior.retainedIn) << 16 | static_cast<uint64_t>(behavior.declarer) << 8 | static_cast<uint64_t>(behavior.namedMemberUse) << 7
+        | static_cast<uint64_t>(behavior.resultOfCallEscapes) << 6 | static_cast<uint64_t>(behavior.membersAreOfObjectsOnly) << 5 | static_cast<uint64_t>(behavior.functionsAreConvertedUnderNamesOnly) << 4
+        | static_cast<uint64_t>(behavior.isDescribedWhenRefused) << 3 | static_cast<uint64_t>(behavior.onlyBoxedPrimitivesAreConverted) << 2
+        | static_cast<uint64_t>(description.callsUnknownCode) << 1 | static_cast<uint64_t>(description.leavesOutOwnEffects);
+    uint64_t hash = operand.index();
+    for (uint64_t word : { static_cast<uint64_t>(behavior.uses.toRaw()), static_cast<uint64_t>(behavior.protocols.toRaw()), flags, static_cast<uint64_t>(behavior.retainingOperand) << 32 | behavior.accepted.index(),
+        static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.namedMembers.data())), static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.calledMembers.data())), static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.convertedMembers.data())) })
+        hash = (hash ^ hash >> 32 ^ word) * 0x9e3779b97f4a7c15ull;
+    return static_cast<uint32_t>(hash >> 32);
+}
+
+// What is added depends on the description only by the two flags that an entry is found by.
+void describeOperandCode(const Program& program, TypeID operand, const OperandBehavior& behavior, EffectDescription& description)
+{
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(operand)) {
+        describeOperandCode(program, program.at(operand), behavior, description);
+        return;
+    }
+
+    auto describeAnew = [&] {
+        EffectDescription added;
+        added.callsUnknownCode = description.callsUnknownCode;
+        added.leavesOutOwnEffects = description.leavesOutOwnEffects;
+        MembersBeingDescribed membersBeingDescribed;
+        describeOperandCode(program, program.at(operand), behavior, membersBeingDescribed, added, operand);
+        return added;
+    };
+    auto isWanted = [&](const PropertyAccessCache::CodeOfOperand& entry) {
+        return entry.operand == operand && entry.calledUnknownCode == description.callsUnknownCode && entry.added.leavesOutOwnEffects == description.leavesOutOwnEffects
+            && entry.behavior.saysTheSameFromTheSameLists(behavior);
+    };
+    uint32_t hash = hashOf(operand, behavior, description);
+    const PropertyAccessCache::CodeOfOperand* known = cache->codeOfOperands.find(hash, isWanted);
+    if (!known)
+        known = &cache->codeOfOperands.add(hash, { operand, behavior, description.callsUnknownCode, describeAnew() }, isWanted);
+    RELEASE_ASSERT(!cache->checksAnswers || known->added == describeAnew());
+    description.add(known->added);
+}
+
+static void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description, TypeID operandID)
 {
     constexpr OperandUses usesRunningSettersAndTraps { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DeletesByKey };
     constexpr OperandUses usesStoringValues { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
 
     bool hasObjects = operand.hasObjects();
+    if (mayBeDescribedInMessage(program.builtins(), behavior, operand)) {
+        if (const BuiltinParameter* described = findParameterDescribedInMessages(program.builtins())) {
+            OperandBehavior behaviorOfMessage { described->uses, described->protocols, described->namedMembers, described->calledMembers };
+            if (operandID && membersBeingDescribed.isEmpty())
+                describeOperandCode(program, operandID, behaviorOfMessage, description);
+            else
+                describeOperandCode(program, operand, behaviorOfMessage, membersBeingDescribed, description);
+        } else
+            description.addUnknownCode();
+    }
     if (!behavior.protocols.isEmpty()) {
         if (hasObjects && behavior.uses.contains(OperandUse::AppliesTransitively))
             describeCodeOfReachableValues(program, operand, behavior, membersBeingDescribed, description);
@@ -735,6 +882,8 @@ static void describeOperandCode(const Program& program, const Type& operand, con
     }
     if (!hasObjects)
         return;
+    if (behavior.uses.contains(OperandUse::BecomesPrototype) && !isCreatedAsPrototype(program, operand))
+        description.addOwn(effectsOfBecomingPrototype);
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesRunningSettersAndTraps) && !isFreeOfSettersAndTraps(operand))
         description.addUnknownCode();
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesStoringValues) && !description.callsUnknownCode && mayConvertStoredValues(program, operand))
@@ -749,7 +898,8 @@ static void describeOperandCode(const Program& program, const Type& operand, con
 static bool mayTakeCallee(const Program& program, const Type& calledValue)
 {
     CalleeList callees = calleesOf(program, calledValue);
-    return !callees.isComplete || std::ranges::any_of(callees.functions, [&](FunctionID callee) {
+    std::optional<ProvenValue<Callees>> all = callees.all();
+    return !all || std::ranges::any_of(all->value().functions, [&](FunctionID callee) {
         return program.at(callee).calleeParameterIndex().has_value();
     });
 }
@@ -824,7 +974,7 @@ static bool isArgumentOfHasInstanceMethod(const Program& program, const Function
 
 std::optional<uint32_t> entryParameterOf(const Function& callee, const Value& call, uint32_t operandIndex)
 {
-    if (effectRuleOf(call.opcode) != EffectRule::Call)
+    if (effectRuleOf(call.opcode) != EffectRule::Call || isHeldOperand(call, operandIndex))
         return std::nullopt;
 
     std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
@@ -883,7 +1033,7 @@ static OperandSummary summarizeArgumentOf(const EffectContext& context, const Va
     if (!entryParameter)
         return { };
 
-    OperandSummary summary = context.summaries.of(callee).operand(*entryParameter);
+    OperandSummary summary = CalleeSummary(context, callee)->operand(*entryParameter);
     summary.uses.add(OperandUse::Inspects);
     if (summary.retainedIn != RetainedIn::Operand)
         return summary;
@@ -905,14 +1055,19 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
 
     CalleeList callees = calleesOfCall(context.program, call);
     bool isCalledValue = behavior.uses.containsAny(callingUses);
-    if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete)
+    if (isCalledValue && call.opcode == Opcode::Call && !callees.listsEveryCallee())
         return summarizeDeclaredUses(behavior);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions || maySuspend(call.opcode))
         return { };
 
+    // Nothing that is joined to a summary that allows everything changes it.
+    constexpr OperandSummary allowsEverything;
     if (isCalledValue) {
         OperandSummary summary = summarizeDeclaredUses(behavior);
-        for (FunctionID callee : callees.functions) {
+        for (FunctionID callee : functions->value()) {
+            if (summary == allowsEverything)
+                break;
             for (uint32_t parameter : entryParametersOfCalledValue(context.program.at(callee), call))
                 summary = joinOf(summary, summarizeArgumentOf(context, call, callee, parameter));
         }
@@ -920,8 +1075,11 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
     }
 
     OperandSummary summary { OperandUse::Inspects, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID callee : callees.functions)
+    for (FunctionID callee : functions->value()) {
+        if (summary == allowsEverything)
+            break;
         summary = joinOf(summary, summarizeArgumentOf(context, call, callee, entryParameterOf(context.program.at(callee), call, operandIndex)));
+    }
     return summary;
 }
 
@@ -1122,11 +1280,11 @@ OperandConfinement confinementOf(Opcode opcode)
     return answers[static_cast<unsigned>(opcode)];
 }
 
-static OperandMemory memoryAccessedByCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, const CalleeList& callees)
+static OperandMemory memoryAccessedByCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, ProvenValue<std::span<const FunctionID>> callees)
 {
     bool isCalledValue = operandUsesOf(call.opcode, operandIndex).containsAny(callingUses);
     OperandMemory memory = OperandMemory::none();
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : callees.value()) {
         const Function& callee = context.program.at(id);
         CalleeSummary summary(context, id);
         if (isCalledValue) {
@@ -1147,8 +1305,8 @@ OperandMemory memoryAccessedThrough(const EffectContext& context, const Function
 
     if (effectRuleOf(user.opcode) == EffectRule::Call && !maySuspend(user.opcode)) {
         CalleeList callees = calleesOfCall(context.program, user);
-        if (callees.isComplete && callees.builtins.isEmpty())
-            return memoryAccessedByCallees(context, user, operandIndex, callees);
+        if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone())
+            return memoryAccessedByCallees(context, user, operandIndex, *functions);
     }
 
     Effects effects = effectsOfUser.onAnyEdge();

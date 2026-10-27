@@ -58,7 +58,7 @@ function f3 name="noStores" parameters=[{type=int[0, 100]}] results=[{type=Array
 function f4 name="storeThroughCasts" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=Array<anything>}] {
     v3 = NewArrayLike v0, v1
     v4 = Upcast v3 castType=anything
-    v5 = Check v4 castType=Array<anything>
+    v5 = Check v4 expectedType=Array<anything>
     v6 = Integer integer=0
     v7 = TryPutByValDirect v5, v6, v2
     Return v3

@@ -33,20 +33,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     ElemSet v17, v18, v17 mode=Strict
     Return
 }
-# The cells of L0, L1 and L2 have no 8 bytes left, so no slot is widened into free bytes.
+# The cells of L0, L1 and L2 have 4 bytes left, so one slot of each is widened: the slot beside it goes to the free bytes.
 # CHECK: L0 CompiledObject size=48 fields=6
-# CHECK-NEXT: "small" OptionalInt32 @
+# CHECK-NEXT: "small" OptionalInt64 @
 # CHECK-NEXT: "nullable" OptionalInt32 @
 # CHECK-NEXT: "either" OptionalInt32 @
 # CHECK-NEXT: "last" OptionalInt32 @
 # CHECK: L1 CompiledObject size=48 fields=4
-# CHECK-NEXT: "whole" OptionalInt32 @
+# CHECK-NEXT: "whole" OptionalInt64 @
 # CHECK-NEXT: "lowest" OptionalInt32 @
 # CHECK-NEXT: "wide" OptionalInt64 @
 # CHECK-NEXT: "unsigned" OptionalInt64 @
 # CHECK: L2 CompiledObject size=48 fields=6
 # CHECK-NEXT: "flags" OptionalInt32 @
-# CHECK-NEXT: "maybe" OptionalInt32 @
+# CHECK-NEXT: "maybe" OptionalInt64 @
 # CHECK-NEXT: "kind" OptionalInt32 @
 # CHECK-NEXT: "sign" OptionalInt32 @
 # CHECK: L3 CompiledObject size=48 fields=2

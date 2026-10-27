@@ -9,8 +9,8 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="carriedAroundLoop" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
   b0(v0: anything @JSValue, v1: anything @JSValue, v2: i32 @Int32):
-    v3 @JSValue = AssumeType v0 castType=number
-    v4 @JSValue = AssumeType v1 castType=number
+    v3 @JSValue = AssumeType v0 provenType=number
+    v4 @JSValue = AssumeType v1 provenType=number
     v5 @Double = Double number=0.5
     v6 @Int32 = Integer integer=0
     Jump -> next b1(v5, v6, v3, v4)
@@ -30,14 +30,14 @@ function f0 name="carriedAroundLoop" parameters=[{type=anything}, {type=anything
 }
 function f1 name="inNoLoop" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything @JSValue):
-    v1 @JSValue = AssumeType v0 castType=number
+    v1 @JSValue = AssumeType v0 provenType=number
     v2 @Double = Unbox v1
     v3 @JSValue = Box v2
     Return v3
 }
 function f2 name="neverAnInteger" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
   b0(v0: anything @JSValue, v1: i32 @Int32):
-    v2 @JSValue = AssumeType v0 castType=fractional
+    v2 @JSValue = AssumeType v0 provenType=fractional
     v3 @Double = Double number=0.5
     v4 @Int32 = Integer integer=0
     Jump -> next b1(v3, v4)

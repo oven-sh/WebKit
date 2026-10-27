@@ -11,6 +11,8 @@
         RUN(testLayoutBoundariesMatchLiveness()); \
         RUN(testSlicedLayoutBoundariesMatchDense()); \
         RUN(testSlicedSolveCallsAdapterInOrder()); \
+        RUN(testSlicedSolveAsksOnlyForNamedBlocks()); \
+        RUN(testSlicedSolveWithoutTailsNeverGivesUp()); \
         RUN(testAllocatorLivenessInSlices()); \
         RUN(testUsedRegistersMatchReference()); \
         RUN(testRegLivenessMatchesTmpLiveness()); \
@@ -157,6 +159,45 @@ struct RecordingRows : SyntheticRows {
 
     Vector<Call> calls;
     std::optional<size_t> wordsPerSlice;
+};
+
+struct SparseRows : SyntheticRows {
+    static bool namesIndices(unsigned blockIndex) { return !(blockIndex % 3); }
+
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    {
+        return namesIndices(block->index()) && SyntheticRows::fillRows(block, firstWord, numberOfWords, gen, kill, tail);
+    }
+};
+
+struct SparseRowsThatNameTheirBlocks : SparseRows {
+    explicit SparseRowsThatNameTheirBlocks(Code& code)
+        : code(code)
+    {
+    }
+
+    std::optional<unsigned> nextBlockInSlice(size_t firstWord, size_t)
+    {
+        if (std::exchange(firstWordOfSlice, firstWord) != firstWord)
+            nextBlockIndex = 0;
+        for (; nextBlockIndex < code.size(); ++nextBlockIndex) {
+            if (code[nextBlockIndex] && namesIndices(nextBlockIndex))
+                return nextBlockIndex++;
+        }
+        return std::nullopt;
+    }
+
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        CHECK(namesIndices(block->index()));
+        ++numberOfCalls;
+        return SparseRows::fillRows(block, firstWord, numberOfWords, gen, kill, tail);
+    }
+
+    Code& code;
+    size_t firstWordOfSlice { 0 };
+    unsigned nextBlockIndex { 0 };
+    size_t numberOfCalls { 0 };
 };
 
 // Compilation: valid Air in which the passes before reportUsedRegisters remove nothing: no self-move, repeated constant, jump-only block or one-target branch.
@@ -546,6 +587,82 @@ void testSlicedSolveCallsAdapterInOrder()
             }
         }
         CHECK(callIndex == liveness.calls.size());
+    }
+}
+
+struct RowsLiveEverywhere {
+    static constexpr unsigned numberOfIndices = 4097 * 64;
+
+    unsigned numIndices() const { return numberOfIndices; }
+    bool needsLiveAtTail(BasicBlock*) const { return true; }
+
+    bool fillRows(BasicBlock*, size_t, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    {
+        for (size_t i = 0; i < numberOfWords; ++i) {
+            gen[i] = 0;
+            kill[i] = 0;
+            tail[i] = ~static_cast<uint64_t>(0);
+        }
+        return true;
+    }
+};
+
+struct BoundariesOfRowsLiveEverywhere : WithLayoutBoundaries<RowsLiveEverywhere> {
+    bool needsLiveAtTail(BasicBlock*) const { return false; }
+};
+
+// Only the sets kept for tails count toward the limit, so a solve that keeps none ends however many indices are live in however many blocks.
+void testSlicedSolveWithoutTailsNeverGivesUp()
+{
+    constexpr unsigned blockCount = 8193;
+
+    B3::Procedure proc;
+    Code& code = proc.code();
+    buildGraphWithGaps(code, blockCount);
+    size_t numberOfBlocks = 0;
+    for (BasicBlock* block : code)
+        numberOfBlocks += !!block;
+    CHECK(numberOfBlocks * (RowsLiveEverywhere::numberOfIndices / 64) > B3::AirLimits::maxWordsOfLivenessAtTails);
+
+    BitMatrixLiveness<RowsLiveEverywhere> keepsTails(code);
+    keepsTails.compute();
+    CHECK(keepsTails.status() == BitMatrixLivenessStatus::GaveUp);
+
+    BitMatrixLiveness<BoundariesOfRowsLiveEverywhere> keepsBoundaries(code);
+    keepsBoundaries.compute();
+    CHECK(keepsBoundaries.status() == BitMatrixLivenessStatus::Solved);
+}
+
+void testSlicedSolveAsksOnlyForNamedBlocks()
+{
+    constexpr unsigned blockCount = 2049;
+    constexpr size_t wordsPerSet = SyntheticRows::numberOfIndices / 64;
+    static_assert(blockCount * wordsPerSet > B3::AirLimits::maxWordsPerLivenessMatrix);
+
+    B3::Procedure proc;
+    Code& code = proc.code();
+    buildGraphWithGaps(code, blockCount);
+
+    BitMatrixLiveness<WithLayoutBoundaries<SparseRows>> askedForEveryBlock(code);
+    askedForEveryBlock.compute();
+    CHECK(askedForEveryBlock.status() == BitMatrixLivenessStatus::Solved);
+    BitMatrixLiveness<WithLayoutBoundaries<SparseRowsThatNameTheirBlocks>> askedForNamedBlocks(code, code);
+    askedForNamedBlocks.compute();
+    CHECK(askedForNamedBlocks.status() == BitMatrixLivenessStatus::Solved);
+    CHECK(askedForNamedBlocks.numberOfCalls);
+
+    BoundaryIndices expectedIndices(code);
+    expectedIndices.append(code, askedForEveryBlock, 0);
+    BoundaryIndices indices(code);
+    indices.append(code, askedForNamedBlocks, 0);
+    CHECK(indices == expectedIndices);
+
+    auto expectedWorkset = askedForEveryBlock.makeWorkset();
+    auto workset = askedForNamedBlocks.makeWorkset();
+    for (BasicBlock* block : code) {
+        askedForEveryBlock.copyLiveAtTailInto(expectedWorkset, block);
+        askedForNamedBlocks.copyLiveAtTailInto(workset, block);
+        CHECK(std::ranges::equal(workset.words(), expectedWorkset.words()));
     }
 }
 

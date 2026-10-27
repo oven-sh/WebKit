@@ -41,7 +41,7 @@ function f2 name="calledWithASumByAFunctionThatIsHandedOn" module=m0 position=15
 }
 # CHECK-LABEL: function f2 name="calledWithASumByAFunctionThatIsHandedOn" {{*}}parameters=[{type=i32 site=w1 flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ i32):
-# CHECK: i32 = Check v0 castType=i32 site=w1
+# CHECK: i32 = Check v0 expectedType=i32 site=w1
 
 function f3 name="calledWithASumThatFlowProves" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=number site=w2}] results=[{type=anything}] {
     v1 = Integer integer=0
@@ -50,4 +50,4 @@ function f3 name="calledWithASumThatFlowProves" module=m0 position=25 flags=[IsC
 }
 # CHECK-LABEL: function f3 name="calledWithASumThatFlowProves" {{*}}parameters=[{type=int[-2147483641, 2147483654] site=w2}]
 # CHECK-NOT: Check
-# CHECK: AssumeType v0 castType=number
+# CHECK: AssumeType v0 provenType=number

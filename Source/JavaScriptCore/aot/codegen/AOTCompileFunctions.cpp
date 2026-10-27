@@ -101,7 +101,7 @@ static bool generatesOnlyWhatTheProgramAsksFor(const CodeGenerationWorker& worke
 
 static ValueID valueBehindCasts(const Function& function, ValueID id)
 {
-    while (function.at(id).opcode == Opcode::AssumeType || function.at(id).opcode == Opcode::Upcast)
+    while (function.at(id).opcode == Opcode::AssumeType || isCastThatProvesNothing(function.at(id).opcode))
         id = function.at(id).valueOperand();
     return id;
 }
@@ -186,7 +186,7 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
     std::span<const ValueID> valuesBeforeCall = block.values.span().first(block.values.size() - 1);
     for (ValueID value : valuesBeforeCall) {
         Opcode opcode = function.at(value).opcode;
-        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && opcode != Opcode::Upcast)
+        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !isCastThatProvesNothing(opcode))
             return std::nullopt;
     }
     if (!generatesOnlyWhatTheProgramAsksFor(worker, inputs, id))

@@ -12,11 +12,14 @@
 #include "AOTClassPrototype.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
+#include "AOTCompiledStructure.h"
 #include "AOTFunctionNames.h"
+#include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectWords.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
@@ -27,6 +30,9 @@
 #include "AOTRuntimeTable.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
+#include "ArrayConventions.h"
+#include "Butterfly.h"
+#include "ButterflyInlines.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
@@ -35,9 +41,11 @@
 #include "JSPropertyNameEnumerator.h"
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <optional>
+#include <span>
 
 namespace JSC { namespace AOT {
 
@@ -68,31 +76,46 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
         object->createDataProperty(instance->globalObject, name, value, true);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
-{
-    constexpr Entry entry = Entry::operationAOTDefineById;
-    AOT_OPERATION_BEGIN(instance, entry);
-    JSObject* object = objectArgument(encodedObject, entry);
-    if (Options::aotCountsPath()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("definition without caches"_s, false, object, identifierAt(instance, name).impl());
-    PutPropertySlot slot(object, true);
-    defineDataProperty(instance, object, identifierAt(instance, name), JSValue::decode(value), slot);
-    OPERATION_RETURN(scope);
-}
-
 // These are the arrays for which JSArray::defineOwnProperty() comes down to putDirectIndex(): a length that is read-only puts the array into sparse mode. The text of the index is never made.
 static bool canDefineElementsDirectly(JSObject* object)
 {
     return isJSArray(object) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
 }
 
-static bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+// What the stub StoreElementOfCompiledObject makes, out of the same allocators: where one of them has run out, this fills it again.
+static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t index, JSValue value)
+{
+    VM& vm = *instance->vm;
+    uint32_t length = index + 1;
+    unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), std::max<unsigned>(length + length / 2, BASE_CONTIGUOUS_VECTOR_LEN));
+    Butterfly* butterfly = Butterfly::create(vm, nullptr, 0, 0, true, IndexingHeader(), vectorLength * sizeof(EncodedJSValue));
+    butterfly->setVectorLength(vectorLength);
+    butterfly->setPublicLength(length);
+    for (unsigned i = 0; i < vectorLength; ++i)
+        butterfly->contiguous().atUnsafe(i).clear();
+    butterfly->contiguous().atUnsafe(index).setWithoutWriteBarrier(value);
+    return JSFinalObject::createWithButterfly(vm, instance->realm.extraPropertiesWithElementsStructure, butterfly);
+}
+
+// The stub gives the next object with the Structure `before` its first element. It stores as it defines, so right above the object is the Object.prototype of its realm, which has no elements and takes none.
+static void rememberStructureWithFirstElement(Instance* instance, const CompiledStructure& before, const CompiledStructure& after, JSObject& extra)
+{
+    Structure* withElements = instance->realm.extraPropertiesWithElementsStructure;
+    if (extra.structure() != withElements || instance->vm->aotState().validatesRuntime)
+        return;
+    if (!before.extraPropertiesSlot() || before.hasOtherPrototype() || before.storedPrototype() != JSValue(instance->realm.objectPrototype) || before.typeInfoBlob() != after.typeInfoBlob())
+        return;
+    EncodedJSValue inPlaceOfPrototype = std::bit_cast<EncodedJSValue>(withElements);
+    std::span { instance->objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before.id().bits(), inPlaceOfPrototype)] = { inPlaceOfPrototype, before.id().bits(), after.id().bits() };
+}
+
+bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
 {
     Object* compiled = compiledObjectOrNull(object);
     if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype() || compiled->layout().isClass())
         return false;
     State& state = *instance->state;
-    if (!state.tables.addedNames().empty() || state.propertyCaches->countsNames())
+    if (!state.tables.addedNames().empty())
         return false;
     VM& vm = *instance->vm;
     JSObject* extra = compiled->extraProperties();
@@ -100,11 +123,37 @@ static bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* objec
         return false;
     if (vm.aotState().validatesRuntime && !(extra && extra->hasOwnProperty(instance->globalObject, index)))
         validateMutation(vm, *compiled, ObjectMutation::AddProperty);
-    if (!extra)
-        extra = compiled->ensureExtraProperties(vm);
+    if (!extra) {
+        const CompiledStructure* before = WTF::opaque(&compiled->compiledStructure());
+        if (index <= maxIndexOfFirstElementMadeByStub)
+            extra = createExtraPropertiesWithElement(instance, index, value);
+        else {
+            extra = constructEmptyObject(vm, instance->realm.emptyExtraPropertiesStructure);
+            extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
+        }
+        compiled->adoptExtraProperties(vm, extra);
+        rememberStructureWithFirstElement(instance, *before, compiled->compiledStructure(), *extra);
+        ensureStillAliveHere(before);
+        return true;
+    }
     extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
     compiled->didChangeExtraProperties(vm);
     return true;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
+{
+    constexpr Entry entry = Entry::operationAOTDefineById;
+    AOT_OPERATION_BEGIN(instance, entry);
+    JSObject* object = objectArgument(encodedObject, entry);
+    if (Options::aotCountsPath()) [[unlikely]]
+        instance->state->propertyCaches->countMiss("definition without caches"_s, false, object, identifierAt(instance, name).impl());
+    const Identifier& identifier = identifierAt(instance, name);
+    if (std::optional<uint32_t> index = parseIndex(identifier); index && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(value)))
+        OPERATION_RETURN(scope);
+    PutPropertySlot slot(object, true);
+    defineDataProperty(instance, object, identifier, JSValue::decode(value), slot);
+    OPERATION_RETURN(scope);
 }
 
 // `{ id, [key]: value }`. As for a store by key: the second object that gets the same name behind the same names has the Structure of its extra properties named, and the stub adds the property to the third.
@@ -290,7 +339,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(!(bits.hasValue || bits.hasWritable) || !(bits.hasGet || bits.hasSet));
-    if (!bits.inheritsNothing && !descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
+    if (!descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
         return false;
     bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
     RETURN_IF_EXCEPTION(scope, false);
@@ -324,8 +373,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     }
     // Object.defineProperty() itself refuses, and runs the code of others, in a frame of its own.
     JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
-    if (bits.inheritsNothing)
-        literal->setPrototypeDirect(vm, jsNull());
     callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
 }
@@ -364,7 +411,13 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, Prope
 
 static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, JSValue key, JSValue function, uint32_t accessorFlags)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Object* compiled = compiledObjectOrNull(object)) {
+        std::array<EncodedJSValue, 2> keyAndFunction { JSValue::encode(key), JSValue::encode(function) };
+        if (compiled->tryDefineAccessorsOfLiteral(vm, globalObject, keyAndFunction, !!(accessorFlags & accessorIsGetter), !!(accessorFlags & accessorIsEnumerable)))
+            return;
+    }
     auto property = key.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     scope.release();
@@ -390,7 +443,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance* instance,
         crashOnWrongOperand(entry);
     auto accessors = spanReinterpretCast<const DefinedAccessor>(unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor));
     Object* compiledObject = compiledObjectOrNull(object);
-    if (compiledObject && getters == (count == maskWidth ? UINT32_MAX : (1u << count) - 1) && compiledObject->tryDefineGettersOfLiteral(vm, globalObject, unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor), enumerable))
+    if (compiledObject && compiledObject->tryDefineAccessorsOfLiteral(vm, globalObject, unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor), getters, enumerable))
         OPERATION_RETURN(scope);
     for (uint32_t index = 0; index < count; ++index) {
         const DefinedAccessor& accessor = accessors[index];
@@ -646,6 +699,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
     if (!target.isObject() || !source.isObject())
         OPERATION_RETURN(scope, 0);
     OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), FunctionID(getter), rule)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordCallee);
+    recordCallee(vm, asObject(closure));
+    instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t methodKind))

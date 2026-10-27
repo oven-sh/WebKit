@@ -8,7 +8,7 @@
 # CHECK: : undefined|number = AssumeType [[read]]
 # CHECK: : Set<string, proven, pristine[Storage, Names]> = AssumeType
 # CHECK: [[handedOut]]: anything ~ object = Construct
-# CHECK-NOT: proven
+# CHECK-NOT: , proven
 # CHECK: Return
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -20,6 +20,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeat.h"
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
@@ -69,6 +70,8 @@ struct FieldState {
     FunctionID function;
     uint32_t numberOfInitializingAllocations { 0 };
     bool isRejected { false };
+    // Some store that gives the closure only expects the layout of its object.
+    bool isGivenWhereLayoutIsExpected { false };
 };
 
 struct ValueReference {
@@ -88,6 +91,7 @@ struct ClosureStore {
     LayoutID layout;
     uint32_t field { 0 };
     FunctionID closureFunction;
+    KnowledgeLevel level { KnowledgeLevel::Proven };
 };
 
 struct FieldInitializer {
@@ -221,8 +225,11 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     bool isConstructorOfClass = callee.constructedClass || callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
+    // A call of a field whose closure is not made yet enters the function through a closure in the frame of the stub, and the list of recorded callees, which the collector visits, holds the closure that the function is entered through.
+    if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+        return false;
     if (!callee.captures.isEmpty()) {
-        const Type& captured = program.at(callee.captures[0].type);
+        const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)
             return false;
     }
@@ -234,7 +241,7 @@ static ClosureDeferral deferralFor(const Program& program, FunctionID function)
     const Function& callee = program.at(function);
     if (callee.captures.isEmpty())
         return ClosureDeferral::CapturesNothing;
-    return program.at(callee.captures[0].type).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
+    return program.at(callee.captures[0].written()).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
 }
 
 static bool createsValueWithoutRunningCode(const Value& value)
@@ -464,8 +471,8 @@ struct WindowScanner {
     {
         if (store.level() != KnowledgeLevel::Proven || (store.guardOperand() && !isObject(store.guardOperand())))
             return { };
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return receivers.isComplete && receivers.members.size() == 1 ? receivers.members[0] : LayoutID();
+        auto receivers = m_program.at(store.receivers()).all();
+        return receivers && receivers->value().size() == 1 ? receivers->value().front() : LayoutID();
     }
 
     bool passesObjectOnlyAsReceiver(const Value& call) const
@@ -519,14 +526,13 @@ struct WindowScanner {
 
     void describeStore(BlockID block, ValueID id, const Value& store, Vector<ClosureStore>& found)
     {
-        // Code that only expects the layout of its objects reads their members by name as well, and a read by name makes the closure in the run time, which costs as much as forty closures made beside the allocation.
-        if (!isClosure(store.valueOperand()) || store.level() != KnowledgeLevel::Proven)
+        if (!isClosure(store.valueOperand()))
             return;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        if (!receivers.isComplete || receivers.members.isEmpty())
+        auto receivers = m_program.at(store.receivers()).all();
+        if (!receivers || receivers->value().empty())
             return;
         std::optional<FieldReference> declaration;
-        for (LayoutID member : receivers.members) {
+        for (LayoutID member : *receivers) {
             std::optional<uint32_t> field = m_program.at(member).findField(store.key());
             if (!field || !m_layouts.all.quickGet(member.index()))
                 return;
@@ -538,7 +544,7 @@ struct WindowScanner {
         if (!m_layouts.all.quickGet(declaration->layout.index()) || !canDeferClosure(m_program, *declaration))
             return;
         if (ValueID closure = findDeferrableClosure(block, store.valueOperand(), store.objectOperand()))
-            found.append({ m_id, block, id, closure, declaration->layout, declaration->field, m_function.at(closure).function() });
+            found.append({ m_id, block, id, closure, declaration->layout, declaration->field, m_function.at(closure).function(), store.level() });
     }
 
     void addInitializer(ClosureFieldFreshObject& object, ValueID listedEnvironment, uint32_t field, ValueID store, ValueID value)
@@ -659,6 +665,13 @@ struct WindowScanner {
 struct DeferralAnalysis {
     enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
 
+    struct CandidateWithKey {
+        auto operator<=>(const CandidateWithKey&) const = default;
+
+        PropertyKeyID key;
+        FieldReference field;
+    };
+
     const Value& valueAt(ValueReference reference) const { return program.at(reference.function).at(reference.value); }
     uint32_t rowOf(FieldReference reference) const
     {
@@ -686,26 +699,35 @@ struct DeferralAnalysis {
         });
     }
 
+    auto findCandidatesWithKey(PropertyKeyID key) const { return std::ranges::equal_range(candidatesByKey, key, { }, &CandidateWithKey::key); }
+
+    // Nothing says which objects arrive at a store by name into any object, so it reaches every candidate under its key.
+    bool storesIntoAnyObject(ValueReference reference) const
+    {
+        const Function& function = program.at(reference.function);
+        const Value& access = function.at(reference.value);
+        return !Value::opcodesWithFieldAccess.contains(access.opcode)
+            && access.opcode != Opcode::IsSlotFilled
+            && storedOf(access.opcode)
+            && access.operand(0)
+            && program.typeOf(function, access.operand(0)).anyObject;
+    }
+
     // An access to a slot names the layouts of its objects. For an access by name the type of the object says them.
     void forEachCandidateOf(ValueReference reference, const Invocable<void(FieldReference, uint32_t row)> auto& functor) const
     {
         const Function& function = program.at(reference.function);
         const Value& access = function.at(reference.value);
+        if (storesIntoAnyObject(reference)) {
+            for (const CandidateWithKey& candidate : findCandidatesWithKey(access.key()))
+                functor(candidate.field, rowOf(candidate.field));
+            return;
+        }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
-            members = program.at(access.receivers()).members.span();
-        else if (access.numberOfOperands() && access.operand(0)) {
-            const Type& type = program.typeOf(function, access.operand(0));
-            // Nothing says which objects arrive at a store by name into any object.
-            if (type.anyObject && storedOf(access.opcode)) {
-                for (FieldReference candidate : candidates) {
-                    if (fieldAt(program, candidate).key == access.key())
-                        functor(candidate, rowOf(candidate));
-                }
-                return;
-            }
-            members = membersOf(program, type);
-        }
+            members = program.at(access.receivers()).completeMembers().value();
+        else if (access.numberOfOperands() && access.operand(0))
+            members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             if (!field)
@@ -718,6 +740,8 @@ struct DeferralAnalysis {
 
     bool reachesCandidate(ValueReference reference, bool onlyIfItDefers) const
     {
+        if (!onlyIfItDefers && storesIntoAnyObject(reference))
+            return !findCandidatesWithKey(valueAt(reference).key()).empty();
         bool result = false;
         forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
             result |= !onlyIfItDefers || states[row].canDefer();
@@ -728,7 +752,7 @@ struct DeferralAnalysis {
     // `ifAbsent` is the answer for a receiver without the field.
     bool holdsForFieldInEveryReceiver(const Value& access, bool ifAbsent, const Invocable<bool(FieldReference)> auto& predicate) const
     {
-        return std::ranges::all_of(program.at(access.receivers()).members, [&](LayoutID member) {
+        return std::ranges::all_of(program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             return field ? predicate(FieldReference { member, *field }) : ifAbsent;
         });
@@ -823,12 +847,16 @@ struct DeferralAnalysis {
             FieldState& state = states[rowOf(field)];
             state.function = chosen;
             candidates.append(field);
+            candidatesByKey.append({ fieldAt(program, field).key, field });
             keysOfCandidates.quickSet(fieldAt(program, field).key.index());
             if (std::get<0>(rankOfChosen))
                 continue;
             layoutsWithEnvironmentCandidates.quickSet(field.layout.index());
             state.isRejected |= numberOfFunctions > 1;
         }
+        AOT::sort(candidatesByKey);
+        for (const ClosureStore& store : closureStores)
+            states[rowOf({ store.layout, store.field })].isGivenWhereLayoutIsExpected |= store.level != KnowledgeLevel::Proven;
 
         for (size_t index = 0; index < program.layouts.size(); ++index) {
             for (uint32_t field = 0; field < program.layouts[index].fields.size(); ++field) {
@@ -977,18 +1005,25 @@ struct DeferralAnalysis {
     }
 
     // What is undefined or null is no closure over anything.
-    bool storesClosureOverReceiver(ValueReference reference, FunctionID closureFunction) const
+    bool storesUndefinedOrNull(ValueReference reference) const
     {
         const Function& function = program.at(reference.function);
         const Value& store = function.at(reference.value);
         ValueID stored = store.operand(*storedOf(store.opcode));
-        if (stored && program.typeOf(function, stored).isUndefinedOrNull())
-            return true;
-        const Value& closure = function.at(definitionThroughUpcasts(function, stored));
-        if (closure.opcode != Opcode::NewClosure || closure.function() != closureFunction || closure.isMadeOnDemand())
-            return false;
+        return stored && program.typeOf(function, stored).isUndefinedOrNull();
+    }
+
+    // The function of the closure that the store brings, where that closure is made over the object stored into.
+    FunctionID findStoredClosureOverReceiver(ValueReference reference) const
+    {
+        const Function& function = program.at(reference.function);
+        const Value& store = function.at(reference.value);
+        const Value& closure = function.at(definitionThroughUpcasts(function, store.operand(*storedOf(store.opcode))));
+        if (closure.opcode != Opcode::NewClosure || closure.isMadeOnDemand())
+            return { };
         std::span<const ValueID> captures = closure.capturesOperands();
-        return captures.size() == 1 && sameObjectThroughCasts(function, captures[0]) == sameObjectThroughCasts(function, store.operand(0));
+        bool isOverReceiver = captures.size() == 1 && sameObjectThroughCasts(function, captures[0]) == sameObjectThroughCasts(function, store.operand(0));
+        return isOverReceiver ? closure.function() : FunctionID();
     }
 
     // What the slot cannot hold takes the property out of its slot.
@@ -1020,6 +1055,15 @@ struct DeferralAnalysis {
         AOT::sort(initializingStores);
         AOT::sort(describedAllocations);
 
+        // One summary per key, kept at the index of the first candidate with that key.
+        struct AnyObjectStoreSummary {
+            bool storesNonObject { false };
+            bool storesOtherClosure { false };
+            FunctionID closureOverReceiver;
+        };
+        Vector<AnyObjectStoreSummary> summaries;
+        summaries.fill({ }, candidatesByKey.size());
+
         mayHoldOtherClosure.ensureSize(firstRows.last());
         for (AccessKind kind : { SlotStore, NamedAccess }) {
             for (ValueReference reference : accesses[kind]) {
@@ -1028,19 +1072,39 @@ struct DeferralAnalysis {
                 if (!stored)
                     continue;
                 bool isOtherThanObject = mayBeOtherThanObject(reference.function, store.operand(*stored));
+                bool storesSomething = !storesUndefinedOrNull(reference);
+                FunctionID closureOverReceiver = findStoredClosureOverReceiver(reference);
+                if (storesIntoAnyObject(reference)) {
+                    AnyObjectStoreSummary& summary = summaries[findCandidatesWithKey(store.key()).begin() - candidatesByKey.begin()];
+                    summary.storesNonObject |= isOtherThanObject;
+                    if (storesSomething) {
+                        summary.storesOtherClosure |= !closureOverReceiver || (summary.closureOverReceiver && summary.closureOverReceiver != closureOverReceiver);
+                        summary.closureOverReceiver = closureOverReceiver;
+                    }
+                    continue;
+                }
                 bool isBehindInitialization = kind == SlotStore && !std::ranges::binary_search(initializingStores, reference);
-                // Of what a store into any object brings into one field, only the type of the slot speaks.
-                bool storesIntoAnyObject = kind == NamedAccess && program.typeOf(program.at(reference.function), store.operand(0)).anyObject;
                 forEachCandidateOf(reference, [&](FieldReference field, uint32_t row) {
-                    bool mayBringOtherThanObject = isOtherThanObject && (!storesIntoAnyObject || mayBeOtherThanObjectOrNullish(program.at(slotTypeOf(program, fieldAt(program, field)))));
-                    if (mayBringOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
+                    if (isOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
                         reject(row);
                     if (isBehindInitialization && keepsEnvironment(states[row]))
                         reject(row);
-                    if (!storesClosureOverReceiver(reference, states[row].function))
+                    if (storesSomething && states[row].function != closureOverReceiver)
                         mayHoldOtherClosure.quickSet(row);
                 });
             }
+        }
+        for (size_t first = 0, index = 0; index < candidatesByKey.size(); ++index) {
+            if (candidatesByKey[index].key != candidatesByKey[first].key)
+                first = index;
+            const AnyObjectStoreSummary& summary = summaries[first];
+            FieldReference field = candidatesByKey[index].field;
+            uint32_t row = rowOf(field);
+            // Of what a store into any object brings into one field, only the type of the slot speaks.
+            if (summary.storesNonObject && isNeverMovedOutByStore(program, field) && mayBeOtherThanObjectOrNullish(program.at(slotTypeOf(program, fieldAt(program, field)))))
+                reject(row);
+            if (summary.storesOtherClosure || (summary.closureOverReceiver && summary.closureOverReceiver != states[row].function))
+                mayHoldOtherClosure.quickSet(row);
         }
         for (ValueReference reference : accesses[Allocation]) {
             const Value& allocation = valueAt(reference);
@@ -1064,7 +1128,7 @@ struct DeferralAnalysis {
 
     bool findsClosureOverReceiver(const Value& read) const
     {
-        return !program.at(read.receivers()).members.isEmpty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
+        return !program.at(read.receivers()).completeMembers().value().empty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
             const FieldState& state = stateOf(field);
             const LocationFlow& location = flowOf(program, field).location;
             return state.canDefer()
@@ -1170,6 +1234,21 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
+    // The first read makes the closure in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven the reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it.
+    void rejectFieldsOfExpectedLayoutsReadByWarmCode()
+    {
+        for (AccessKind kind : { SlotRead, NamedAccess }) {
+            for (ValueReference reference : accesses[kind]) {
+                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)).predicted())
+                    continue;
+                forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
+                    if (states[row].isGivenWhereLayoutIsExpected)
+                        reject(row);
+                });
+            }
+        }
+    }
+
     void rejectFieldsReadWhereTheyMayHaveLeftTheSlot()
     {
         for (AccessKind kind : { SlotRead, PresenceTest }) {
@@ -1228,13 +1307,13 @@ struct DeferralAnalysis {
             const Layout& layout = program.layouts[index];
             TypeID type;
             if (layout.flow.closureEnvironmentField)
-                type = layout.fields[*layout.flow.closureEnvironmentField].declared.type;
+                type = layout.fields[*layout.flow.closureEnvironmentField].declared.written();
             bool hasSeveralTypes = false;
             for (uint32_t field = 0; field < layout.fields.size(); ++field) {
                 const FieldState& state = stateOf({ LayoutID(index), field });
                 if (!defersOverEnvironment(state))
                     continue;
-                TypeID captured = program.at(state.function).captures[0].type;
+                TypeID captured = program.at(state.function).captures[0].written();
                 hasSeveralTypes |= type && type != captured;
                 type = captured;
             }
@@ -1258,7 +1337,7 @@ struct DeferralAnalysis {
                 continue;
             const Layout& layout = program.at(candidate.layout);
             std::optional<uint32_t> existingField = layout.flow.closureEnvironmentField;
-            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].type, !existingField });
+            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].written(), !existingField });
         }
         AOT::sort(environmentFields, { }, &ClosureEnvironmentField::layout);
         removeRepeatedElements(environmentFields, [](const ClosureEnvironmentField& a, const ClosureEnvironmentField& b) {
@@ -1288,13 +1367,24 @@ struct DeferralAnalysis {
         accesses[SlotRead].removeAllMatching([&](ValueReference reference) {
             return !reachesCandidate(reference, true);
         });
+        auto isNarrowed = [&](FieldReference field, uint32_t row) {
+            const FieldFlow& flow = flowOf(program, field);
+            return states[row].canDefer() && isFilledByEveryAllocation(field) && flow.occupancy != Occupancy::AlwaysFilled && flow.stability.containsAll(stabilityOfFilledSlot);
+        };
+        BitVector narrowedKeys;
+        narrowedKeys.ensureSize(program.types.numberOfPropertyKeys());
+        for (const CandidateWithKey& candidate : candidatesByKey) {
+            if (isNarrowed(candidate.field, rowOf(candidate.field)))
+                narrowedKeys.quickSet(candidate.key.index());
+        }
         accesses[NamedAccess].removeAllMatching([&](ValueReference reference) {
-            bool isNarrowed = false;
+            if (storesIntoAnyObject(reference))
+                return !narrowedKeys.quickGet(valueAt(reference).key().index());
+            bool reachesNarrowedCandidate = false;
             forEachCandidateOf(reference, [&](FieldReference field, uint32_t row) {
-                const FieldFlow& flow = flowOf(program, field);
-                isNarrowed |= states[row].canDefer() && isFilledByEveryAllocation(field) && flow.occupancy != Occupancy::AlwaysFilled && flow.stability.containsAll(stabilityOfFilledSlot);
+                reachesNarrowedCandidate |= isNarrowed(field, row);
             });
-            return !isNarrowed;
+            return !reachesNarrowedCandidate;
         });
         accesses[KeyOrderTest].removeAllMatching([&](ValueReference reference) {
             const ClosureEnvironmentField* field = findEnvironmentField(valueAt(reference).layout());
@@ -1316,6 +1406,7 @@ struct DeferralAnalysis {
         findAccesses();
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
+        rejectFieldsOfExpectedLayoutsReadByWarmCode();
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
@@ -1326,6 +1417,7 @@ struct DeferralAnalysis {
     }
 
     const Program& program;
+    const Heat& heat;
     BuildContext& build;
     Vector<uint32_t> functionsBySize = largeFunctions(program, build.parallelLoops());
     // A class and the classes below it have one row for a field: that of the class that declares it.
@@ -1336,6 +1428,7 @@ struct DeferralAnalysis {
     Vector<ClosureFieldFreshObject> objects { };
     Vector<ClosureStore> closureStores { };
     Vector<FieldReference> candidates { };
+    Vector<CandidateWithKey> candidatesByKey { };
     BitVector keysOfCandidates { };
     BitVector layoutsWithCandidates { };
     BitVector layoutsAllocatedOnlyByOperations { };
@@ -1661,7 +1754,7 @@ static void applyDeferrals(ProgramEditor& editor, BuildContext& build, const Def
         if (!entry.isNew)
             continue;
         Field field;
-        field.declared = DeclaredType { .type = entry.type, .flags = { PositionFlags::IsFromCompiler } };
+        field.declared = DeclaredType(Proven::byPosition(entry.type)).with(PositionFlags::IsFromCompiler);
         field.flags = { FieldFlags::IsRequired, FieldFlags::IsHidden, FieldFlags::IsAddedLate };
         field.flow.location.initialization = InitializationState::SetAtCreation;
         field.flow.occupancy = Occupancy::AlwaysFilled;
@@ -1781,7 +1874,7 @@ static void joinClosuresOfArms(const AnalysisContext& context, Function& functio
     compactFunction(function);
 }
 
-void deferClosuresInFields(ProgramEditor& editor, BuildContext& build)
+void deferClosuresInFields(ProgramEditor& editor, const Heat& heat, BuildContext& build)
 {
     if (build.recordedOptions().useWideReferences())
         return;
@@ -1799,7 +1892,7 @@ void deferClosuresInFields(ProgramEditor& editor, BuildContext& build)
         });
     }
 
-    DeferralAnalysis analysis { program, build };
+    DeferralAnalysis analysis { program, heat, build };
     analysis.run();
     if (analysis.numberOfDeferringFields)
         applyDeferrals(editor, build, analysis);
@@ -2313,9 +2406,12 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
     auto becomeReadOfData = [&](ValueID id, Opcode operation, DataID data) -> Value& {
         Value& value = function.edit(id);
         AllocationSiteID allocationSite = value.allocationSite();
+        ArrayStorage arrayStorage = operation == Opcode::Data ? value.arrayStorage() : ArrayStorage::Other;
         value.become(operation);
         value.setData(data);
         value.setAllocationSite(allocationSite);
+        if (operation == Opcode::Data)
+            value.setArrayStorage(arrayStorage);
         value.type = resultTypeOf(context.program, function, value, types);
         return value;
     };

@@ -20,6 +20,7 @@
 #include "AOTCompactTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
@@ -30,6 +31,7 @@
 #include "AOTImageLoading.h"
 #include "AOTLimits.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTModuleHost.h"
 #include "AOTModuleRecord.h"
 #include "AOTModules.h"
 #include "AOTNativeCallValidation.h"
@@ -55,8 +57,10 @@
 #include "AOTStubEntrypoints.h"
 #include "AOTStubFrontEnds.h"
 #include "AOTStubsExceptions.h"
+#include "AOTThreshold.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AddressSpaceBudget.h"
 #include "DeferGC.h"
 #include "ErrorConstructor.h"
 #include "FastMarkAppender.h"
@@ -104,6 +108,12 @@
 #if OS(LINUX)
 #include <errno.h>
 #include <sys/mman.h>
+#endif
+
+#if USE(MIMALLOC)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <bmalloc/mimalloc.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 namespace JSC { namespace AOT {
@@ -172,6 +182,10 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     prefix.one = 1;
     prefix.pureNaN = PNaN;
     prefix.minInt64 = std::numeric_limits<int64_t>::min();
+    prefix.minIntegerAddedTo = minIntegerAddedTo;
+    prefix.maxIntegerAddedTo = maxIntegerAddedTo;
+    prefix.distanceOfIntegersAddedToFromZero = -minIntegerAddedTo;
+    prefix.spanOfIntegersAddedTo = maxIntegerAddedTo - minIntegerAddedTo;
     prefix.doubleEncodeOffset = JSValue::DoubleEncodeOffset;
     prefix.boxedOne = JSValue::encode(jsNumber(1));
     prefix.undefinedInteger = undefinedInteger;
@@ -303,6 +317,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
+    words.extraPropertiesWithElementsStructure = Structure::nonPropertyTransition(vm, words.emptyExtraPropertiesStructure, TransitionKind::AllocateContiguous, nullptr);
+    words.headerOfExtraPropertiesWithElements = cellHeaderFor(words.extraPropertiesWithElementsStructure);
     words.boundFunctionClassInfo = JSBoundFunction::info();
     words.objectPrototype = realm->objectPrototype();
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
@@ -325,9 +341,24 @@ static void* loopPollPage(Instance* instance)
 }
 #endif
 
+void makeCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
+{
+    StackManager::Mirror& limit = instance.callsByValue.limit.get();
+    if (!limit.isOnList())
+        return;
+    instance.callsByValue.isRenamedAtRunTime = isRenamedAtRunTime;
+    // No change of the limit of the stack reaches the word any more.
+    instance.vm->traps().unregisterMirror(limit);
+    *std::bit_cast<uintptr_t*>(std::bit_cast<uintptr_t>(&limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()) = std::numeric_limits<uintptr_t>::max();
+}
+
 static void registerStackMirror(Instance* instance, VM& vm)
 {
     vm.traps().registerMirror(instance->stackMirror.get());
+    vm.traps().registerMirror(instance->jsonLevels.limit.get());
+    vm.traps().registerMirror(instance->callsByValue.limit.get());
+    if (FunctionTables* tables = vm.aotState().functionTables.get(); tables && tables->recordsCalleesOfCallsByValue())
+        makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
 #if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     Locker locker { loopPollPages.lock };
@@ -347,6 +378,9 @@ static void unregisterStackMirror(Instance* instance, VM& vm)
         loopPollPages.pages.removeFirst(loopPollPage(instance));
     }
 #endif
+    if (instance->callsByValue.limit.get().isOnList())
+        vm.traps().unregisterMirror(instance->callsByValue.limit.get());
+    vm.traps().unregisterMirror(instance->jsonLevels.limit.get());
     vm.traps().unregisterMirror(instance->stackMirror.get());
 }
 
@@ -448,6 +482,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
     instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
+    instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
     fillInstanceClassInfos(*instance);
@@ -458,6 +493,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     {
         Locker locker { vmState.instancesLock };
         vmState.instances.append(instance);
+        vmState.didChangeInstances();
     }
     vmState.propertyCaches->didCreateInstance(*instance);
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
@@ -465,6 +501,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->tableAt<uint8_t>(InstanceLayout::offsetOfWordsWrittenOnce), InstanceLayout::offsetOfKeyOrderSteps - InstanceLayout::offsetOfWordsWrittenOnce, true, false);
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
+    releaseUnusedPagesOfThread();
     return instance;
 }
 
@@ -475,6 +512,7 @@ void Instance::destroy(Instance* instance)
     {
         Locker locker { vmState.instancesLock };
         vmState.instances.removeFirst(instance);
+        vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
     }
     vmState.counters->add(instance->runtime.counters);
@@ -673,11 +711,29 @@ struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)
 };
 #endif
 
+// A leaf that preserves most registers is handed characters and numbers and no instance.
+static constexpr bool isCalledWithoutCollection(Entry entry)
+{
+    std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation) && !featureOf(entry);
+}
+
+// What takes the pending exception runs the collection that throwing put off.
+static_assert(!isCalledWithoutCollection(Entry::operationAOTCatch) && !isCalledWithoutCollection(Entry::operationAOTCatchException) && !isCalledWithoutCollection(Entry::operationAOTCatchValueAndException));
+
+template<Entry entry, auto operation>
+static constexpr auto functionInTable = [] {
+    if constexpr (isCalledWithoutCollection(entry))
+        return CallWithoutCollection<operation>::call;
+    else
+        return operation;
+}();
+
 template<bool countsCalls>
 static void fillOperations(void** entries)
 {
 #define AOT_FILL_OPERATION(name) \
-    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, &name, std::remove_pointer_t<decltype(&name)>>::call : &name>();
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, functionInTable<Entry::name, &name>, std::remove_pointer_t<decltype(&name)>>::call : functionInTable<Entry::name, &name>>();
 #define AOT_FILL_SCHEMA_OPERATION(name) AOT_FILL_OPERATION(operationAOT##name)
 #define AOT_TRAP_ENTRY(name) \
     entries[static_cast<unsigned>(Entry::name)] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
@@ -815,6 +871,13 @@ const Identifier& RuntimeTable::nameOfApplyTrap(VM& vm)
     return m_nameOfApplyTrap;
 }
 
+size_t StructuresWithFastIndexing::removeDeadEntries(VM& vm, CollectionScope)
+{
+    return m_structures.removeAllMatching([&](Structure* structure) {
+        return !vm.heap.isMarked(structure);
+    });
+}
+
 VMState::VMState() = default;
 
 VMState::~VMState()
@@ -834,6 +897,7 @@ void VMState::attachImage(VM& vm)
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
     caches = makeUnique<CacheRegistry>();
+    caches->add(CacheKind::WeakByKey, "structures with fast indexing"_s, structuresWithFastIndexing);
     counters = makeUniqueWithoutFastMallocCheck<RuntimeCounters>();
     hasCompiledCode = true;
     vm.setMayHaveUncacheableTransitions();
@@ -907,7 +971,7 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
 {
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;
     static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
-    static constexpr unsigned maxDraws = 16;
+    AOT_THRESHOLD(unsigned, maxDraws, 16);
     if (bytes >= highestRandomAddress - lowestRandomAddress)
         return nullptr;
     if (WTF::isAddressRandomizationDisabled())
@@ -926,13 +990,206 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
 }
 #endif
 
-void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+#if OS(LINUX)
+static bool canMap(size_t bytes)
 {
+    void* pages = mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (pages == MAP_FAILED)
+        return false;
+    munmap(pages, bytes);
+    return true;
+}
+
+AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<const size_t> stepsOfAllocator)
+{
+    AddressSpaceToStart result;
+    result.left = addressSpaceLeft();
+    if (result.left == std::numeric_limits<size_t>::max())
+        return result;
+    result.needed = addressSpaceToStart(sizeOfProgram);
+    result.isRefused = !canMap(result.needed);
+    if (result.isRefused)
+        return result;
+    // Beside a step of the allocator there is room for as much again: the cells, tables and stacks of threads.
+    for (size_t step : stepsOfAllocator) {
+        if (canMap(step + std::max(step, addressSpaceToStartBesideAllocations()))) {
+            result.largestStepOfAllocator = step;
+            return result;
+        }
+    }
+    result.largestStepOfAllocator = 0;
+    return result;
+}
+#else
+AddressSpaceToStart askForAddressSpaceToStart(size_t, std::span<const size_t>) { return { }; }
+#endif
+
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static thread_local uint8_t* t_pagesOfThread;
+static thread_local size_t t_sizeOfPagesOfThread;
+static thread_local bool t_isStarting;
+static std::atomic<unsigned> s_numberOfThreadsStarting;
+
+// The thread may run another image of the executable than the thread that starts it. What its tables need beyond these pages they get as they do without them.
+static size_t sizeOfPagesForNewThread(const Image& image)
+{
+    AOT_THRESHOLD(size_t, sizeOfSmallTables, 512 * KB);
+    auto [below, above] = reservationSizes(image);
+    return roundUpToMultipleOf(pageSize(), VMPropertyCaches::maxSizeOfPagesAtStart(image) + below + above + arenaCapacity(image.programTables()) + sizeOfSmallTables);
+}
+
+// The allocator keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread. So does a heap.
+// Other threads allocate meanwhile, so it stops where less than this much address space is left, and it reads what is left: to map as much would take it from them.
+static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
+{
+#if USE(MIMALLOC)
+    struct Pages {
+        size_t size;
+        unsigned count;
+    };
+    // What a thread takes until the first statement of a small program runs. The largest come last: by then the small ones have divided what is free.
+    AOT_THRESHOLD(Pages, pagesOfThread[], { { 64 * KB, 40 }, { 512 * KB, 8 }, { 4 * MB, 2 } });
+    AOT_THRESHOLD(unsigned, piecesInPage, 7);
+    AOT_THRESHOLD(size_t, alignmentOfPages, 64 * KB);
+    // It asks the system for an arena whenever its arenas are full, and each time it is refused it goes on at addresses far from the last.
+    AOT_THRESHOLD(size_t, smallestStep, 128 * MB);
+    static const size_t largestStep = mi_option_get_size(mi_option_arena_reserve);
+    size_t left = addressSpaceLeft();
+    size_t step = largestStep + sizeToLeaveFree <= left ? largestStep : largestStep > smallestStep && smallestStep + sizeToLeaveFree <= left ? smallestStep : 0;
+    mi_option_set(mi_option_arena_reserve, step / KB);
+
+    size_t sizeOfPagesOfThread = 0;
+    for (auto [size, count] : pagesOfThread)
+        sizeOfPagesOfThread += count * (size + alignmentOfPages);
+    if (numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree <= left)
+        return true;
+
+    mi_heap_t* heap = mi_heap_new();
+    if (!heap)
+        return false;
+    bool hasRoom = true;
+    for (unsigned thread = 0; thread < numberOfThreads; ++thread) {
+        for (auto [size, count] : pagesOfThread) {
+            for (unsigned page = 0; hasRoom && page < count; ++page) {
+                for (unsigned piece = 0; hasRoom && piece < piecesInPage; ++piece)
+                    hasRoom = !!mi_heap_malloc(heap, size / (piecesInPage + 1));
+                hasRoom = hasRoom && addressSpaceLeft() >= sizeToLeaveFree;
+            }
+        }
+    }
+    mi_heap_destroy(heap);
+    return hasRoom;
+#else
+    UNUSED_PARAM(numberOfThreads);
+    UNUSED_PARAM(sizeToLeaveFree);
+    return true;
+#endif
+}
+
+// Until a thread adopts them the pages begin with their size.
+static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads, size_t sizeToLeaveFree)
+{
+    if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
+        return nullptr;
+    size_t size = sizeOfPagesForNewThread(image);
+    if (addressSpaceLeft() < size + sizeToLeaveFree)
+        return nullptr;
+    void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
+    if (pages)
+        *static_cast<size_t*>(pages) = size;
+    return pages;
+}
+
+PagesForNewThread tryReservePagesForFirstThread()
+{
+    const Image* image = Image::current();
+    if (!hasAddressSpaceLimit() || !image)
+        return { };
+    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting, 0);
+    if (!pages)
+        --s_numberOfThreadsStarting;
+    return { pages, !pages };
+}
+
+PagesForNewThread tryReservePagesForNewThread()
+{
+    // The stack of the thread, and what the threads that run take meanwhile.
+    AOT_THRESHOLD(size_t, sizeToLeaveFree, 10 * MB);
+    const Image* image = Image::current();
+    if (!hasAddressSpaceLimit() || !image)
+        return { };
+    unsigned numberOfThreads = ++s_numberOfThreadsStarting;
+    void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
+    if (!pages) {
+        --s_numberOfThreadsStarting;
+        return { nullptr, true };
+    }
+    if (!tryEnsureRoomInAllocator(numberOfThreads, sizeToLeaveFree)) {
+        releasePagesForNewThread(pages);
+        return { nullptr, true };
+    }
+    return { pages, false };
+}
+
+void releasePagesForNewThread(void* pages)
+{
+    if (!pages)
+        return;
+    OSAllocator::releaseDecommitted(pages, *static_cast<size_t*>(pages), 0);
+    --s_numberOfThreadsStarting;
+}
+
+void adoptPagesForNewThread(void* pages)
+{
+    RELEASE_ASSERT(!t_pagesOfThread);
+    t_pagesOfThread = static_cast<uint8_t*>(pages);
+    t_sizeOfPagesOfThread = pages ? std::exchange(*static_cast<size_t*>(pages), 0) : 0;
+    t_isStarting = !!pages;
+}
+
+void releaseUnusedPagesOfThread()
+{
+    if (t_sizeOfPagesOfThread)
+        OSAllocator::releaseDecommitted(t_pagesOfThread, t_sizeOfPagesOfThread, 0);
+    t_pagesOfThread = nullptr;
+    t_sizeOfPagesOfThread = 0;
+    if (std::exchange(t_isStarting, false))
+        --s_numberOfThreadsStarting;
+}
+
+static void* tryTakePagesOfThread(size_t bytes)
+{
+    bytes = roundUpToMultipleOf(pageSize(), bytes);
+    if (bytes > t_sizeOfPagesOfThread)
+        return nullptr;
+    t_sizeOfPagesOfThread -= bytes;
+    return std::exchange(t_pagesOfThread, t_pagesOfThread + bytes);
+}
+#else
+PagesForNewThread tryReservePagesForFirstThread() { return { }; }
+PagesForNewThread tryReservePagesForNewThread() { return { }; }
+void releasePagesForNewThread(void*) { }
+void adoptPagesForNewThread(void*) { }
+void releaseUnusedPagesOfThread() { }
+static void* tryTakePagesOfThread(size_t) { return nullptr; }
+#endif
+
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+{
+    if (void* pages = tryTakePagesOfThread(bytes))
+        return pages;
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
     if (void* pages = tryReserveGuardedPagesAtRandomAddress(bytes, usage))
         return pages;
 #endif
-    return OSAllocator::reserveAndCommit(bytes, usage, nullptr, true, false, false, guardPagesOnEachEnd);
+    return OSAllocator::tryReserveAndCommit(bytes, usage, nullptr, true, false, false, guardPagesOnEachEnd);
+}
+
+void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+{
+    void* pages = tryReserveGuardedPages(bytes, usage);
+    RELEASE_ASSERT(pages, bytes);
+    return pages;
 }
 
 void releaseGuardedPages(void* pages, size_t bytes)

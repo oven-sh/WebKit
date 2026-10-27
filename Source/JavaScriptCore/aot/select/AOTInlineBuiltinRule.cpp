@@ -117,6 +117,8 @@ static void fillInlineCall(Entry& entry, const Program& program, const Value& or
     entry.setArgumentsOperands(original.argumentsOperands());
     entry.setAccessSite(original.accessSite());
     entry.setAllocationSite(original.allocationSite());
+    if constexpr (std::same_as<Entry, Value>)
+        entry.setIsDoneInPlace(original.isDoneInPlace());
 }
 
 std::optional<InlineBuiltinSite> findInlineBuiltinSite(SelectionContext& context, ValueID id)
@@ -182,7 +184,6 @@ static void rewriteInlineCall(const Program& program, GroupRewriter& rewriter, c
             rewriter.builder().demoteReturnCall(rewriter.rootBlock());
         Value& inlineCall = rewriter.replaceRoot(Opcode::CallInline);
         fillInlineCall(inlineCall, program, original, match.builtin);
-        inlineCall.setIsDemotedTailCall(original.isDemotedTailCall());
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();

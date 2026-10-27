@@ -47,49 +47,15 @@ struct SiteCheckpoint {
 };
 static_assert(sizeof(SiteCheckpoint) == 12 && sizeof(SiteCheckpoint::position) == 4 && sizeof(SiteCheckpoint::frame) == 4);
 
-struct HeadWord {
-    uint64_t encode() const { return numberOfSites << 3 | hasPrologueChecks << 2 | hasInlineFrames << 1; }
-    static HeadWord decode(uint64_t word) { return { word >> 3, !!(word & 4), !!(word & 2) }; }
-
-    uint64_t numberOfSites;
-    bool hasPrologueChecks;
-    bool hasInlineFrames;
-};
-
-struct InlineFrameWord {
-    uint64_t encode() const { return static_cast<uint64_t>(parent) << 2 | isConstruct << 1 | isTailCall; }
-    static InlineFrameWord decode(uint64_t word) { return { static_cast<unsigned>(word >> 2), !!(word & 2), !!(word & 1) }; }
-
-    unsigned parent;
-    bool isConstruct;
-    bool isTailCall;
-};
-
-// The frame applies until the next site with details. The three flags apply to this site only.
-struct SiteDetails {
-    uint64_t encode() const { return static_cast<uint64_t>(frame) << 3 | isFirstRead << 2 | isTailCall << 1 | isConstruct; }
-    static SiteDetails decode(uint64_t word) { return { static_cast<unsigned>(word >> 3), !!(word & 4), !!(word & 2), !!(word & 1) }; }
-
-    unsigned frame;
-    bool isFirstRead;
-    bool isTailCall;
-    bool isConstruct;
-};
-
 struct SiteWithCode {
     uint32_t returnOffset;
     uint32_t site;
     bool isFirstRead;
 };
 
-struct StreamHead {
+struct StreamHead : CallSiteHead {
     const uint8_t* sites() const { return checkpoints + SiteCheckpoint::numberFor(numberOfSites) * sizeof(SiteCheckpoint); }
 
-    uint64_t numberOfSites { 0 };
-    Vector<std::pair<uint32_t, uint32_t>, 1> prologueChecks;
-    uint64_t numberOfSitesWithoutCode { 0 };
-    uint64_t numberOfInlineFrames { 0 };
-    const uint8_t* inlineFrames { nullptr };
     const uint8_t* checkpoints { nullptr };
 };
 
@@ -122,6 +88,9 @@ static Vector<SiteWithCode, 32> collectReturnSites(const CompiledCode& code)
     });
     RELEASE_ASSERT(firstReadSites.empty());
     AOT::stableSort(returnSites, { }, &SiteWithCode::returnOffset);
+    // findCallSite() hands a return address the site in front of it only if that site says nothing but where it is.
+    for (size_t i = 1; i < returnSites.size(); ++i)
+        RELEASE_ASSERT(returnSites[i].site != returnSites[i - 1].site || !std::ranges::binary_search(code.sites.flaggedSites, returnSites[i].site, { }, &FlaggedSite::site));
     returnSites.shrink(std::ranges::unique(returnSites, { }, &SiteWithCode::site).begin() - returnSites.begin());
     return returnSites;
 }
@@ -146,7 +115,6 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
     for (auto [offset, site, isFirstRead] : returnSites) {
         ++number;
         RELEASE_ASSERT(site == number);
-        RELEASE_ASSERT(!(offset % codeOffsetUnit));
         RELEASE_ASSERT(previousIsFirstRead ? offset == previousOffset : offset > previousOffset);
         if (writtenCount && !(writtenCount % SiteCheckpoint::sitesBetween)) {
             SiteCheckpoint checkpoint { static_cast<uint32_t>(previousOffset / codeOffsetUnit), static_cast<uint32_t>(siteBytes.size()), previousFrame };
@@ -157,13 +125,17 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
         RELEASE_ASSERT(frame <= numberOfInlineFrames);
         while (!flaggedSites.empty() && flaggedSites.front().site < number)
             flaggedSites = flaggedSites.subspan(1);
-        OptionSet<SiteFlag> flags;
-        if (!flaggedSites.empty() && flaggedSites.front().site == number)
-            flags = flaggedSites.front().flags;
-        bool hasDetails = frame != previousFrame || isFirstRead || !flags.isEmpty();
-        appendVarint(siteBytes, static_cast<uint64_t>((offset - previousOffset) / codeOffsetUnit) << 1 | hasDetails);
-        if (hasDetails)
-            appendVarint(siteBytes, SiteDetails { frame, isFirstRead, flags.contains(SiteFlag::IsTailCall), flags.contains(SiteFlag::Constructs) }.encode());
+        CallSiteRow row { .distance = offset - previousOffset };
+        if (isFirstRead)
+            row.details.kind = CallSiteKind::FirstRead;
+        else if (!flaggedSites.empty() && flaggedSites.front().site == number) {
+            row.details.kind = flaggedSites.front().kind;
+            row.details.calledBuiltin = flaggedSites.front().calledBuiltin;
+        }
+        row.hasDetails = frame != previousFrame || row.details.kind != CallSiteKind::Plain;
+        if (row.hasDetails)
+            row.details.frame = frame;
+        row.append(siteBytes);
         previousOffset = offset;
         previousFrame = frame;
         previousIsFirstRead = isFirstRead;
@@ -187,34 +159,28 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
     if (returnSites.isEmpty() && prologueChecks.empty())
         return;
 
-    bool hasInlineFrames = sites.hasEncodedInlineFrames();
-    appendVarint(stream, HeadWord { returnSites.size(), !prologueChecks.empty(), hasInlineFrames }.encode());
-    if (!prologueChecks.empty()) {
-        appendVarint(stream, prologueChecks.size());
-        std::optional<uint32_t> previousCallOffset;
-        for (const PrologueCheck& check : prologueChecks) {
-            RELEASE_ASSERT(!(check.callOffset % codeOffsetUnit) && !(check.resumeOffset % codeOffsetUnit));
-            RELEASE_ASSERT(!previousCallOffset || *previousCallOffset < check.callOffset);
-            appendVarint(stream, check.callOffset / codeOffsetUnit);
-            appendVarint(stream, check.resumeOffset / codeOffsetUnit);
-            previousCallOffset = check.callOffset;
-        }
+    CallSiteHead head;
+    head.numberOfSites = returnSites.size();
+    head.hasPrologueChecks = !prologueChecks.empty();
+    for (const PrologueCheck& check : prologueChecks) {
+        RELEASE_ASSERT(head.prologueChecks.isEmpty() || head.prologueChecks.last().callOffset < check.callOffset);
+        head.prologueChecks.append({ .callOffset = check.callOffset, .resumeOffset = check.resumeOffset });
     }
-    appendVarint(stream, sites.numberOfSitesWithoutCode);
-    if (hasInlineFrames) {
+    head.numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
+    Vector<uint8_t> frames;
+    if (sites.hasEncodedInlineFrames()) {
         const Vector<InlineFrame>& inlineFrames = sites.inlineFrames;
         RELEASE_ASSERT(inlineFrames.size() - 1 <= sites.numberOfSitesWithoutCode);
-        Vector<uint8_t> frames;
         for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
             RELEASE_ASSERT(inlineFrames[frame].parent < frame);
             RELEASE_ASSERT(inlineFrames[frame].callSite == sites.numberOfSitesWithoutCode - (inlineFrames.size() - 1) + frame);
-            appendVarint(frames, InlineFrameWord { inlineFrames[frame].parent, inlineFrames[frame].isConstruct, inlineFrames[frame].isTailCall }.encode());
-            appendVarint(frames, code.body.callees[inlineFrames[frame].callee].index());
+            InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = code.body.callees[inlineFrames[frame].callee] }.append(frames);
         }
-        appendVarint(stream, inlineFrameCount(sites));
-        appendVarint(stream, frames.size());
-        stream.appendVector(frames);
+        head.hasInlineFrames = true;
+        head.numberOfInlineFrames = inlineFrameCount(sites);
+        head.inlineFrames = frames.span();
     }
+    head.append(stream);
     appendSites(stream, code, returnSites.span());
 }
 
@@ -243,64 +209,62 @@ Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, BuildC
 
 static StreamHead readHead(const uint8_t* cursor)
 {
-    HeadWord word = HeadWord::decode(readVarint(cursor));
-    StreamHead head;
-    head.numberOfSites = word.numberOfSites;
-    if (word.hasPrologueChecks) {
-        for (uint64_t count = readVarint(cursor); count--;) {
-            uint32_t callOffset = static_cast<uint32_t>(readVarint(cursor) * codeOffsetUnit);
-            uint32_t resumeOffset = static_cast<uint32_t>(readVarint(cursor) * codeOffsetUnit);
-            head.prologueChecks.append(std::pair { callOffset, resumeOffset });
-        }
-    }
-    head.numberOfSitesWithoutCode = readVarint(cursor);
-    if (word.hasInlineFrames) {
-        head.numberOfInlineFrames = readVarint(cursor);
-        uint64_t size = readVarint(cursor);
-        head.inlineFrames = cursor;
-        cursor += size;
-    }
+    StreamHead head { CallSiteHead::read(cursor) };
     head.checkpoints = cursor;
     return head;
 }
 
-static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
+static const uint8_t* findCallSites(const Image& image, uint32_t function)
 {
     const ImageFunction& record = image.function(function);
     if (!record.has(ImageFunctionFlag::HasCallSites))
+        return nullptr;
+    return SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites;
+}
+
+static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
+{
+    const uint8_t* callSites = findCallSites(image, function);
+    if (!callSites)
         return std::nullopt;
-    return readHead(SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites);
+    return readHead(callSites);
 }
 
 void InlineFrameReader::read(const Image& image, uint32_t function, unsigned last)
 {
     std::optional<StreamHead> head = readHead(image, function);
     RELEASE_ASSERT(head && last && last <= head->numberOfInlineFrames);
-    const uint8_t* cursor = head->inlineFrames;
+    const uint8_t* cursor = head->inlineFrames.data();
     m_image = &image;
     m_function = function;
     m_frames.shrink(0);
     m_frames.reserveCapacity(last);
     for (unsigned frame = 1; frame <= last; ++frame) {
-        InlineFrameWord word = InlineFrameWord::decode(readVarint(cursor));
+        InlineFrameRow row = InlineFrameRow::read(cursor);
         uint32_t callSite = static_cast<uint32_t>(head->numberOfSitesWithoutCode - head->numberOfInlineFrames + frame);
-        uint32_t callee = static_cast<uint32_t>(readVarint(cursor));
-        RELEASE_ASSERT(word.parent < frame);
-        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { word.parent, CallSiteIndex(callSite), FunctionID(callee), word.isConstruct, word.isTailCall });
+        RELEASE_ASSERT(row.parent < frame);
+        m_frames.unsafeAppendWithoutCapacityCheck(InlineFrameRecord { row, CallSiteIndex(callSite) });
     }
 }
 
 SiteFrames::SiteFrames(const Image& image, uint32_t function)
+    : SiteFrames(findCallSites(image, function))
 {
-    std::optional<StreamHead> head = readHead(image, function);
-    if (!head || !head->numberOfSites)
+}
+
+SiteFrames::SiteFrames(const uint8_t* callSites)
+{
+    if (!callSites)
         return;
-    m_remainingInlineFrames = head->numberOfInlineFrames;
-    m_inlineFrames = head->inlineFrames;
-    RELEASE_ASSERT(m_remainingInlineFrames <= head->numberOfSitesWithoutCode);
-    m_remainingSuspensionSites = head->numberOfSitesWithoutCode - m_remainingInlineFrames;
-    m_remainingSitesWithCode = head->numberOfSites;
-    m_sites = head->sites();
+    StreamHead head = readHead(callSites);
+    if (!head.numberOfSites)
+        return;
+    m_remainingInlineFrames = head.numberOfInlineFrames;
+    m_inlineFrames = head.inlineFrames.data();
+    RELEASE_ASSERT(m_remainingInlineFrames <= head.numberOfSitesWithoutCode);
+    m_remainingSuspensionSites = head.numberOfSitesWithoutCode - m_remainingInlineFrames;
+    m_remainingSitesWithCode = head.numberOfSites;
+    m_sites = head.sites();
 }
 
 unsigned SiteFrames::next()
@@ -311,15 +275,14 @@ unsigned SiteFrames::next()
     }
     if (m_remainingInlineFrames) {
         --m_remainingInlineFrames;
-        unsigned parent = InlineFrameWord::decode(readVarint(m_inlineFrames)).parent;
-        readVarint(m_inlineFrames);
-        return parent;
+        return InlineFrameRow::read(m_inlineFrames).parent;
     }
     if (!m_remainingSitesWithCode)
         return 0;
     --m_remainingSitesWithCode;
-    if (readVarint(m_sites) & 1)
-        m_frame = SiteDetails::decode(readVarint(m_sites)).frame;
+    CallSiteRow row = CallSiteRow::read(m_sites);
+    if (row.hasDetails)
+        m_frame = row.details.frame;
     return m_frame;
 }
 
@@ -378,29 +341,27 @@ static std::optional<CallSiteRecord> findCallSite(const StreamHead* head, uint32
     unsigned frameInFront = 0;
     std::optional<CallSiteIndex> firstReadSite;
     while (count--) {
-        uint64_t word = readVarint(cursor);
-        offset += (word >> 1) * codeOffsetUnit;
-        SiteDetails details { frame, false, false, false };
-        if (word & 1)
-            details = SiteDetails::decode(readVarint(cursor));
-        frame = details.frame;
+        CallSiteRow row = CallSiteRow::read(cursor);
+        offset += row.distance;
+        if (row.hasDetails)
+            frame = row.details.frame;
         ++number;
         if (offset > returnOffset)
             break;
         if (offset < returnOffset) {
-            hasSiteInFront = !details.isFirstRead && !details.isConstruct && !details.isTailCall;
+            hasSiteInFront = row.details.kind == CallSiteKind::Plain;
             numberInFront = number;
             frameInFront = frame;
             continue;
         }
         CallSiteIndex callSite(static_cast<uint32_t>(number));
-        if (!details.isFirstRead)
-            return CallSiteRecord { callSite, frame, details.isConstruct, details.isTailCall, firstReadSite };
+        if (row.details.kind != CallSiteKind::FirstRead)
+            return CallSiteRecord { callSite, frame, row.details.kind, row.details.calledBuiltin, firstReadSite };
         firstReadSite = callSite;
     }
     if (!hasSiteInFront)
         return std::nullopt;
-    return CallSiteRecord { CallSiteIndex(static_cast<uint32_t>(numberInFront)), frameInFront, false, false, std::nullopt };
+    return CallSiteRecord { CallSiteIndex(static_cast<uint32_t>(numberInFront)), frameInFront };
 }
 
 std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t returnOffset) const
@@ -409,6 +370,14 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     if (!head)
         return std::nullopt;
     return findCallSite(&*head, returnOffset);
+}
+
+bool Image::callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex site) const
+{
+    const ImageFunction& record = this->function(function);
+    if (!record.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) [[likely]]
+        return false;
+    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).callsOwnFunctionObjectAt(site.bits());
 }
 
 ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
@@ -456,8 +425,6 @@ void* resumeAddressAfterStackCheck(const void* returnAddress)
 static_assert(!static_cast<uint8_t>(HandlerType::Catch) && static_cast<uint8_t>(HandlerType::Finally) == 1 && static_cast<uint8_t>(HandlerType::SynthesizedCatch) == 2 && static_cast<uint8_t>(HandlerType::SynthesizedFinally) == 3);
 static_assert(std::endian::native == std::endian::little);
 
-static constexpr unsigned bitsPerType = 2;
-static constexpr uint8_t typeMask = (1 << bitsPerType) - 1;
 static constexpr uint8_t takesExceptionBit = 1 << 0;
 static constexpr uint8_t ignoresValueBit = 1 << 1;
 
@@ -474,9 +441,7 @@ void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler> handler
         for (; !handlers.empty() && handlers.front().site == end && handlers.front().codeOffset == target && handlers.front().type == type; handlers = handlers.subspan(1))
             ++end;
         RELEASE_ASSERT(start >= endOfLast && end > start);
-        appendVarint(bytes, start - endOfLast);
-        appendVarint(bytes, end - start - 1);
-        appendVarint(bytes, zigZagEncode(target - targetOfLast) << bitsPerType | static_cast<uint8_t>(type));
+        HandlerRow { .sitesSkipped = start - endOfLast, .furtherSites = end - start - 1, .type = type, .targetChange = target - targetOfLast }.append(bytes);
         endOfLast = end;
         targetOfLast = target;
     }
@@ -489,14 +454,14 @@ std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, Call
     uint64_t endOfLast = 0;
     int64_t target = 0;
     while (cursor < end) {
-        uint64_t start = endOfLast + readVarint(cursor);
-        endOfLast = start + readVarint(cursor) + 1;
-        uint64_t word = readVarint(cursor);
-        target += zigZagDecode(word >> bitsPerType);
+        HandlerRow row = HandlerRow::read(cursor);
+        uint64_t start = endOfLast + row.sitesSkipped;
+        endOfLast = start + row.furtherSites + 1;
+        target += row.targetChange;
         if (site.bits() < start)
             return std::nullopt;
         if (site.bits() < endOfLast)
-            return HandlerRecord { static_cast<uint32_t>(target), static_cast<HandlerType>(word & typeMask) };
+            return HandlerRecord { static_cast<uint32_t>(target), row.type };
     }
     return std::nullopt;
 }
@@ -510,17 +475,13 @@ bool catchesExceptions(const Image& image, uint32_t function)
     const uint8_t* cursor = handlers.data();
     const uint8_t* end = cursor + handlers.size();
     while (cursor < end) {
-        readVarint(cursor);
-        readVarint(cursor);
-        if (HandlerRecord { 0, static_cast<HandlerType>(readVarint(cursor) & typeMask) }.catchesExceptions())
+        if (HandlerRecord { 0, HandlerRow::read(cursor).type }.catchesExceptions())
             return true;
     }
     return false;
 }
 
-static constexpr uint64_t maxLineWord = zigZagEncode(std::numeric_limits<uint32_t>::max()) << 2 | 2;
-static constexpr size_t maxPositionSize = sizeOfVarint(maxLineWord) + 2 * sizeOfVarint(std::numeric_limits<uint32_t>::max());
-static_assert(sitesBetweenPositionCheckpoints * maxPositionSize <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
+static_assert(sitesBetweenPositionCheckpoints * (2 + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
 
 namespace {
 
@@ -528,6 +489,8 @@ struct PositionState {
     int64_t line { 0 };
     int64_t column { 0 };
     uint32_t source { 0 };
+    LineColumn constructionStart { 0, 0 };
+    bool startIsForCallers { false };
 };
 
 struct PositionsEntry {
@@ -545,6 +508,8 @@ struct RememberedPosition {
     uint32_t line;
     uint32_t column;
     uint32_t sourcePlusOne;
+    LineColumn constructionStart;
+    bool startIsForCallers;
 };
 
 } // anonymous namespace
@@ -557,14 +522,31 @@ static uint32_t sourceNumber(const SitePosition& position)
 static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const SitePosition& position)
 {
     uint32_t source = sourceNumber(position);
-    if (position.line == last.line && source == last.source)
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.column) - last.column) << 1 | 1);
-    else {
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.line) - last.line) << 2 | (source != last.source) << 1);
-        if (source != last.source)
-            appendVarint(stream, source);
-        appendVarint(stream, position.column);
+    bool startsOnSameLine = position.constructionStartLine == position.line;
+    if (position.constructionStartLine && (startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line)) {
+        stream.append(0);
+        // No row begins with a zero: a start on another line is at least one line back.
+        if (position.startIsForCallers)
+            stream.append(0);
+        ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
+        if (startsOnSameLine)
+            start.columnsBack = position.column - position.constructionStartColumn;
+        else {
+            start.linesBack = position.line - position.constructionStartLine;
+            start.column = position.constructionStartColumn;
+        }
+        start.append(stream);
     }
+    PositionRow row { .isOnSameLine = position.line == last.line && source == last.source };
+    if (row.isOnSameLine)
+        row.columnChange = static_cast<int64_t>(position.column) - last.column;
+    else {
+        row.isInOtherSource = source != last.source;
+        row.lineChange = static_cast<int64_t>(position.line) - last.line;
+        row.source = row.isInOtherSource ? source : 0;
+        row.column = position.column;
+    }
+    row.append(stream);
     last = { position.line, position.column, source };
 }
 
@@ -573,23 +555,16 @@ OwnPosition OwnPosition::of(const SiteDescription& sites)
     return { sites.positions[0].line, sourceNumber(sites.positions[0]) };
 }
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnPosition ofFunctionInFront)
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, const uint8_t* callSites, OwnPosition ofFunctionInFront)
 {
     RELEASE_ASSERT(!sites.positions.isEmpty());
     size_t count = sites.positions.size();
     size_t numberOfInlineFrames = inlineFrameCount(sites);
     size_t numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
     RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
-    size_t numberOfSuspensionSites = numberOfSitesWithoutCode - numberOfInlineFrames;
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
-    // Has to match SiteFrames::next(), the decoder's only way to learn the frame of a site.
-    auto stateFrame = [&](size_t site) -> uint32_t {
-        if (!followsInlineFrames || site <= numberOfSuspensionSites)
-            return 0;
-        if (site <= numberOfSitesWithoutCode)
-            return sites.inlineFrames[site - numberOfSuspensionSites].parent;
-        return sites.positions[site].inlineFrame;
-    };
+    // The decoder's only way to learn the frame of a site.
+    SiteFrames frames(followsInlineFrames ? callSites : nullptr);
 
     PositionState start { sites.positions[0].line, sites.positions[0].column, sourceNumber(sites.positions[0]) };
     Vector<uint8_t> checkpoints;
@@ -600,24 +575,27 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
     for (size_t site = 1; site < count; ++site) {
         if (!(site % sitesBetweenPositionCheckpoints)) {
             size_t bytesSinceLast = positions.size() - lastRunEnd;
-            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * maxPositionSize);
+            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * (2 + ConstructionStartRow::maxSize + PositionRow::maxSize));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast >> 8));
             lastRunEnd = positions.size();
             states.fill(start);
         }
-        appendPosition(positions, states[stateFrame(site)], sites.positions[site]);
+        appendPosition(positions, states[frames.next()], sites.positions[site]);
     }
 
     bool hasCheckpoints = !checkpoints.isEmpty();
     bool isInOtherSource = start.source != ofFunctionInFront.source;
-    appendVarint(stream, static_cast<uint64_t>(checkpoints.size() + positions.size()) << 2 | hasCheckpoints << 1 | followsInlineFrames);
-    appendVarint(stream, zigZagEncode(start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line))) << 1 | isInOtherSource);
-    if (isInOtherSource)
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(start.source) - ofFunctionInFront.source));
-    appendVarint(stream, sites.positions[0].column);
-    if (hasCheckpoints)
-        appendVarint(stream, count);
+    PositionsHead {
+        .followsInlineFrames = followsInlineFrames,
+        .hasCheckpoints = hasCheckpoints,
+        .size = checkpoints.size() + positions.size(),
+        .isInOtherSource = isInOtherSource,
+        .lineChange = start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line)),
+        .sourceChange = static_cast<int64_t>(start.source) - ofFunctionInFront.source,
+        .column = sites.positions[0].column,
+        .count = hasCheckpoints ? count : 0,
+    }.append(stream);
     stream.appendVector(checkpoints);
     stream.appendVector(positions);
 }
@@ -625,21 +603,15 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
 static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionInFront)
 {
     PositionsEntry entry;
-    uint64_t sizeAndFlags = readVarint(cursor);
-    uint64_t lineWord = readVarint(cursor);
-    entry.start.source = ofFunctionInFront.source;
-    entry.start.line = ofFunctionInFront.line;
-    if (lineWord & 1) {
-        entry.start.source = static_cast<uint32_t>(ofFunctionInFront.source + zigZagDecode(readVarint(cursor)));
-        entry.start.line = 0;
-    }
-    entry.start.line += zigZagDecode(lineWord >> 1);
-    entry.start.column = static_cast<int64_t>(readVarint(cursor));
-    entry.followsInlineFrames = sizeAndFlags & 1;
-    if (sizeAndFlags & 2)
-        entry.count = readVarint(cursor);
+    PositionsHead head = PositionsHead::read(cursor);
+    entry.start.source = static_cast<uint32_t>(ofFunctionInFront.source + head.sourceChange);
+    entry.start.line = (head.isInOtherSource ? 0 : ofFunctionInFront.line) + head.lineChange;
+    entry.start.column = head.column;
+    entry.followsInlineFrames = head.followsInlineFrames;
+    if (head.hasCheckpoints)
+        entry.count = head.count;
     entry.sites = cursor;
-    entry.end = cursor + (sizeAndFlags >> 2);
+    entry.end = cursor + head.size;
     cursor = entry.end;
     ofFunctionInFront = { static_cast<uint32_t>(entry.start.line), entry.start.source };
     return entry;
@@ -647,20 +619,37 @@ static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionI
 
 static void readPosition(const uint8_t*& cursor, PositionState& state)
 {
-    uint64_t word = readVarint(cursor);
-    if (word & 1)
-        state.column += zigZagDecode(word >> 1);
-    else {
-        state.line += zigZagDecode(word >> 2);
-        if (word & 2)
-            state.source = static_cast<uint32_t>(readVarint(cursor));
-        state.column = static_cast<int64_t>(readVarint(cursor));
+    std::optional<ConstructionStartRow> start;
+    state.startIsForCallers = false;
+    if (!*cursor) {
+        ++cursor;
+        if (!*cursor) {
+            ++cursor;
+            state.startIsForCallers = true;
+        }
+        start = ConstructionStartRow::read(cursor);
     }
+    PositionRow row = PositionRow::read(cursor);
+    if (row.isOnSameLine)
+        state.column += row.columnChange;
+    else {
+        state.line += row.lineChange;
+        if (row.isInOtherSource)
+            state.source = row.source;
+        state.column = row.column;
+    }
+    state.constructionStart = { 0, 0 };
+    if (!start)
+        return;
+    if (start->isOnSameLine)
+        state.constructionStart = { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column - start->columnsBack) };
+    else
+        state.constructionStart = { static_cast<unsigned>(state.line - start->linesBack), start->column };
 }
 
 static SourcePosition sourcePositionFor(const PositionState& state)
 {
-    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID() };
+    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID(), state.constructionStart, state.startIsForCallers };
 }
 
 std::optional<SourcePosition> decodePosition(const Image& image, uint32_t function, const uint8_t* entryInSection, OwnPosition ofFunctionInFront, CallSiteIndex site)
@@ -708,7 +697,7 @@ std::optional<SourcePosition> decodePosition(const Image& image, uint32_t functi
 }
 
 static Lock rememberedPositionsLock;
-static std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock);
+static constinit std::array<RememberedPosition, 64> rememberedPositions WTF_GUARDED_BY_LOCK(rememberedPositionsLock) { };
 
 void forgetRememberedPositions()
 {
@@ -737,12 +726,15 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
     {
         Locker locker { rememberedPositionsLock };
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
-            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID() };
+            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers };
     }
-    std::optional<SourcePosition> position = findPosition(*this, function, site);
+    unsigned methodReadColumnDelta = site.bits() >> siteNumberBits;
+    std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
+    if (position && methodReadColumnDelta)
+        position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - methodReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
-        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0 };
+        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers };
     }
     return position;
 }

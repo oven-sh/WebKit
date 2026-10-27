@@ -20,7 +20,7 @@
 # CHECK-LABEL: function f2 name="Base"
 # CHECK: [[prototype]]: object = GetConstructPrototype
 # CHECK-NEXT: [[allocated]]: object = NewObject [[prototype]] layout=L0
-# CHECK-NEXT: [[proven]]: L0|L1 = AssumeType [[allocated]] castType=L0|L1
+# CHECK-NEXT: [[proven]]: L0|L1 = AssumeType [[allocated]] provenType=L0|L1
 # CHECK-NEXT: PutSlot [[proven]], -, {{*}} key="x" receivers=[L0, L1] level=Proven
 
 layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f2 fields=[{key="x" declared={type=anything}}]

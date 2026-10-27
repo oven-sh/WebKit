@@ -49,12 +49,48 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
             m_failedSwitches.append(FailedSwitch { analyses.identityOf(terminator.subjectOperand()), from, target });
     }
 
-    AOT::sort(m_failedEdges, { }, [](const FailedEdge& edge) {
-        return std::tuple { edge.opcode, edge.subject, edge.target };
-    });
+    nestFailedEdges();
     AOT::sort(m_failedSwitches, { }, [](const FailedSwitch& entry) {
         return std::pair { entry.subject, entry.target };
     });
+}
+
+void FailedTests::nestFailedEdges()
+{
+    if (m_failedEdges.isEmpty())
+        return;
+
+    Vector<uint32_t> lastNumberBelow(FillWith { }, m_function.blocks.size(), 0u);
+    m_numberInDominatorTree.fill(UINT32_MAX, m_function.blocks.size());
+    uint32_t nextNumber = 0;
+    m_analyses.dominators().walkTree([&](BlockID block) {
+        m_numberInDominatorTree[block.index()] = nextNumber++;
+    }, [&](BlockID block) {
+        lastNumberBelow[block.index()] = nextNumber - 1;
+    });
+
+    AOT::sort(m_failedEdges, { }, [&](const FailedEdge& edge) {
+        return std::tuple { edge.opcode, edge.subject, m_numberInDominatorTree[edge.target.index()] };
+    });
+
+    Vector<uint32_t, 16> open;
+    auto closeEdgesBefore = [&](uint32_t number) {
+        while (!open.isEmpty() && lastNumberBelow[m_failedEdges[open.last()].target.index()] < number) {
+            const FailedEdge& closed = m_failedEdges[open.takeLast()];
+            m_boundaries.append({ lastNumberBelow[closed.target.index()] + 1, closed.enclosing });
+        }
+    };
+    for (uint32_t index = 0; index < m_failedEdges.size(); ++index) {
+        FailedEdge& edge = m_failedEdges[index];
+        bool startsRun = !index || m_failedEdges[index - 1].opcode != edge.opcode || m_failedEdges[index - 1].subject != edge.subject;
+        uint32_t number = m_numberInDominatorTree[edge.target.index()];
+        closeEdgesBefore(startsRun ? UINT32_MAX : number);
+        if (!open.isEmpty())
+            edge.enclosing = open.last();
+        open.append(index);
+        m_boundaries.append({ number, index });
+    }
+    closeEdgesBefore(UINT32_MAX);
 }
 
 static bool failsWhereOtherFailed(FunctionAnalyses& analyses, const Value& test, const Value& failed)
@@ -78,9 +114,14 @@ EarlierTest FailedTests::find(const Value& test, BlockID at) const
     auto failedEdges = std::ranges::equal_range(m_failedEdges, std::pair { test.opcode, subject }, { }, [](const FailedEdge& edge) {
         return std::pair { edge.opcode, edge.subject };
     });
-    for (const FailedEdge& edge : failedEdges) {
-        if (failsWhereOtherFailed(m_analyses, test, m_function.at(edge.test)) && dominators.dominates(edge.target, at))
-            return EarlierTest::Failed;
+    if (!failedEdges.empty()) {
+        size_t first = failedEdges.begin() - m_failedEdges.begin();
+        auto boundaries = m_boundaries.subspan(2 * first, 2 * failedEdges.size());
+        auto boundary = std::ranges::upper_bound(boundaries, m_numberInDominatorTree[at.index()], { }, &Boundary::number);
+        for (uint32_t index = boundary == boundaries.begin() ? noEdge : std::prev(boundary)->edge; index != noEdge; index = m_failedEdges[index].enclosing) {
+            if (failsWhereOtherFailed(m_analyses, test, m_function.at(m_failedEdges[index].test)))
+                return EarlierTest::Failed;
+        }
     }
     if (provesOf(test.opcode) != Proof::Shape)
         return EarlierTest::Unknown;
@@ -108,9 +149,9 @@ bool FailedTests::isCoveredBySwitch(const Value& shapeTest, const FailedSwitch& 
 {
     const Program& program = m_analyses.program();
     std::span<const LayoutSetID> cases = m_function.at(entry.from).terminator.layoutSets();
-    return std::ranges::all_of(program.at(shapeTest.layouts()).members, [&](LayoutID layout) {
+    return std::ranges::all_of(program.at(shapeTest.layouts()).completeMembers(), [&](LayoutID layout) {
         return std::ranges::any_of(cases, [&](LayoutSetID set) {
-            return std::ranges::binary_search(program.at(set).members, layout);
+            return std::ranges::binary_search(program.at(set).completeMembers(), layout);
         });
     });
 }

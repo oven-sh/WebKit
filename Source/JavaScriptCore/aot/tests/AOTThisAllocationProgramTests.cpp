@@ -47,34 +47,41 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = FinishClass v4 layout=L0
     PutModuleVariable v9 variable=g0
     v11 = Integer integer=1
-    v12 = Integer integer=2
-    v13 = Call v0, -, v11
-    v14 = Call v0, -, v12
-    v15 = Builtin builtin=GlobalThis
-    v16 = PropGet v15 key="id" [isFreeName]
-    v17 = Call v16, -, v9
-    v18 = PropGet v15 key="print" [isFreeName]
-    v19 = Construct v13
-    v20 = Construct v14
-    v21 = Construct v9
-    v22 = PropGet v19 key="getP"
-    v23 = Call v22, v19 calleeKey="getP"
-    v24 = PropGet v20 key="getP"
-    v25 = Call v24, v20 calleeKey="getP"
-    v26 = PropGet v21 key="getP"
-    v27 = Call v26, v21 calleeKey="getP"
-    v28 = PropGet v19 key="tag"
-    v29 = PropGet v20 key="tag"
-    v30 = PropGet v9 key="has"
-    v31 = Call v30, v9, v19 calleeKey="has"
-    v32 = Call v30, v9, v20 calleeKey="has"
-    v33 = Call v30, v9, v15 calleeKey="has"
-    v34 = PropGet v15 key="Object" [isFreeName]
-    v35 = PropGet v34 key="keys"
-    v36 = Call v35, v34, v19 calleeKey="keys"
-    v37 = PropGet v36 key="join"
-    v38 = Call v37, v36 calleeKey="join"
-    v39 = Call v18, -, v23, v25, v27, v28, v29, v31, v32, v33, v38
+    v12 = Undefined
+    Jump -> next b1(v11, v12)
+  b1(v13, v14):
+    LoopHint
+    v16 = Call v0, -, v13
+    v17 = Increment v13
+    v18 = Integer integer=3
+    v19 = Less v17, v18
+    Branch v19 -> taken b1(v17, v16), notTaken b2(v14, v16)
+  b2(v20, v21):
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="id" [isFreeName]
+    v24 = Call v23, -, v9
+    v25 = PropGet v22 key="print" [isFreeName]
+    v26 = Construct v20
+    v27 = Construct v21
+    v28 = Construct v9
+    v29 = PropGet v26 key="getP"
+    v30 = Call v29, v26 calleeKey="getP"
+    v31 = PropGet v27 key="getP"
+    v32 = Call v31, v27 calleeKey="getP"
+    v33 = PropGet v28 key="getP"
+    v34 = Call v33, v28 calleeKey="getP"
+    v35 = PropGet v26 key="tag"
+    v36 = PropGet v27 key="tag"
+    v37 = PropGet v9 key="has"
+    v38 = Call v37, v9, v26 calleeKey="has"
+    v39 = Call v37, v9, v27 calleeKey="has"
+    v40 = Call v37, v9, v22 calleeKey="has"
+    v41 = PropGet v22 key="Object" [isFreeName]
+    v42 = PropGet v41 key="keys"
+    v43 = Call v42, v41, v26 calleeKey="keys"
+    v44 = PropGet v43 key="join"
+    v45 = Call v44, v43 calleeKey="join"
+    v46 = Call v25, -, v30, v32, v34, v35, v36, v38, v39, v40, v45
     Return
 }
 function f1 name="make" length=1 parameters=[{type=anything}] results=[{type=anything}] {
@@ -107,18 +114,20 @@ function f4 name="getP" kind=Method flags=[HasThis] thisType={type=L0|L1 flags=[
     Return v2
 }
 function f5 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1} results=[{type=anything}] {
-    v1 = GetModuleVariable variable=g1
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = Integer integer=7
-    v4 = GetModuleVariable variable=g1
-    PrivateDefine v0, v4, v3 layout=L0 field=1
-    v6 = Undefined
-    Return v6
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer integer=7
+    v5 = GetModuleVariable variable=g1
+    PrivateDefine v1, v5, v4 layout=L0 field=1
+    v7 = Undefined
+    Return v7
 }
 function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything}] thisType={type=L1} results=[{type=anything}] {
-    PropDefine v1, v0 key="tag"
-    v3 = Undefined
-    Return v3
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    PropDefine v2, v0 key="tag"
+    v4 = Undefined
+    Return v4
 }
 function f7 name="has" kind=Method length=1 parameters=[{type=anything}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g1
@@ -191,10 +200,11 @@ function f4 name="init" kind=Method flags=[HasThis] thisType={type=L1 flags=[IsE
     Return v3
 }
 function f5 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
-    v1 = Integer integer=5
-    PropDefine v0, v1 key="q"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=5
+    PropDefine v1, v2 key="q"
+    v4 = Undefined
+    Return v4
 }
 )IR"_s;
 
@@ -255,16 +265,18 @@ function f2 name="Wider" kind=DerivedConstructor flags=[HasRestParameter, HasNew
     Return v4
 }
 function f3 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1} results=[{type=anything}] {
-    v1 = Data data=d0
-    PropDefine v0, v1 key="env"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Data data=d0
+    PropDefine v1, v2 key="env"
+    v4 = Undefined
+    Return v4
 }
 function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
-    v1 = Data data=d1
-    PropDefine v0, v1 key="extra"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Data data=d1
+    PropDefine v1, v2 key="extra"
+    v4 = Undefined
+    Return v4
 }
 )IR"_s;
 
@@ -561,16 +573,17 @@ function f9 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={typ
     Return v1
 }
 function f10 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g4
-    PrivateDefine v0, v1, v1 layout=L3
-    v3 = Integer integer=6
-    v4 = Convert v3 declared={type=number flags=[IsExpected]}
-    v5 = GetModuleVariable variable=g4
-    PrivateDefine v0, v5, v4 layout=L3 field=1
-    v7 = Undefined
-    Return v7
+    v2 = GetModuleVariable variable=g4
+    PrivateDefine v1, v2, v2 layout=L3
+    v4 = Integer integer=6
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g4
+    PrivateDefine v1, v6, v5 layout=L3 field=1
+    v8 = Undefined
+    Return v8
 }
 data d0 root=Array{contents=anything} module=m0
 entry module=m0
@@ -732,30 +745,32 @@ function f3 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={typ
     Return v1
 }
 function f4 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=1
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v2 key="x"
-    v4 = Integer integer=2
-    v5 = Convert v4 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v5 key="y"
-    v7 = Undefined
-    Return v7
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="x"
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v6 key="y"
+    v8 = Undefined
+    Return v8
 }
 function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=20
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v2 key="y"
-    v4 = Undefined
-    PropDefine v0, v4 key="z"
-    v6 = Integer integer=10
-    v7 = Convert v6 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v7 key="x"
-    v9 = Undefined
-    Return v9
+    v2 = Integer integer=20
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="y"
+    v5 = Undefined
+    PropDefine v1, v5 key="z"
+    v7 = Integer integer=10
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v8 key="x"
+    v10 = Undefined
+    Return v10
 }
 data d0 root=Array{contents=anything} module=m0
 entry module=m0
@@ -942,22 +957,24 @@ function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParamete
     Return v4
 }
 function f3 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropSet v0, v2 key="n"
-    v4 = Undefined
-    Return v4
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="n"
+    v5 = Undefined
+    Return v5
 }
 function f4 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=1
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropSet v0, v2 key="z"
-    v4 = Undefined
-    Return v4
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="z"
+    v5 = Undefined
+    Return v5
 }
 entry module=m0
 )IR"_s;
@@ -1091,13 +1108,14 @@ function f4 name="DefinesOverSetter" module=m0 kind=DerivedConstructor flags=[Ha
     Return v4
 }
 function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = String string="defined"
-    v2 = Convert v1 declared={type=string flags=[IsExpected]}
-    PropDefine v0, v2 key="guarded"
-    v4 = Undefined
-    Return v4
+    v2 = String string="defined"
+    v3 = Convert v2 declared={type=string flags=[IsExpected]}
+    PropDefine v1, v3 key="guarded"
+    v5 = Undefined
+    Return v5
 }
 entry module=m0
 )IR"_s;
@@ -1201,6 +1219,231 @@ function f8 name="value" module=m0 kind=Getter flags=[HasThis, HasExplicitName] 
 entry module=m0
 )IR"_s;
 
+static constexpr ASCIILiteral classesInRotationText = R"IR(layout L0 kind=Instance name="K" module=m0 constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#p"@L0 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}, {key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 kind=Instance module=m0 base=L0 constructor=f5 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 name="K" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClassToken layout=L0
+    PutModuleVariable v2 variable=g2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4 layout=L0
+    PutModuleVariable v5 variable=g1
+    v7 = NewClosure function=f3
+    PutModuleVariable v7 variable=g3
+    v9 = NewClosure function=f4
+    DefineMethod v5, v9 layout=L0 key="read"
+    v11 = FinishClass v5 layout=L0
+    v12 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Convert v11 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v13 variable=g0
+    v15 = Integer integer=2
+    v16 = Undefined
+    Jump -> next b2(v15, v16)
+  b2(v17, v18):
+    LoopHint
+    v20 = Call v1, -, v17 calleeName="make"
+    v21 = Increment v17
+    v22 = Integer integer=4
+    v23 = Less v21, v22
+    Branch v23 -> taken b2(v21, v20), notTaken b3(v18, v20)
+  b3(v24, v25):
+    v26 = Convert v24 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v27 = Convert v25 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v28 = NewArray v13, v26, v27 contents=undefined|null|function|f2|f5
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|function|f2|f5> flags=[IsExpected]}
+    v30 = Integer
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Integer
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Integer
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Integer
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Integer
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v31, v33, v35, v37, v39)
+  b4(v40, v41, v42, v43, v44):
+    LoopHint
+    v46 = Integer integer=6000
+    v47 = Less v44, v46
+    Branch v47 -> taken b5(| 0), notTaken b16(| 0)
+  b5(v48):
+    Jump -> next b6()
+  b6():
+    v49 = Integer integer=3
+    v50 = Mod v48, v49
+    v51 = ElemGet v29, v50
+    v52 = Convert v51 declared={type=undefined|null|function|f2|f5 flags=[IsExpected]}
+    v53 = Construct v52
+    v54 = Convert v53 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v55 = PropGet v54 key="read"
+    v56 = Convert v55 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v57 = Call v56, v54 calleeKey="read" calleeName="made.read"
+    v58 = Convert v57 declared={type=number flags=[IsExpected]}
+    v59 = Add v40, v58
+    v60 = Convert v59 declared={type=number flags=[IsExpected]}
+    v61 = InstanceOf v54, v26 writtenExpression="made instanceof First"
+    v62 = ToBoolean v61
+    Branch v62 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v63):
+    Jump -> next b8()
+  b8():
+    v64 = Increment v42
+    v65 = Convert v64 declared={type=number flags=[IsExpected]}
+    v66 = Convert v54 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v67 = PropGet v66 key="get"
+    v68 = Convert v67 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v69 = Call v68, v66 calleeKey="get" calleeName="made.get"
+    v70 = Add v41, v69
+    v71 = Convert v70 declared={type=number flags=[IsExpected]}
+    Jump -> next b10(v66, v71, v65)
+  b9(v72):
+    Jump -> next b10(v54, v41, v42)
+  b10(v73, v74, v75):
+    v76 = InstanceOf v73, v27 writtenExpression="made instanceof Second"
+    v77 = ToBoolean v76
+    Branch v77 -> taken b11(| 0), notTaken b13(| 0)
+  b11(v78):
+    Jump -> next b12()
+  b12():
+    v79 = Increment v43
+    v80 = Convert v79 declared={type=number flags=[IsExpected]}
+    v81 = Convert v73 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v82 = PropGet v81 key="get"
+    v83 = Convert v82 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v84 = Call v83, v81 calleeKey="get" calleeName="made.get"
+    v85 = Add v74, v84
+    v86 = Convert v85 declared={type=number flags=[IsExpected]}
+    Jump -> next b14(v86, v80)
+  b13(v87):
+    Jump -> next b14(v74, v43)
+  b14(v88, v89):
+    Jump -> next b15()
+  b15():
+    v90 = Increment v48
+    v91 = Convert v90 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v60, v88, v75, v89, v91)
+  b16(v92):
+    Jump -> next b17()
+  b17():
+    v93 = Builtin builtin=GlobalThis
+    v94 = PropGet v93 key="print" [isFreeName]
+    v95 = Call v94, -, v40, v41, v42, v43 calleeName="print"
+    v96 = Undefined
+    Return v96
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f5 flags=[IsExpected]}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="K"
+    v3 = ResolveHeritage v2
+    v4 = NewClosure v0 function=f5
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = NewClosure function=f6
+    DefineMethod v5, v6 layout=L1 key="get"
+    v8 = FinishClass v5 layout=L1
+    v9 = Convert v8 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    Return v9
+}
+function f2 name="K" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] constructedClass=L0 {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f7
+    Return v3
+}
+function f3 name="#m" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g2
+    v3 = PrivateGet v1, v2 layout=L0 field=1
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v6 = PropGet v5 key="a"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Add v4, v7
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Return v9
+}
+function f4 name="read" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L1 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes=[f9] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
+    v2 = GetModuleVariable variable=g2
+    v3 = PrivateGet v1, v2 layout=L0
+    v4 = GetModuleVariable variable=g3
+    v5 = Call v4, v1 calleeName="this.#m"
+    ReturnCall v5 casts=[{declared={type=number flags=[IsExpected]}}]
+}
+function f5 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] captures=[{type=anything}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] constructedClass=L1 {
+  b0(v0: anything, v1: function, v2: anything, v3: Array):
+    Jump -> next b1()
+  b1():
+    v4 = GetSuperBase v1
+    v5 = SuperConstructList v4, v2, v3 layout=L1
+    v6 = Convert v5 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = CallDirect v0, v6 function=f8
+    Return v6
+}
+function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f10] {
+  b0(v0: L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v2 = PropGet v1 key="b"
+    Return v2
+}
+function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: L0|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g2
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer integer=7
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g2
+    PrivateDefine v1, v6, v5 layout=L0 field=1
+    v8 = Integer integer=1
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v9 key="a"
+    v11 = Undefined
+    Return v11
+}
+function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything}] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: anything, v1: L1):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v3 = Convert v0 declared={type=number flags=[IsExpected]}
+    PropDefine v2, v3 key="b"
+    v5 = Undefined
+    Return v5
+}
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
+entry module=m0
+)IR"_s;
+
 static void checkInShellWithAndWithoutPasses(ASCIILiteral programText, ASCIILiteral expectedOutput)
 {
     checkOutputOfProgramInShell(programText, expectedOutput, { });
@@ -1271,6 +1514,17 @@ static void testStoreOfBaseConstructorRunsSetterOfSubclass()
     checkOutputOfProgramInShell(storeRunsSetterOfSubclassText, "setter 1 42 42 stored\n"_s, { "disable=flow-results"_s });
 }
 
+static void testClassAndClassesBelowConstructedInRotation()
+{
+    checkInShellWithAndWithoutPasses(classesInRotationText, "48000 10000 2000 2000\n"_s);
+
+    // No allocator has room: an object whose prototype is the one of the allocation, or one that is remembered, comes from the operation that allocates.
+    static constexpr ASCIILiteral statements = "const printValues = print; globalThis.print = (...values) => printValues(...values, Number(aotOperationCount(\"operationAOTAllocateSlow\")) >= 4000);"_s;
+    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s }, statements, { "--aotCountsPath=/dev/null"_s });
+    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s, "references=narrow"_s, "validate"_s }, statements, { "--aotCountsPath=/dev/null"_s });
+    checkOutputOfProgramInShell(classesInRotationText, "48000 10000 2000 2000 true\n"_s, { "testing=ForceGCSlowPaths"_s, "admit=Inspector"_s }, statements, { "--aotCountsPath=/dev/null"_s });
+}
+
 std::span<const NativeTest> thisAllocationProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1285,6 +1539,7 @@ std::span<const NativeTest> thisAllocationProgramTests()
         { "this-allocation/programs/field-of-base-declared-again-by-subclass"_s, testFieldOfBaseDeclaredAgainBySubclass },
         { "this-allocation/programs/store-of-base-constructor-before-definition-by-subclass"_s, testStoreOfBaseConstructorBeforeDefinitionBySubclass },
         { "this-allocation/programs/store-of-base-constructor-runs-setter-of-subclass"_s, testStoreOfBaseConstructorRunsSetterOfSubclass },
+        { "this-allocation/programs/class-and-classes-below-constructed-in-rotation"_s, testClassAndClassesBelowConstructedInRotation },
     };
     return tests;
 }

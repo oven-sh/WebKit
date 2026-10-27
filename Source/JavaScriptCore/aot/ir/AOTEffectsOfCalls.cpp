@@ -86,7 +86,7 @@ static Effects effectsOfContentsRead(OperandKind kind)
 
 static bool mayEnterTableLookup(const Program& program, const Value& tableCall)
 {
-    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(tableCall.receivers()).members.span(), tableCall.key(), Access::Read);
+    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(tableCall.receivers()).completeMembers(), tableCall.key(), Access::Read);
     return !partition.rest.isEmpty() || std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
         return arm.answer.kind != MemberKind::Method || !arm.answer.receiverProofs.isEmpty() || !arm.answer.conditions.isEmpty();
     });
@@ -100,8 +100,8 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
             namedCallees.add(callee);
     });
     if (call.opcode == Opcode::CallTable && !mayEnterTableLookup(program, call))
-        namedCallees.functions.removeFirst(call.function());
-    if (!namedCallees.functions.isEmpty())
+        namedCallees.remove(call.function());
+    if (!namedCallees.runsNothing())
         return namedCallees;
     if (Value::opcodesWithCallees.contains(call.opcode))
         return calleesOf(program, call.callees());
@@ -110,7 +110,7 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
 
 static bool listsWhatReceiverFinds(const Program& program, const Value& call)
 {
-    return call.opcode == Opcode::CallTable && call.callees() && calleesOf(program, call.callees()).isComplete;
+    return call.opcode == Opcode::CallTable && call.callees() && program.at(call.callees()).listsEveryCallee();
 }
 
 static Effects effectsOfFindingCallee()
@@ -134,6 +134,10 @@ static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, Eff
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
+    if (callee.has(FunctionCapabilities::RecordsCallee))
+        description.addOwn(declaredBoundOf(Opcode::RecordCallee));
+    if (callee.capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }))
+        description.addOwn(declaredBoundOf(Opcode::AreFunctionNamesUnchanged));
 }
 
 static bool takesThisFromConstruction(const Function& callee)
@@ -158,17 +162,18 @@ static void describeCreationOfThis(const Program& program, FunctionID callee, co
 void describeCallees(const Program& program, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands, EffectDescription& description)
 {
     bool constructs = mode == BuiltinCallMode::Construct;
-    description.addFunctions(callees.functions.span());
-    for (FunctionID callee : callees.functions) {
+    Callees listed = callees.listed();
+    description.addFunctions(listed.functions);
+    for (FunctionID callee : listed.functions) {
         describeEntrypoint(program.at(callee), mode, description);
         if (constructs)
             describeCreationOfThis(program, callee, operands, description);
     }
-    for (BuiltinID callee : callees.builtins)
+    for (BuiltinID callee : listed.builtins)
         describeCallOf(program, callee, mode, description);
-    if (constructs && operands.newTarget && !callees.builtins.isEmpty())
+    if (constructs && operands.newTarget && !listed.builtins.empty())
         describeReadOfConstructPrototype(program, program.at(operands.newTarget), description);
-    if (!callees.isComplete)
+    if (!callees.listsEveryCallee())
         description.addUnknownCode();
 }
 
@@ -233,7 +238,7 @@ static void describeCalleesOfCall(const Program& program, const Function& functi
 
 static void describeOperandsGivenToBuiltins(const Program& program, const Function& function, const Value& call, const CalleeList& callees, BuiltinCallMode mode, EffectDescription& description)
 {
-    if (callees.builtins.isEmpty())
+    if (callees.listed().builtins.empty())
         return;
 
     std::optional<BuiltinCallForm> form = formOfArguments(call.opcode);
@@ -244,15 +249,15 @@ static void describeOperandsGivenToBuiltins(const Program& program, const Functi
 
     Vector<TypeID, 4> arguments = typesOfArguments(function, call, *form);
     ValueID receiver = receiverOf(call);
-    const Type& receiverType = receiver ? program.typeOf(function, receiver) : program.at(TypeTable::undefined);
-    for (BuiltinID callee : callees.builtins)
+    TypeID receiverType = receiver ? function.at(receiver).type : TypeTable::undefined;
+    for (BuiltinID callee : callees.listed().builtins)
         describeOperandsOfCall(program, callee, mode, *form, receiverType, arguments.span(), description);
 }
 
 static void describeNamedCallees(const CalleeList& callees, EffectDescription& description)
 {
-    description.addFunctions(callees.functions.span());
-    if (!callees.isComplete)
+    description.addFunctions(callees.listed().functions);
+    if (!callees.listsEveryCallee())
         description.addUnknownCode();
 }
 

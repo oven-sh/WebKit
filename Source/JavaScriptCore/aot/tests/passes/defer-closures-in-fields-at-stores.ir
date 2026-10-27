@@ -3,8 +3,8 @@
 # FORM: Prepared
 # OPTIONS: references=narrow check=VerifyEachPass
 # RUN: pass DeferClosuresInFields
-# STATISTIC: FieldsDeferringClosures = 15
-# STATISTIC: ClosuresDeferredInFields = 17
+# STATISTIC: FieldsDeferringClosures = 16
+# STATISTIC: ClosuresDeferredInFields = 18
 # STATISTIC: StoresListedByAllocations = 2
 # CHECK: outcome: Changed
 
@@ -34,7 +34,7 @@ layout L19 name="GivenNumberByName" fields=[{key="run" declared={type=number|fun
 layout L20 name="MayLeaveItsSlot" fields=[{key="run" declared={type=number|function}}]
 
 # CHECK: layout L0 {{*}}{key="id" declared={type=anything}}, {key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f9}}}, {key="plain" declared={type=function} flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
-# CHECK-NEXT: layout L1 name="StoredBehindGuard" fields=[{key="run" declared={type=function}}]
+# CHECK-NEXT: layout L1 {{*}}flow={location={deferral=CapturesObject deferredFunction=f9}}}]
 # CHECK-NEXT: layout L2 {{*}}flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f9}}}]
 # CHECK-NEXT: layout L3 {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation deferral=CapturesObject deferredFunction=f9}}}]
 # CHECK-NEXT: layout L4 name="GivenNumber" fields=[{key="run" declared={type=number|function} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
@@ -101,7 +101,7 @@ function f1 name="storesIntoWhatItIsGiven" module=m0 parameters=[{type=L0}, {typ
     PutSlot v2, -, v16 key="run" receivers=[L2] level=Proven
     Return
 }
-# The closure stands right in front of its store. A store that only expects the layout of its object makes its closure: such code reads members by name as well, which makes a closure in the run time.
+# The closure stands right in front of its store. A store that only expects the layout of its object leaves its closure unmade too: nothing reads the field.
 # CHECK-LABEL: function f1 name="storesIntoWhatItIsGiven"
 # CHECK: = Call v0
 # CHECK-NEXT: v4: f9 = NewClosure function=f9 [isMadeOnDemand]
@@ -109,7 +109,7 @@ function f1 name="storesIntoWhatItIsGiven" module=m0 parameters=[{type=L0}, {typ
 # CHECK-NEXT: v3: f10 = NewClosure function=f10 [isMadeOnDemand]
 # CHECK-NEXT: v7: f10 = Upcast v3 castType=function
 # CHECK-NEXT: PutSlotOrAdd v0, -, v7 key="plain" receivers=[L0] level=Proven
-# CHECK: v12: f9 = NewClosure v11 function=f9
+# CHECK: v12: f9 = NewClosure function=f9 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v1, v10, v12 key="run" receivers=[L1] level=Expected
 # CHECK: v14: f9 = NewClosure v1 function=f9
 # CHECK-NEXT: PropDefine v1, v14 key="run"
@@ -219,7 +219,7 @@ function f5 name="reads" module=m0 parameters=[{type=L9}, {type=L10}, {type=L9},
 function f6 name="UnderPrototype" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11 {
     v1 = GetConstructPrototype v0 layout=L11
     v2 = NewObject v1 layout=L11
-    v3 = AssumeType v2 castType=L11
+    v3 = AssumeType v2 provenType=L11
     v4 = NewClosure v3 function=f9
     PutSlotOrAdd v3, -, v4 key="run" receivers=[L11] level=Proven
     Return v3

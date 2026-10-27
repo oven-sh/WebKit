@@ -16,7 +16,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool hasNeverResult(const Value& value)
+bool hasNeverResult(const Value& value)
 {
     return value.type == TypeTable::never && resultRuleOf(value.opcode) != ResultRule::None;
 }
@@ -60,6 +60,152 @@ BodyContents contentsOf(const Function& function)
     }
     contents.traits.add(traitsBesideBlocks(function, contents.opcodes.contains(Opcode::Parameter), hasNeverValue));
     return contents;
+}
+
+static uint16_t countedWordOf(const Value& value, uint16_t hasNeverResultBit)
+{
+    return static_cast<uint16_t>(value.opcode) | (hasNeverResult(value) ? hasNeverResultBit : 0);
+}
+
+inline void CountedContents::addWord(uint16_t word)
+{
+    m_opcodes.add(word & ~hasNeverResultBit);
+    m_numberOfNeverValues += !!(word & hasNeverResultBit);
+}
+
+inline void CountedContents::removeWord(uint16_t word)
+{
+    m_opcodes.remove(word & ~hasNeverResultBit);
+    m_numberOfNeverValues -= !!(word & hasNeverResultBit);
+}
+
+void CountedContents::addValuesOf(const Function& function, uint32_t blockIndex)
+{
+    const Block& block = function.blocks[blockIndex];
+    CountedBlock& counted = m_blocks[blockIndex];
+    uint32_t numberOfValues = block.parameters.size() + block.values.size();
+    if (numberOfValues > counted.capacity) {
+        counted.firstValue = m_listedValues.size();
+        counted.capacity = numberOfValues;
+        m_listedValues.grow(m_listedValues.size() + numberOfValues);
+    }
+    counted.numberOfValues = numberOfValues;
+    ValueID* listed = m_listedValues.mutableSpan().data() + counted.firstValue;
+    uint16_t* wordOfValue = m_wordOfValue.mutableSpan().data();
+    auto add = [&](ValueID id) {
+        uint16_t word = countedWordOf(function.at(id), hasNeverResultBit);
+        *listed++ = id;
+        wordOfValue[id.index()] = word;
+        addWord(word);
+    };
+    for (ValueID parameter : block.parameters)
+        add(parameter);
+    for (ValueID value : block.values)
+        add(value);
+}
+
+void CountedContents::removeValuesOf(CountedBlock& counted)
+{
+    for (ValueID id : m_listedValues.span().subspan(counted.firstValue, counted.numberOfValues))
+        removeWord(std::exchange(m_wordOfValue[id.index()], isNotListed));
+    counted.numberOfValues = 0;
+}
+
+void CountedContents::countEndOf(const Function& function, uint32_t blockIndex)
+{
+    const Block& block = function.blocks[blockIndex];
+    CountedBlock& counted = m_blocks[blockIndex];
+    if (std::exchange(counted.isCounted, true)) {
+        m_terminators.remove(static_cast<unsigned>(counted.terminator));
+        for (unsigned traits = counted.traits.toRaw(); traits; traits &= traits - 1)
+            m_traits.remove(std::countr_zero(traits));
+    }
+    counted.terminator = block.terminator.kind;
+    counted.traits = bodyTraitsOf(block, BlockID(blockIndex));
+    m_terminators.add(static_cast<unsigned>(counted.terminator));
+    for (unsigned traits = counted.traits.toRaw(); traits; traits &= traits - 1)
+        m_traits.add(std::countr_zero(traits));
+}
+
+void CountedContents::countAnew(const Function& function)
+{
+    m_opcodes = { };
+    m_terminators = { };
+    m_traits = { };
+    m_numberOfNeverValues = 0;
+    m_listedValues.shrink(0);
+    m_blocks.fill(CountedBlock { }, function.blocks.size());
+    m_wordOfValue.fill(isNotListed, function.values.size());
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        addValuesOf(function, index);
+        countEndOf(function, index);
+    }
+    m_isCounted = true;
+}
+
+void CountedContents::countWhatChanged(const Function& function, const ChangeLog& log)
+{
+    static constexpr OptionSet<BlockEdit> editsOfLists { BlockEdit::Added, BlockEdit::Values, BlockEdit::Parameters };
+    static constexpr OptionSet<BlockEdit> editsOfEnds { BlockEdit::Added, BlockEdit::Parameters, BlockEdit::Terminator, BlockEdit::Edges };
+    size_t numberOfKnownValues = m_wordOfValue.size();
+    m_blocks.grow(function.blocks.size());
+    m_wordOfValue.grow(function.values.size());
+    std::ranges::fill(m_wordOfValue.mutableSpan().subspan(numberOfKnownValues), isNotListed);
+
+    Vector<uint32_t, 32> pending;
+    for (const BlockChange& change : log.blocksSince(m_endOfLog)) {
+        uint32_t index = change.block.index();
+        if (change.edits.containsAny(editsOfEnds))
+            countEndOf(function, index);
+        if (change.edits.containsAny(editsOfLists) && !std::exchange(m_blocks[index].isPending, true))
+            pending.append(index);
+    }
+    // A value may have gone from one list to another.
+    for (uint32_t index : pending)
+        removeValuesOf(m_blocks[index]);
+    for (uint32_t index : pending) {
+        addValuesOf(function, index);
+        m_blocks[index].isPending = false;
+    }
+    // A value that stands in no list comes into one by an edit of the block.
+    for (const ValueChange& change : log.valuesSince(m_endOfLog)) {
+        uint16_t& counted = m_wordOfValue[change.value.index()];
+        if (counted == isNotListed)
+            continue;
+        uint16_t word = countedWordOf(function.at(change.value), hasNeverResultBit);
+        if (word == counted)
+            continue;
+        removeWord(counted);
+        addWord(word);
+        counted = word;
+    }
+}
+
+const BodyContents& CountedContents::bringUpToDate(const Function& function, const ChangeLog& log)
+{
+    bool hasLeftMuchRoomBehind = m_listedValues.size() > mostPlacesInListsForEachValue * function.values.size();
+    bool logIsWhole = m_hasReadBody && !log.hasForgottenSince(m_endOfLog);
+    if (!logIsWhole || function.blocks.size() < m_blocks.size() || function.values.size() < m_wordOfValue.size() || hasLeftMuchRoomBehind)
+        m_isCounted = false;
+    // To count costs more than to read. It pays where the body is asked after again and the log tells what has changed since.
+    bool paysToCount = logIsWhole && log.numberOfEntriesSince(m_endOfLog) < function.values.size();
+    m_hasReadBody = true;
+    if (!m_isCounted && !paysToCount) {
+        m_endOfLog = log.end();
+        m_contents = contentsOf(function);
+        return m_contents;
+    }
+    if (m_isCounted)
+        countWhatChanged(function, log);
+    else
+        countAnew(function);
+    m_endOfLog = log.end();
+
+    m_contents.opcodes = std::bit_cast<OpcodeSet>(m_opcodes.words);
+    m_contents.terminators = std::bit_cast<TerminatorKindSet>(m_terminators.words);
+    m_contents.traits = OptionSet<BodyTrait>::fromRaw(static_cast<uint8_t>(m_traits.words[0]));
+    m_contents.traits.add(traitsBesideBlocks(function, m_contents.opcodes.contains(Opcode::Parameter), m_numberOfNeverValues));
+    return m_contents;
 }
 
 BodyIndex::Row::Row(const Function& function, BodyIDs ids)
@@ -106,7 +252,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     hot.listsParameters = numberOfParameters;
     hot.traits.add(traitsBesideBlocks(function, hot.listsParameters, hasNeverValue));
     hot.holdsExpectedTypes = function.values.containsIf([](const Value& value) {
-        return !!value.expected();
+        return !!value.expected().predicted();
     });
     if (ids == BodyIDs::Final) {
         cold.makeNames(function);
@@ -163,7 +309,7 @@ void BodyIndex::ColdRow::makeNames(const Function& function)
     forEachReference(static_cast<const FunctionRecord&>(function), collector);
     for (const Value& value : function.values) {
         collector(value.type);
-        collector(value.expected());
+        collector(value.expected().predicted());
         forEachReference(value, collector);
     }
     for (const Block& block : function.blocks)

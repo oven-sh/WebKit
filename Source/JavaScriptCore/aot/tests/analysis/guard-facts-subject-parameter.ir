@@ -21,8 +21,8 @@ function f0 name="twoAllocations" parameters=[{type=anything}, {type=boolean}] r
     Return v8
 }
 # CHECK-LABEL: function f0
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled NotFrozen of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
-# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3]
+# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v6 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, NotFrozen of v6 by allocation v2 reads ShapeWords[L0], KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3 v7.4 v7.5]
 # CHECK: v8 guard v7: Available
 
 function f1 name="guardsOfOtherAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -76,7 +76,7 @@ function f3 name="subjectIsNotPassed" parameters=[{type=anything}, {type=boolean
     Return v9
 }
 # CHECK-LABEL: function f3
-# CHECK: v8 facts: [Shape OwnInstance of v2 by allocation v2 reads -, SlotFilled NotFrozen of v2 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v2 by allocation v2 reads NamedProperties, KeyOrder of v2 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: v8 facts: [Shape OwnInstance of v2 by allocation v2 reads -, SlotFilled of v2 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v2 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v2 by allocation v2 reads NamedProperties, NotFrozen of v2 by allocation v2 reads ShapeWords[L0], KeyOrder of v2 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: v9 guard v8: Available
 
 function f4 name="allocationsOfTwoLayouts" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -94,8 +94,8 @@ function f4 name="allocationsOfTwoLayouts" parameters=[{type=anything}, {type=bo
     Return v8
 }
 # CHECK-LABEL: function f4
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 or allocation v4 reads -, SlotFilled NotFrozen of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1], NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 or allocation v4 reads NamedProperties, KeyOrder of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1] OrderWords]
-# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3]
+# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 or allocation v4 reads -, SlotFilled of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1], NoExtraProperties of v6 by allocation v2 or allocation v4 reads NamedProperties, NoFieldOutsideSlot of v6 by allocation v2 or allocation v4 reads NamedProperties, NotFrozen of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1], KeyOrder of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1] OrderWords]
+# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3 v7.4 v7.5]
 # CHECK: v8 guard v7: Available
 
 function f5 name="oneAllocationFillsFewerSlots" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -113,7 +113,7 @@ function f5 name="oneAllocationFillsFewerSlots" parameters=[{type=anything}, {ty
     Return v8
 }
 # CHECK-LABEL: function f5
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, SlotFilled NotFrozen of v6 by allocation v4 reads ShapeWords[L0], KeyOrder of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] OrderWords]
+# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, NoExtraProperties of v6 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, NotFrozen of v6 by allocation v2 reads ShapeWords[L0], SlotFilled of v6 by allocation v4 reads ShapeWords[L0], KeyOrder of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] OrderWords]
 # CHECK: v8 guard v7: Available
 
 function f6 name="castsOfAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -132,7 +132,7 @@ function f6 name="castsOfAllocations" parameters=[{type=anything}, {type=boolean
     Return v8
 }
 # CHECK-LABEL: function f6
-# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled NotFrozen of v8
+# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v8 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, NotFrozen of v8 by allocation v2 reads ShapeWords[L0], KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
 
 function f7 name="proofsOnEdges" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=anything}] {
     Branch v2 -> taken b1(), notTaken b2()
@@ -238,7 +238,7 @@ function f12 name="allocatedAgainInLoop" parameters=[{type=anything}] results=[{
     Return v6
 }
 # CHECK-LABEL: function f12
-# CHECK: v4 facts: [Shape OwnInstance of v3 by allocation v1 reads -, SlotFilled NotFrozen of v3 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v3 by allocation v1 reads NamedProperties, KeyOrder of v3 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK: v4 facts: [Shape OwnInstance of v3 by allocation v1 reads -, SlotFilled of v3 by allocation v1 reads ShapeWords[L0], NoExtraProperties of v3 by allocation v1 reads NamedProperties, NoFieldOutsideSlot of v3 by allocation v1 reads NamedProperties, NotFrozen of v3 by allocation v1 reads ShapeWords[L0], KeyOrder of v3 by allocation v1 reads ShapeWords[L0] OrderWords]
 # CHECK: v6 guard v4: Available
 
 function f13 name="loopPassesParametersToThemselves" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -262,7 +262,7 @@ function f13 name="loopPassesParametersToThemselves" parameters=[{type=anything}
     Return v9
 }
 # CHECK-LABEL: function f13
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled NotFrozen of v6
+# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v6 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, NotFrozen of v6 by allocation v2 reads ShapeWords[L0], KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: v9 guard v7: Available
 
 function f14 name="loopPassesAnotherObjectWithTheSameGuard" parameters=[{type=anything}] results=[{type=anything}] {
@@ -280,7 +280,7 @@ function f14 name="loopPassesAnotherObjectWithTheSameGuard" parameters=[{type=an
     Return v3
 }
 # CHECK-LABEL: function f14
-# CHECK: v4 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled NotFrozen of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK: v4 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties of v1 by allocation v1 reads NamedProperties, NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, NotFrozen of v1 by allocation v1 reads ShapeWords[L0], KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
 
 function f15 name="loopSwapsTwoObjects" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -297,7 +297,7 @@ function f15 name="loopSwapsTwoObjects" parameters=[{type=anything}] results=[{t
     Return v4
 }
 # CHECK-LABEL: function f15
-# CHECK: v6 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled NotFrozen of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK: v6 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties of v1 by allocation v1 reads NamedProperties, NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, NotFrozen of v1 by allocation v1 reads ShapeWords[L0], KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
 
 function f16 name="handlerEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -317,7 +317,7 @@ function f16 name="handlerEdges" parameters=[{type=anything}, {type=boolean}] re
     Return v11
 }
 # CHECK-LABEL: function f16
-# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled NotFrozen of v8
+# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v8 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, NotFrozen of v8 by allocation v2 reads ShapeWords[L0], KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: v11 guard v9: Available
 
 function f17 name="endedBeforeOneHandlerEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -338,8 +338,8 @@ function f17 name="endedBeforeOneHandlerEdge" parameters=[{type=anything}, {type
     Return v11
 }
 # CHECK-LABEL: function f17
-# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled NotFrozen of v8
-# CHECK: b3 available at head: [v2.0 v2.1 v2.2 v2.3 v3.0 v3.1 v3.2 v3.3 v4.0 v5.0 v9.0]
+# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v8 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, NotFrozen of v8 by allocation v2 reads ShapeWords[L0], KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: b3 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5 v3.0 v3.1 v3.2 v3.3 v3.4 v3.5 v4.0 v5.0 v9.0]
 
 function f18 name="endedBeforeOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v1 -> taken b1(), notTaken b2()
@@ -357,7 +357,7 @@ function f18 name="endedBeforeOneEdge" parameters=[{type=anything}, {type=boolea
     Return v9
 }
 # CHECK-LABEL: function f18
-# CHECK: v8 facts: [Shape OwnInstance of v7 by allocation v2 reads -, SlotFilled NotFrozen of v7
+# CHECK: v8 facts: [Shape OwnInstance of v7 by allocation v2 reads -, SlotFilled of v7 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v7 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v7 by allocation v2 reads NamedProperties, NotFrozen of v7 by allocation v2 reads ShapeWords[L0], KeyOrder of v7 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: b3 available at head: [v8.0]
 
 function f19 name="endedAfterTheEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -379,7 +379,7 @@ function f19 name="endedAfterTheEdges" parameters=[{type=anything}, {type=boolea
     Return v10
 }
 # CHECK-LABEL: function f19
-# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3]
+# CHECK: b3 available at head: [v7.0 v7.1 v7.2 v7.3 v7.4 v7.5]
 # CHECK-NEXT: b4 available at head: [v7.0]
 # CHECK: v8 guard v7: Available
 
@@ -404,8 +404,8 @@ function f20 name="subjectIsUnspecifiedOnOneEdge" parameters=[{type=anything}, {
     Return
 }
 # CHECK-LABEL: function f20
-# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled NotFrozen of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
-# CHECK: b3 available at head: [v9.0 v9.1 v9.2 v9.3]
+# CHECK: v9 facts: [Shape OwnInstance of v8 by allocation v2 reads -, SlotFilled of v8 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v8 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v8 by allocation v2 reads NamedProperties, NotFrozen of v8 by allocation v2 reads ShapeWords[L0], KeyOrder of v8 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: b3 available at head: [v9.0 v9.1 v9.2 v9.3 v9.4 v9.5]
 # CHECK: v11 guard v9: Available
 
 function f21 name="objectWithoutGuardOnOneEdge" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
@@ -453,7 +453,7 @@ function f23 name="unspecifiedSubjectAndAnotherObject" parameters=[{type=anythin
     Return v6
 }
 # CHECK-LABEL: function f23
-# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled NotFrozen of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 reads -, SlotFilled of v6 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v6 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v6 by allocation v2 reads NamedProperties, NotFrozen of v6 by allocation v2 reads ShapeWords[L0], KeyOrder of v6 by allocation v2 reads ShapeWords[L0] OrderWords]
 
 function f24 name="endedBeforeTheEdgeThatPassesTheSubject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v1 -> taken b1(), notTaken b2()
@@ -470,7 +470,7 @@ function f24 name="endedBeforeTheEdgeThatPassesTheSubject" parameters=[{type=any
     Return v7
 }
 # CHECK-LABEL: function f24
-# CHECK: v8 facts: [Shape OwnInstance of v7 by allocation v2 reads -, SlotFilled NotFrozen of v7
+# CHECK: v8 facts: [Shape OwnInstance of v7 by allocation v2 reads -, SlotFilled of v7 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v7 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v7 by allocation v2 reads NamedProperties, NotFrozen of v7 by allocation v2 reads ShapeWords[L0], KeyOrder of v7 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: b3 available at head: [v8.0]
 
 function f25 name="tagTellsCellFromFields" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -498,6 +498,6 @@ function f25 name="tagTellsCellFromFields" parameters=[{type=anything}, {type=bo
     Return v15
 }
 # CHECK-LABEL: function f25
-# CHECK: v10 facts: [Shape OwnInstance of v9 by allocation v2 reads -, SlotFilled NotFrozen of v9
-# CHECK: v14 facts: [Shape OwnInstance of v13 by allocation v2 reads -, SlotFilled NotFrozen of v13
+# CHECK: v10 facts: [Shape OwnInstance of v9 by allocation v2 reads -, SlotFilled of v9 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v9 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v9 by allocation v2 reads NamedProperties, NotFrozen of v9 by allocation v2 reads ShapeWords[L0], KeyOrder of v9 by allocation v2 reads ShapeWords[L0] OrderWords]
+# CHECK: v14 facts: [Shape OwnInstance of v13 by allocation v2 reads -, SlotFilled of v13 by allocation v2 reads ShapeWords[L0], NoExtraProperties of v13 by allocation v2 reads NamedProperties, NoFieldOutsideSlot of v13 by allocation v2 reads NamedProperties, NotFrozen of v13 by allocation v2 reads ShapeWords[L0], KeyOrder of v13 by allocation v2 reads ShapeWords[L0] OrderWords]
 # CHECK: v15 guard v14: Available

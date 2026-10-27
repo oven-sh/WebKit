@@ -99,6 +99,8 @@ public:
 #if ENABLE(AOT)
         bool isCompiledFrame() const { return !!m_compiledFrames; }
         JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
+        // The frame is that of the built-in function that compiledFrame() calls, and whose steps compiled code runs itself.
+        bool isOfBuiltinCalledByCompiledFrame() const { return m_isOfBuiltinCalledByCompiledFrame; }
         JS_EXPORT_PRIVATE bool isConstructCall() const;
 #else
         static constexpr bool isCompiledFrame() { return false; }
@@ -176,6 +178,7 @@ public:
         uint32_t m_wasmCallSiteIndexBits { };
 #if ENABLE(AOT)
         AOT::CompiledFrameIterator* m_compiledFrames { nullptr };
+        bool m_isOfBuiltinCalledByCompiledFrame { false };
 #endif
 
         friend class StackVisitor;
@@ -189,7 +192,7 @@ public:
         TerminateIfTopEntryFrameIsEmpty,
     };
 
-    enum class CompiledFrameVisit : bool { ShownFrames, EachRunOnce };
+    enum class CompiledFrameVisit : uint8_t { ShownFrames, ShownFramesAndCalledBuiltins, EachRunOnce };
 
     template<typename Functor>
     static constexpr CompiledFrameVisit compiledFrameVisitFor = std::is_base_of_v<UnwindFunctorBase, Functor> ? CompiledFrameVisit::EachRunOnce : CompiledFrameVisit::ShownFrames;
@@ -224,10 +227,10 @@ public:
 
 #if ENABLE(AOT)
     template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, StackVisitorFunctor Functor>
-    static void visitWithCompiledFrames(CallFrame* startFrame, VM&, NOESCAPE const Functor&, bool skipFirstFrame = false);
+    static void visitWithCompiledFrames(CallFrame* startFrame, VM&, NOESCAPE const Functor&, bool skipFirstFrame = false, CompiledFrameVisit = compiledFrameVisitFor<Functor>);
 
     template<StackVisitorFunctor Functor>
-    static void visitFrom(VM&, const AOT::CompiledFrameExit&, NOESCAPE const Functor&);
+    static void visitFrom(VM&, const AOT::CompiledFrameExit&, NOESCAPE const Functor&, CompiledFrameVisit = compiledFrameVisitFor<Functor>);
 #endif
 
     Frame& operator*() { return m_frame; }
@@ -297,9 +300,9 @@ private:
 };
 
 template <StackVisitor::EmptyEntryFrameAction action, StackVisitorFunctor Functor>
-NEVER_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame)
+NEVER_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame, CompiledFrameVisit compiledFrameVisit)
 {
-    WithCompiledFrames visitor(startFrame, vm, skipFirstFrame, compiledFrameVisitFor<Functor>);
+    WithCompiledFrames visitor(startFrame, vm, skipFirstFrame, compiledFrameVisit);
     if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
         return;
     while (visitor->callFrame()) {
@@ -311,9 +314,9 @@ NEVER_INLINE void StackVisitor::visitWithCompiledFrames(CallFrame* startFrame, V
 }
 
 template<StackVisitorFunctor Functor>
-NEVER_INLINE void StackVisitor::visitFrom(VM& vm, const AOT::CompiledFrameExit& exit, NOESCAPE const Functor& functor)
+NEVER_INLINE void StackVisitor::visitFrom(VM& vm, const AOT::CompiledFrameExit& exit, NOESCAPE const Functor& functor, CompiledFrameVisit compiledFrameVisit)
 {
-    WithCompiledFrames visitor(vm, exit, compiledFrameVisitFor<Functor>);
+    WithCompiledFrames visitor(vm, exit, compiledFrameVisit);
     while (visitor->callFrame()) {
         IterationStatus status = functor(visitor);
         if (status != IterationStatus::Continue)

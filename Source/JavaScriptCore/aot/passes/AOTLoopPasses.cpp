@@ -9,14 +9,19 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCodeSizeEstimate.h"
+#include "AOTDecidedBranches.h"
+#include "AOTEffectsOfAccesses.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
+#include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
 #include "AOTProgramPasses.h"
+#include "AOTRegionCloner.h"
 #include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -320,9 +325,8 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 
 static MemoryAccess variableAccessOf(const Function& function, const Value& value)
 {
-    constexpr AbstractHeapSet hoistableHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
     MemoryAccess access = memoryAccessOf(function, value);
-    if (!access || !hoistableHeaps.contains(access.location.heap()))
+    if (!access || !heapsOfVariables.contains(access.location.heap()))
         return { };
     return access;
 }
@@ -346,13 +350,64 @@ static void addClobbers(FunctionPassContext& context, ValueID id, LoopClobbers& 
         addEffects(context.analyses.effectsOf(id), clobbers);
 }
 
-// In the header what stands in front of a read is known. Anything in the loop may have run in front of a read in another block.
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& testsThatStay)
+static bool staysBehindFirstTest(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    return std::ranges::any_of(context.analyses.inductionVariables().of(loop).variables, [&](const InductionVariable& variable) {
+        return std::ranges::any_of(variable.tests, [&](const InductionTest& test) {
+            return test.block == loop.header() && test.tested == TestedValue::BeforeStep && test.entryRelation == EntryRelation::Holds;
+        });
+    });
+}
+
+// The one block of the loop that the branch of the header leads to, if nothing else leads there.
+static BlockID findBlockBehindHeader(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    const Terminator& terminator = context.function.at(loop.header()).terminator;
+    if (!terminator.isConditionalBranch() || loops.belongsTo(terminator.taken().block, loop) == loops.belongsTo(terminator.notTaken().block, loop))
+        return { };
+    BlockID next = loops.belongsTo(terminator.taken().block, loop) ? terminator.taken().block : terminator.notTaken().block;
+    return next != loop.header() && context.analyses.cfg().incomingEdges(next).size() == 1 ? next : BlockID();
+}
+
+static bool readsWhatMayChangeBehindHeader(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    BlockID behindHeader = findBlockBehindHeader(context, loop);
+    return behindHeader && std::ranges::any_of(context.function.at(behindHeader).values, [&](ValueID id) {
+        const Value& value = context.function.at(id);
+        if (!hoistableReadOpcodes.contains(value.opcode))
+            return false;
+        MemoryAccess access = variableAccessOf(context.function, value);
+        return access.kind == MemoryAccess::Kind::Read && stabilityOf(context.program, value, access) != LocationStability::UnchangedDuringActivation;
+    });
+}
+
+// The read goes ahead of the fact that it names, so the word it finds may be anything. The cast that stays names the fact.
+static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder& builder, BlockValues& remaining, ValueID id)
+{
+    Function& function = context.function;
+    Value ahead = function.at(id);
+    ValueID fact = ahead.factOperand();
+    ahead.setFactOperand({ });
+    ahead.setMayPrecedeItsStore(true);
+    builder.setOrigin(ahead.origin());
+    ValueID read = builder.addDetached(WTF::move(ahead));
+
+    Value& value = function.edit(id, ValueEdit::Definition);
+    value.becomeAssumeType(read, Proven::behindFact(value.type));
+    value.setFactOperand(fact);
+    remaining.append(id);
+    return read;
+}
+
+// In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
+// A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
     BlockID header = loop.header();
-    if (isClosedOnlyByWaysBack(context.analyses, loop))
+    if (isClosedOnlyByWaysBack(context.analyses, loop).predicted())
         return 0;
     bool hasRead = false;
     BitVector body(function.blocks.size());
@@ -360,13 +415,16 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         body.quickSet(loop.at(i).index());
         hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            return value.opcode == Opcode::ToBoolean || (hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read);
+            return lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || (hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read);
         });
     }
     if (!hasRead || function.at(header).isHandlerBlock())
         return 0;
     std::optional<Edge> entry = context.analyses.naturalLoops().findSingleEntry(loop);
-    if (!entry || function.at(entry->from).terminator.kind != TerminatorKind::Jump)
+    if (!entry || entry->isHandlerEdge())
+        return 0;
+    bool isEnteredFromBranch = function.at(entry->from).terminator.kind != TerminatorKind::Jump;
+    if (isEnteredFromBranch && !function.at(entry->from).terminator.isConditionalBranch())
         return 0;
     BlockID preheader = entry->from;
 
@@ -389,10 +447,34 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         });
         return result;
     };
-    auto canHoist = [&](ValueID id, bool isInHeader, const LoopClobbers& clobbersBeforeRead) {
+    auto canGoAheadOfItsFact = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
+    };
+    // What was entered where the first turn is sure to get to, with every variable as it is ahead of the loop, may as well be entered ahead of the loop. What names the fact follows it.
+    bool firstTurnGetsHere = true;
+    Vector<ValueID, 4> factsOfFirstTurn;
+    auto namesFactOfFirstTurn = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && factsOfFirstTurn.contains(value.factOperand());
+    };
+    BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
+    auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
+        if (looksAtWhatMayBeUnspecified.get(id.index()))
+            return false;
         if (value.opcode == Opcode::ToBoolean)
-            return !keptReads.get(id.index()) && !testsThatStay.get(id.index()) && hasInvariantOperands(value);
+            return !keptReads.get(id.index()) && hasInvariantOperands(value);
+        // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
+        if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
+            if (keptReads.get(id.index()) || !hasInvariantOperands(value))
+                return false;
+            // An accessor that nobody sees run may still answer with a new object each time.
+            ProvenAccess storage;
+            const ProvenAccess& proven = provenAccessOf(program, function, value, storage);
+            if (!proven.isComplete || !proven.accessors.isEmpty())
+                return false;
+            Effects effects = context.analyses.effectsOf(id).onAnyEdge();
+            return effects.isUnobservable() && !effects.reads.overlaps(clobbers.writes);
+        }
         if (!hoistableReadOpcodes.contains(value.opcode))
             return false;
         MemoryAccess access = variableAccessOf(function, value);
@@ -406,42 +488,72 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         if (stability == LocationStability::ChangedByOwnStores && mayPrecedeStore)
             stability = LocationStability::Unknown;
         // That a location is stored before it is read may hang on a test in front of the read, and a block that is not the header may not run at all.
-        if (!isInHeader && stability != LocationStability::UnchangedDuringActivation)
+        if (stability != LocationStability::UnchangedDuringActivation && block != header && block != behindHeader)
             return false;
         if (stability != LocationStability::UnchangedDuringActivation && clobbersBeforeRead.writes.overlaps(program, access.location))
             return false;
         if (stability == LocationStability::Unknown && clobbers.writes.overlaps(program, access.location))
             return false;
-        return hasInvariantOperands(value);
+        return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
 
     unsigned numberOfHoistedReads = 0;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
-    BlockFrequency frequencyOfPreheader = frequencies.classOf(preheader);
+    Expected<BlockFrequency> frequencyOfPreheader = frequencies.classOf(preheader);
+    LoopClobbers clobbersSinceEntry;
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
         if (!body.get(blockID.index()))
             continue;
         // In front of the loop a read runs each time the loop is entered, and what it read is kept all the way round. A block that seldom runs pays for its own reads.
-        BlockFrequency frequency = frequencies.classOf(blockID);
-        if (frequency == BlockFrequency::Rare || frequency > frequencyOfPreheader)
+        Expected<BlockFrequency> frequency = frequencies.classOf(blockID);
+        if (frequency.predicted() == BlockFrequency::Rare || (frequency > frequencyOfPreheader).predicted()) {
+            if (blockID == header)
+                behindHeader = { };
             continue;
-        LoopClobbers clobbersInHeader;
+        }
+        bool followsEntry = blockID == header || blockID == behindHeader;
         unsigned numberOfReadsBefore = numberOfHoistedReads;
         BlockValues remaining;
         remaining.reserveInitialCapacity(function.at(blockID).values.size());
         for (ValueID id : function.at(blockID).values) {
-            if (!canHoist(id, blockID == header, blockID == header ? clobbersInHeader : clobbers)) {
-                addClobbers(context, id, clobbersInHeader);
+            if (!canHoist(id, blockID, followsEntry ? clobbersSinceEntry : clobbers)) {
+                if (followsEntry) {
+                    addClobbers(context, id, clobbersSinceEntry);
+                    firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOf(id).onAnyEdge());
+                    if (firstTurnGetsHere && function.at(id).opcode == Opcode::Entered && hasInvariantOperands(function.at(id)))
+                        factsOfFirstTurn.append(id);
+                }
                 remaining.append(id);
+                continue;
+            }
+            if (isEnteredFromBranch) {
+                entriesFromBranches.append(*entry);
+                return 0;
+            }
+            ++numberOfHoistedReads;
+            if (namesFactOfFirstTurn(function.at(id))) {
+                ValueID fact = function.at(id).factOperand();
+                factsOfFirstTurn.removeFirst(fact);
+                BlockValues& valuesAroundFact = definingBlock[fact.index()] == blockID ? remaining : function.edit(definingBlock[fact.index()]).values;
+                valuesAroundFact.removeFirst(fact);
+                function.edit(preheader).values.append(fact);
+                definingBlock[fact.index()] = preheader;
+            }
+            if (!hasInvariantOperands(function.at(id))) {
+                function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));
+                appendKeptReadForValidation(builder, remaining, id);
                 continue;
             }
             function.edit(preheader).values.append(id);
             definingBlock[id.index()] = preheader;
-            ++numberOfHoistedReads;
             appendKeptReadForValidation(builder, remaining, id);
             if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
-                function.edit(id).setMayPrecedeItsStore(true);
+                function.edit(id).setIsValidatedWhereLookedAt(true);
+        }
+        if (blockID == header) {
+            addEffects(context.analyses.effectsOfTerminator(header), clobbersSinceEntry);
+            firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOfTerminator(header).onAnyEdge());
         }
         if (numberOfHoistedReads > numberOfReadsBefore)
             function.edit(blockID).values = WTF::move(remaining);
@@ -451,20 +563,17 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     return numberOfHoistedReads;
 }
 
-PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
+static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 2>& entriesFromBranches)
 {
     const Function& function = context.function;
     CFG& cfg = context.analyses.cfg();
-    if (!cfg.hasCycle())
-        return PassOutcome::Unchanged;
-
     NaturalLoops& naturalLoops = context.analyses.naturalLoops();
     Vector<const NaturalLoop*> loopsInnermostFirst;
     loopsInnermostFirst.reserveInitialCapacity(naturalLoops.numLoops());
     for (unsigned i = 0; i < naturalLoops.numLoops(); ++i)
         loopsInnermostFirst.append(&naturalLoops.loop(i));
     if (loopsInnermostFirst.isEmpty())
-        return PassOutcome::Unchanged;
+        return 0;
     AOT::sort(loopsInnermostFirst, [&](const NaturalLoop* a, const NaturalLoop* b) {
         return cfg.reversePostOrderIndex(a->header()) > cfg.reversePostOrderIndex(b->header());
     });
@@ -478,25 +587,52 @@ PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
             definingBlock[id.index()] = blockID;
     }
 
-    // A value that may be unspecified is tested only where the program tests it. Asked before anything moves: the answer follows the uses of values.
-    BitVector testsThatStay;
-    if (context.analyses.opcodesOfValues().contains(Opcode::ToBoolean)) {
-        UnspecifiedValues unspecified(context.analyses);
-        for (BlockID block : cfg.reversePostOrder()) {
-            for (ValueID id : function.at(block).values) {
-                if (function.at(id).opcode == Opcode::ToBoolean && unspecified.mayContain(function.at(id).operand(0)))
-                    testsThatStay.set(id.index());
-            }
+    // A value that may be unspecified is looked at only where the program looks at it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
+    BitVector looksAtWhatMayBeUnspecified;
+    UnspecifiedValues unspecified(context.analyses);
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (!hoistableOpcodes.contains(function.at(id).opcode))
+                continue;
+            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                if (unspecified.mayContain(operand))
+                    looksAtWhatMayBeUnspecified.set(id.index());
+            });
         }
+    }
+
+    BitVector headersWhoseTestHoldsOnEntry;
+    for (const NaturalLoop* loop : loopsInnermostFirst) {
+        if (readsWhatMayChangeBehindHeader(context, *loop) && staysBehindFirstTest(context, *loop))
+            headersWhoseTestHoldsOnEntry.set(loop->header().index());
     }
 
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, testsThatStay);
-    if (!numberOfHoistedReads)
+        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, looksAtWhatMayBeUnspecified, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+    if (numberOfHoistedReads)
+        context.analyses.didChangeValues();
+    return numberOfHoistedReads;
+}
+
+PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
+{
+    if (!context.analyses.cfg().hasCycle())
         return PassOutcome::Unchanged;
 
-    context.analyses.didChangeValues();
+    Vector<Edge, 2> entriesFromBranches;
+    unsigned numberOfChanges = hoistReadsOutOfLoops(context, entriesFromBranches);
+    if (!entriesFromBranches.isEmpty()) {
+        IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+        for (Edge entry : entriesFromBranches)
+            builder.splitEdge(entry);
+        numberOfChanges += entriesFromBranches.size();
+        entriesFromBranches.clear();
+        numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
+    }
+    if (!numberOfChanges)
+        return PassOutcome::Unchanged;
+
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }
@@ -630,14 +766,171 @@ static bool removeOutermostDeadLoops(FunctionPassContext& context)
     return true;
 }
 
+static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID block)
+{
+    BitVector hints;
+    std::span<const ValueID> values = function.at(block).values.span();
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (function.at(values[index]).opcode == Opcode::LoopHint)
+            hints.set(index);
+    }
+    if (hints.isEmpty())
+        return false;
+    builder.eraseValues(block, hints);
+    return true;
+}
+
+// What is left of a loop whose way back has been folded away turns no more.
+static bool removeHintsOutsideCycles(FunctionPassContext& context)
+{
+    Vector<BlockID, 8> outsideCycles;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        if (!context.analyses.isInCycle(block))
+            outsideCycles.append(block);
+    }
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    bool changed = false;
+    for (BlockID block : outsideCycles)
+        changed |= eraseLoopHints(builder, context.function, block);
+    return changed;
+}
+
 PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     while (removeOutermostDeadLoops(context))
         outcome = PassOutcome::Changed;
+    if (removeHintsOutsideCycles(context))
+        outcome = PassOutcome::Changed;
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;
+    return outcome;
+}
+
+// UnrollShortLoops.
+
+// How often the body runs, where the counter starts at a constant, steps by a constant and is tested against a constant.
+static std::optional<uint64_t> findNumberOfTurns(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const InductionVariable* counter = context.analyses.inductionVariables().of(loop).counter();
+    if (!counter || counter->step.kind != InductionStepKind::Constant || !counter->step.constant)
+        return std::nullopt;
+    const InductionTest* test = counter->controllingTest();
+    if (!test || test->tested != TestedValue::BeforeStep || test->block != loop.header() || !isBoundingRelation(test->relation, counter->direction) || !counter->start || !test->bound)
+        return std::nullopt;
+    std::optional<int64_t> start = integerConstantThroughCasts(context.program, context.function, counter->start);
+    std::optional<int64_t> bound = integerConstantThroughCasts(context.program, context.function, test->bound);
+    constexpr int64_t farthest = 1 << 30;
+    if (!start || !bound || std::abs(*start) > farthest || std::abs(*bound) > farthest)
+        return std::nullopt;
+
+    int64_t distance = counter->direction == InductionDirection::Increasing ? *bound - *start : *start - *bound;
+    if (test->relation == Opcode::LessEq || test->relation == Opcode::GreaterEq)
+        ++distance;
+    uint64_t step = static_cast<uint64_t>(std::abs(counter->step.constant));
+    return distance <= 0 ? 0 : (static_cast<uint64_t>(distance) + step - 1) / step;
+}
+
+namespace {
+
+struct ShortLoop {
+    BlockID header;
+    uint64_t numberOfTurns { 0 };
+    Vector<BlockID, 8> region;
+    Vector<Edge, 2> entries;
+    Vector<Edge, 2> backEdges;
+};
+
+} // anonymous namespace
+
+// The header takes the counter as a parameter and ends by comparing it with a constant.
+static bool mayBeHeaderOfShortLoop(const Program& program, const Function& function, const Block& block)
+{
+    if (block.parameters.isEmpty() || !block.terminator.isConditionalBranch())
+        return false;
+    const Value& comparison = function.at(block.terminator.conditionOperand());
+    return relationalOperators.contains(comparison.opcode) && (integerConstantThroughCasts(program, function, comparison.operand(0)) || integerConstantThroughCasts(program, function, comparison.operand(1)));
+}
+
+static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Function& function = context.function;
+    NaturalLoops& loops = context.analyses.naturalLoops();
+    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop).predicted())
+        return std::nullopt;
+    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
+    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
+        return std::nullopt;
+
+    ShortLoop found { loop.header(), *numberOfTurns, { }, { }, { } };
+    uint64_t bytes = 0;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        if (loops.innerMostLoopOf(loop.at(index)) != &loop)
+            return std::nullopt;
+        found.region.append(loop.at(index));
+        bytes += estimatedCodeBytes(context.program, function, function.at(loop.at(index)));
+    }
+    if (bytes * *numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+        return std::nullopt;
+
+    for (Edge edge : context.analyses.cfg().incomingEdges(loop.header())) {
+        if (edge.isHandlerEdge() || hasEdgeResults(function, edge))
+            return std::nullopt;
+        (loops.belongsTo(edge.from, loop) ? found.backEdges : found.entries).append(edge);
+    }
+    if (RegionCloner::checkCanDuplicate(context.analyses, found.region.span()) != CloneCheck::CanClone)
+        return std::nullopt;
+    return found;
+}
+
+// The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.
+static void unroll(FunctionPassContext& context, const ShortLoop& loop)
+{
+    Function& function = context.function;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<std::unique_ptr<RegionCloner>> turns;
+    for (uint64_t turn = 0; turn < loop.numberOfTurns; ++turn) {
+        turns.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+        turns.last()->cloneBlocks(loop.region.span(), [](ValueID, Value&) { });
+    }
+
+    for (Edge entry : loop.entries)
+        builder.redirectEdge(entry, turns.first()->cloneOf(loop.header), Arguments(targetOf(function, entry).arguments));
+    for (size_t turn = 0; turn < turns.size(); ++turn) {
+        BlockID next = turn + 1 < turns.size() ? turns[turn + 1]->cloneOf(loop.header) : loop.header;
+        for (Edge backEdge : loop.backEdges) {
+            Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
+            builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
+        }
+        eraseLoopHints(builder, function, turns[turn]->cloneOf(loop.header));
+    }
+    context.analyses.didChangeControlFlow();
+    RegionCloner::repairSSA(context.analyses, turns.span());
+    context.analyses.didChangeControlFlow();
+}
+
+PassOutcome unrollShortLoops(FunctionPassContext& context)
+{
+    PassOutcome outcome = PassOutcome::Unchanged;
+    const CFG& cfg = context.analyses.cfg();
+    bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
+        return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
+            return cfg.isReachable(edge.from) && cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block);
+        });
+    });
+    if (!mayHaveShortLoop)
+        return outcome;
+    for (uint64_t unrolled = 0; unrolled < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++unrolled) {
+        std::optional<ShortLoop> found;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index)
+            found = findShortLoop(context, loops.loop(index));
+        if (!found)
+            break;
+        unroll(context, *found);
+        outcome = PassOutcome::Changed;
+    }
     return outcome;
 }
 

@@ -1,0 +1,116 @@
+# An append of several parts is rolled back when one of them throws, where the handler goes on with the builder
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="handlerAppends" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b5()
+  b2() handler=b3():
+    v8 = String string="n"
+    v9 = Strcat v4, v8, v5, v0
+    Jump -> next b4(v9)
+  b3() role=CatchHandler:
+    v10 = String string="T"
+    v11 = Add v4, v10
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Integer integer=1
+    v14 = Add v5, v13
+    Jump -> next b1(v12, v14)
+  b5():
+    Return v4
+}
+# CHECK-LABEL: name="handlerAppends"
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: v8: "n" = String string="n"
+# CHECK-NEXT: [[c0]]: int[0, 2147483647] = StringBuilderCheckpoint v4
+# CHECK-NEXT: Jump -> next [[covered0]]()
+# CHECK: b3() role=CatchHandler:
+# CHECK: StringBuilderAppend v4, v10
+# CHECK: [[covered0]]() handler=[[failed0]]():
+# CHECK-NEXT: StringBuilderAppend v4, v8, v5, v0
+# CHECK-NEXT: Jump
+# CHECK: [[failed0]]() role=CleanupHandler frequency=Rare handler=b3():
+# CHECK-NEXT: [[e0]]: exception = CatchException
+# CHECK-NEXT: StringBuilderRollBack v4, [[c0]]
+# CHECK-NEXT: Rethrow [[e0]]
+
+function f1 name="handlerTakesTheBuilder" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2() handler=b4(v4):
+    v8 = Strcat v4, v0, v5
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+  b4(v11) role=CatchHandler:
+    Return v11
+}
+# CHECK-LABEL: name="handlerTakesTheBuilder"
+# CHECK: b2() handler=b4(v4):
+# CHECK-NEXT: [[c1]]: int[0, 2147483647] = StringBuilderCheckpoint v4
+# CHECK: StringBuilderAppend v4, v0, v5
+# CHECK: role=CleanupHandler frequency=Rare handler=b4(v4):
+# CHECK: StringBuilderRollBack v4, [[c1]]
+
+function f2 name="appendsOnePart" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+  b4() role=CatchHandler:
+    Return v4
+}
+# CHECK-LABEL: name="appendsOnePart"
+# CHECK-NOT: StringBuilderCheckpoint
+# CHECK: StringBuilderAppend v4, v0
+# CHECK-NOT: StringBuilderRollBack
+
+function f3 name="handlerDropsTheBuilder" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v8 = Strcat v4, v0, v5
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v11
+}
+# CHECK-LABEL: name="handlerDropsTheBuilder"
+# CHECK-NOT: StringBuilderCheckpoint
+# CHECK: StringBuilderAppend v4, v0, v5
+# CHECK-NOT: StringBuilderRollBack

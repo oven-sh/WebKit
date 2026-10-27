@@ -60,16 +60,19 @@ class ValueFlowSolution {
 public:
     enum class Witnesses : uint8_t { None, ForEveryEdge };
     enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
-    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
+    enum class CoveredMembers : uint8_t { StayListed, AreLeftOut };
+    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor, CoveredMembers = CoveredMembers::StayListed);
     ~ValueFlowSolution();
 
     const Program& program() const { return m_program; }
     const ValueSets& sets() const { return m_bodies.sets(); }
     const ValueFlowBodies& bodies() const { return m_bodies; }
     const ValueFlowSolver& solver() const { return *m_solver; }
+    // Where the build widens flow, solver() was given more to begin with, and this one solved the program as it is.
+    const ValueFlowSolver* solverOfProgramAsItIs() const { return m_solverOfProgramAsItIs.get(); }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }
     bool hasResult() const { return m_hasResult; }
-    ValueSetID valueOf(const ValueFlowOperand&);
+    ValueSetID possibleValuesOf(const ValueFlowOperand&);
 
 private:
     const Program& m_program;
@@ -79,6 +82,8 @@ private:
     mutable ValueSetMakerPool m_makerPool;
     std::unique_ptr<ValueFlowInstancedFunctions> m_instancedFunctions;
     ValueFlowSolverInput m_input;
+    ValueFlowSolverInput m_inputAsItIs;
+    std::unique_ptr<ValueFlowSolver> m_solverOfProgramAsItIs;
     std::unique_ptr<ValueFlowSolver> m_solver;
     bool m_hasResult { false };
 };

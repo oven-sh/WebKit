@@ -1,4 +1,4 @@
-# A loop that is not hot keeps its unlikely paths: the copy would cost more code than it saves time
+# A loop that is not expected to run keeps its unlikely paths: the copy would cost more code than it saves time
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass SeparateUnlikelyLoopPaths

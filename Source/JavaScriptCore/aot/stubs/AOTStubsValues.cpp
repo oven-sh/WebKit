@@ -343,6 +343,11 @@ void generateEqual(StubAssembler& jit)
     loadStringLength(jit, left, leftValue, length);
     loadStringLength(jit, right, rightValue, flags);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, length, flags));
+    JumpList needsOperation;
+    branchIfCharactersInPlaceDiffer(jit, { left, right, leftValue, rightValue, length, flags, result }, isFalse, needsOperation);
+    isTrue.append(jit.jump());
+
+    needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringsAreEqual, equalityOperationCall(isStrict, left, right, false));
 
     isTrue.link(&jit);

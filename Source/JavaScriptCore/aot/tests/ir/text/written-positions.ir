@@ -1,0 +1,18 @@
+# A value may name two positions: where it is reported, then where it is written
+# RUN: round-trip
+# CHECK: v1 = PropGet v0 key="start" @110 @19
+# CHECK-NEXT: v2 = PropGet v0 key="end" @110
+# CHECK-NEXT: v3 = Sub v2, v1 @120 @0
+# CHECK: round trip: same
+# RUN(V): verify
+# V: valid
+
+module m0 path="/a.js" displayPath="a.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="start" @110 @19
+    v2 = PropGet v0 key="end" @110
+    v3 = Sub v2, v1 @120 @0
+    Return v3
+}

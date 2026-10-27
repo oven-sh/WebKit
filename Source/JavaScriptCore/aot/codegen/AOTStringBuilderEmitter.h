@@ -22,6 +22,7 @@ public:
 
     void generateStringBuilderBegin(const ValueContext&);
     void generateStringBuilderAppendJSON(const ValueContext&);
+    void generateStringBuilderAppendJSONMembers(const ValueContext&);
     void generateStringBuilderLength(const ValueContext&);
     void generateStringBuilderToString(const ValueContext&);
     void generateStringBuilderFinish(const ValueContext&);

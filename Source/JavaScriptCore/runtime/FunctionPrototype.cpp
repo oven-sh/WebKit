@@ -174,7 +174,12 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if ((function && function->canAssumeNameAndLengthAreOriginal(vm)) || target->type() == SlimClosureType) [[likely]] {
+    bool canAssumeNameAndLengthAreOriginal = function && function->canAssumeNameAndLengthAreOriginal(vm);
+#if ENABLE(AOT)
+    if (isSlimClosureType(target->type()))
+        canAssumeNameAndLengthAreOriginal = AOT::CompiledCallee::canAssumeNameAndLengthAreOriginal(vm, target);
+#endif
+    if (canAssumeNameAndLengthAreOriginal) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
         // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
         // at the time of creation of JSBoundFunction.

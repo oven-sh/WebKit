@@ -442,7 +442,15 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     const FieldAddressRegisters field { object, T10, T11, T11, T12 };
     jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), field.slotData);
     computeFieldAddress(jit, field, false, otherwise);
-    branchOnFieldPresence(jit, field, T10, otherwise, isAbsent);
+    JumpList isPresent;
+    branchOnFieldPresence(jit, field, T10, isPresent, isAbsent);
+
+    // A closure that is made at its first use. The object and the name say all that making it takes, so nothing is looked up and nothing is filed.
+    static_assert(!uncreatedDeferredClosure);
+    isPresent.link(&jit);
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::DeferredClosure))));
+    otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(field.address)));
+    jit.callOperationAndReturn(Entry::operationAOTMaterializeDeferredClosure, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = object, .thirdArgumentIn = name });
 
     isAbsent.link(&jit);
     jit.bindEntry(getByIdOfEmptySlot().withCallerFrame(callerFrame));
@@ -766,7 +774,7 @@ void CachedSlot::loadOwnWordIndex(StubAssembler& jit, GPRReg result) const
         jit.signExtend32ToPtr(m_payload, result);
         return;
     }
-    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition);
+    RELEASE_ASSERT(payload == SlotPayload::Holder || payload == SlotPayload::Transition || payload == SlotPayload::Removal);
     if (payload == SlotPayload::Holder && m_form == SlotForm::PackedSlot)
         jit.signExtend32ToPtr(m_header, result);
     else
@@ -825,7 +833,7 @@ GPRReg CachedSlot::registerOfFirstPayloadWord() const
     const SlotPayload payload = Slot::payloadOf(m_kind);
     if (payload == SlotPayload::Field || payload == SlotPayload::Transition || payload == SlotPayload::CustomAccessor)
         return m_form == SlotForm::Slot ? m_payload : m_header;
-    RELEASE_ASSERT(m_form == SlotForm::Slot && (payload == SlotPayload::WordIndex || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition));
+    RELEASE_ASSERT(m_form == SlotForm::Slot && (payload == SlotPayload::WordIndex || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition || payload == SlotPayload::Removal || payload == SlotPayload::OrderWords));
     return m_payload;
 }
 
@@ -839,7 +847,7 @@ void CachedSlot::loadSecondPayloadWord(StubAssembler& jit, GPRReg result) const
     const SlotPayload payload = Slot::payloadOf(m_kind);
     const bool mayBePacked = payload == SlotPayload::Field || payload == SlotPayload::ExtraProperty || payload == SlotPayload::Transition;
     if (m_form == SlotForm::Slot) {
-        RELEASE_ASSERT(mayBePacked || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition);
+        RELEASE_ASSERT(mayBePacked || payload == SlotPayload::FieldAndHolder || payload == SlotPayload::ExtraPropertyAddition || payload == SlotPayload::Removal || payload == SlotPayload::OrderWords);
         jit.urshift64(m_payload, TrustedImm32(secondPayloadWordShift), result);
         return;
     }
@@ -863,6 +871,7 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     RELEASE_ASSERT(result != m_header);
     switch (Slot::payloadOf(m_kind)) {
     case SlotPayload::None:
+    case SlotPayload::Key:
         jit.move(TrustedImm32(0), result);
         return;
     case SlotPayload::Holder: {
@@ -890,6 +899,8 @@ void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
     case SlotPayload::WordIndex:
     case SlotPayload::FieldAndHolder:
     case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Removal:
+    case SlotPayload::OrderWords:
     case SlotPayload::Constant:
         break;
     }
@@ -1122,7 +1133,7 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
 {
     const SlotHandlerTableTraits traits = traitsOf(table);
     const SlotHandlerOperands operands = operandsOfSlotHandler(table);
-    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const std::array handlers = slotHandlerKeys(table);
     const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
     RELEASE_ASSERT(header == operands.header);
     RELEASE_ASSERT(noOverlap(scratch, operands.receiver, operands.header, operands.payload, operands.value, operands.keyCell, operands.identifierNumber, siteRegisterOf(traits).value_or(InvalidGPRReg), instanceGPR));
@@ -1137,7 +1148,7 @@ void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg 
 
 void callSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg kind)
 {
-    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const std::array handlers = slotHandlerKeys(table);
     const int32_t offsetOfHandlers = static_cast<int32_t>(Instance::offsetOfSlotHandlers(table));
 #if CPU(ARM64) && defined(BUN_HARDENED)
     jit.add32(TrustedImm32(offsetOfHandlers / static_cast<int32_t>(sizeof(void*))), kind);

@@ -24,5 +24,5 @@ function f0 name="caseOfSwitch" parameters=[{type=L0|L1}] results=[{type=anythin
     v6 = Null
     Return v6
 # CHECK: ValidateType v0 validatedType=L0
-# CHECK-NEXT: = AssumeType v0 castType=L0
+# CHECK-NEXT: = AssumeType v0 provenType=L0
 }

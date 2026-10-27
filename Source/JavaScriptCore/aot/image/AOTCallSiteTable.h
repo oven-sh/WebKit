@@ -7,8 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTImageForward.h"
+#include "AOTLimits.h"
+#include "AOTSchemaPackedRecords.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
 #include "HandlerInfo.h"
@@ -26,17 +29,26 @@ struct SiteHandler;
 struct CallSiteRecord {
     CallSiteIndex callSite;
     unsigned inlineFrame;
-    bool isConstruct;
-    bool isTailCall;
-    std::optional<CallSiteIndex> firstReadSite;
-};
+    // A function that makes a tail call leaves the stack when its callee begins.
+    bool isTailDeleted(bool calleeWasEntered) const { return isTailCall() && (calleeWasEntered || isInsideCallee()); }
+    bool isConstruct() const { return isConstructOf(kind); }
+    bool isTailCall() const { return isTailCallOf(kind); }
+    bool isInsideCallee() const { return isInsideCalleeOf(kind); }
 
-struct InlineFrameRecord {
-    unsigned parent;
+    CallSiteKind kind { CallSiteKind::Plain };
+    // What is called runs steps of this function, which has no frame of its own.
+    BuiltinID calledBuiltin { };
+    std::optional<CallSiteIndex> firstReadSite { };
+};
+static_assert(sizeof(CallSiteRecord) == 20);
+
+// A method read without a site of its own is the site of the call and, above the bits of a site number, the columns between the two.
+inline constexpr unsigned siteNumberBits = 23;
+static_assert(defaultLimitValue(LimitID::SitesPerFunction, hostArchitecture()) < 1u << siteNumberBits);
+inline CallSiteIndex methodReadSite(CallSiteIndex call, unsigned columnDelta) { return CallSiteIndex(call.bits() | columnDelta << siteNumberBits); }
+
+struct InlineFrameRecord : InlineFrameRow {
     CallSiteIndex callSite;
-    FunctionID function;
-    bool isConstruct;
-    bool isTailCall;
 };
 
 class InlineFrameReader {
@@ -59,6 +71,8 @@ private:
 class SiteFrames {
 public:
     SiteFrames(const Image&, uint32_t function);
+    // Of the encoded call sites of one function. Without any, every site is in frame 0.
+    explicit SiteFrames(const uint8_t* callSites);
     unsigned next();
     void skip(uint64_t numberOfSites);
 
@@ -96,8 +110,13 @@ bool catchesExceptions(const Image&, uint32_t function);
 struct SourcePosition {
     friend bool operator==(const SourcePosition&, const SourcePosition&) = default;
 
+    const LineColumn& startOfExpression() const { return constructionStart.line && !startIsForCallers ? constructionStart : lineColumn; }
+
     LineColumn lineColumn;
     ModuleID source;
+    LineColumn constructionStart { 0, 0 };
+    // `constructionStart` is no start of a construction: it is where the site is reported while something that it called runs.
+    bool startIsForCallers { false };
 };
 
 static constexpr unsigned sitesBetweenPositionCheckpoints = 512;
@@ -109,7 +128,7 @@ struct OwnPosition {
     uint32_t source { 0 };
 };
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, OwnPosition ofFunctionInFront);
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, const uint8_t* callSites, OwnPosition ofFunctionInFront);
 std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
 void forgetRememberedPositions();
 

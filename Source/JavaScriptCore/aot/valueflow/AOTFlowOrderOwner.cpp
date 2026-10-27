@@ -116,9 +116,10 @@ public:
         for (size_t next = 0; next < m_frames.size(); ++next) {
             FlowScopeFrame* caller = m_frames[next].get();
             for (const FlowFunctionMention& mention : m_index.mentionsIn(caller->function)) {
-                bool runsOnlyDuringCall = m_index.calls.soleCallSites[mention.function.index()] == FlowCallSite { caller->function, mention.value };
-                if (runsOnlyDuringCall && pointOf(*caller, mention.value))
-                    appendFrame(mention.function, caller, mention.value);
+                FlowCallSite site = m_index.calls.soleCallSites[mention.function.index()];
+                bool runsOnlyDuringCall = site.second && site.first == caller->function && (site.second == mention.value || mention.kind == FunctionReferenceKind::Closure);
+                if (runsOnlyDuringCall && pointOf(*caller, site.second))
+                    appendFrame(mention.function, caller, site.second);
             }
         }
     }
@@ -201,7 +202,7 @@ public:
                 continue;
             const Variable& variable = m_index.program().variables[location];
             bool isSetAtCreation = variable.initialization == VariableInitialization::Function;
-            bool startsAbsent = m_index.program().at(variable.declared.type).primitives & Primitive::Absent;
+            bool startsAbsent = m_index.program().at(variable.declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwiceAtAll) };
             if (orders[location].initialization == InitializationState::StoredBeforeEveryRead && orders[location].stores == StoreCount::AtMostOnce)
                 orders[location].isStoredBeforeCallersOfReaders = isStoredBeforeCallersOfReaders(location);
@@ -456,59 +457,108 @@ private:
             m_classesEvaluatedOnce.set(constructedClass.index());
 
         ensureEntry(function);
-        Vector<std::pair<FlowScopeFrame*, ValueID>, 4> worklist;
-        worklist.append({ &creator, closure });
-        auto follow = [&](FlowScopeFrame& frame, const Use& use) {
-            if (use.kind != Use::Kind::Operand)
-                return false;
-            const Value& user = frame.body.at(use.user);
-            if (isForwardedOperand(operandInfoOf(user.opcode, use.operandIndex))) {
-                worklist.append({ &frame, use.user });
-                return true;
-            }
-            FlowScopeFrame* callee = user.opcode == Opcode::CallDirect ? findFrame(user.function()) : nullptr;
-            if (callee && callee->caller == &frame && callee->call == use.user) {
-                auto argumentIndex = user.variadicOperandIndex(use.operandIndex);
-                const auto& parameters = callee->body.at(entryBlock).parameters;
-                if (argumentIndex && *argumentIndex < parameters.size()) {
-                    worklist.append({ callee, parameters[*argumentIndex] });
-                    return true;
-                }
-            }
-            if (user.opcode == Opcode::PropDefine && use.operandIndex == OperandIndex::PropDefine::object) {
-                VariableID staticField = findStaticFieldVariable(m_index.program(), function, user.key());
+        auto finish = [&](FlowScopeFrame& frame, const Use& use, UseOfClosure kind) {
+            if (kind == UseOfClosure::DefinesProperty) {
+                VariableID staticField = findStaticFieldVariable(m_index.program(), function, frame.body.at(use.user).key());
                 if (staticField && m_index.locationOwners[staticField.index()] == m_owner.function)
                     m_definitions.append({ staticField.index(), frame.function, use.user });
-                return true;
+                return;
             }
-            if (user.opcode != Opcode::DefineMethod)
-                return false;
-            if (use.operandIndex == OperandIndex::DefineMethod::classObject)
-                return true;
-            if (use.operandIndex != OperandIndex::DefineMethod::function)
-                return false;
-            ValueID constructor = forwardedSourceOf(frame.body, user.operand(OperandIndex::DefineMethod::classObject));
-            if (frame.body.at(constructor).opcode != Opcode::NewClosure)
-                return false;
-            worklist.append({ &frame, constructor });
-            return true;
+            auto location = storedLocation(frame, use);
+            bool isOpaque = location && m_index.opaqueLocations.get(*location);
+            bool isEnteredAtRead = location && !canCapturePerIterationEnvironment && m_index.locationOwners[*location] == m_owner.function;
+            FlowScopeEntry entryAtUse = scopeEntryAfter(frame.function, frame.analyses.useLists().pointOf(use));
+            if (isOpaque || isEnteredAtRead)
+                recordStoredFunction(*location, function, entryAtUse);
+            else
+                lower(function, entryAtUse);
         };
-        while (!worklist.isEmpty()) {
-            auto [followedFrame, followedValue] = worklist.takeLast();
-            FlowScopeFrame& frame = *followedFrame;
-            for (const Use& use : frame.analyses.useLists().usesOf(followedValue)) {
-                if (follow(frame, use))
-                    continue;
-                auto location = storedLocation(frame, use);
-                bool isOpaque = location && m_index.opaqueLocations.get(*location);
-                bool isEnteredAtRead = location && !canCapturePerIterationEnvironment && m_index.locationOwners[*location] == m_owner.function;
-                FlowScopeEntry entryAtUse = scopeEntryAfter(frame.function, frame.analyses.useLists().pointOf(use));
-                if (isOpaque || isEnteredAtRead)
-                    recordStoredFunction(*location, function, entryAtUse);
-                else
-                    lower(function, entryAtUse);
+        forEachUseReachedFrom(creator, closure, [&](FlowScopeFrame& frame, ValueID constructor) {
+            for (const ReachedUse& reached : usesReachedFromConstructor(frame, constructor))
+                finish(*reached.frame, reached.use, reached.kind);
+        }, finish);
+    }
+
+    enum class UseOfClosure : uint8_t { Followed, DefinesProperty, Other };
+
+    struct FollowedValue {
+        FlowScopeFrame* frame;
+        ValueID value;
+        bool isConstructorOfMethod { false };
+    };
+
+    struct ReachedUse {
+        FlowScopeFrame* frame;
+        Use use;
+        UseOfClosure kind;
+    };
+
+    UseOfClosure followUse(FlowScopeFrame& frame, const Use& use, Vector<FollowedValue, 4>& worklist)
+    {
+        if (use.kind != Use::Kind::Operand)
+            return UseOfClosure::Other;
+        const Value& user = frame.body.at(use.user);
+        if (isForwardedOperand(operandInfoOf(user.opcode, use.operandIndex))) {
+            worklist.append({ &frame, use.user });
+            return UseOfClosure::Followed;
+        }
+        FlowScopeFrame* callee = user.opcode == Opcode::CallDirect ? findFrame(user.function()) : nullptr;
+        if (callee && callee->caller == &frame && callee->call == use.user) {
+            auto argumentIndex = user.variadicOperandIndex(use.operandIndex);
+            const auto& parameters = callee->body.at(entryBlock).parameters;
+            if (argumentIndex && *argumentIndex < parameters.size()) {
+                worklist.append({ callee, parameters[*argumentIndex] });
+                return UseOfClosure::Followed;
             }
         }
+        if (user.opcode == Opcode::PropDefine && use.operandIndex == OperandIndex::PropDefine::object)
+            return UseOfClosure::DefinesProperty;
+        if (user.opcode != Opcode::DefineMethod)
+            return UseOfClosure::Other;
+        if (use.operandIndex == OperandIndex::DefineMethod::classObject)
+            return UseOfClosure::Followed;
+        if (use.operandIndex != OperandIndex::DefineMethod::function)
+            return UseOfClosure::Other;
+        ValueID constructor = forwardedSourceOf(frame.body, user.operand(OperandIndex::DefineMethod::classObject));
+        if (frame.body.at(constructor).opcode != Opcode::NewClosure)
+            return UseOfClosure::Other;
+        worklist.append({ &frame, constructor, true });
+        return UseOfClosure::Followed;
+    }
+
+    // A method goes wherever the constructor of its class goes.
+    void forEachUseReachedFrom(FlowScopeFrame& creator, ValueID closure, NOESCAPE const Invocable<void(FlowScopeFrame&, ValueID)> auto& followConstructor, NOESCAPE const Invocable<void(FlowScopeFrame&, const Use&, UseOfClosure)> auto& functor)
+    {
+        Vector<FollowedValue, 4> worklist;
+        worklist.append({ &creator, closure });
+        while (!worklist.isEmpty()) {
+            FollowedValue followed = worklist.takeLast();
+            FlowScopeFrame& frame = *followed.frame;
+            if (followed.isConstructorOfMethod) {
+                followConstructor(frame, followed.value);
+                continue;
+            }
+            for (const Use& use : frame.analyses.useLists().usesOf(followed.value)) {
+                UseOfClosure kind = followUse(frame, use, worklist);
+                if (kind != UseOfClosure::Followed)
+                    functor(frame, use, kind);
+            }
+        }
+    }
+
+    // The same for every method of the class, and a class object has a use for each method.
+    const Vector<ReachedUse>& usesReachedFromConstructor(FlowScopeFrame& frame, ValueID constructor)
+    {
+        std::pair<FlowScopeFrame*, ValueID> key { &frame, constructor };
+        if (auto known = m_usesReachedFromConstructors.find(key); known != m_usesReachedFromConstructors.end())
+            return *known->value;
+        auto uses = makeUnique<Vector<ReachedUse>>();
+        forEachUseReachedFrom(frame, constructor, [&](FlowScopeFrame& frame, ValueID constructor) {
+            uses->appendVector(usesReachedFromConstructor(frame, constructor));
+        }, [&](FlowScopeFrame& frame, const Use& use, UseOfClosure kind) {
+            uses->append({ &frame, use, kind });
+        });
+        return *m_usesReachedFromConstructors.add(key, WTF::move(uses)).iterator->value;
     }
 
     void recordReadsOfStoredFunctions()
@@ -845,7 +895,7 @@ private:
                 orders[location] = { InitializationState::StoredBeforeEveryRead, storeCountOf(location, false, canRunTwicePerInstance), true };
                 continue;
             }
-            bool startsAbsent = m_index.program().at(fields[field].declared.type).primitives & Primitive::Absent;
+            bool startsAbsent = m_index.program().at(fields[field].declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwicePerInstance) };
         }
     }
@@ -859,6 +909,7 @@ private:
     HashMap<VariableID, FlowScopeEntry> m_entriesByStores;
     Vector<FunctionID> m_queue;
     Vector<StoredFunction> m_storedFunctions;
+    HashMap<std::pair<FlowScopeFrame*, ValueID>, std::unique_ptr<Vector<ReachedUse>>> m_usesReachedFromConstructors;
     Vector<StoredFunctionReader> m_storedFunctionReaders;
     Vector<StoredFunction> m_functionsTakenOut;
     Vector<FlowScopeLocationAccess> m_definitions;
@@ -871,14 +922,15 @@ private:
 static bool runsAfterCompletion(const FlowScopeIndex& index, FunctionID function, ModuleID completed)
 {
     ModuleID module = index.program().at(function).module;
-    return module && index.moduleOrder.completesBefore(completed, module);
+    return module && !index.functionsEnteredWithoutMention.quickGet(function.index()) && index.moduleOrder.completesBefore(completed, module);
 }
 
-static bool canObserveUnfinishedModule(const Program& program, const FlowModuleValueRead& read)
+static bool canObserveUnfinishedModule(const FlowScopeIndex& index, const FlowModuleValueRead& read)
 {
+    const Program& program = index.program();
     Opcode opcode = program.at(read.function).at(read.value).opcode;
     if (opcode == Opcode::ImportModule)
-        return false;
+        return index.moduleOrder.modulesThatJobsMayInterrupt.get(read.subject.index());
     if (opcode == Opcode::RequireModule)
         return program.at(read.subject).requireResult != RequireResult::ModuleExports;
     return true;
@@ -896,7 +948,7 @@ static BitVector findVariablesReadEarly(const FlowScopeIndex& index)
     };
 
     for (const FlowModuleValueRead& read : index.moduleValueReads) {
-        if (canObserveUnfinishedModule(program, read) && !runsAfterCompletion(index, read.function, read.subject))
+        if (canObserveUnfinishedModule(index, read) && !runsAfterCompletion(index, read.function, read.subject))
             visit(read.subject);
     }
     for (size_t module : index.inputs.modulesLoadedByHost)

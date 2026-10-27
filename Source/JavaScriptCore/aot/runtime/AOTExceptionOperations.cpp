@@ -9,7 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
+#include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
+#include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTMembersLeftOut.h"
@@ -51,6 +54,32 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
+// The limit that sends a call here lies above every frame once calls by value record their callees.
+static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
+{
+    FunctionTables& tables = FunctionTables::of(*instance->vm);
+    if (!tables.recordsCalleesOfCallsByValue())
+        return false;
+    tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
+    return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller))
+{
+    if (recordCalleeInsteadOfPolling(instance, callee, stackPointerOfCaller))
+        return ExceptionOperationImplicitResult<void> { nullptr };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
+    vm.traps().handleTraps(VMTraps::AsyncEvents);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    vm.throwTerminationExceptionIfNeeded();
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        throwOutOfMemoryErrorIfOwed(vm, globalObject, scope);
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
@@ -84,8 +113,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowToHandlerInFunction);
     DeferGCForAWhile deferGC(vm);
-    throwException(globalObject, scope, JSValue::decode(value));
+    bool stackIsUnobserved = !needsExceptionForEveryThrow(*instance) && vm.interpreter.isExceptionCaughtByUserCatchClause();
+    throwException(globalObject, scope, Exception::create(vm, JSValue::decode(value), stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStackOfThrow));
     OPERATION_RETURN(scope);
+}
+
+// The program threw the value somewhere else, and a cleanup that took the value throws it on.
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAfterCleanup);
+    if (vm.exceptionForInspection()) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        throwException(globalObject, scope, JSValue::decode(value));
+        OPERATION_RETURN(scope);
+    }
+    instance->runtime.exceptions.thrownValue = value;
+    instance->state->returnAddressOfThrowAfterCleanup = removeCodePtrTag(callFrame->rawReturnPC());
+    instance->state->keptByCleanup = kept;
+    return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
+}
+
+// A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance*))
+{
+    return std::bit_cast<uint64_t>(removeCodePtrTag(AOT_OPERATION_FRAME_RECORD()->returnPC));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))
@@ -103,6 +154,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJS
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* instance))
 {
     VM& vm = *instance->vm;
+    // A collection that starts here goes over the frames from this one.
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
     if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
         vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
@@ -114,9 +167,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
     return JSValue::encode(value);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
+static Exception* takePendingException(VM& vm)
 {
-    VM& vm = *instance->vm;
     if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
         vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
@@ -124,7 +176,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (I
     Exception* exception = scope.exception();
     RELEASE_ASSERT(exception && !vm.isTerminationException(exception));
     scope.clearException();
-    return JSValue::encode(exception);
+    return exception;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    // Nobody lists the frames of a throw that compiled code catches further up.
+    if (JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0)))
+        return JSValue::encode(Exception::create(vm, thrown, Exception::StackCaptureAction::DoNotCaptureStack));
+    return JSValue::encode(takePendingException(vm));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, (Instance* instance))
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
+    Exception* exception = takePendingException(vm);
+    return makeUGPRPair(JSValue::encode(exception->value()), std::bit_cast<UCPURegister>(exception));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
@@ -137,6 +207,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, 
     if (!instance->state->objects->layouts.valueHasType(expected, checked)) [[unlikely]]
         reportFailedCheck(*instance, typeSite, expected, checked);
     OPERATION_RETURN(scope);
+}
+
+static String nameOfFunctionOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames)
+        return { };
+    while (!frames->isAtEnd() && frames->frame().visibility == TraceVisibility::Hidden)
+        frames->advance();
+    if (frames->isAtEnd())
+        return { };
+    return writtenFunctionName(FunctionDescription(frames->frame().function).sourceFunction());
 }
 
 JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKind kind, const Identifier* name)
@@ -183,11 +265,15 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
         return createStaticPrivateBrandOfNonObjectError(globalObject);
     case Typed::RuntimeErrorKind::SpreadResultNotObject:
         return createSpreadResultNotObjectError(globalObject);
+    case Typed::RuntimeErrorKind::NoSyncIteratorForAsyncIteration:
+        return createTypeError(globalObject, "iterable should have an iterator symbol"_s);
+    case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
+        return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
         if (validatesRuntime(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
-        if (name && !name->isEmpty())
-            return createTypeError(globalObject, makeString('\'', name->string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
+        if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
+            return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
         return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
         return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());
@@ -226,7 +312,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Inst
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSuppressedError);
     DeferTerminationForAWhile deferTermination(vm);
-    constexpr bool useCurrentFrame = false;
+    constexpr bool useCurrentFrame = true;
     RELEASE_AND_RETURN(scope, createSuppressedError(globalObject, vm, globalObject->errorStructure(ErrorType::SuppressedError), JSValue::decode(error), JSValue::decode(suppressed), jsUndefined(), nullptr, TypeNothing, useCurrentFrame));
 }
 
@@ -339,7 +425,9 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
     case Typed::Representation::Int64:
         return jsNumber(static_cast<double>(static_cast<int64_t>(bits)));
     case Typed::Representation::Double:
-        return jsNumber(purifyNaN(std::bit_cast<double>(floatingPointBits)));
+    case Typed::Representation::DoubleWithPayload:
+    case Typed::Representation::ImpureDouble:
+        return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
     case Typed::Representation::LiteralString:
         if (isLiteralStringWord(bits))
             return instance->state->strings->stringForLiteralStringWord(bits);
@@ -368,7 +456,7 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
             return jsNull();
         if (floatingPointBits == undefinedDouble || floatingPointBits == absentDouble)
             return jsUndefined();
-        return jsNumber(purifyNaN(std::bit_cast<double>(floatingPointBits)));
+        return jsNumber(withoutPayload(std::bit_cast<double>(floatingPointBits)));
     case Typed::Representation::Unchosen:
     case Typed::Representation::RawWord:
         break;

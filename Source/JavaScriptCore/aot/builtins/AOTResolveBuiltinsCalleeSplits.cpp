@@ -70,22 +70,22 @@ static bool passesCallOn(const BuiltinTable& table, BuiltinID method)
 
 static bool knowsNothingAbout(const Function& function, const Type& type, ValueID id)
 {
-    return type.anyObject && !function.at(id).expected();
+    return type.anyObject && !function.at(id).expected().predicted();
 }
 
 static bool isExpectedToBe(FunctionPassContext& context, ValueID callee, BuiltinID method)
 {
-    TypeID expected = context.function.at(callee).expected();
+    TypeID expected = context.function.at(callee).expected().predicted();
     return !expected || Type::forBuiltin(method).isSubsetOf(context.types.at(expected), context.program);
 }
 
-static bool hasCalleesToDispatchOver(const Program& program, const Value& call)
+static Expected<bool> hasCalleesToDispatchOver(const Program& program, const Value& call)
 {
     CalleeSetID stamp = call.callees();
     if (!stamp)
         return false;
     const CalleeSet& callees = program.at(stamp);
-    return callees.isComplete || !callees.functions.isEmpty();
+    return callees.listsEveryCallee() || !callees.seen().predicted().functions.empty();
 }
 
 // A bound function outlives the code that binds it, and its callers expect the compiled one. Cold code gets no test of the receiver, so the call tests its callee there.
@@ -93,9 +93,9 @@ static bool bindsFunctionSeenByFlowInColdCode(FunctionPassContext& context, cons
 {
     const FlowResults& flow = context.inputs.flow;
     AccessSiteID accessSite = context.function.at(site.value).accessSite();
-    if (!accessSite || !flow.hasResults() || flow.boundFunctionsSeenAt(accessSite, FlowBoundFunctionUseAtSite::Made).size() != 1)
+    if (!accessSite || !flow.hasResults() || flow.boundFunctionsSeenAt(accessSite, FlowBoundFunctionUseAtSite::Made).predicted().size() != 1)
         return false;
-    return isCold(heatClassOf(context, site.block));
+    return isCold(heatClassOf(context, site.block)).predicted();
 }
 
 static TypeID calleeTypeOf(TypeArena& types, const MemberOfClasses& method)
@@ -110,7 +110,7 @@ static bool mayHaveCalleeSplit(const Program& program, const Function& function,
     BuiltinMemberName name = builtinMemberNameOf(program, call.calleeKey());
     if (!name || name.isPrivateAlias)
         return false;
-    return program.typeOf(function, call.calleeOperand()).anyObject && !hasCalleesToDispatchOver(program, call);
+    return program.typeOf(function, call.calleeOperand()).anyObject && !hasCalleesToDispatchOver(program, call).predicted();
 }
 
 static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, const ValueSite& site)
@@ -134,7 +134,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
 
     if (!program.typeOf(function, callee).anyObject)
         return std::nullopt;
-    if (hasCalleesToDispatchOver(program, call))
+    if (hasCalleesToDispatchOver(program, call).predicted())
         return std::nullopt;
     const Type& receiverType = program.typeOf(function, receiver);
     bool knowsReceiver = !knowsNothingAbout(function, receiverType, receiver);
@@ -157,7 +157,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     });
     if (methods.isEmpty())
         return std::nullopt;
-    if (context.analyses.blockFrequencies().classOf(site.block) != BlockFrequency::Normal)
+    if (context.analyses.blockFrequencies().classOf(site.block).predicted() != BlockFrequency::Normal)
         return std::nullopt;
 
     if (context.exceeds(LimitID::MaxDispatchCases, methods.size(), site.value))

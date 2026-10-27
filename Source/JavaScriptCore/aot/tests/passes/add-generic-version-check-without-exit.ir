@@ -1,5 +1,5 @@
 # The state of an iterator cannot be handed from one version to the other, so the second check has no exit: it becomes a guard at each use, and the typed blocks behind it run with what it would have turned away.
-# Flow has proven the result for that too, so the product is assumed to be a number in the typed blocks as in the copy
+# Flow has proven the result for that too and says so in front of the store, so the product stays a number in the typed blocks as in the copy
 # FORM: Prepared optimizing
 # RUN: pass AddGenericVersion
 # STATISTIC: GenericVersionsCreated = 1
@@ -8,33 +8,34 @@
 module m0 path="main.ts" displayPath="main.ts"
 
 function f0 name="checkWithoutExitBesideOneWithAnExit" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
-    v2 = Check v0 castType=object
+    v2 = Check v0 expectedType=Array
     v3 = IteratorOpen v2
     Jump -> next b1()
   b1() handler=b3():
     v4 = Call v1
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     v6 = Mul v5, v5
     Jump -> next b2()
   b2():
     IteratorClose v3
-    Return v6
+    v8 = AssumeType v6 provenType=number
+    Return v8
   b3() role=IterationCleanup subject=v3:
-    v8 = CatchException
+    v9 = CatchException
     IteratorClose v3 completion=Throw
-    Rethrow v8
-# CHECK: = TypeTest v0 testedType=object
+    Rethrow v9
+# CHECK: = TypeTest v0 testedType=Array
 # CHECK-NOT: = TypeTest
-# CHECK: v5: anything ~ number = Upcast v4
+# CHECK: v5: anything ~ number = Expect v4 expectedType=number
 # CHECK-NEXT: v6: number|bigint{{*}} = Mul v5, v5
 # CHECK-NOT: = TypeTest
-# CHECK: [[assumed]]: number = AssumeType v6 castType=number
+# CHECK: [[assumed]]: number = AssumeType v6 provenType=number
 # CHECK-NEXT: Return [[assumed]]
 # CHECK-NOT: = TypeTest
 # CHECK: frequency=Unlikely
 # CHECK: [[product]]: number|bigint{{*}} = Mul
 # CHECK-NOT: = TypeTest
-# CHECK: [[assumedInCopy]]: number = AssumeType [[product]] castType=number
+# CHECK: [[assumedInCopy]]: number = AssumeType [[product]] provenType=number
 # CHECK-NEXT: Return [[assumedInCopy]]
 # CHECK-NOT: = TypeTest
 }

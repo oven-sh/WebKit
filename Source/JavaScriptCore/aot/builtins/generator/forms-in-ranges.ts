@@ -93,5 +93,11 @@ export function linkFormsInRanges({ overloads }: Pick<TableModel, "overloads">):
       return takesBytes(parameter) ? [{ operand: "Argument", index }] : [];
     });
     overload.code.inRanges = { overload: helper, views };
+    // The helper stands for one overload of the function, which refuses only what none of its overloads takes.
+    helper.parameters = helper.parameters.map((parameter, index) =>
+      overload.parameters[index]?.roles.includes("DescribedWhenRefused") === false
+        ? { ...parameter, roles: parameter.roles.filter(role => role !== "DescribedWhenRefused") }
+        : parameter,
+    );
   }
 }

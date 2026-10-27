@@ -27,6 +27,8 @@
 #include "AOTRuntimeType.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "ArgList.h"
+#include "ConstructData.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
@@ -394,9 +396,14 @@ String describe(const ProgramTables& tables, const RuntimeType& type, Typed::Typ
 
 static thread_local const String* quotedSource;
 
-StringView quotedSourceOfFailedExpression()
+String quotedSourceOfFailedExpression(VM& vm)
 {
-    return quotedSource ? StringView(*quotedSource) : StringView();
+    if (quotedSource)
+        return *quotedSource;
+    if (!vm.hasCompiledCode())
+        return { };
+    StringView constructor = nameOfConstructorThatRunsOnTop(vm);
+    return constructor.isNull() ? String() : tryMakeString("new "_s, constructor);
 }
 
 static JSObject* createQuoting(const String& source, JSObject* (*create)(JSGlobalObject*, JSValue), JSGlobalObject* globalObject, JSValue value)
@@ -461,6 +468,28 @@ JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue calle
     return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
 }
 
+void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView name)
+{
+    String source = name.isNull() ? String() : tryMakeString("new "_s, name);
+    SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
+    CallData constructData;
+    constructData.type = CallData::Type::Native;
+    constructData.native.function = function->nativeConstructor();
+    constructData.native.isBoundFunction = false;
+    constructData.native.isWasm = false;
+    construct(globalObject, function, constructData, ArgList());
+}
+
+JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
+{
+    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorNotFunction, globalObject, constructor);
+}
+
+JSObject* createHasInstanceNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
+{
+    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorHasInstanceValueNotFunction, globalObject, constructor);
+}
+
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
 {
     return createNotAFunctionError(globalObject, callee, name.isNull() || name.isSymbol() || name.isPrivateName() ? StringView() : StringView(name.impl()));
@@ -488,7 +517,7 @@ JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const Stri
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
 {
-    return createError(globalObject, withAOTErrorNote(makeString("The built-in function '"_s, functionName, "' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
+    return createBuiltinNotCompiledError(globalObject, functionName.isEmpty() ? "A built-in function"_str : makeString("The built-in function '"_s, functionName, '\''));
 }
 
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject* globalObject, std::span<const String> builtins)
@@ -586,14 +615,23 @@ String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
     return holder == Builtins::GlobalThis ? String(key) : makeString(text, '.', StringView(key));
 }
 
+// Fuzzilli's loop in Bun compares a compiled program with `bun run`, where these errors are never thrown, also when the program catches them.
+static String printForFuzzilli(String&& message)
+{
+#if ENABLE(FUZZILLI)
+    dataLogLn(message);
+#endif
+    return WTF::move(message);
+}
+
 String deletionFromLockedBuiltinMessage(const String& property)
 {
-    return withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot delete "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 String assignmentToLockedBuiltinMessage(const String& property)
 {
-    return withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot assign to "_s, property, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
@@ -603,7 +641,7 @@ String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder)
 {
-    return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s));
+    return printForFuzzilli(withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, " because built-in objects are read-only in a compiled executable"_s)));
 }
 
 } } // namespace JSC::AOT

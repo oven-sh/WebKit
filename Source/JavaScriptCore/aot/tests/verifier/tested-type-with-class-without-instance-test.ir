@@ -9,11 +9,11 @@ function f0 name="badTest" parameters=[{type=anything}] results=[{type=undefined
     Return
 }
 function f1 name="badCheck" parameters=[{type=anything}] results=[{type=undefined}] {
-    v1 = Check v0 castType=Object
+    v1 = Check v0 expectedType=Object
     Return
 }
 function f2 name="badCheckOfSubclass" parameters=[{type=anything}] results=[{type=undefined}] {
-    v1 = Check v0 castType=undefined|TypeError
+    v1 = Check v0 expectedType=undefined|TypeError
     Return
 }
 function f3 name="badTestWhereEveryObjectPasses" parameters=[{type=int|Function}] results=[{type=undefined}] {
@@ -22,13 +22,13 @@ function f3 name="badTestWhereEveryObjectPasses" parameters=[{type=int|Function}
 }
 function f4 name="goodTestAndCheck" parameters=[{type=anything}, {type=int|Function}] results=[{type=undefined}] {
     v2 = TypeTest v0 testedType=object
-    v3 = Check v0 castType=undefined|Error
+    v3 = Check v0 expectedType=undefined|Error
     v4 = TypeTest v1 testedType=object
     Return
 }
 function f5 name="goodProofAndExpectedType" parameters=[{type=anything}] results=[{type=undefined}] {
-    v1 = Check v0 castType=object
-    v2 = AssumeType v1 castType=Object
+    v1 = Check v0 expectedType=object
+    v2 = AssumeType v1 provenType=Object
     v3 ~ TypeError = Upcast v0 castType=anything
     Return
 }

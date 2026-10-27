@@ -106,6 +106,36 @@ enum class TestSiteRuleID : uint8_t {
 
 inline constexpr uint32_t testedOperandIndex = 0;
 
+constexpr bool isSymbolOfProgram(PropertyKeyKind kind)
+{
+    return kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::RegisteredSymbol;
+}
+
+// The method or accessor that the class of the layout, or the nearest one above it, defines under the key.
+inline const ClassMember* findMemberOfClass(const Program& program, LayoutID holder, ClassSide side, PropertyKeyID key)
+{
+    for (unsigned steps = 0; holder && steps < 64; ++steps) {
+        const Layout& layout = program.at(holder);
+        auto found = std::ranges::find_if(layout.classFlow.members, [&](const ClassMember& member) { return member.side == side && member.key == key; });
+        if (found != layout.classFlow.members.end())
+            return &*found;
+        holder = layout.flow.baseState == BaseState::Layout ? layout.flow.base : LayoutID();
+    }
+    return nullptr;
+}
+
+// One of the conditions is about a member that a class defines under a symbol which the program makes.
+bool holdMemberUnderSymbolOfProgram(const Program& program, const auto& conditions)
+{
+    return std::ranges::any_of(conditions, [&](const auto& condition) {
+        return condition.key && isSymbolOfProgram(program.at(condition.key).kind) && findMemberOfClass(program, condition.layout, condition.side, condition.key);
+    });
+}
+
+// Such members are what a library calls on its own objects, at many places of which a program runs few: a test and the copy behind it are for hot code and for loops. The general form is a read and a call.
+// Where nothing is known of heat, all code counts.
+bool paysToTestMembersUnderSymbolsOfProgram(FunctionPassContext&, BlockID);
+
 inline Value makeTypeTest(ValueID value, TypeID testedType)
 {
     Value test = IRBuilder::make(Opcode::TypeTest, { value });
@@ -164,6 +194,8 @@ inline Value makeClosureTest(ValueID value, FunctionID function)
     return test;
 }
 
+enum class TestOutcome : uint8_t { IsExpectedToPass, IsUnpredictable };
+
 struct TestSite {
     TestSiteRuleID rule { TestSiteRuleID::Operator };
     ValueID use;
@@ -171,6 +203,7 @@ struct TestSite {
     uint32_t firstTest { 0 };
     uint32_t numberOfTests { 0 };
     Effects effectsWhenPassed;
+    TestOutcome outcome { TestOutcome::IsExpectedToPass };
 };
 
 struct TestSites {
@@ -220,15 +253,15 @@ public:
     void keepPlanOfUse(PlannedAccess&&);
     std::optional<PlannedAccess> takePlanOfUse(bool isOnlyCalled);
 
-    void report(std::span<const Value> tests, const Effects& effectsWhenPassed);
-    void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed); }
+    void report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome = TestOutcome::IsExpectedToPass);
+    void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome = TestOutcome::IsExpectedToPass) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed, outcome); }
 
     void forEachCandidate(NOESCAPE const Invocable<void(const Value&)> auto& functor)
     {
         const CFG& cfg = m_context.analyses.cfg();
         const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
         for (BlockID block : cfg.reversePostOrder()) {
-            if (frequencies.classOf(block) == BlockFrequency::Rare)
+            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
                 continue;
             const BlockValues& values = m_context.function.at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
@@ -261,7 +294,6 @@ private:
     mutable std::optional<FailedConditions> m_failedConditions;
     Vector<PlannedAccess> m_plannedAccesses;
     Vector<uint32_t> m_plannedAccessOfValue;
-    std::optional<bool> m_isColdFunction;
     BlockID m_blockOfHeatClass;
     bool m_blockIsCold { false };
 };

@@ -162,7 +162,8 @@ std::optional<BrokenResultRule> ResultRuleCheck::check(ValueID id)
             if (std::optional<BrokenResultRule> found = compare(id, operandIndex, narrower, type))
                 return found;
         }
-        Type anyValue = Type::anything().withPrimitives(type.primitives & Primitive::Absent);
+        // `anything` holds neither what is absent nor a word that may be anything.
+        Type anyValue = Type::anything().withPrimitives(type.primitives & (Primitive::Absent | Primitive::Unspecified));
         if (value.operandKind(operandIndex) == OperandKind::Any && type != anyValue) {
             if (std::optional<BrokenResultRule> found = compare(id, operandIndex, type, anyValue))
                 return found;

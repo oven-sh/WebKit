@@ -1,0 +1,28 @@
+# A constant of a module holds its value as long as the program runs, so a suspension does not list what was read from one, neither as it is nor behind a cast or as
+# a finished class. What was read from a variable that can be stored to again is listed.
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+
+layout L0 kind=Instance name="Made" module=m0 position=6 constructor=f1
+variable g0 module=m0 declared={type=function} flags=[IsImmutable]
+variable g1 module=m0 declared={type=object} flags=[IsImmutable]
+variable g2 module=m0 declared={type=object}
+module m0 path="main.js" displayPath="main.js"
+function f0 name="awaits" module=m0 flags=[IsAsync] thisType={type=anything} parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = FinishClass v1 layout=L0
+    v3 = GetModuleVariable variable=g1
+    v4 = Upcast v3 castType=anything
+    v5 = GetModuleVariable variable=g2
+    v6 = Await v0 @10
+    v7 = NewArray v2, v3, v4, v5 contents=anything
+    Return v7
+}
+function f1 name="Made" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="awaits"
+# CHECK: b0(v0: anything, [[driver]]: undefined|Promise):
+# CHECK: AwaitBySavingFrame v0, [[driver]], v5 @10

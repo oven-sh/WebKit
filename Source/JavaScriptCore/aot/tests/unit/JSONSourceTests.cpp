@@ -506,6 +506,16 @@ static void testUnwinding()
 
     words.didUnwindTo(stackPointerAtDepth(1));
     AOT_TEST_CHECK(!words.sourceOwnerStackPointer);
+
+    AOT_TEST_CHECK(openSource(fixture, 1, 2));
+    AOT_TEST_CHECK(openSource(fixture, 2, 4));
+    words.didLeaveFramesUpTo(stackPointerAtDepth(5));
+    checkOpenSource(fixture, 2, 4);
+    words.didLeaveFramesUpTo(stackPointerAtDepth(4));
+    checkOpenSource(fixture, 1, 2);
+    AOT_TEST_CHECK(!runtime.numberOfSuspendedSources());
+    words.didLeaveFramesUpTo(stackPointerAtDepth(2));
+    AOT_TEST_CHECK(!words.sourceOwnerStackPointer);
 }
 
 static void testScope()

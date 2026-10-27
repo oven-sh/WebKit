@@ -37,6 +37,7 @@
 #include <limits>
 #include <memory>
 #include <ranges>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -68,6 +69,15 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
         return std::ranges::any_of(order, [&](uint32_t field) {
             return layout.fields[field].form.contains(FieldForm::IsAccessor);
         });
+    };
+    // No object is seen without a field that is always filled, so an order that leaves one out is the order of none.
+    BitVector isInEveryOrder(layout.fields.size());
+    for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        if (isEnumerableStringField(program, layout.fields[field]) && flowOf(program, { id, field }).occupancy == Occupancy::AlwaysFilled)
+            isInEveryOrder.quickSet(field);
+    }
+    auto isOrderOfNoObject = [&, numberOfFieldsInEveryOrder = isInEveryOrder.bitCount()](const KeyOrderFields& order) {
+        return static_cast<size_t>(std::ranges::count_if(order, [&](uint32_t field) { return isInEveryOrder.quickGet(field); })) < numberOfFieldsInEveryOrder;
     };
     uint64_t numberOfOrdersLeftOut = 0;
     bool isComplete = true;
@@ -104,7 +114,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
                     if (!order.contains(field))
                         extended.append(field);
                 }
-                if (extendedOrders.contains(extended))
+                if (extendedOrders.contains(extended) || (declaringLayout == id && isOrderOfNoObject(extended)))
                     continue;
                 if (extended.size() > limits.maxFields || extendedOrders.size() == limits.maxOrders || listsAccessor(extended))
                     ++numberOfOrdersLeftOut;
@@ -412,22 +422,7 @@ static constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static bool hasOrdinaryOwnKeys(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-        return true;
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+static bool hasOrdinaryOwnKeys(LayoutKind kind) { return hasOrdinaryOwnKeysOf(kind); }
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
 {
@@ -450,7 +445,7 @@ static bool isUnderPrivateName(const Program& program, const Field& field)
     if (!field.key)
         return false;
     PropertyKeyKind kind = program.at(field.key).kind;
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 static bool isOrdinaryDataField(const Program& program, FieldReference reference)
@@ -465,8 +460,23 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
 {
     const Program& program = context.program;
     const Type& type = program.typeOf(context.function, site.source);
-    bool areProven = type.hasOnlyLayouts(program) && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
-    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
+    bool areProven = type.hasOnlyLayouts() && (copiesNothingFromNullish(site.walk) || !type.mayBeUndefinedOrNull());
+    return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source).predicted()) };
+}
+
+static bool expectsOneLayout(FunctionPassContext& context, const OwnKeyWalkSite& site)
+{
+    return std::ranges::count_if(walkedLayoutsOf(context, site).second, [&](LayoutID layout) {
+        return context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
+    }) == 1;
+}
+
+// Once its fields are stored one by one, such an object need not be made.
+static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
+{
+    const EscapeAnalysis& escape = context.analyses.escape();
+    std::optional<ObjectID> tracked = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(object);
+    return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
 }
 
 // The layout of a literal that has no property yet when a spread without excluded keys fills it.
@@ -576,7 +586,15 @@ static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context
             return plan;
         }
     }
-    return planWalkByLayouts(context, site, layoutOfEmptyTarget(context, unchanged, site));
+    LayoutID emptyTarget = layoutOfEmptyTarget(context, unchanged, site);
+    if (emptyTarget && isKeptByNobody(context, site.target)) {
+        // The operation behind the arms takes the object as it is, so it is made there. A hot loop leaves for a copy of itself on that way. Other code goes on behind the arms, where an object that is made on one way is made on all.
+        const NaturalLoop* loop = context.analyses.naturalLoops().innerMostLoopOf(site.block);
+        std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, site);
+        if (plan && (!plan->needsOriginalCall || (loop && isHotLoop(context, *loop).predicted())))
+            return plan;
+    }
+    return planWalkByLayouts(context, site, emptyTarget);
 }
 
 // A copy is an ordinary object with ordinary properties under the same names in the same order.
@@ -689,22 +707,49 @@ static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite
     return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
 }
 
+// `{ ...source, ..`: the first thing that a new object without a property gets.
+static bool fillsEmptyLiteral(const Function& function, const OwnKeyWalkSite& site)
+{
+    if (site.walk != OwnKeyWalk::Spread)
+        return false;
+    const Value& target = function.at(site.target);
+    if (target.opcode != Opcode::NewObject || !target.fields().empty())
+        return false;
+    const BlockValues& values = function.at(site.block).values;
+    for (uint32_t index = site.index; index--;) {
+        if (values[index] == site.target)
+            return true;
+        if (std::ranges::contains(function.at(values[index]).operands(), site.target))
+            return false;
+    }
+    return false;
+}
+
+static bool walksWithoutTests(const OwnKeyWalkPlan& plan)
+{
+    return plan.arms.size() == 1 && !plan.needsShapeTest && !plan.needsKeyOrderTest && !plan.needsOriginalCall;
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
+    Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
-        if (function.at(block).frequency == BlockFrequency::Rare)
+        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
             if (!site || context.runsAtMostOnce(block))
                 continue;
-            HeatClass heat = heatClassOf(context, block);
+            Expected<HeatClass> heat = heatClassOf(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site))
+            if (!isCold(heat).predicted() && (site->walk != OwnKeyWalk::Copy || isHot(heat).predicted()) && !isListThatLivesOn(context, *site)) {
+                if (!isHot(heat).predicted() && fillsEmptyLiteral(function, *site))
+                    fillingLiteralsOutsideHotCode.append(site->value);
                 sites.append(WTF::move(*site));
+            }
         }
     }
     UnchangedAllocations unchanged(context, sites.span());
@@ -719,6 +764,12 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
             if (!plan)
                 continue;
+            // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
+                // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
+                if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
+                    continue;
+            }
             walk.walkedSources.append(WalkedSource { walk.site.source, WTF::move(*plan), function.at(walk.site.value) });
         }
         walks.append(WTF::move(walk));
@@ -811,19 +862,16 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     bool isAssign = site.walk == OwnKeyWalk::Assign;
     std::span<const PropertyKeyID> excludedKeys = site.walk == OwnKeyWalk::Spread ? original.excludedKeys() : std::span<const PropertyKeyID>();
 
+    // A copy gets its properties in the order in which the source got them, names and symbols alike.
     Vector<uint32_t, 8> walkedFields;
-    Vector<uint32_t, 8> fieldsWithSymbolKeys;
     for (uint32_t index : arm.order) {
         const Field& field = fields[index];
         RELEASE_ASSERT(!field.computedKey);
         if (std::ranges::contains(excludedKeys, field.key))
             continue;
-        if (isEnumerableStringField(program, field))
+        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind)))
             walkedFields.append(index);
-        else if (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind))
-            fieldsWithSymbolKeys.append(index);
     }
-    walkedFields.appendVector(fieldsWithSymbolKeys);
 
     auto appendName = [&](uint32_t field) {
         return emission.appendString(program.at(fields[field].key).text);
@@ -836,7 +884,7 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     };
     auto elementTypeOf = [&](TypeID arrayType) {
         const ClassPart* part = program.at(arrayType).findClassPart(BuiltinClasses::Array);
-        return part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
+        return part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything;
     };
     auto appendArray = [&](TypeID contents, std::span<const ValueID> elements) {
         return builder.append(Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements));
@@ -885,7 +933,7 @@ static void emitArms(Emission& emission, const OwnKeyWalkSite& site, const Walke
     RELEASE_ASSERT(!plan.arms.isEmpty());
     IRBuilder& builder = emission.builder();
     const Function& function = builder.function();
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
 
     auto endExpansion = [&](ValueID result) {
         Vector<ValueID, 2> listAndGuard;
@@ -945,7 +993,7 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
 {
     IRBuilder& builder = emission.builder();
     const OwnKeyWalkSite& site = walk.site;
-    BlockFrequency frequency = builder.function().at(site.block).frequency;
+    Expected<BlockFrequency> frequency = builder.function().at(site.block).frequency;
     IRBuilder::Expansion expansion = builder.beginExpansion({ site.block, site.index });
     if (site.walk != OwnKeyWalk::Assign)
         keepResultAsGuard(builder, expansion);
@@ -997,11 +1045,42 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
     BlockID noText = builder.addBlock(BlockFrequency::Rare);
 
     ValueID stringBuilder = builder.append(Opcode::StringBuilderBegin, { });
-    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder);
+    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
+
+    bool listsHolders = serializer.mayListHolders(site.source);
+    bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
+    Expected<BlockFrequency> frequency = builder.function().at(builder.currentBlock()).frequency;
+    std::optional<Target> outerHandler = builder.handler();
+    BlockID threw;
+    if (isCovered) {
+        threw = builder.addHandlerBlock(listsHolders ? BlockRole::CleanupHandler : BlockRole::CatchHandler, ValueID());
+        builder.setHandler(Target { threw, { }, { } });
+        BlockID covered = builder.addBlock(frequency);
+        builder.emitJump(covered);
+        builder.moveToEndOf(covered);
+    }
+
     serializer.appendRoot(site.source, noText);
     serializer.commit();
 
     ValueID result = builder.append(Opcode::StringBuilderFinish, { stringBuilder });
+    if (isCovered) {
+        builder.setHandler(WTF::move(outerHandler));
+        BlockID finished = builder.addBlock(frequency);
+        builder.emitJump(finished);
+
+        builder.moveToEndOf(threw);
+        if (listsHolders) {
+            ValueID exception = builder.append(Opcode::CatchException, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
+            builder.emitRethrow(exception);
+        } else {
+            // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
+            builder.append(Opcode::CatchValue, { });
+            builder.emitJump(noText);
+        }
+        builder.moveToEndOf(finished);
+    }
     if (textFormCall) {
         BuiltinCallOperands operands { original.receiverOperand(), Vector<ValueID, 4>(original.argumentsOperands()) };
         operands.arguments[site.sourceArgument] = result;
@@ -1011,7 +1090,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         BuiltinCallStamps stamps { original.expectedResult(), original.accessSite(), original.allocationSite() };
         result = builder.append(makeBuiltinCall(textFormCall->overload, BuiltinCallForm::Whole, passedOperands, stamps));
     }
-    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = original.type }));
+    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(original.type))));
 
     builder.moveToEndOf(noText);
     builder.append(Opcode::StringBuilderDiscard, { stringBuilder });
@@ -1126,7 +1205,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
     Function& function = context.function;
     IRBuilder& builder = emission.builder();
     BlockID header = naturalLoop.header();
-    if (function.at(header).frequency == BlockFrequency::Rare || context.runsAtMostOnce(header))
+    if (function.at(header).frequency.predicted() == BlockFrequency::Rare || context.runsAtMostOnce(header))
         return PassOutcome::Unchanged;
 
     ValueID step = findStepAtHeadOf(context, header);
@@ -1228,6 +1307,16 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
             auto cloner = makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function);
             cloner->cloneBlocks(region.span(), [](ValueID, Value&) { });
             Turn turn { cloner->cloneOf(header), cloner->cloneOf(step), arm.names[position], position };
+
+            // A turn is on no cycle of its own.
+            BitVector loopHints;
+            const BlockValues& values = function.at(turn.header).values;
+            for (uint32_t index = 0; values[index] != turn.step; ++index) {
+                if (function.at(values[index]).opcode == Opcode::LoopHint)
+                    loopHints.set(index);
+            }
+            builder.eraseValues(turn.header, loopHints);
+
             size_t positionIndex = function.at(turn.header).parameters.find(function.at(turn.step).positionOperand());
             for (BlockID block : cloner->clonedBlocks()) {
                 for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
@@ -1252,7 +1341,7 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
     builder.setHandler(function.at(entry).handler);
     builder.moveToEndOf(entry);
 
-    BlockFrequency frequencyOfEntry = function.at(entry).frequency;
+    Expected<BlockFrequency> frequencyOfEntry = function.at(entry).frequency;
     for (size_t index = 0; index < arms.size(); ++index) {
         BlockID nextArm = builder.addBlock(frequencyOfEntry);
         const OwnKeyWalkArm& arm = arms[index].tested;
@@ -1265,22 +1354,17 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
 
     // While the object is as the enumerator found it, the step answers with the name at its position. Otherwise the turn is taken by the loop as written, from the same position on.
     for (const Turn& turn : turns) {
+        // The repair splits a block that has a handler after each value that other blocks read, so the step may have left the header. A turn that no edge enters has no place.
+        ValueLocation placeOfStep = context.analyses.useLists().locationOf(turn.step);
+        if (placeOfStep.placement != ValuePlacement::InBlock)
+            continue;
+
         Arguments carriedValues(function.at(turn.header).parameters);
-
-        // A turn is on no cycle of its own.
-        BitVector loopHints;
-        const BlockValues& values = function.at(turn.header).values;
-        for (uint32_t index = 0; values[index] != turn.step; ++index) {
-            if (function.at(values[index]).opcode == Opcode::LoopHint)
-                loopHints.set(index);
-        }
-        builder.eraseValues(turn.header, loopHints);
-
         ValueID enumerator = function.at(turn.step).enumeratorOperand();
         ValueID object = function.at(turn.step).objectOperand();
-        BlockFrequency frequency = function.at(turn.header).frequency;
+        Expected<BlockFrequency> frequency = function.at(turn.header).frequency;
         builder.setOrigin(function.at(turn.step).origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion({ turn.header, static_cast<uint32_t>(function.at(turn.header).values.find(turn.step)) });
+        IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
         builder.emitFailureOfPredictions(Target { header, Arguments(carriedValues), { } });
         ValueID position = builder.appendInteger(turn.position);
         ValueID isCurrent = builder.append(Opcode::IsEnumeratorCurrent, { enumerator, object, position });
@@ -1521,7 +1605,7 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
         builder.endExpansion(expansion, std::span<const ValueID> { });
     };
     Vector<std::pair<int64_t, Target>> cases;
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     for (int64_t number = 1; number <= static_cast<int64_t>(literals.size() + hasOther); ++number)
         cases.append({ number, Target { builder.addBlock(frequency), { }, { } } });
     Vector<BlockID, 4> arms = cases.map<Vector<BlockID, 4>>([](const auto& entry) {
@@ -1533,7 +1617,7 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     for (size_t index = 0; index < literals.size(); ++index) {
         builder.moveToEndOf(arms[index]);
         for (size_t field = 0; field < literals[index]->properties.size(); ++field, ++passed) {
-            ValueID held = builder.append(makeAssumeType(passed->first, passed->second));
+            ValueID held = builder.append(makeAssumeType(passed->first, Proven::byConstruction(passed->second)));
             builder.append(makeDefinitionOfProperty(target, literals[index]->properties[field].first, held));
         }
         endArm();
@@ -1626,6 +1710,11 @@ struct OpenDataNode {
     size_t numberOfChildren;
     Vector<ValueID, 8> values;
     Vector<uint32_t, 2> holes;
+    Vector<uint32_t, 8> fieldsOfHead { };
+    Vector<ValueID, 8> valuesOfHead { };
+    Vector<size_t, 2> membersDefinedAfterHead { };
+    bool canAddToHead { true };
+    ValueID head { };
 
     size_t numberOfFinishedChildren() const { return values.size() + holes.size(); }
 };
@@ -1705,48 +1794,70 @@ static Value makeConstant(const DataNode& leaf)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Value makeAggregate(Rewrite& rewrite, const OpenDataNode& closed, const FlowDataNodeStamp& stamp, const auto& insert)
+static Value makeHead(const OpenDataNode& open, const FlowDataNodeStamp& stamp)
 {
+    return Emission::make<&Value::setLayout, &Value::setFields, &Value::setValuesOperands, &Value::setAllocationSite, &Value::setAllocationClass>(Opcode::NewObject, { },
+        open.node->as<DataNode::Object>().layout, open.fieldsOfHead.span(), open.valuesOfHead.span(), stamp.site, stamp.allocationClass);
+}
+
+static void allocateHead(OpenDataNode& open, const FlowDataNodeStamp& stamp, const auto& insert)
+{
+    const Vector<DataMember>& members = open.node->as<DataNode::Object>().members;
+    open.head = insert(makeHead(open, stamp));
+    for (size_t index : std::exchange(open.membersDefinedAfterHead, { }))
+        insert(makeDefinitionOfProperty(open.head, members[index].key, open.values[index]));
+}
+
+// The values of this many members may all be made before the object is allocated.
+AOT_THRESHOLD(size_t, maxMembersMadeBeforeAllocation, 4095);
+
+// Array indexes are listed before the other own keys, which are listed in the order of their creation. A long object is allocated at the first
+// member with another name that the allocation cannot fill, and each later member is defined as soon as its value is made.
+static void addChild(Rewrite& rewrite, OpenDataNode& open, ValueID value, const auto& stampOf, const auto& insert)
+{
+    const size_t index = open.values.size();
+    open.values.append(value);
+    const auto* object = open.node->tryAs<DataNode::Object>();
+    if (!object)
+        return;
+
     const Program& program = rewrite.program;
+    const PropertyKeyID key = object->members[index].key;
+    if (open.head) {
+        insert(makeDefinitionOfProperty(open.head, key, value));
+        return;
+    }
+    const Layout& layout = program.at(object->layout);
+    std::optional<uint32_t> field = layout.findField(key);
+    // An allocation fills a slot without a test.
+    auto fitsSlot = [&] {
+        TypingContext typing { program, rewrite.function, rewrite.context.types };
+        return typing.typeOf(value).isSubsetOf(typing.typeOf(layout.fields[*field].declared), program);
+    };
+    if (field && open.canAddToHead && fitsSlot()) {
+        open.fieldsOfHead.append(*field);
+        open.valuesOfHead.append(value);
+        return;
+    }
+    open.membersDefinedAfterHead.append(index);
+    open.canAddToHead &= program.nameClassOf(key) == NameClass::Index;
+    if (!open.canAddToHead && object->members.size() > maxMembersMadeBeforeAllocation)
+        allocateHead(open, stampOf(open), insert);
+}
+
+static Value makeAggregate(OpenDataNode& closed, const FlowDataNodeStamp& stamp, const auto& insert)
+{
     if (const auto* array = closed.node->tryAs<DataNode::Array>()) {
-        return Emission::make<&Value::setContents, &Value::setArrayStorage, &Value::setHoles, &Value::setElementsOperands, &Value::setAllocationSite>(Opcode::NewArray, { },
-            stamp.elements ? stamp.elements : array->contents, stamp.arrayStorage, closed.holes.span(), closed.values.span(), stamp.site);
+        // Flow proves storage only of contents that it has proven.
+        return Emission::make<&Value::setContents, &Value::setContentsAreProven, &Value::setArrayStorage, &Value::setHoles, &Value::setElementsOperands, &Value::setAllocationSite>(Opcode::NewArray, { },
+            stamp.elements ? stamp.elements : array->contents, stamp.arrayStorage != ArrayStorage::Other, stamp.arrayStorage, closed.holes.span(), closed.values.span(), stamp.site);
     }
 
-    const auto& object = closed.node->as<DataNode::Object>();
-    const Layout& layout = program.at(object.layout);
-    const Vector<DataMember>& members = object.members;
-
-    // Array indexes are listed before the other own keys, which are listed in the order of their creation.
-    Vector<uint32_t, 8> fields;
-    Vector<ValueID, 8> values;
-    Vector<size_t, 2> membersDefinedAfterHead;
-    bool canAddToHead = true;
-    for (size_t index = 0; index < members.size(); ++index) {
-        std::optional<uint32_t> field = layout.findField(members[index].key);
-        // An allocation fills a slot without a test.
-        auto fitsSlot = [&] {
-            TypingContext typing { program, rewrite.function, rewrite.context.types };
-            return typing.typeOf(closed.values[index]).isSubsetOf(typing.typeOf(layout.fields[*field].declared), program);
-        };
-        if (field && canAddToHead && fitsSlot()) {
-            fields.append(*field);
-            values.append(closed.values[index]);
-            continue;
-        }
-        membersDefinedAfterHead.append(index);
-        canAddToHead &= program.nameClassOf(members[index].key) == NameClass::Index;
-    }
-
-    Value allocation = Emission::make<&Value::setLayout, &Value::setFields, &Value::setValuesOperands, &Value::setAllocationSite, &Value::setAllocationClass>(Opcode::NewObject, { },
-        object.layout, fields.span(), values.span(), stamp.site, stamp.allocationClass);
-    if (membersDefinedAfterHead.isEmpty())
-        return allocation;
-
-    ValueID head = insert(WTF::move(allocation));
-    for (size_t index : membersDefinedAfterHead)
-        insert(makeDefinitionOfProperty(head, members[index].key, closed.values[index]));
-    return IRBuilder::make(Opcode::FinishObject, { head });
+    if (!closed.head && closed.membersDefinedAfterHead.isEmpty())
+        return makeHead(closed, stamp);
+    if (!closed.head)
+        allocateHead(closed, stamp, insert);
+    return IRBuilder::make(Opcode::FinishObject, { closed.head });
 }
 
 static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
@@ -1757,6 +1868,9 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
     const DataNode& root = rewrite.program.at(rewrite.at(id).data()).root;
     auto insert = [&](Value&& value) {
         return rewrite.insertBefore(point, origin, WTF::move(value));
+    };
+    auto stampOf = [&](const OpenDataNode& open) {
+        return rewrite.context.inputs.flow.dataNodeStamp(rootSite, open.ordinal);
     };
 
     Value replacement;
@@ -1770,19 +1884,19 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
             else if (node.is<DataNode::Hole>())
                 openNodes.last().holes.append(static_cast<uint32_t>(openNodes.last().numberOfFinishedChildren()));
             else
-                openNodes.last().values.append(insert(makeConstant(node)));
+                addChild(rewrite, openNodes.last(), insert(makeConstant(node)), stampOf, insert);
 
             while (!openNodes.isEmpty() && openNodes.last().numberOfFinishedChildren() == openNodes.last().numberOfChildren) {
                 OpenDataNode closed = openNodes.takeLast();
-                FlowDataNodeStamp stamp = rewrite.context.inputs.flow.dataNodeStamp(rootSite, closed.ordinal);
-                Value aggregate = makeAggregate(rewrite, closed, stamp, insert);
+                FlowDataNodeStamp stamp = stampOf(closed);
+                Value aggregate = makeAggregate(closed, stamp, insert);
                 if (openNodes.isEmpty()) {
                     replacement = WTF::move(aggregate);
                     return;
                 }
                 // The field that takes an array may have been narrowed to what flow has proven of that very array.
                 ValueID made = insert(WTF::move(aggregate));
-                openNodes.last().values.append(stamp.type ? insert(makeAssumeType(made, stamp.type)) : made);
+                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, Proven::byConstruction(stamp.type))) : made, stampOf, insert);
             }
         });
     }

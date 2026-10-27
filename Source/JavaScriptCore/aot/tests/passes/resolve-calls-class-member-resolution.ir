@@ -128,12 +128,12 @@ function f24 name="static-method-with-capture" parameters=[{type=f0}] results=[{
 }
 function f25 name="cast-rejects-static-method" parameters=[{type=f0}] results=[{type=anything}] {
     v1 = PropGet v0 key="make"
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     v3 = Call v2, v0 calleeKey="make"
     Return v3
 # CHECK-NEXT: b0(v0: f0):
 # CHECK-NEXT: = PropGet v0 key="make"
-# CHECK-NEXT: = Check v1 castType=number
+# CHECK-NEXT: = Check v1 expectedType=number
 # CHECK-NEXT: = Call v2, v0 calleeKey="make"
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }

@@ -288,7 +288,7 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
 
     Vector<TestFailure> failures;
     Wire::CompileOptions options = makeDefaultCompileOptions();
-    options.checks = Wire::CheckSet::VerifyEachStage;
+    RELEASE_ASSERT(!applyOptionWord(options, "check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed"_s));
     for (const OptionWord& optionWord : file.optionWords) {
         if (std::optional<String> sentence = applyOptionWord(options, optionWord.word))
             failures.append(TestFailure { optionWord.line, WTF::move(*sentence) });

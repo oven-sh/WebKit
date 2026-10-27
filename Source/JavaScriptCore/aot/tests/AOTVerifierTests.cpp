@@ -10,7 +10,9 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTEffectSummaries.h"
+#include "AOTEffectsCache.h"
 #include "AOTEffectsCheck.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTIR.h"
 #include "AOTIRTestSupport.h"
 #include "AOTNativeTest.h"
@@ -23,7 +25,9 @@
 #include <memory>
 #include <span>
 #include <wtf/DataLog.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -44,6 +48,7 @@ constexpr BlockID b3 { 3u };
 constexpr ValueID v0 { 0u };
 constexpr ValueID v1 { 1u };
 constexpr ValueID v2 { 2u };
+constexpr ValueID v3 { 3u };
 constexpr ValueID v4 { 4u };
 constexpr ValueID v5 { 5u };
 constexpr ValueID v7 { 7u };
@@ -362,7 +367,7 @@ void testTypeIDOutOfRange()
         copy.edit(v2).type = TypeID(idPastEveryTable);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.edit(v9).setExpected(TypeID(idPastEveryTable));
+        copy.edit(v9).setExpected(ExpectedType(TypeID(idPastEveryTable)));
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
         copy.edit(v15).type = { };
@@ -393,7 +398,7 @@ void addRequest(Typed::Function& function)
 {
     ValueID request = addValue(function, b3, Opcode::Convert, { v0 });
     DeclaredType declared;
-    declared.type = TypeTable::anything;
+    declared.establish(Proven::byPosition(TypeTable::anything));
     function.edit(request).setDeclared(declared);
 }
 
@@ -530,7 +535,7 @@ Typed::Function createPlacedFunction(Program& program)
     Value& read = function.edit(placedRead);
     read.setOperand(0, placedObject);
     read.setKey(program.at(L0).fields[0].key);
-    read.setReceivers(program.types.intern(LayoutSet { { L0 }, true }));
+    read.setReceivers(program.types.intern(LayoutSet::complete({ L0 })));
     read.setFieldAccess(FieldAccessID(placedID));
     return function;
 }
@@ -659,6 +664,144 @@ void testEffectsExceedReplacedGroupInProvisionalFunction()
     AOT_TEST_CHECK(error.function == f7 && !error.block && !error.value);
 }
 
+void testEffectsAskedAgainAfterUnreportedEdit()
+{
+    VerifierTest test;
+    Program& program = *test.program;
+    Typed::Function copy = program.at(f7);
+    ValueID comparison = addValue(copy, b0, Opcode::StrictEq, { v2, v2 });
+    typeFunctionAsRead(program, f7, copy, test.build());
+
+    EffectSummaries summaries;
+    EffectContext context { program, summaries };
+    Diagnostics& diagnostics = test.build().diagnostics();
+    EffectsCache effects(context, copy, &diagnostics);
+    effects.resizeToFunction();
+    auto compare = [&](ValueID operand) {
+        copy.edit(comparison).setOperand(0, operand);
+        copy.edit(comparison).setOperand(1, operand);
+    };
+
+    EffectsOnEdges effectsOnIntegers = effects.of(comparison);
+    AOT_TEST_CHECK(effects.of(comparison) == effectsOnIntegers);
+    compare(v0);
+    effects.didChangeFunction();
+    AOT_TEST_CHECK(effects.of(comparison) != effectsOnIntegers);
+    AOT_TEST_CHECK(!diagnostics.hasErrors());
+
+    compare(v2);
+    AOT_TEST_CHECK(effects.of(comparison) != effectsOnIntegers);
+    test.expectOnly(Kind::VerificationFailedAfterPass);
+    AOT_TEST_CHECK(diagnostics.internalErrors()[0].detail.startsWith(makeString("the pass asked for the effects of v"_s, comparison.index(), " (StrictEq) after an edit that the analyses were not told of: they answered reads("_s)));
+}
+
+struct HeldAnalysesTest : VerifierTest {
+    HeldAnalysesTest()
+        : verifyingBuild(optionsThatVerifyEachPass())
+        , copy(program->at(f7))
+        , comparison(addValue(copy, b0, Opcode::StrictEq, { v2, v2 }))
+    {
+        typeFunctionAsRead(*program, f7, copy, build());
+    }
+
+    static Wire::CompileOptions optionsThatVerifyEachPass()
+    {
+        Wire::CompileOptions options = makeDefaultCompileOptions();
+        options.checks = Wire::CheckSet::VerifyEachPass;
+        return options;
+    }
+
+    // They look at the function and are told of no edit.
+    AnalysisContext context() { return { verifyingBuild, *program, nullptr, nullptr, f7 }; }
+    const Typed::Function& function() const { return copy; }
+
+    void expectOnlyDetail(const String& expected)
+    {
+        Diagnostics& diagnostics = verifyingBuild.diagnostics();
+        diagnostics.finish(program.get());
+        bool hasExpectedError = diagnostics.userDiagnostics().isEmpty() && diagnostics.internalErrors().size() == 1 && diagnostics.internalErrors()[0].kind == Kind::VerificationFailedAfterPass && diagnostics.internalErrors()[0].detail == expected;
+        if (!hasExpectedError)
+            printDiagnostics(diagnostics, WTF::dataFile());
+        AOT_TEST_CHECK(hasExpectedError);
+    }
+
+    BuildContext verifyingBuild;
+    Typed::Function copy;
+    ValueID comparison;
+};
+
+void testGraphHeldAfterUnreportedEdit()
+{
+    HeldAnalysesTest test;
+    FunctionAnalyses analyses(test.context(), test.function());
+    analyses.dominators();
+    AOT_TEST_CHECK(analyses.verifyCached());
+    AOT_TEST_CHECK(!test.verifyingBuild.diagnostics().hasErrors());
+
+    test.copy.edit(b0).terminator.taken().block = BlockID(2u);
+    AOT_TEST_CHECK(!analyses.verifyCached());
+    AOT_TEST_CHECK(!analyses.verifyCached());
+    test.expectOnlyDetail("control-flow: the length of the reverse post order: the analyses hold 4, and the same analysis made anew gives 3"_s);
+}
+
+void testUseListsHeldAfterUnreportedEdit()
+{
+    auto expectedDetail = [](unsigned numberOfUsesHeld) {
+        return makeString("use-lists: the length of the uses of v2 (Integer): the analyses hold "_s, numberOfUsesHeld, ", and the same analysis made anew gives "_s, numberOfUsesHeld - 1);
+    };
+
+    {
+        HeldAnalysesTest test;
+        FunctionAnalyses analyses(test.context(), test.function());
+        unsigned numberOfUsesHeld = analyses.useLists().useCount(v2);
+        AOT_TEST_CHECK(analyses.verifyCached());
+
+        test.copy.edit(test.comparison).setOperand(1, v3);
+        AOT_TEST_CHECK(!analyses.verifyCached());
+        test.expectOnlyDetail(expectedDetail(numberOfUsesHeld));
+    }
+
+    // Where the lists are asked for again behind a pass, the finding is made on the spot, and the check behind the pass adds none.
+    {
+        HeldAnalysesTest test;
+        FunctionAnalyses analyses(test.context(), test.function());
+        unsigned numberOfUsesHeld = analyses.useLists().useCount(v2);
+        test.copy.edit(test.comparison).setOperand(1, v3);
+        analyses.didRunPass();
+        AOT_TEST_CHECK(!test.verifyingBuild.diagnostics().hasErrors());
+        AOT_TEST_CHECK(analyses.useLists().useCount(v2) == numberOfUsesHeld);
+        AOT_TEST_CHECK(test.verifyingBuild.diagnostics().hasErrors());
+        AOT_TEST_CHECK(!analyses.verifyCached());
+        test.expectOnlyDetail(expectedDetail(numberOfUsesHeld));
+    }
+
+    {
+        HeldAnalysesTest test;
+        FunctionAnalyses analyses(test.context(), test.function());
+        analyses.useLists();
+        test.copy.edit(v4).setOperand(2, v3);
+        test.copy.edit(v4).setOperand(3, v2);
+        AOT_TEST_CHECK(!analyses.verifyCached());
+        test.expectOnlyDetail("use-lists: entry 0 of the uses of v2 (Integer): the analyses hold operand 2 of v4 (Call) in b0, and the same analysis made anew gives operand 3 of v4 (Call) in b0"_s);
+    }
+}
+
+void testEffectsHeldAfterUnreportedEdit()
+{
+    HeldAnalysesTest test;
+    FunctionAnalyses analyses(test.context(), test.function());
+    String effectsHeld = toString(analyses.effectsOf(test.comparison));
+    AOT_TEST_CHECK(analyses.verifyCached());
+
+    test.copy.edit(test.comparison).setOperand(0, v0);
+    test.copy.edit(test.comparison).setOperand(1, v0);
+    EffectSummaries summaries;
+    String effects = toString(effectsOf(EffectContext { *test.program, summaries }, test.copy, test.copy.at(test.comparison)));
+    AOT_TEST_CHECK(effects != effectsHeld);
+    AOT_TEST_CHECK(!analyses.verifyCached());
+    test.expectOnlyDetail(makeString("effects: the effects of v"_s, test.comparison.index(), " (StrictEq): the analyses hold "_s, effectsHeld, ", and effectsOf() gives "_s, effects));
+}
+
 // The record of a type is planned from the type without what no test finds, and the tables hold the cells of the realm alone.
 void testRecordOfEveryBuiltinNamesOnlyCellsOfRealm()
 {
@@ -723,6 +866,10 @@ std::span<const NativeTest> verifierTests()
         { "verifier/record-id-out-of-range"_s, testRecordIDOutOfRange },
         { "verifier/effects-exceed-replaced-group"_s, testEffectsExceedReplacedGroup },
         { "verifier/effects-exceed-replaced-group-in-provisional-function"_s, testEffectsExceedReplacedGroupInProvisionalFunction },
+        { "verifier/effects-asked-again-after-unreported-edit"_s, testEffectsAskedAgainAfterUnreportedEdit },
+        { "verifier/graph-held-after-unreported-edit"_s, testGraphHeldAfterUnreportedEdit },
+        { "verifier/use-lists-held-after-unreported-edit"_s, testUseListsHeldAfterUnreportedEdit },
+        { "verifier/effects-held-after-unreported-edit"_s, testEffectsHeldAfterUnreportedEdit },
         { "verifier/record-of-every-builtin-names-only-cells-of-realm"_s, testRecordOfEveryBuiltinNamesOnlyCellsOfRealm },
     };
     return tests;

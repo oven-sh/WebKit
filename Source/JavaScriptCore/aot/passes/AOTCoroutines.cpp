@@ -15,9 +15,12 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTFlowCoroutines.h"
+#include "AOTFlowResults.h"
+#include "AOTFlowUnseenCode.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTFuseGeneratorLoops.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTPassRunner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -30,12 +33,14 @@
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -75,28 +80,44 @@ static ValueID driverOfAsyncBody(const Function& body)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ValueID appendAwait(IRBuilder& builder, ValueID awaited)
+ValueID appendAwait(IRBuilder& builder, ValueID awaited, std::span<const ValueID> held)
 {
     Function& function = builder.function();
-    if (function.isUnsplitCoroutine())
-        return builder.append(Opcode::Await, { awaited });
-    return builder.append(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
+    if (function.isUnsplitCoroutine()) {
+        Value await = IRBuilder::make(Opcode::Await, { awaited });
+        await.setHeldOperands(held);
+        return builder.append(WTF::move(await));
+    }
+    Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, driverOfAsyncBody(function) });
+    await.setHeldOperands(held);
+    return builder.append(WTF::move(await));
 }
 
 // Where the iterator does not answer at once the step suspends this frame, and whoever finishes the step resumes the frame through its driver.
-ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent)
+ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID sent, std::span<const ValueID> held)
 {
     Function& function = builder.function();
     ValueID driver = function.isUnsplitCoroutine() ? builder.appendUndefined() : driverOfAsyncBody(function);
-    return builder.append(Opcode::StepAsyncGenerator, { iterator, sent, driver });
+    Value step = IRBuilder::make(Opcode::StepAsyncGenerator, { iterator, sent, driver });
+    step.setHeldOperands(held);
+    return builder.append(WTF::move(step));
 }
 
-// A ramp takes over the id and the callers of its source, so what is known about those callers carries over.
-static constexpr OptionSet<FunctionCapabilities> capabilitiesRampsInherit {
-    FunctionCapabilities::MayChangeSignature,
-    FunctionCapabilities::HasOnlyDirectCallers,
-    FunctionCapabilities::IsNeverCalledByHost,
-};
+Value makeIteratorResultObject(const Program& program, ValueID value, ValueID done, AllocationSiteID site)
+{
+    LayoutID layoutID = program.layoutOf(BuiltinLayouts::IteratorResult);
+    const Layout& layout = program.at(layoutID);
+    std::optional<uint32_t> valueField = layout.findField(program.keyOf(BuiltinNames::value));
+    std::optional<uint32_t> doneField = layout.findField(program.keyOf(BuiltinNames::done));
+    RELEASE_ASSERT(valueField && doneField);
+
+    Value object = IRBuilder::make(Opcode::NewObject);
+    object.setLayout(layoutID);
+    object.setFields(std::array { *valueField, *doneField });
+    object.setValuesOperands(std::array { value, done });
+    object.setAllocationSite(site);
+    return object;
+}
 
 static ValueID appendSettledPromise(IRBuilder& builder, Opcode settle, ValueID outcome)
 {
@@ -127,7 +148,7 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
     if (unsplit.runsOnlyBehindFailedTest())
         ramp.flags.add(FunctionFlags::IsSplitOffGenericVersion);
     ramp.creator = record;
-    ramp.capabilities = (initialCapabilitiesOf(ramp) - capabilitiesRampsInherit) | (unsplit.capabilities & capabilitiesRampsInherit);
+    ramp.capabilities = capabilitiesInPlaceOf(ramp, unsplit.capabilities, FunctionCapabilities::MayChangeSignature);
 
     IRBuilder builder(context, ramp, types);
     builder.setOrigin(Origin { ramp.position, 0 });
@@ -139,11 +160,10 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
     RELEASE_ASSERT(ramp.results.size() == 1);
     // A ramp returns what it allocates, whatever is said of its result. What is said of the contents stays in the type, where contents are no proof.
     DeclaredType& declared = ramp.results[0];
-    plan.didNarrowResult = declared.flags.contains(PositionFlags::IsExpected) || !types.at(declared.type).isSubsetOf(types.at(plan.allocatedType), context.program);
+    plan.didNarrowResult = declared.isExpected() || !types.at(declared.written()).isSubsetOf(types.at(plan.allocatedType), context.program);
     if (plan.didNarrowResult) {
-        TypeID met = types.intersectionOf(plan.allocatedType, declared.type);
-        declared.type = met == TypeTable::never ? plan.allocatedType : met;
-        declared.flags.remove(PositionFlags::IsExpected);
+        TypeID met = types.intersectionOf(plan.allocatedType, declared.expected().predicted());
+        declared.establish(Proven::byConstruction(met != TypeTable::never && types.at(met).isSubsetOf(types.at(plan.allocatedType), context.program) ? met : plan.allocatedType));
     }
 
     // A ramp is built before its body exists, so the result type of this call cannot come from the callee. A worker takes no driver.
@@ -156,7 +176,7 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
         return builder.appendWithType(WTF::move(call), TypeTable::anything);
     };
     auto emitReturnOfDriver = [&](ValueID returned) {
-        emitReturnOfCall(builder, convertTo(builder, returned, DeclaredType { .type = ramp.results[0].type }));
+        emitReturnOfCall(builder, convertTo(builder, returned, DeclaredType(Proven::byPosition(*ramp.results[0].established()))));
     };
 
     if (plan.neverSuspends) {
@@ -226,7 +246,7 @@ static Function buildAsyncWorker(TypeArena& types, Function&& unsplit, const Cor
         ValueID value = block.terminator.valueOperand();
         returned = types.unionOf(returned, value ? worker.at(value).type : TypeTable::undefined);
     }
-    worker.results = Vector<DeclaredType> { DeclaredType { .type = returned } };
+    worker.results = Vector<DeclaredType> { DeclaredType(Proven::byPosition(returned)) };
     worker.derivation = Derivation {
         .source = record.ramp,
         .parameterMap = Vector<ParameterOrigin>(worker.numberOfEntryParameters(), [](size_t index) { return ParameterOrigin { static_cast<uint32_t>(index) }; }),
@@ -263,10 +283,12 @@ static void rewriteInPlace(BodyRewrite& body, BlockID block, ValueID id, Opcode 
 {
     ReplacedEffects replaced = replacedEffectsOf(body, replacedValues);
     Value& value = body.function.edit(id);
+    Vector<ValueID, 8> held(heldOperandsOf(value));
     value.become(opcode);
     uint32_t operandIndex = 0;
     for (ValueID operand : operands)
         value.setOperand(operandIndex++, operand);
+    setHeldOperands(value, held.span());
     body.analyses.didChangeValues();
     checkSuccessor(body, block, id, replaced);
 }
@@ -286,13 +308,13 @@ static void prepareHeaderOfBody(const AnalysisContext& context, TypeArena& types
         TypingContext typing { context.program, body, types };
         TypeID restType = declaredEntryTypeOf(typing, body, *hiddenRest);
         body.flags.remove(FunctionFlags::HasHiddenRest);
-        body.parameters.append(DeclaredType { .type = restType });
+        body.parameters.append(DeclaredType(Proven::byPosition(restType)));
     }
     body.flags.remove(FunctionFlags::HasRestParameter);
-    body.parameters.append(DeclaredType { .type = plan.driverType });
+    body.parameters.append(DeclaredType(Proven::byPosition(plan.driverType)));
     RELEASE_ASSERT(plan.record.promiseParameter == sourceParameters && body.numberOfEntryParameters() == sourceParameters + 1);
 
-    body.results = Vector<DeclaredType> { DeclaredType { .type = TypeTable::anything } };
+    body.results = Vector<DeclaredType> { DeclaredType(Proven::byPosition(TypeTable::anything)) };
     body.derivation = Derivation {
         .source = plan.record.ramp,
         .parameterMap = Vector<ParameterOrigin>(sourceParameters + 1, [&](size_t index) {
@@ -328,124 +350,185 @@ static void markRareModeArms(BodyRewrite& body)
     body.analyses.invalidate(FunctionAnalysis::Frequencies);
 }
 
-// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown.
-static void moveProofsOfSentValueBehindMode(BodyRewrite& body, BlockID block, ValueID yield)
-{
-    Function& function = body.function;
-    IRBuilder& builder = body.builder;
-    const Terminator& terminator = function.at(block).terminator;
-    if (terminator.kind != TerminatorKind::Switch)
-        return;
+namespace {
 
-    const BlockValues& values = function.at(block).values;
-    ValueID sent;
-    Vector<ValueID, 4> proofs;
-    BitVector proofIndexes(values.size());
-    for (uint32_t index = 0; index < values.size(); ++index) {
-        const Value& value = function.at(values[index]);
-        if (value.opcode == Opcode::ResultAt && value.operand(0) == yield && value.index() == static_cast<uint32_t>(YieldResult::Sent)) {
-            if (sent)
-                return;
-            sent = values[index];
-            continue;
-        }
-        if (!sent || (!isCastWithoutTest(value.opcode) && value.opcode != Opcode::ValidateType))
-            continue;
-        if (value.valueOperand() != sent && !proofs.contains(value.valueOperand()))
-            continue;
-        proofs.append(values[index]);
-        proofIndexes.quickSet(index);
-    }
-    if (proofs.isEmpty())
-        return;
-
-    BlockID throwingArm;
-    Vector<BlockID, 2> otherArms;
-    auto addArm = [&](BlockID arm) {
-        if (!otherArms.contains(arm))
-            otherArms.append(arm);
-    };
-    std::span<const Target> caseTargets = terminator.caseTargets();
-    for (size_t index = 0; index < caseTargets.size(); ++index) {
-        if (terminator.cases()[index] == static_cast<int64_t>(ResumeMode::Throw))
-            throwingArm = caseTargets[index].block;
-        else
-            addArm(caseTargets[index].block);
-    }
-    addArm(terminator.otherwise().block);
-    if (!throwingArm || otherArms.contains(throwingArm))
-        return;
-    const CFG& cfg = body.analyses.cfg();
-    if (!cfg.singleIncomingEdge(throwingArm))
-        return;
-    Vector<Edge, 2> edgesIntoOtherArms;
-    for (BlockID arm : otherArms) {
-        std::optional<Edge> edge = cfg.singleIncomingEdge(arm);
-        if (!edge)
-            return;
-        edgesIntoOtherArms.append(*edge);
-    }
-
+// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown. What is proven of the values that are sent in holds in the arms that do not throw.
+struct ProofsOfSentValue {
     struct UseInArm {
         Use use;
         uint32_t proof;
         // None for the arm that throws.
         std::optional<uint32_t> arm;
     };
+    struct Arm {
+        Edge edge;
+        bool needsOwnBlock;
+    };
+
+    BlockID block;
+    ValueID sent;
+    Vector<ValueID, 4> proofs;
+    Vector<Arm, 2> otherArms;
     Vector<UseInArm, 8> uses;
-    Dominators& dominators = body.analyses.dominators();
+};
+
+} // anonymous namespace
+
+static bool provesWithoutTest(const Value& value)
+{
+    return isCastWithoutTest(value.opcode) || value.opcode == Opcode::ValidateType;
+}
+
+// Nothing where a proof cannot leave its place in front of the switch on the mode.
+static std::optional<ProofsOfSentValue> findProofsOfSentValue(BodyRewrite& body, BlockID block, ValueID yield)
+{
+    const Function& function = body.function;
     const UseLists& useLists = body.analyses.useLists();
-    for (uint32_t proof = 0; proof < proofs.size(); ++proof) {
-        for (const Use& use : useLists.usesOf(proofs[proof])) {
-            if (use.kind == Use::Kind::Operand && proofs.contains(use.user))
+    ProofsOfSentValue found { .block = block };
+    for (const Use& use : useLists.usesOf(yield)) {
+        if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ResultAt || function.at(use.user).index() != static_cast<uint32_t>(YieldResult::Sent))
+            continue;
+        if (found.sent || use.block != block)
+            return std::nullopt;
+        found.sent = use.user;
+    }
+    if (!found.sent)
+        return found;
+    for (ValueID id : function.at(block).values) {
+        const Value& value = function.at(id);
+        if (provesWithoutTest(value) && (value.operand(0) == found.sent || found.proofs.contains(value.operand(0))))
+            found.proofs.append(id);
+    }
+
+    const Terminator& terminator = function.at(block).terminator;
+    std::optional<Edge> throwingEdge;
+    if (terminator.kind == TerminatorKind::Switch) {
+        const CFG& cfg = body.analyses.cfg();
+        for (uint32_t index = 0; index < terminator.targets.size(); ++index) {
+            Edge edge { block, index };
+            BlockID target = terminator.targets[index].block;
+            if (index < terminator.cases().size() && terminator.cases()[index] == static_cast<int64_t>(ResumeMode::Throw))
+                throwingEdge = edge;
+            else
+                found.otherArms.append({ edge, cfg.singleIncomingEdge(target) != edge || !!function.at(target).handler });
+        }
+    }
+    if (!throwingEdge) {
+        if (!found.proofs.isEmpty())
+            return std::nullopt;
+        found.otherArms.clear();
+    }
+    auto armOf = [&](const Use& use) -> std::optional<uint32_t> {
+        size_t arm = found.otherArms.findIf([&](const ProofsOfSentValue::Arm& candidate) {
+            if (use.kind == Use::Kind::EdgeArgument && use.block == block)
+                return use.edge() == candidate.edge;
+            return body.analyses.dominates(candidate.edge, use.block);
+        });
+        return arm == notFound ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(arm));
+    };
+
+    // Whoever proves something of the value farther on does so in an arm that does not throw.
+    for (const Use& use : useLists.usesOf(found.sent)) {
+        if (use.kind == Use::Kind::Operand && provesWithoutTest(function.at(use.user)) && !found.proofs.contains(use.user) && !armOf(use))
+            return std::nullopt;
+    }
+    for (uint32_t proof = 0; proof < found.proofs.size(); ++proof) {
+        for (const Use& use : useLists.usesOf(found.proofs[proof])) {
+            if (use.kind == Use::Kind::Operand && found.proofs.contains(use.user))
                 continue;
             if (use.kind == Use::Kind::BlockSubject)
-                return;
-            if (dominators.dominates(throwingArm, use.block)) {
-                uses.append({ use, proof, std::nullopt });
+                return std::nullopt;
+            if (std::optional<uint32_t> arm = armOf(use)) {
+                if (use.block == block)
+                    found.otherArms[*arm].needsOwnBlock = true;
+                found.uses.append({ use, proof, arm });
                 continue;
             }
-            size_t arm = otherArms.findIf([&](BlockID candidate) { return dominators.dominates(candidate, use.block); });
-            // Somebody reads it where several arms meet, or in front of the switch.
-            if (arm == notFound)
-                return;
-            uses.append({ use, proof, static_cast<uint32_t>(arm) });
+            // The arm that throws has the value as it came, and nothing there may hang on its type. Somebody else reads it where several arms meet, or in front of the switch.
+            bool isThrown = use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Throw;
+            if (!isThrown || !body.analyses.dominates(*throwingEdge, use.block))
+                return std::nullopt;
+            found.uses.append({ use, proof, std::nullopt });
         }
     }
+    return found;
+}
 
-    for (size_t index = 0; index < otherArms.size(); ++index) {
-        if (function.at(otherArms[index]).handler)
-            otherArms[index] = builder.splitEdge(edgesIntoOtherArms[index]);
-    }
+static void moveProofsOfSentValuesBehindModes(BodyRewrite& body, std::span<const ProofsOfSentValue> all)
+{
+    Function& function = body.function;
+    IRBuilder& builder = body.builder;
 
-    Vector<ValueID, 8> copies;
-    for (size_t arm = 0; arm < otherArms.size(); ++arm) {
-        for (ValueID proof : proofs) {
-            Value copy = function.at(proof);
-            size_t operand = proofs.find(copy.valueOperand());
-            if (operand != notFound)
-                copy.setValueOperand(copies[arm * proofs.size() + operand]);
-            builder.setOrigin(copy.origin());
-            copies.append(builder.insertBefore(ProgramPoint::atHeadOf(otherArms[arm]), WTF::move(copy)));
+    auto keyOf = [](Edge edge) {
+        return static_cast<uint64_t>(edge.from.index()) << 32 | edge.targetIndex;
+    };
+    UncheckedKeyHashMap<uint64_t, BlockID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> blocksOnEdges;
+    for (const ProofsOfSentValue& found : all) {
+        for (const ProofsOfSentValue::Arm& arm : found.otherArms) {
+            if (arm.needsOwnBlock)
+                blocksOnEdges.add(keyOf(arm.edge), builder.splitEdge(arm.edge));
         }
     }
-    for (const UseInArm& use : uses)
-        replaceUse(function, use.use, use.arm ? copies[*use.arm * proofs.size() + use.proof] : sent);
+    // The arguments of an edge have gone to the block on it.
+    auto whereItIsNow = [&](Use use) {
+        if (use.kind != Use::Kind::EdgeArgument)
+            return use;
+        if (BlockID added = blocksOnEdges.get(keyOf(use.edge()))) {
+            use.block = added;
+            use.targetIndex = 0;
+        }
+        return use;
+    };
+
+    for (const ProofsOfSentValue& found : all) {
+        Vector<ValueID, 8> copies;
+        for (size_t arm = 0; arm < found.otherArms.size(); ++arm) {
+            BlockID head = targetOf(function, found.otherArms[arm].edge).block;
+            for (ValueID proof : found.proofs) {
+                Value copy = function.at(proof);
+                size_t operand = found.proofs.find(copy.operand(0));
+                if (operand != notFound)
+                    copy.setOperand(0, copies[arm * found.proofs.size() + operand]);
+                builder.setOrigin(copy.origin());
+                copies.append(builder.insertBefore(ProgramPoint::atHeadOf(head), WTF::move(copy)));
+            }
+        }
+        for (const ProofsOfSentValue::UseInArm& use : found.uses)
+            replaceUse(function, whereItIsNow(use.use), use.arm ? copies[*use.arm * found.proofs.size() + use.proof] : found.sent);
+    }
     builder.applyInsertions();
-    builder.eraseValues(block, proofIndexes);
+
+    for (const ProofsOfSentValue& found : all) {
+        const BlockValues& values = function.at(found.block).values;
+        BitVector proofIndexes(values.size());
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (found.proofs.contains(values[index]))
+                proofIndexes.quickSet(index);
+        }
+        builder.eraseValues(found.block, proofIndexes);
+    }
     body.analyses.didChangeValues();
 }
 
 static void mergeAwaitsIntoYields(BodyRewrite& body)
 {
     struct AwaitedYield {
-        ProgramPoint await;
-        uint32_t yieldIndex;
+        BlockID block;
+        ValueID await;
         ValueID yield;
     };
     const Function& function = body.function;
     const UseLists& useLists = body.analyses.useLists();
     Vector<AwaitedYield> merges;
+    Vector<ProofsOfSentValue> proofsToMove;
+    auto mergeWhereProofsCanMove = [&](AwaitedYield awaitedYield) {
+        std::optional<ProofsOfSentValue> found = findProofsOfSentValue(body, awaitedYield.block, awaitedYield.yield);
+        if (!found)
+            return;
+        merges.append(awaitedYield);
+        if (!found->proofs.isEmpty())
+            proofsToMove.append(WTF::move(*found));
+    };
     forEachListed(function, Opcode::Await, [&](ProgramPoint point, ValueID await) {
         if (function.at(await).takesExtraTurn())
             return;
@@ -456,7 +539,7 @@ static void mergeAwaitsIntoYields(BodyRewrite& body)
                 return;
             Opcode user = function.at(use->user).opcode;
             if (user == Opcode::Yield && use->operandIndex == OperandIndex::Yield::value) {
-                merges.append({ point, index + 1, use->user });
+                mergeWhereProofsCanMove({ point.block, await, use->user });
                 return;
             }
             if (!isCastWithoutTest(user))
@@ -464,17 +547,18 @@ static void mergeAwaitsIntoYields(BodyRewrite& body)
         }
     });
 
-    // The last one of a block first, so the positions of the others still hold.
-    for (const AwaitedYield& merge : merges | std::views::reverse) {
-        ValueID await = function.at(merge.await.block).values[merge.await.index];
-        rewriteInPlace(body, merge.await.block, merge.yield, Opcode::AsyncGeneratorYield, { body.driver, function.at(await).valueOperand() }, { await, merge.yield });
+    // An await that goes may be what reads a proof, so the proofs move while every use is where it was found.
+    if (!proofsToMove.isEmpty())
+        moveProofsOfSentValuesBehindModes(body, proofsToMove.span());
+
+    for (const AwaitedYield& merge : merges) {
+        rewriteInPlace(body, merge.block, merge.yield, Opcode::AsyncGeneratorYield, { body.driver, function.at(merge.await).valueOperand() }, { merge.await, merge.yield });
+        const BlockValues& values = function.at(merge.block).values;
         BitVector mergedIndexes;
-        for (uint32_t index = merge.await.index; index < merge.yieldIndex; ++index)
+        for (size_t index = values.find(merge.await); values[index] != merge.yield; ++index)
             mergedIndexes.set(index);
-        body.builder.eraseValues(merge.await.block, mergedIndexes);
+        body.builder.eraseValues(merge.block, mergedIndexes);
     }
-    for (const AwaitedYield& merge : merges)
-        moveProofsOfSentValueBehindMode(body, merge.await.block, merge.yield);
 }
 
 static void replaceYields(BodyRewrite& body)
@@ -517,13 +601,14 @@ static void replaceStepsAndAwaits(BodyRewrite& body)
         IRBuilder::Expansion expansion = builder.beginExpansion(point);
         Value successor = IRBuilder::make(Opcode::AwaitBySavingFrame, { await.valueOperand(), body.driver });
         successor.setTakesExtraTurn(await.takesExtraTurn());
+        successor.setHeldOperands(heldOperandsOf(await));
         // An expected type is set only where it says more than the type.
         TypeID type = resultTypeOf(program, function, successor, types);
-        if (await.expected() && await.expected() != type && types.at(await.expected()).isSubsetOf(types.at(type), program))
+        if (await.expected().predicted() && await.expected().predicted() != type && types.at(await.expected().predicted()).isSubsetOf(types.at(type), program))
             successor.setExpected(await.expected());
         ValueID result = builder.append(WTF::move(successor));
         checkSuccessor(body, point.block, result, replaced);
-        builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = await.type }));
+        builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(await.type))));
     }
 }
 
@@ -545,6 +630,7 @@ static void expandInitialYield(BodyRewrite& body)
     auto head = [&] { return function.at(entryBlock).values.span().first(point->index); };
 
     ReplacedEffects replaced = replacedEffectsOf(body, { function.at(point->block).values[point->index] });
+    Vector<ValueID, 8> held(heldOperandsOf(function.at(function.at(point->block).values[point->index])));
     // The ramp allocates the generator, which reads the property `prototype` of the function, and only then does the head of the body evaluate the parameters.
     bool takesPrototypeAgain = point->block != entryBlock || std::ranges::any_of(head(), [&](ValueID id) {
         Effects effects = analyses.effectsOf(id).onAnyEdge();
@@ -568,7 +654,9 @@ static void expandInitialYield(BodyRewrite& body)
         RELEASE_ASSERT(calleeParameter);
         builder.append(Opcode::TakeGeneratorPrototype, { body.driver, function.at(entryBlock).parameters[*calleeParameter] });
     }
-    ValueID yield = builder.append(Opcode::YieldBySavingFrame, { body.driver, builder.appendUndefined() });
+    Value firstYield = IRBuilder::make(Opcode::YieldBySavingFrame, { body.driver, builder.appendUndefined() });
+    firstYield.setHeldOperands(held.span());
+    ValueID yield = builder.append(WTF::move(firstYield));
     checkSuccessor(body, point->block, yield, replaced);
     ValueID sent = builder.append(makeResultAt(yield, static_cast<uint32_t>(YieldResult::Sent)));
     ValueID mode = builder.append(makeResultAt(yield, static_cast<uint32_t>(YieldResult::Mode)));
@@ -608,6 +696,156 @@ static void replaceReturns(BodyRewrite& body)
     body.analyses.didChangeValues();
 }
 
+// In each block from the last suspension that can list what is held to the first, with what is live behind it.
+static void forEachSuspensionFromLastToFirst(const Function& function, FunctionAnalyses& analyses, NOESCAPE const Invocable<void(ValueID, const Liveness::LocalCalc&)> auto& functor)
+{
+    Vector<uint32_t, 4> suspensionIndexes;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (canHoldOperands(function.at(values[index]).opcode) && analyses.maySuspend(values[index]))
+                suspensionIndexes.append(index);
+        }
+        if (suspensionIndexes.isEmpty())
+            continue;
+
+        Liveness::LocalCalc localCalc(analyses.liveness(), block);
+        uint32_t pointIndex = values.size();
+        while (!suspensionIndexes.isEmpty()) {
+            uint32_t suspensionIndex = suspensionIndexes.takeLast();
+            while (pointIndex > suspensionIndex + 1)
+                localCalc.execute(--pointIndex);
+            functor(values[suspensionIndex], localCalc);
+        }
+    }
+}
+
+static PassOutcome listLiveValues(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    PassOutcome outcome = PassOutcome::Unchanged;
+    if (!function.isUnsplitCoroutine())
+        return outcome;
+    // What the function still captures when it is split it holds until it ends.
+    BitVector isHeldUntilTheEnd;
+    const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+    for (uint32_t index = 0; index < entryParameters.size(); ++index) {
+        if (function.entryParameterKind(index) != EntryParameter::Parameter)
+            isHeldUntilTheEnd.set(entryParameters[index].index());
+    }
+    Vector<ValueID, 16> held;
+    BitVector isListed;
+    forEachSuspensionFromLastToFirst(function, context.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
+        Opcode opcode = function.at(suspension).opcode;
+        if ((opcode == Opcode::IteratorResume || opcode == Opcode::IteratorClose) && function.at(suspension).iteratorKind() == IteratorKind::Sync)
+            return;
+        held.shrink(0);
+        isListed.clearAll();
+        for (ValueID listed : heldOperandsOf(function.at(suspension))) {
+            held.append(listed);
+            isListed.set(listed.index());
+        }
+        size_t numberListed = held.size();
+        auto list = [&](ValueID object) {
+            if (!isHeldUntilTheEnd.get(object.index()) && !isListed.set(object.index()))
+                held.append(object);
+        };
+        behind.forEachLive([&](ValueID live) {
+            if (live == suspension)
+                return;
+            // An iteration holds what it walks, and a closure what it captures: one that is only called need not be made.
+            const Value& definition = function.at(sameObjectThroughConversionsToObject(function, live));
+            if (definition.opcode == Opcode::IteratorOpen)
+                list(definition.iterableOperand());
+            else if (definition.opcode == Opcode::NewClosure) {
+                for (ValueID capture : definition.capturesOperands())
+                    list(capture);
+            } else
+                list(live);
+        });
+        if (held.size() == numberListed)
+            return;
+        setHeldOperands(function.edit(suspension), held.span());
+        outcome = PassOutcome::Changed;
+    });
+    return outcome;
+}
+
+// A block goes on listing each value that it was read with.
+static PassOutcome replaceReadsOfScopes(Function& function)
+{
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+        for (ValueID id : function.at(BlockID(block)).values) {
+            if (function.at(id).opcode != Opcode::ReadScope)
+                continue;
+            function.edit(id).become(Opcode::Undefined);
+            outcome = PassOutcome::Changed;
+        }
+    }
+    return outcome;
+}
+
+// What the function as it is written reads behind a suspension it holds there, also where a later pass finds that the read is never reached.
+// A read of a scope reads all that the names of the scope hold.
+PassOutcome listLiveValuesAtSuspensions(FunctionPassContext& context)
+{
+    PassOutcome outcome = listLiveValues(context);
+    return outcome | replaceReadsOfScopes(context.function);
+}
+
+// A constant of a module holds its value as long as the program runs.
+static bool isHeldByConstantOfModule(const Program& program, const Function& function, ValueID id)
+{
+    const Value* definition = &function.at(sameObjectThroughCasts(function, id));
+    if (definition->opcode == Opcode::FinishClass)
+        definition = &function.at(sameObjectThroughCasts(function, definition->classObjectOperand()));
+    if (definition->opcode != Opcode::GetModuleVariable)
+        return false;
+    const Variable& variable = program.at(definition->variable());
+    return variable.flags.contains(VariableFlags::IsImmutable) && variable.module;
+}
+
+// A suspended function holds what it reads behind the suspension and, until it ends, its receiver, what it captures, and what the names of its parameters hold, which the suspension lists as it is read.
+// A later pass may answer such a read without the object: what the object holds lives on as long as the function would have held the object.
+static void holdLiveValuesAtSuspensions(BodyRewrite& body)
+{
+    Function& function = body.function;
+    const Program& program = body.analyses.program();
+    body.analyses.didChangeControlFlow();
+
+    auto isHeld = [&](ValueID id) {
+        return id != body.driver && mayHoldObject(program.typeOf(function, id)) && !isHeldByConstantOfModule(program, function, id);
+    };
+    Vector<ValueID, 8> parameters;
+    const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
+    for (uint32_t index = 0; index < entryParameters.size(); ++index) {
+        if (entryParameters[index] != body.driver && function.entryParameterKind(index) != EntryParameter::Parameter && isHeld(entryParameters[index]))
+            parameters.append(entryParameters[index]);
+    }
+
+    Vector<ValueID, 16> held;
+    forEachSuspensionFromLastToFirst(function, body.analyses, [&](ValueID suspension, const Liveness::LocalCalc& behind) {
+        held.shrink(0);
+        auto holdUnlessLive = [&](ValueID id) {
+            if (!behind.isLive(id) && !held.contains(id))
+                held.append(id);
+        };
+        for (ValueID parameter : parameters)
+            holdUnlessLive(parameter);
+        for (ValueID listed : heldOperandsOf(function.at(suspension))) {
+            if (isHeld(listed))
+                holdUnlessLive(listed);
+        }
+        behind.forEachLive([&](ValueID live) {
+            if (live != suspension && isHeld(live))
+                held.append(live);
+        });
+        setHeldOperands(function.edit(suspension), held.span());
+    });
+    body.analyses.didChangeValues();
+}
+
 static Function buildCoroutineBody(const AnalysisContext& context, TypeArena& types, Function&& unsplit, const CoroutinePlan& plan)
 {
     Function function = WTF::move(unsplit);
@@ -636,6 +874,7 @@ static Function buildCoroutineBody(const AnalysisContext& context, TypeArena& ty
     }
 
     replaceReturns(body);
+    holdLiveValuesAtSuspensions(body);
     builder.setHandler(std::nullopt);
     return function;
 }
@@ -678,7 +917,7 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
                 const Value& value = caller.at(id);
                 if (value.opcode != Opcode::CallDirect || !narrowedRamps.get(value.function().index()))
                     continue;
-                TypeID resultType = program.at(value.function()).result().type;
+                TypeID resultType = program.provenTypeOf(program.at(value.function()).result());
                 if (resultType != value.type && program.at(resultType).isSubsetOf(program.at(value.type), program))
                     calls.append(id);
             }
@@ -696,8 +935,15 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
     });
 }
 
+static bool loadsModulesByName(const FlowResults& flow)
+{
+    return !flow.hasResults() || std::ranges::any_of(flow.unseenCode(), [](const UnseenCodeRecord& record) {
+        return loadsModulesByName(record.cause);
+    });
+}
+
 // A require() evaluates the ES module that it names and what that module imports.
-static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelLoops& loops)
+static void markModulesEvaluatedByRequire(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
 {
     const Program& program = editor.program();
     bool someModuleAwaits = std::ranges::any_of(program.modules, [](const Module& module) {
@@ -707,10 +953,10 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelL
         return;
 
     Vector<uint32_t> work = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
-        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule }))
+        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule, Opcode::EvaluateRequiredModule }))
             return;
         for (const Value& value : program.functions[index].values) {
-            if (value.opcode == Opcode::RequireModule)
+            if (value.opcode == Opcode::RequireModule || value.opcode == Opcode::EvaluateRequiredModule)
                 found.append(value.module().index());
         }
     });
@@ -719,6 +965,11 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelL
             if (request.kind == ModuleRequestKind::Require)
                 work.append(request.target.index());
         }
+    }
+    // A name computed at run time finds an entry point. A program with one entry point has begun it before any require() runs.
+    if (program.entries.size() > 1 && loadsModulesByName(flow)) {
+        for (const Entry& entry : program.entries)
+            work.append(entry.module.index());
     }
     BitVector seen(program.modules.size());
     while (!work.isEmpty()) {
@@ -740,7 +991,7 @@ void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, co
     });
     if (coroutines.isEmpty())
         return;
-    markModulesEvaluatedByRequire(editor, build.parallelLoops());
+    markModulesEvaluatedByRequire(editor, inputs.flow, build.parallelLoops());
     Vector<CoroutinePlan> plans(coroutines.size(), [&](size_t index) {
         CoroutinePlan plan;
         plan.record.kind = *coroutineKindOf(program.functions[coroutines[index]]);
@@ -922,8 +1173,14 @@ static bool collectIteratorResultReads(FunctionPassContext& context, ValueID res
                 return false;
             continue;
         }
-        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects())
+        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects()) {
+            // Behind a branch on the test the result has another name.
+            for (ValueID parameter : findNarrowedParameters(context.function, context.analyses.useLists(), use)) {
+                if (!context.analyses.cfg().singleIncomingEdge(context.analyses.useLists().blockOf(parameter)) || !collectIteratorResultReads(context, parameter, reads))
+                    return false;
+            }
             continue;
+        }
         if (user.opcode != Opcode::PropGet || user.type != TypeTable::anything || (user.key() != program.keyOf(BuiltinNames::value) && user.key() != program.keyOf(BuiltinNames::done)))
             return false;
     }
@@ -999,15 +1256,16 @@ static bool isAwaitableCallAtEndOf(FunctionPassContext& context, BlockID block, 
 }
 
 // An expected type is set only where it says more than the type.
-static Value makeAwaitLike(FunctionPassContext& context, const Value& original, ValueID awaited)
+static Value makeAwaitLike(FunctionPassContext& context, const Value& original, ValueID awaited, std::span<const ValueID> held)
 {
     Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, original.promiseOperand() });
-    TypeID expected = original.expected();
+    await.setHeldOperands(held);
+    TypeID expected = original.expected().predicted();
     if (!expected)
         return await;
     TypeID type = resultTypeOf(context.program, context.function, await, context.types);
     if (expected != type && context.types.at(expected).isSubsetOf(context.types.at(type), context.program))
-        await.setExpected(expected);
+        await.setExpected(ExpectedType(expected));
     return await;
 }
 
@@ -1023,7 +1281,7 @@ static std::optional<AwaitOfMergedValues> findAwaitOfMergedValues(FunctionPassCo
 {
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
-    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
+    if (function.at(await).takesExtraTurn() || function.kind == FunctionKind::Module)
         return std::nullopt;
 
     Vector<ValueID, 1> casts;
@@ -1041,6 +1299,13 @@ static std::optional<AwaitOfMergedValues> findAwaitOfMergedValues(FunctionPassCo
     const Block& merge = function.at(block);
     if (merge.isHandlerBlock() || !hasOnlyPureValues(context, merge.values.span().first(awaitLocation.index)) || context.analyses.isEnteredFromUnreachableBlock(block))
         return std::nullopt;
+
+    // An await that moves in front of the merge holds what is defined there.
+    for (ValueID held : heldOperandsOf(function.at(await))) {
+        ValueLocation location = useLists.locationOf(held);
+        if (location.placement == ValuePlacement::InBlock && location.block == block)
+            return std::nullopt;
+    }
 
     AwaitOfMergedValues found { await, block, parameterLocation.index, { } };
     bool awaitsCall = false;
@@ -1079,8 +1344,13 @@ static unsigned sinkAwaitsOfMergedValues(FunctionPassContext& context, IRBuilder
 
         builder.setOrigin(await.origin());
         for (BlockID predecessor : site.predecessors) {
-            ValueID incoming = function.at(predecessor).terminator.next().arguments[site.parameterIndex];
-            ValueID result = builder.insertBefore(pointBeforeTerminatorOf(function, predecessor), makeAwaitLike(context, await, incoming));
+            const Arguments& arguments = function.at(predecessor).terminator.next().arguments;
+            ValueID incoming = arguments[site.parameterIndex];
+            Vector<ValueID, 8> held = WTF::map<8>(await.heldOperands(), [&](ValueID held) {
+                size_t index = function.at(site.block).parameters.find(held);
+                return index == notFound ? held : arguments[index];
+            });
+            ValueID result = builder.insertBefore(pointBeforeTerminatorOf(function, predecessor), makeAwaitLike(context, await, incoming, held.span()));
             function.edit(predecessor, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.next().arguments[site.parameterIndex] = result;
         }
         builder.applyInsertions();
@@ -1146,12 +1416,12 @@ static bool giveCallersOfNextTheirOwnAwait(FunctionPassContext& context, IRBuild
 
     Value await = function.at(id);
     IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
-    builder.endExpansion(expansion, builder.append(makeAwaitLike(context, await, await.awaitedOperand())));
+    builder.endExpansion(expansion, builder.append(makeAwaitLike(context, await, await.awaitedOperand(), await.heldOperands())));
 
     builder.setOrigin(await.origin());
     Vector<ValueID, 2> ownAwaits;
     for (BlockID block : blocksThatCall)
-        ownAwaits.append(builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAwaitLike(context, await, function.at(block).terminator.next().arguments[0])));
+        ownAwaits.append(builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAwaitLike(context, await, function.at(block).terminator.next().arguments[0], await.heldOperands())));
     builder.applyInsertions();
     for (size_t index = 0; index < ownAwaits.size(); ++index)
         builder.redirectEdge(Edge { blocksThatCall[index], 0 }, expansion.continuation, { ownAwaits[index] });
@@ -1162,8 +1432,8 @@ static bool giveCallersOfNextTheirOwnAwait(FunctionPassContext& context, IRBuild
 static std::optional<AwaitedCall> findAwaitedCall(FunctionPassContext& context, ValueID await, TestsAtHeadOfCallee tests = TestsAtHeadOfCallee::AreNoCallee)
 {
     const Function& function = context.function;
-    // Whether the body of a module goes on inside a require() depends on whether it awaits a promise, so the callee makes one.
-    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
+    // Which queue resumes the body of a module depends on whether it awaits a promise, so the callee makes one.
+    if (function.at(await).takesExtraTurn() || function.kind == FunctionKind::Module)
         return std::nullopt;
 
     Vector<ValueID, 1> casts;
@@ -1176,6 +1446,9 @@ static std::optional<AwaitedCall> findAwaitedCall(FunctionPassContext& context, 
     std::optional<Vector<ValueID, 4>> resultReads;
     if (!callee && !collectIteratorResultReads(context, await, resultReads.emplace()))
         resultReads = std::nullopt;
+    // Where somebody takes the result itself, the step makes it, and a layout of which flow has seen no allocation has no cell.
+    if (!callee && !resultReads && context.program.at(context.program.layoutOf(BuiltinLayouts::IteratorResult)).flow.allocation == AllocationState::NeverAllocated)
+        return std::nullopt;
 
     const UseLists& useLists = context.analyses.useLists();
     if (!useLists.singleUse(awaited))
@@ -1217,16 +1490,16 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
     replaced.add(effects, function, function.at(site.await));
 
     TypeID type = function.at(site.await).type;
-    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected()](Value& value) {
+    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected().predicted(), held = Vector<ValueID, 8>(function.at(site.await).heldOperands())](Value& value) {
         const Value& call = function.at(site.call);
         value.become(Opcode::AwaitCallBySavingFrame);
         value.setFunction(site.callee.entryWithoutPromise);
         value.setPromiseOperand(promise);
         value.setArgumentsOperands(call.argumentsOperands());
+        setHeldOperands(value, held.span());
         value.setOrigin(call.origin());
         value.setAccessSite(call.accessSite());
-        value.setExpected(expected);
-        value.setIsDemotedTailCall(call.isDemotedTailCall());
+        value.setExpected(ExpectedType(expected));
     };
     Value successor;
     becomeAwaitOfCall(successor);
@@ -1243,7 +1516,7 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
     checkReplacement(effects, function, { context.id, site.point.block, result }, function.at(result), replaced, context.build.diagnostics());
 
     builder.setOrigin(awaitOrigin);
-    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = type }));
+    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(type))));
 }
 
 // The promise of a function that never suspends is settled when the function returns, so the caller awaits what it would have been settled with.
@@ -1258,7 +1531,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
 
     IRBuilder::Expansion expansion = builder.beginExpansion(site.point);
     Origin awaitOrigin = builder.origin();
-    BlockFrequency frequency = function.at(site.point.block).frequency;
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
 
     BlockID rejection = builder.addHandlerBlock(BlockRole::CatchHandler, ValueID());
     BlockID awaiting = builder.addBlock(frequency);
@@ -1291,7 +1564,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
 
     builder.setOrigin(awaitOrigin);
     builder.moveToEndOf(awaiting);
-    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited)), DeclaredType { .type = await.type }));
+    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited, await.heldOperands())), DeclaredType(Proven::byPosition(await.type))));
 }
 
 // `for await` is Await(Call(next)) as well, so the step that serves it takes as many turns of the job queue as the call and the await.
@@ -1303,8 +1576,11 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     ValueID generator = function.at(site.call).receiverOperand();
     ValueID sent = function.at(site.call).argumentsOperands()[0];
     Origin callOrigin = function.at(site.call).origin();
-    BlockFrequency frequency = function.at(site.point.block).frequency;
+    const BuiltinTable& builtins = context.program.builtins();
+    BuiltinID calledBuiltin = builtins.canonicalID(builtins.at(function.at(site.call).overload()).builtin);
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
     TypeID type = function.at(site.await).type;
+    Vector<ValueID, 8> held(heldOperandsOf(function.at(site.await)));
 
     auto appendWithKey = [&](Opcode opcode, std::initializer_list<ValueID> operands, PropertyKeyID key) {
         Value access = IRBuilder::make(opcode, operands);
@@ -1318,7 +1594,10 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     ValueID value = site.resultReads ? builder.addParameter(expansion.continuation, TypeTable::anything) : ValueID();
     ValueID done = site.resultReads ? builder.addParameter(expansion.continuation, TypeTable::anything) : ValueID();
 
-    ValueID step = builder.append(Opcode::StepAsyncGenerator, { generator, sent, driver });
+    Value stepOfGenerator = IRBuilder::make(Opcode::StepAsyncGenerator, { generator, sent, driver });
+    stepOfGenerator.setCalledBuiltin(calledBuiltin);
+    stepOfGenerator.setHeldOperands(held.span());
+    ValueID step = builder.append(WTF::move(stepOfGenerator));
     ValueID stepped = builder.append(makeResultAt(step, static_cast<uint32_t>(StepGeneratorResult::Value)));
     ValueID status = builder.append(makeResultAt(step, static_cast<uint32_t>(StepGeneratorResult::Status)));
     auto appendStatusTest = [&](AsyncGeneratorStepStatus expected) {
@@ -1327,14 +1606,11 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     IRBuilder::BranchBlocks blocks = builder.emitBranch(appendStatusTest(AsyncGeneratorStepStatus::Result), BlockFrequency::Rare, frequency);
 
     if (!site.resultReads) {
-        builder.endExpansion(expansion, convertTo(builder, stepped, DeclaredType { .type = type }));
+        builder.endExpansion(expansion, convertTo(builder, stepped, DeclaredType(Proven::byPosition(type))));
 
-        // What CreateIterResultObject makes: an ordinary object with the two as its own data properties, in this order.
         builder.moveToEndOf(blocks.notTaken);
-        ValueID object = builder.append(Opcode::NewDictionary, { });
-        appendWithKey(Opcode::PropDefine, { object, stepped }, valueKey);
-        appendWithKey(Opcode::PropDefine, { object, appendStatusTest(AsyncGeneratorStepStatus::Completed) }, doneKey);
-        builder.endExpansion(expansion, convertTo(builder, object, DeclaredType { .type = type }));
+        ValueID object = builder.append(makeIteratorResultObject(context.program, stepped, appendStatusTest(AsyncGeneratorStepStatus::Completed)));
+        builder.endExpansion(expansion, convertTo(builder, object, DeclaredType(Proven::byPosition(type))));
         return;
     }
 

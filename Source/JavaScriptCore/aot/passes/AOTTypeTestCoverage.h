@@ -134,6 +134,8 @@ struct TestEventInputs {
     std::span<const ExistingProof> proofs;
     std::span<const HoistedTest> hoistedTests;
     bool measuresCodeBetweenEvents { true };
+    // No proof is carried past the front of these values.
+    const BitVector* valuesThatStartNewStretch { nullptr };
 };
 
 struct TestEvent {
@@ -161,6 +163,7 @@ public:
     std::span<const TestEvent> eventsOf(BlockID) const LIFETIME_BOUND;
     // Whether an event of its block has the index of the value. Most values have none.
     bool hasEventAt(ValueID value) const { return m_hasEvent.get(value.index()); }
+    bool startsNewStretch(ValueID value) const { return m_inputs.valuesThatStartNewStretch && m_inputs.valuesThatStartNewStretch->get(value.index()); }
     uint32_t bytesAfterLastEventOf(BlockID block) const { return m_bytesAfterLastEvent[block.index()]; }
 
     const BitVector& endedBy(const TestEvent& event) const LIFETIME_BOUND
@@ -175,7 +178,7 @@ public:
     uint32_t endOfResultReadsAfter(ProgramPoint) const;
 
     // A slow path comes back on such an edge: without the edges of this kind its target is still reached.
-    bool isRejoiningEdge(Edge) const;
+    Expected<bool> isRejoiningEdge(Edge) const;
 
 private:
     struct Collector;

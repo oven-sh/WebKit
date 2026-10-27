@@ -30,8 +30,8 @@ public:
     void expect(ValueID id, TypeID expected)
     {
         Value& value = m_function.edit(id);
-        m_replacedTypes.append({ id, value.expected() });
-        value.setExpected(expected);
+        m_replacedTypes.append({ id, value.expected().predicted() });
+        value.setExpected(ExpectedType(expected));
     }
 
     // The names that a value is asked for are all that speaks for the layouts expected of it: nobody has checked that, and no analysis has seen them arrive.
@@ -41,7 +41,7 @@ public:
     void takeBack()
     {
         for (auto [id, replaced] : m_replacedTypes | std::views::reverse)
-            m_function.edit(id, ValueEdit::Type).setExpected(replaced);
+            m_function.edit(id, ValueEdit::Type).setExpected(ExpectedType(replaced));
         m_replacedTypes.clear();
     }
 

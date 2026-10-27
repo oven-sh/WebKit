@@ -1,4 +1,4 @@
-# The parser of an object tries the members in declared order, then in any order in a loop, and allocates the layout in the closing block
+# The parser of an object tries the members in declared order, then in any order in a loop, where a member that comes again keeps its place among the keys, and allocates the layout in the closing block
 # FORM: Prepared optimizing
 # RUN: derived-functions Parser:g0 Parser:g1 Parser:g2
 # STATISTIC: ParsersCreated = 3
@@ -49,17 +49,25 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK: [[hasEscapes]]: boolean = JSONKeyHasEscapes [[key]]
 # CHECK-NEXT: Branch [[hasEscapes]] -> taken [[escapes]](), notTaken
 # CHECK-NEXT: [[escapes]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK-NEXT: Jump -> next [[undeclared]]()
 # CHECK: [[idInLoop]]: boolean = JSONStartsWith [[key]] string="\"id\"" @
 # CHECK: = JSONStartsWith [[key]] string="\"name\"" @
-# CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken
-# CHECK-NEXT: [[idRepeats]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[unknown0]]()
-# CHECK: = JSONObjectKey [[order]] layout=L0 @
-# CHECK: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
-# CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken
-# CHECK-NEXT: [[nameRepeats]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken [[idIsNew]]()
+# CHECK: [[afterId]]([[orderWithId]]: keyorder):
+# CHECK: [[idRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[afterId]]([[order]])
+# CHECK-NEXT: [[idIsNew]]():
+# CHECK-NEXT: [[orderAfterIdInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 @
+# CHECK-NEXT: Jump -> next [[afterId]]([[orderAfterIdInLoop]])
+# CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken [[nameIsNew]]()
+# CHECK: [[afterName]]([[orderWithName]]: keyorder):
+# CHECK: [[nameRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[afterName]]([[order]])
+# CHECK-NEXT: [[nameIsNew]]():
+# CHECK-NEXT: [[orderAfterNameInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 field=1
+# CHECK-NEXT: Jump -> next [[afterName]]([[orderAfterNameInLoop]])
+# CHECK: [[undeclared]]():
+# CHECK-NEXT: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
 # CHECK: [[hasId]]():
 # CHECK-NEXT: Branch [[cSeenName]] -> taken {{*}}, notTaken [[nameIsMissing]]()
 # CHECK-NEXT: [[idIsMissing]]() frequency=Rare:

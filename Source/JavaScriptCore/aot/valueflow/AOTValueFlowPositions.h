@@ -39,6 +39,8 @@ struct ValueFlowPositionResult {
     ValueFlowProof proof { ValueFlowProof::NothingArrives };
     std::optional<Type> narrowed;
     ValueFlowObjectID stranger;
+    // The narrowed type is what flow holds: the family has neither taken anything out of it nor put anything in.
+    bool isWhatFlowHolds { false };
 };
 
 struct ValueFlowLayoutsOfSite {
@@ -101,14 +103,18 @@ public:
     ValueSetID withoutWhatPlaceholdersCover(ValueSetID);
     ValueSetMaker& maker();
 
-    ValueFlowPositionResult resultAt(const Type& family, ValueSetID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
+    // The value lies in the family whatever flow holds: its primitives are taken from there, and flow narrows within it.
+    ValueFlowPositionResult resultAt(ProvenType family, ValueSetID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
+    // Nothing is known of the value: the family holds only if all that arrives lies in it.
+    ValueFlowPositionResult resultAt(ExpectedType family, ValueSetID, DeadZone = DeadZone::MayBeObserved);
     ValueFlowPositionResult resultAt(const DeclaredType&, ValueSetID, DeadZone = DeadZone::MayBeObserved);
+    ValueFlowPositionResult resultAmongAllValues(ValueSetID set) { return resultAt(Proven::byRulesBehindChecks(TypeTable::anything), set); }
     FlowPositionUpdate updateFrom(const ValueFlowPositionResult&, const Type& family);
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
 
-    std::optional<LayoutSet> receiversAt(const Type& family, ValueSetID);
-    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID, const ValueFlowOperand* calleeOfConstruction);
+    std::optional<LayoutSet> receiversAt(ValueSetID);
+    std::optional<CalleeSet> calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
 
     bool isSurelyInside(ValueSetID, const Type&, std::optional<TypeID> numberOfType = std::nullopt);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);
@@ -120,13 +126,6 @@ public:
     FlowSiteLoss lossOf(const ValueFlowPositionResult&, ValueFlowNodeID = { });
 
 private:
-    enum class Trust : uint8_t {
-        Nothing,
-        Primitives,
-        Position,
-        PassedTest,
-    };
-
     bool isEnabled(FlowResultKind kind) const { return m_inputs.build.isEnabled(kind, m_switchSubject); }
     bool holds(ValueSetID set, ValueFlowObjectID member) const { return m_inputs.sets().contains(set, member); }
     const ValueFlowLayoutsOfSite* findLayoutsPickedBy(ValueFlowObjectID);
@@ -136,9 +135,9 @@ private:
     Type typeOfMembers(ValueSetID);
     Type typeOf(ValueSetID);
     Type withinLimits(Type&&);
-    ValueFlowObjectID findStranger(ValueSetID, const Type& family, Trust);
+    ValueFlowObjectID findStranger(ValueSetID, const Type& family);
     std::optional<Type> familyBehindDictionaries(const Type& family);
-    ValueFlowPositionResult decide(const Type& family, ValueSetID, DeadZone, Trust, const ValueFlowNumbers*, ValueFlowNodeID = { });
+    template<typename KindOfType> ValueFlowPositionResult decide(KindOfType family, ValueSetID, DeadZone, const ValueFlowNumbers*, ValueFlowNodeID = { });
     String placeOf(ValueFlowNodeID) const;
 
     const ValueFlowResultInputs& m_inputs;

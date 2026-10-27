@@ -13,9 +13,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool belongToOneArm(const MemberAnswer& a, const MemberAnswer& b)
+static bool haveSameMember(const MemberAnswer& a, const MemberAnswer& b)
 {
-    if (a.kind != b.kind || a.needsNoTest() != b.needsNoTest())
+    if (a.kind != b.kind)
         return false;
     switch (a.kind) {
     case MemberKind::Unknown:
@@ -37,6 +37,11 @@ bool belongToOneArm(const MemberAnswer& a, const MemberAnswer& b)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool belongToOneArm(const MemberAnswer& a, const MemberAnswer& b)
+{
+    return a.needsNoTest() == b.needsNoTest() && haveSameMember(a, b);
+}
+
 void mergeIntoArm(MemberArm& arm, LayoutID layout, const MemberAnswer& answer)
 {
     MemberAnswer& merged = arm.answer;
@@ -50,6 +55,23 @@ void mergeIntoArm(MemberArm& arm, LayoutID layout, const MemberAnswer& answer)
     if (merged.cause == UnprovenCause::Unknown)
         merged.cause = answer.cause;
     setLevel(merged);
+}
+
+void mergeArmsWithSameMember(MemberPartition& partition, ArmsToMerge armsToMerge)
+{
+    for (size_t index = 0; index < partition.arms.size(); ++index) {
+        partition.arms.removeAllMatching([&](const MemberArm& later) {
+            MemberArm& arm = partition.arms[index];
+            if (arm.answer.needsNoTest() == later.answer.needsNoTest() || !haveSameMember(arm.answer, later.answer))
+                return false;
+            const MemberArm& proven = arm.answer.needsNoTest() ? arm : later;
+            if (armsToMerge == ArmsToMerge::WhereFewerAreProven && 2 * proven.layouts.size() > arm.layouts.size() + later.layouts.size())
+                return false;
+            for (LayoutID layout : later.layouts)
+                mergeIntoArm(arm, layout, later.answer);
+            return true;
+        }, index + 1);
+    }
 }
 
 static bool mayAnswerLikeOtherLayouts(const Layout& layout)

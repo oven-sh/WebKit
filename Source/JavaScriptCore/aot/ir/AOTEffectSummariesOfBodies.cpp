@@ -14,6 +14,7 @@
 #include "AOTEffectsDescription.h"
 #include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -171,6 +172,8 @@ static std::optional<uint32_t> mappedEntryParameter(const Function& callee, cons
 {
     if (Value::opcodesWithCallees.contains(call.opcode))
         return entryParameterOf(callee, call, operandIndex);
+    if (isHeldOperand(call, operandIndex))
+        return std::nullopt;
     return call.variadicOperandIndex(operandIndex);
 }
 
@@ -459,21 +462,21 @@ private:
         });
     }
 
-    static bool runsOnlyCallees(const EffectDescription& description, const CalleeList& callees)
+    static bool runsOnlyCallees(const EffectDescription& description, std::span<const FunctionID> callees)
     {
         if (description.callsUnknownCode)
             return false;
-        if (std::ranges::is_sorted(callees.functions))
-            return std::ranges::includes(callees.functions, description.functions);
+        if (std::ranges::is_sorted(callees))
+            return std::ranges::includes(callees, description.functions);
         return std::ranges::all_of(description.functions, [&](FunctionID function) {
-            return callees.functions.contains(function);
+            return std::ranges::contains(callees, function);
         });
     }
 
-    void summarizeCall(BlockID block, const Value& value, const CalleeList& callees, const EffectDescription& description)
+    void summarizeCall(BlockID block, const Value& value, ProvenValue<std::span<const FunctionID>> callees, const EffectDescription& description)
     {
         addToExits(block, description.own.normal, description.own.handler);
-        for (FunctionID id : callees.functions) {
+        for (FunctionID id : callees.value()) {
             const Function& callee = m_context.program.at(id);
             uint32_t numberOfParameters = callee.numberOfEntryParameters();
             addDependencyToExits(block, SummaryNode::onReturn(id), SummaryNode::onThrow(id));
@@ -546,7 +549,7 @@ private:
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
-        if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
+        if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program))
             description.callsUnknownCode = true;
         AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
         if (description.functions.size() > mostFunctionsFollowed) {
@@ -556,8 +559,8 @@ private:
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
-            if (callees.isComplete && callees.builtins.isEmpty() && runsOnlyCallees(description, callees)) {
-                summarizeCall(block, value, callees, description);
+            if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone(); functions && runsOnlyCallees(description, *functions)) {
+                summarizeCall(block, value, *functions, description);
                 return;
             }
         }

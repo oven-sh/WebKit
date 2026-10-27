@@ -93,12 +93,15 @@ const fromText = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
-const functionKind = (name: string) => [
+const functionKind = (name: string, pristineTest: "Mark" | "ClosureAsCreated" = "Mark") => [
   ...b.class(`%${name}%`, {
     extends: "Function",
     isNeverPristine: true,
+    pristineTest,
     lockedMembers: ["prototype"],
     closedToOtherNames: ["prototype"],
+    // As for Function: the compiler follows no function made from text.
+    namesDefinedOnNewInstances: [],
     usesFeature: "Interpreter",
     nativeSymbols: [`call${name}Constructor`, `construct${name}Constructor`],
     call: fromText,
@@ -592,7 +595,7 @@ export default b.declarations(
     proto: { next: hostStep(advances) },
   }),
 
-  functionKind("AsyncFunction"),
+  functionKind("AsyncFunction", "ClosureAsCreated"),
   functionKind("GeneratorFunction"),
   functionKind("AsyncGeneratorFunction"),
 

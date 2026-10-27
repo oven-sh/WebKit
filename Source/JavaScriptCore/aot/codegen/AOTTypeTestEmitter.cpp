@@ -187,6 +187,8 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Operand operand,
     case Representation::Int64:
         return integerPasses(operand.as<Integer>(), plan);
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return doublePasses(operand.as<Number>(), plan);
     case Representation::OptionalInt64:
         return decideByMarker(verdictOfNumbers(plan));
@@ -321,6 +323,8 @@ void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, B3::Freque
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::RawWord:
@@ -478,6 +482,8 @@ Condition TypeTestEmitter::isMarker(Operand operand)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::JSValue:
     case Representation::RawWord:

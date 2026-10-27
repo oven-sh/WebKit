@@ -43,6 +43,8 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
     case Representation::Int64:
         return isNotZero(operand.as<Integer>());
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         return isNeitherZeroNorNaN(operand.as<Number>());
     case Representation::OptionalDouble:
         return isNeitherZeroNorNaN(emitter<ConversionEmitter>().withoutMarkers(operand).as<Number>());

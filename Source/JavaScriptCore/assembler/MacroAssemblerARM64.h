@@ -5122,8 +5122,10 @@ public:
                 return Jump(makeBranch(cond));
             }
 
-            signExtend32ToPtr(mask, getCachedDataTempRegisterIDAndInvalidate());
-            m_assembler.tst<64>(reg, dataTempRegister);
+            // The forms that test a word in memory load it into dataTempRegister.
+            RegisterID maskRegister = reg == dataTempRegister ? getCachedMemoryTempRegisterIDAndInvalidate() : getCachedDataTempRegisterIDAndInvalidate();
+            signExtend32ToPtr(mask, maskRegister);
+            m_assembler.tst<64>(reg, maskRegister);
         }
         return Jump(makeBranch(cond));
     }
@@ -5145,8 +5147,9 @@ public:
                 return Jump(makeBranch(cond));
             }
 
-            move(mask, getCachedDataTempRegisterIDAndInvalidate());
-            m_assembler.tst<64>(reg, dataTempRegister);
+            RegisterID maskRegister = reg == dataTempRegister ? getCachedMemoryTempRegisterIDAndInvalidate() : getCachedDataTempRegisterIDAndInvalidate();
+            move(mask, maskRegister);
+            m_assembler.tst<64>(reg, maskRegister);
         }
         return Jump(makeBranch(cond));
     }

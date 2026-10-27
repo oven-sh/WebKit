@@ -170,7 +170,7 @@ function f5 name="aliasThroughTwoEdges" parameters=[{type=anything}, {type=boole
 
 function f6 name="assumedTypeRepeatsAtEachUse" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     v2 = NewArray v0 contents=anything
-    v3 = AssumeType v2 castType=Array<anything, proven, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names]>
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v4 = Call v0, -, v3
@@ -180,15 +180,15 @@ function f6 name="assumedTypeRepeatsAtEachUse" parameters=[{type=anything}, {typ
 # CHECK-NOT: NewArray
 # CHECK: b1():
 # CHECK-NEXT: [[cell6]]: Array = NewArray v0
-# CHECK-NEXT: [[first6]]:{{*}}= AssumeType [[cell6]] castType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: [[first6]]:{{*}}= AssumeType [[cell6]] provenType=Array<anything, proven, pristine[Storage, Names]>
 # CHECK-NEXT: = Call v0, -, [[first6]]
-# CHECK-NEXT: [[second6]]:{{*}}= AssumeType [[cell6]] castType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: [[second6]]:{{*}}= AssumeType [[cell6]] provenType=Array<anything, proven, pristine[Storage, Names]>
 # CHECK-NEXT: Return [[second6]]
 }
 
 function f7 name="assumedTypeStoredInVirtualObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     v2 = NewArray v0 contents=anything
-    v3 = AssumeType v2 castType=Array<anything, proven, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names]>
     v4 = NewObject -, v3 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -208,7 +208,7 @@ function f8 name="checkForItsOwnLayoutGoes" parameters=[{type=anything}, {type=b
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v2 castType=L0 site=w0
+    v3 = Check v2 expectedType=L0 site=w0
     v4 = GetSlotOrUndefined v3 key="list" receivers=[L0] level=Proven
     Return v4
   b2():
@@ -222,7 +222,7 @@ function f8 name="checkForItsOwnLayoutGoes" parameters=[{type=anything}, {type=b
 
 function f9 name="assumedTypeUnderFoldedTest" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     v2 = NewArray contents=anything
-    v3 = AssumeType v2 castType=Array<anything, proven>
+    v3 = AssumeType v2 provenType=Array<anything, proven>
     v4 = Upcast v3 castType=anything
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -246,7 +246,7 @@ function f10 name="checkThatFailsStays" parameters=[{type=anything}, {type=boole
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v2 castType=L1 site=w0
+    v3 = Check v2 expectedType=L1 site=w0
     v4 = GetSlotOrUndefined v3 key="list" receivers=[L1] level=Proven
     Return v4
   b2():
@@ -256,6 +256,6 @@ function f10 name="checkThatFailsStays" parameters=[{type=anything}, {type=boole
 # CHECK-NEXT: Branch
 # CHECK: b1():
 # CHECK-NEXT: [[cell10]]:{{*}}= NewObject -, v0
-# CHECK-NEXT: v3: L1 = Check [[cell10]] castType=L1
+# CHECK-NEXT: v3: L1 = Check [[cell10]] expectedType=L1
 # CHECK-NEXT: = GetSlotOrUndefined v3 key="list"
 }

@@ -41,7 +41,7 @@ function f2 name="withExpectedResult" parameters=[{type=string}] results=[{type=
     Return v2
 # CHECK: = CallDirect {{*}} function=[[parserOfCheckedPage]]
 # CHECK: function [[parserOfCheckedPage]] {{*}}role=Parser
-# CHECK: [[assumedChecked]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
+# CHECK: [[assumedChecked]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} provenType=Array<
 # CHECK: = NewObject -, [[assumedChecked]] layout=L3 fields=[0]
 # CHECK: function [[parserOfRows]] {{*}}role=Parser {{*}}type=undefined|Array<L0>}
 # CHECK: function [[parserOfPage]] {{*}}role=Parser
@@ -52,6 +52,6 @@ function f2 name="withExpectedResult" parameters=[{type=string}] results=[{type=
 # CHECK: [[isArray]]: boolean = TypeTest [[items]] testedType=Array<L0>
 # CHECK-NEXT: Branch [[isArray]] -> taken [[whenArray]](| 0), notTaken
 # CHECK: [[whenArray]]([[array]]: Array<L0>):
-# CHECK-NEXT: [[assumed]]: {{*}}pristine[Storage, Names]> = AssumeType [[array]] castType=Array<
+# CHECK-NEXT: [[assumed]]: {{*}}pristine[Storage, Names]> = AssumeType [[array]] provenType=Array<
 # CHECK: = NewObject -, [[assumed]], {{*}} layout=L1 fields=[0, 1]
 }

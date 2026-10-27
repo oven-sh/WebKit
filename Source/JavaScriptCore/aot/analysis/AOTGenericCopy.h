@@ -24,7 +24,7 @@ struct FunctionPassContext;
 
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
 
-bool isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
+Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 
@@ -46,6 +46,8 @@ public:
     void addEntry(BlockID block) { m_entries.append(block); }
     void addRejoinBlock(BlockID block) { m_isRejoinBlock.set(block.index()); }
     void addRejoinBlockWithoutTests(BlockID block) { m_isRejoinBlockWithoutTests.set(block.index()); }
+    // The copy comes back here even where the tested code knows more about a live value. Behind the block that value has the type of both.
+    void addRequiredRejoinBlock(BlockID block) { m_isRequiredRejoinBlock.set(block.index()); }
     void addValueToBeNarrowed(ValueID value) { m_valuesToBeNarrowed.append(value); }
     void addValueNarrowedInUnknownWay(ValueID value) { m_valuesNarrowedInUnknownWay.append(value); }
     void addValueKnownBeyondItsType(ValueID value) { m_valuesKnownBeyondTheirTypes.append(value); }
@@ -57,7 +59,7 @@ public:
     Extent plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks);
     std::span<const BlockID> plannedBlocks() const LIFETIME_BOUND { return m_region.span(); }
 
-    void clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency));
+    void clone(Expected<BlockFrequency> (*frequencyOfCopy)(Expected<BlockFrequency>));
     BlockID copyOf(BlockID block) const { return m_cloner ? m_cloner->cloneOf(block) : BlockID(); }
     ValueID copyOf(ValueID value) const { return m_hasPlaceholder.get(value.index()) ? ValueID() : nameInCopy(value); }
     std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
@@ -118,7 +120,7 @@ private:
     };
 
     bool isInRegion(BlockID block) const { return m_isInRegion.get(block.index()); }
-    bool isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
+    Expected<bool> isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
 
     void computeBlocksReachingNonRareCode();
     void computeNarrowedValues();
@@ -128,6 +130,7 @@ private:
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
+    bool handsOverTooMuchAtExits() const;
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);
     void recordTestedRejoins();
 
@@ -154,6 +157,7 @@ private:
     Vector<ValueID, 8> m_valuesKnownBeyondTheirTypes;
     BitVector m_isRejoinBlock;
     BitVector m_isRejoinBlockWithoutTests;
+    BitVector m_isRequiredRejoinBlock;
 
     BitVector m_reachesNonRareCode;
     BitVector m_mayBeNarrowed;

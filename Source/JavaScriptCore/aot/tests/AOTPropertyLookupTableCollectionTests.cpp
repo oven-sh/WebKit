@@ -124,6 +124,7 @@ void checkLivenessOfPayload(Slot slot, Structure* live, Structure* dead, const I
     uintptr_t cageBase = MarkedBlockCage::baseOf(live);
     switch (Slot::payloadOf(slot.kind)) {
     case SlotPayload::Holder:
+    case SlotPayload::Key:
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));
         slot.holder = live;
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));
@@ -156,6 +157,12 @@ void checkLivenessOfPayload(Slot slot, Structure* live, Structure* dead, const I
         slot.transition.newStructureID = dead->id();
         AOT_TEST_CHECK(!slot.namesOnlyLiveCells(isMarked, cageBase));
         return;
+    case SlotPayload::Removal:
+        slot.removal.newStructureID = live->id();
+        AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));
+        slot.removal.newStructureID = dead->id();
+        AOT_TEST_CHECK(!slot.namesOnlyLiveCells(isMarked, cageBase));
+        return;
     case SlotPayload::Constant:
         slot.constant = JSValue::encode(jsNumber(1));
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));
@@ -167,6 +174,7 @@ void checkLivenessOfPayload(Slot slot, Structure* live, Structure* dead, const I
     case SlotPayload::None:
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
+    case SlotPayload::OrderWords:
     case SlotPayload::CustomAccessor:
         slot.holder = dead;
         AOT_TEST_CHECK(slot.namesOnlyLiveCells(isMarked, cageBase));

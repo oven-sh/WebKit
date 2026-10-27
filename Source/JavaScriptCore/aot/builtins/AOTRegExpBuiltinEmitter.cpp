@@ -94,7 +94,7 @@ void RegExpBuiltinEmitter::generateNewRegExp(const InlineCall& call)
         }
         flags = *parsed;
     }
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewRegExp, { cellOperand(call.argument(0)), word32(flags.toRaw()) }), Type::builtinClass(BuiltinClasses::RegExp));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::NewRegExp, { cellOperand(call.argument(0)), word32(flags.toRaw()) }, { .calledBuiltin = functionOf(call.overload()) }), Type::builtinClass(BuiltinClasses::RegExp));
 }
 
 void RegExpBuiltinEmitter::generateRegExpExec(const InlineCall& call)
@@ -149,7 +149,7 @@ void RegExpBuiltinEmitter::generateStringReplace(const InlineCall& call)
         finish(call, CellPointer(replaced), stringType);
         return;
     }
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceRegExp, { string, regExpObject, boxedOperand(call.context(), replacement) }), stringType);
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceRegExp, { string, regExpObject, boxedOperand(call.context(), replacement) }, { .calledBuiltin = functionOf(call.overload()) }), stringType);
 }
 
 void RegExpBuiltinEmitter::generateStringReplaceAll(const InlineCall& call)
@@ -159,7 +159,7 @@ void RegExpBuiltinEmitter::generateStringReplaceAll(const InlineCall& call)
     ValueID replacement = call.argument(1);
     const Type& stringType = m_program.at(TypeTable::string);
     if (takesRegExp(call)) {
-        finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceAllRegExp, { string, pattern, boxedOperand(call.context(), replacement) }), stringType);
+        finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceAllRegExp, { string, pattern, boxedOperand(call.context(), replacement) }, { .calledBuiltin = functionOf(call.overload()) }), stringType);
         return;
     }
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceAllString, { string, pattern, cellOperand(replacement) }), stringType);

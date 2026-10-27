@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTValueFlowBuiltins.h"
+
 namespace JSC { namespace AOT { namespace Typed {
 
 void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -18,7 +20,7 @@ void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     ClimbingSet coroutine = only(context, universe.coroutineResultOf(function));
     ValueFlowNodeID returned = nodes.result(function, 0);
     if (!context.program().at(function).has(FunctionFlags::IsGenerator)) {
-        resolvePromises(context, coroutine, context.valueOf(returned));
+        resolvePromises(context, coroutine, { returned, ValueSets::nothing, ValueSets::anything });
         rejectPromises(context, coroutine, { nodes.thrown(function), ValueSets::nothing, ValueSets::anything });
         return;
     }
@@ -28,8 +30,8 @@ void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     context.connect(yielded, context.written(coroutine, steppedValuesName));
     context.connect(returned, context.written(coroutine, returnedValueName));
     if (context.program().at(function).has(FunctionFlags::IsAsync)) {
-        context.connect(context.lookup(context.valueOf(yielded), awaitedValueName), context.written(coroutine, steppedValuesName));
-        context.connect(context.lookup(context.valueOf(returned), awaitedValueName), context.written(coroutine, returnedValueName));
+        connectAwaitedValue(context, { yielded, ValueSets::nothing, ValueSets::anything }, context.written(coroutine, steppedValuesName));
+        connectAwaitedValue(context, { returned, ValueSets::nothing, ValueSets::anything }, context.written(coroutine, returnedValueName));
     }
 
     context.add(sent, universe.undefinedValue());

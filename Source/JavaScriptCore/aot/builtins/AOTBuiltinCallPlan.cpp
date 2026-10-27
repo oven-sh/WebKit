@@ -274,7 +274,7 @@ private:
     OperandOutcome requirePristine(BuiltinOperand, const PristineRequirement&);
     OperandOutcome giveUp();
 
-    TypeID expectedWithin(const PlannedOperand&) const;
+    ExpectedType expectedWithin(const PlannedOperand&) const;
     bool followsOperandRefusedByValue(BuiltinOperand) const;
     OperandRequirement& ensureRequirement(BuiltinOperand);
     bool hasStepFor(BuiltinOperand) const;
@@ -332,7 +332,7 @@ BuiltinCallPlan CallPlanner::plan()
 
 void CallPlanner::resetToMatch()
 {
-    m_plan = BuiltinCallPlan { .state = m_match.state, .overload = m_match.overload, .requirements = m_match.requirements };
+    m_plan = BuiltinCallPlan { .state = m_match.state, .overload = m_match.overload, .function = m_table.canonicalID(m_overload->builtin), .requirements = m_match.requirements };
     m_hoistsUserCode = false;
 }
 
@@ -420,7 +420,7 @@ OperandOutcome CallPlanner::excludeThrowingValues(PlannedOperand& operand)
     if (!refused || fitIn(operand.type, refused) == TypeFit::Outside)
         return OperandOutcome::Undecided;
 
-    TypeID expected = expectedWithin(operand);
+    TypeID expected = expectedWithin(operand).predicted();
     if (!expected || fitIn(expected, refused) != TypeFit::Outside)
         return giveUp();
 
@@ -444,7 +444,7 @@ OperandOutcome CallPlanner::planConversion(PlannedOperand& operand)
     bool mayRunUserCode = convertible != type;
 
     if (mayRunUserCode && !m_mayHoistUserCode) {
-        TypeID expected = expectedWithin(operand);
+        TypeID expected = expectedWithin(operand).predicted();
         if (!expected && followsOperandRefusedByValue(operand.position))
             expected = types().intern(convertible);
         if (!expected || !types().at(expected).isSubsetOf(convertible, m_context.program))
@@ -463,7 +463,7 @@ OperandOutcome CallPlanner::requireAcceptedType(PlannedOperand& operand)
 {
     BuiltinTypeID accepted = operand.parameter.accepted;
     Type narrowed = types().at(operand.type).intersectWith(typeOfBuiltinType({ m_context }, accepted), types());
-    TypeID expected = expectedWithin(operand);
+    TypeID expected = expectedWithin(operand).predicted();
     if (!expected && isExpectedToBeAccepted(types().at(operand.type), operand.parameter.conversion))
         expected = types().intern(narrowed);
     if (!expected && isExpectedToBeNumber(types().at(operand.type), operand.parameter.conversion))
@@ -512,14 +512,14 @@ OperandOutcome CallPlanner::giveUp()
     return OperandOutcome::GaveUp;
 }
 
-TypeID CallPlanner::expectedWithin(const PlannedOperand& operand) const
+ExpectedType CallPlanner::expectedWithin(const PlannedOperand& operand) const
 {
     const OverloadQuery& overloads = m_query.overloads;
-    TypeID expected = overloads.expected.at(operand.position);
+    TypeID expected = overloads.expected.predicted().at(operand.position);
     if (!expected || expected == overloads.proven.at(operand.position))
         return { };
     Type met = withoutClassProofs(types().at(expected)).intersectWith(types().at(operand.type), types());
-    return met.isNever() ? TypeID() : types().intern(met);
+    return ExpectedType(met.isNever() ? TypeID() : types().intern(met));
 }
 
 static bool failsByValue(BuiltinConversion conversion)
@@ -611,7 +611,16 @@ static Value makeRequireObjectCoercible(ValueID value, const NullishCheck& check
     return result;
 }
 
-static ValueID insertStep(const OperandStep& step, ValueID value, const NullishCheck& check, const InsertBeforeCall& insert)
+// A conversion that throws, or that runs code of the program, does so inside the function that is called: a stack trace lists that function there.
+static Value makeConversion(Opcode opcode, ValueID value, BuiltinID function)
+{
+    Value result = IRBuilder::make(opcode, { value });
+    if (function && Value::opcodesWithCalledBuiltin.contains(opcode))
+        result.setCalledBuiltin(function);
+    return result;
+}
+
+static ValueID insertStep(const OperandStep& step, ValueID value, BuiltinID function, const NullishCheck& check, const InsertBeforeCall& insert)
 {
     switch (step.kind) {
     case OperandStepKind::Pass:
@@ -622,7 +631,7 @@ static ValueID insertStep(const OperandStep& step, ValueID value, const NullishC
         return insert(makeRequireObjectCoercible(value, check));
     case OperandStepKind::Convert:
         for (Opcode opcode : conversionOpcodesOf(step.conversion))
-            value = insert(IRBuilder::make(opcode, { value }));
+            value = insert(makeConversion(opcode, value, function));
         return value;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -640,7 +649,7 @@ BuiltinCallOperands insertOperandSteps(const BuiltinCallPlan& plan, const Builti
         BuiltinOperand position = steps.front().operand;
         ValueID value = passed.operandAt(position);
         for (const OperandStep& step : steps)
-            value = insertStep(step, value, check, insert);
+            value = insertStep(step, value, plan.function, check, insert);
         appendOperand(result, position, value);
     }
     return result;
@@ -716,8 +725,7 @@ Effects effectsOfPlannedCall(const BuiltinCallQuery& query, const BuiltinCallPla
         appendOperand(converted, position, type);
     }
 
-    const Type* receiver = converted.receiver ? &context.types.at(converted.receiver) : nullptr;
-    effects.merge(effectsOfOverload(query.effects, plan.overload, form, receiver, converted.arguments.span()).normal);
+    effects.merge(effectsOfOverload(query.effects, plan.overload, form, converted.receiver, converted.arguments.span()).normal);
     return effects;
 }
 

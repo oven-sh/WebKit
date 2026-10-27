@@ -23,6 +23,7 @@
 #include "StrongInlines.h"
 #include "WeakInlines.h"
 #include <array>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(WEBASSEMBLY)
 #include "WebAssemblyGCStructure.h"
@@ -49,8 +50,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Check v1 castType=number
-    v4 = Check v2 castType=string
+    v3 = Check v1 expectedType=number
+    v4 = Check v2 expectedType=string
     v5 = NewObject -, v3 layout=L0 fields=[0]
     ElemSet v5, v4, v3
     v7 = Call v0, -, v5

@@ -46,7 +46,7 @@ struct FlowSiteObservation {
     AccessSiteID site;
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     AccessCost cost { AccessCost::ByName };
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
     CopyPlace place { CopyPlace::OwnBody };
     bool isInGenericVersion { false };
     LayoutID layout;
@@ -208,14 +208,14 @@ static void forEachDescribedSite(const Program& program, const Value& value, con
         access.key = value.key();
     if (PayloadWord::receivers(value.opcode)) {
         if (LayoutSetID receivers = value.receivers()) {
-            access.receivers = program.at(receivers).members.span();
-            if (program.at(receivers).isComplete)
+            access.receivers = program.at(receivers).written().span();
+            if (program.at(receivers).listsEveryLayout())
                 access.numberOfCandidates = access.receivers.size();
         }
     }
     if (PayloadWord::callees(value.opcode)) {
-        if (CalleeSetID callees = value.callees(); callees && program.at(callees).isComplete)
-            access.numberOfCandidates = program.at(callees).functions.size() + program.at(callees).builtins.size();
+        if (std::optional<ProvenValue<Callees>> callees = value.callees() ? program.at(value.callees()).all() : std::nullopt)
+            access.numberOfCandidates = callees->value().functions.size() + callees->value().builtins.size();
     }
 
     if (Value::opcodesWithPlacedKeys.contains(value.opcode)) {
@@ -226,8 +226,11 @@ static void forEachDescribedSite(const Program& program, const Value& value, con
         return;
     }
     AccessSiteID stampedSite = PayloadWord::accessSite(value.opcode) ? value.accessSite() : AccessSiteID();
+    AccessSiteID secondSite = PayloadWord::secondAccessSite(value.opcode) ? value.secondAccessSite() : AccessSiteID();
     forEachAccessSite(value, [&](AccessSiteID site) {
-        functor(site, site == stampedSite ? access : AccessDescription { .accessClass = access.accessClass });
+        if (site == stampedSite)
+            return functor(site, access);
+        functor(site, AccessDescription { .accessClass = access.accessClass, .key = secondSite && site == secondSite ? value.secondKey() : PropertyKeyID() });
     });
 }
 
@@ -277,9 +280,9 @@ static void collectObservations(const Program& program, const FlowResults& flow,
     });
 }
 
-static uint8_t rarityOf(BlockFrequency frequency)
+static uint8_t rarityOf(Expected<BlockFrequency> frequency)
 {
-    switch (frequency) {
+    switch (frequency.predicted()) {
     case BlockFrequency::Normal:
         return 0;
     case BlockFrequency::Unlikely:
@@ -301,7 +304,7 @@ static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const 
         uint8_t rarityOfOtherHalf { UINT8_MAX };
     };
     auto isCandidate = [&](const FlowSiteObservation& observation) {
-        return observation.cost == AccessCost::ByName && observation.frequency != BlockFrequency::Normal && !observation.isInGenericVersion
+        return observation.cost == AccessCost::ByName && observation.frequency.predicted() != BlockFrequency::Normal && !observation.isInGenericVersion
             && observation.site.index() < flow.numberOfAccessSites() && hasModule(flow.at(observation.site).location);
     };
 
@@ -423,11 +426,11 @@ static ObservationsOfFunction observeAccessSites(const Program& program, const F
     double weightOfFunction = 0;
     if (heat) {
         analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
-        weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id), 100));
+        weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id).predicted(), 100));
     }
     for (BlockID blockID : cfg.reversePostOrder()) {
         const Block& block = function.at(blockID);
-        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID) : 0;
+        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID).predicted() : 0;
         for (ValueID value : block.values) {
             collectObservations(program, flow, function, function.at(value), blockID, heatOfBlock, tests, observations.sites);
             if (heat)
@@ -615,7 +618,7 @@ static FlowSiteLoss lossBelowProven(const Program& program, const FlowResults& f
     if (hasFunction(loss.witness) && !hasModule(loss.witness.location))
         loss.witness.location = program.at(FunctionID(loss.witness.function)).declarationLocation();
     if (!hasFunction(loss.witness) || !hasModule(loss.witness.location))
-        loss.witness = { flow.at(site).function.index(), Wire::none, flow.at(site).location };
+        loss.witness = { flow.at(site).function.index(), Wire::none, flow.writtenLocationOf(site) };
     loss.witness.function = findFunctionAsRead(&program, FunctionID(loss.witness.function)).index();
     return loss;
 }
@@ -754,6 +757,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
 {
     struct SiteRecord {
         Wire::AccessRecord record;
+        PropertyKeyID key;
         bool isInGenericVersion { false };
     };
     const ParallelLoops& loops = build.parallelLoops();
@@ -767,7 +771,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
         if (!isCall && !level.copies)
             return;
         found.append(SiteRecord { {
-            .location = access.location,
+            .location = flow.writtenLocationOf(site),
             .kind = access.kind,
             .level = level.level,
             .layout = findLayoutAsRead(&program, level.layout).index(),
@@ -776,25 +780,29 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
             .function = findFunctionAsRead(&program, access.function).index(),
             .cost = level.cost,
             .heat = level.heat,
-        }, program.at(access.function).role == FunctionRole::GenericVersion });
+        }, level.key, program.at(access.function).role == FunctionRole::GenericVersion });
         fillLoss(found.last().record, level.level != KnowledgeLevel::Proven || level.cost != AccessCost::Free ? lossBelowProven(program, flow, build, site, level) : FlowSiteLoss { });
     });
 
-    auto orderKey = [](const Wire::AccessRecord& record) {
+    auto orderKey = [](const SiteRecord& site) {
+        const Wire::AccessRecord& record = site.record;
         return std::tuple {
-            record.location.module, record.location.position, record.kind, rankOf(record.level), record.cause,
+            record.location.module, record.location.position, record.kind, !site.key, site.key.index(), rankOf(record.level), record.cause,
             record.witness.function, record.witness.value, record.function, record.layout, record.limit, record.illTypedCause,
         };
     };
     parallelSort(loops, sites.mutableSpan(), [&](const SiteRecord& a, const SiteRecord& b) {
-        return orderKey(a.record) < orderKey(b.record);
+        return orderKey(a) < orderKey(b);
     });
 
+    // One place may hold accesses to several names.
     Vector<Wire::AccessRecord> records;
+    PropertyKeyID keyOfLastRecord;
     bool costIsOfGenericVersion = false;
     for (const SiteRecord& site : sites) {
-        if (records.isEmpty() || records.last().location != site.record.location || records.last().kind != site.record.kind) {
+        if (records.isEmpty() || records.last().location != site.record.location || records.last().kind != site.record.kind || keyOfLastRecord != site.key) {
             records.append(site.record);
+            keyOfLastRecord = site.key;
             costIsOfGenericVersion = site.isInGenericVersion;
             continue;
         }

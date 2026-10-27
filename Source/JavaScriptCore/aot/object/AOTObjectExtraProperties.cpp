@@ -596,6 +596,13 @@ JSObject* Object::ensureExtraProperties(VM& vm)
     return extra;
 }
 
+// What the first property does to the Structure of the extra properties is done before the object gets them, so the Structure of the object is looked for once.
+void Object::adoptExtraProperties(VM& vm, JSObject* filled)
+{
+    ASSERT(!isNotExtensible());
+    setExtraProperties(vm, filled, structureForNewExtraProperties(vm, *this, filled, false));
+}
+
 void Object::setExtraProperties(VM& vm, JSObject* extra, CompiledStructure* withExtraProperties)
 {
     ASSERT(!hasExtraProperties() && withExtraProperties->hasExtraProperties());

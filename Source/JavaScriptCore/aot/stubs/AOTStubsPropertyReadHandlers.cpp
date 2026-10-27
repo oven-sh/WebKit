@@ -8,15 +8,21 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
+#include "AOTCompiledStructure.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStubRegisters.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
 #include "AOTStubsPropertyAccessors.h"
+#include "AOTStubsCalls.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "Butterfly.h"
 #include "JSArrayBufferView.h"
 #include "JSObject.h"
 #include "JSString.h"
+#include "ProxyObject.h"
+#include "VM.h"
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -55,6 +61,10 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
     case Slot::Kind::Transition:
+    case Slot::Kind::Removal:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
+    case Slot::Kind::NothingToRemove:
         return false;
     case Slot::Kind::Value:
     case Slot::Kind::Getter:
@@ -250,7 +260,7 @@ void generateReadSlot(StubAssembler& jit)
             const GPRReg uid = T10;
             slot.loadFirstPayloadWord(jit, accessorIndex);
             loadPropertyName(uid);
-            callCustomGetterAndReturn(jit, R0, accessorIndex, uid);
+            callCustomGetterAndReturn(jit, R0, accessorIndex, uid, origin == SlotOrigin::ByVal ? std::optional<GPRReg>(operands.keyCell) : std::nullopt);
             return;
         }
         case Slot::Kind::Field:
@@ -360,6 +370,8 @@ void generateReadSlot(StubAssembler& jit)
             jit.returnToCaller();
             return;
         case Slot::Kind::Uncacheable:
+            if (jit.options().callsTrapsOfProxies.predicted() && slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
+                jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get));
             uncached.append(jit.jump());
             return;
         case Slot::Kind::Setter:
@@ -369,6 +381,10 @@ void generateReadSlot(StubAssembler& jit)
         case Slot::Kind::ExtraSetter:
         case Slot::Kind::ExtraPropertyAddition:
         case Slot::Kind::Transition:
+        case Slot::Kind::Removal:
+        case Slot::Kind::ExtraPropertyRemoval:
+        case Slot::Kind::FieldRemoval:
+        case Slot::Kind::NothingToRemove:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -376,6 +392,195 @@ void generateReadSlot(StubAssembler& jit)
     emitReadBySlot();
     linkToSlotExit(jit, miss, table, SlotExit::Miss);
     linkToSlotExit(jit, uncached, table, SlotExit::Uncached);
+}
+
+StubSignature signatureOfThroughProxy(StubKey key)
+{
+    if (static_cast<TrapOfProxy>(key.form()) == TrapOfProxy::Set)
+        return StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(valueStoredThroughProxyRegister), gprOf(StubRegister::T14) });
+    return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(slotHeaderRegister) });
+}
+
+// As ProxyObject.cpp performProxyGet(), performHasProperty() and performPut(). The trap is read off the handler and called as compiled code reads and calls.
+void generateThroughProxy(StubAssembler& jit)
+{
+    static_assert(numberOfArgumentGPRs >= 4 && !(sizeof(ProxyAccessWords) % stackAlignmentBytes()));
+    const TrapOfProxy trap = static_cast<TrapOfProxy>(jit.key().form());
+    const bool isStore = trap == TrapOfProxy::Set;
+    const GPRReg R0 = jit.operand(0);
+    const GPRReg key = jit.operand(1);
+    const GPRReg handler = isStore ? jit.clobberOperand(2) : jit.allocateScratch(valueStoredThroughProxyRegister);
+    const GPRReg target = jit.allocateScratch(StubRegister::T11);
+    const GPRReg scratch = isStore ? jit.clobberOperand(3) : jit.allocateScratch(StubRegister::T14);
+    const GPRReg name = jit.clobberRegister(slotNameRegister);
+    static_assert(areDistinctOnEveryISA(firstStubOperandRegister, slotPayloadRegister, slotHeaderRegister, valueStoredThroughProxyRegister, StubRegister::T11, StubRegister::T14, slotNameRegister));
+    RELEASE_ASSERT(noOverlap(R0, key, handler, target, scratch, name) && (isStore || jit.result() == R0));
+    struct Operations {
+        unsigned numberOfArguments;
+        Entry withoutFunction;
+        Entry afterCall;
+        Entry whole;
+        uint32_t bitsOfTargetThatMayBind;
+    };
+    const Operations operations = [&]() -> Operations {
+        switch (trap) {
+        case TrapOfProxy::Get:
+            return { 3, Entry::operationAOTGetWithProxyTrap, Entry::operationAOTValidateAnswerOfProxyTrap, Entry::operationAOTGetByVal, Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits };
+        case TrapOfProxy::Has:
+            return { 2, Entry::operationAOTHasWithProxyTrap, Entry::operationAOTFinishHasThroughProxy, Entry::operationAOTInByValAndCache, Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits };
+        case TrapOfProxy::Set:
+            return { 4, Entry::operationAOTSetWithProxyTrap, Entry::operationAOTFinishSetThroughProxy, Entry::operationAOTPutByVal, Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }();
+    auto inProxy = [&](ProxyObject::Field field) {
+        return Address(R0, ProxyObject::offsetOfInternalField(static_cast<unsigned>(field)));
+    };
+    auto kept = [&](ptrdiff_t offset) {
+        return Address(sp, static_cast<int32_t>(offset));
+    };
+
+    // Without a trap the question is the same question about the target: it has no receiver. The answers are zero and one, and a target is neither.
+    auto emitQuestionAboutTarget = [&] {
+        RELEASE_ASSERT(signatureOf(inById(PresenceQuestion::In)).operands[0] == Reg(R0) && signatureOf(inById(PresenceQuestion::In)).immediate == name);
+        Jump isAnswered = jit.branch64(CCallHelpers::BelowOrEqual, R0, TrustedImm32(1));
+        jit.jumpToStub(inById(PresenceQuestion::In));
+        isAnswered.link(&jit);
+    };
+    const ScopedLambda<void()> askTarget = emitQuestionAboutTarget;
+
+    // Whoever comes here has probed a table, which leaves the slot in these two. So no caller of theirs has anything in them.
+    jit.recordClobbers(RegisterSet(gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
+    jit.checkStackBeforeEntering();
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = !isStore, .checksException = true, .emitBeforeReturn = trap == TrapOfProxy::Has ? &askTarget : nullptr }, [&] {
+        JumpList isDone;
+        JumpList isNoFunction;
+        JumpList runTimeDoesAll;
+        JumpList runTimeFinishes;
+        auto callOperation = [&](Entry operation) {
+            jit.move(instanceGPR, operationArgumentGPR(0));
+            jit.callOperation(operation, jit.reuseScratch(StubRegister::Operation));
+        };
+        auto callWithWords = [&](Entry operation) {
+            jit.move(R0, operationArgumentGPR(2));
+            jit.move(sp, operationArgumentGPR(1));
+            callOperation(operation);
+        };
+
+        jit.subPtr(TrustedImm32(sizeof(ProxyAccessWords)), sp);
+        jit.storePtr(R0, kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)));
+        jit.storePtr(key, kept(OBJECT_OFFSETOF(ProxyAccessWords, key)));
+        if (isStore) {
+            jit.store64(handler, kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)));
+            jit.store64(scratch, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
+        } else
+            jit.store64(jit.operand(2), kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
+        jit.load64(inProxy(ProxyObject::Field::Handler), handler);
+        jit.load64(inProxy(ProxyObject::Field::Target), target);
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.numbersOfNamesOfTraps) + static_cast<int32_t>(static_cast<unsigned>(trap) * sizeof(uint32_t))), name);
+        jit.storePtr(target, kept(OBJECT_OFFSETOF(ProxyAccessWords, target)));
+        jit.storePtr(handler, kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)));
+        // It is revoked.
+        runTimeDoesAll.append(jit.branchIfNotCell(handler));
+        runTimeDoesAll.append(jit.branchTest32(CCallHelpers::Zero, name));
+        jit.move(handler, R0);
+        jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
+        isNoFunction.append(jit.branchIfNotCell(R0));
+        isNoFunction.append(branchIfNotFunctionType(jit, R0, scratch));
+
+        jit.move(R0, calleeGPR);
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, handler)), thisGPR);
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), argumentGPR(0));
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), argumentGPR(1));
+        if (isStore)
+            jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), argumentGPR(2));
+        if (trap != TrapOfProxy::Has)
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
+        jit.callStub(callValueCell(operations.numberOfArguments));
+        Jump saysYes;
+        if (trap == TrapOfProxy::Has) {
+            saysYes = jit.branch64(CCallHelpers::Equal, R0, TrustedImm64(JSValue::ValueTrue));
+            runTimeFinishes.append(jit.branch64(CCallHelpers::NotEqual, R0, TrustedImm64(JSValue::ValueFalse)));
+        } else if (isStore)
+            runTimeFinishes.append(jit.branch64(CCallHelpers::NotEqual, R0, TrustedImm64(JSValue::ValueTrue)));
+        // Only a target that is not extensible or has a property that is not configurable binds what the trap may answer.
+        JumpList bindsNothing;
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), target);
+        loadStructure(jit, target, scratch);
+        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(operations.bitsOfTargetThatMayBind)));
+        // The Structure of a compiled object says yes for all of them. What was done to one object stands in the object, and what its fields are born with in the layout.
+        Jump isCompiledObject = jit.branchIfType(target, CompiledObjectType);
+        if (trap == TrapOfProxy::Has) {
+            // Whoever hands over no slot asks for the text of an index. The elements of an extensible array in plain storage are configurable.
+            static_assert(Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && UndecidedShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
+            runTimeFinishes.append(jit.branchIfNotType(target, ArrayType));
+            runTimeFinishes.append(jit.branchTest64(CCallHelpers::NonZero, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot))));
+            runTimeFinishes.append(jit.branchTest32(CCallHelpers::NonZero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_didPreventExtensionsBits)));
+            jit.load8(Address(target, JSCell::indexingTypeAndMiscOffset()), scratch);
+            jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+            bindsNothing.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(ContiguousShape)));
+        }
+        runTimeFinishes.append(jit.jump());
+        isCompiledObject.link(&jit);
+        runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable))));
+        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
+        // What the trap has thrown is seen in front of the return. Until then nothing looks at the answer but the tests above, and only the operation must not run.
+        runTimeFinishes.link(&jit);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        isDone.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset())));
+        callWithWords(operations.afterCall);
+        isDone.append(jit.jump());
+
+        if (trap == TrapOfProxy::Has) {
+            saysYes.link(&jit);
+            jit.move(TrustedImm32(1), R0);
+            isDone.append(jit.jump());
+            bindsNothing.link(&jit);
+            jit.move(TrustedImm32(0), R0);
+            isDone.append(jit.jump());
+        } else
+            isDone.append(bindsNothing);
+
+        isNoFunction.link(&jit);
+        if (trap == TrapOfProxy::Get) {
+            // Without a trap the target answers. A data property is the same for every receiver, so what is filed for the target says it.
+            const StubSignature probe = signatureOfTryGetSuperById(tryGetSuperById());
+            RELEASE_ASSERT(probe.immediate && probe.operands[0] == Reg(R0) && *probe.immediate != R0);
+            const GPRReg column = *probe.immediate;
+            JumpList tablesDoNotSay;
+            tablesDoNotSay.append(jit.branchIfNotUndefined(R0));
+            jit.load16(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot) + Slot::offsetOfLocation()), column);
+            tablesDoNotSay.append(jit.branchTest32(CCallHelpers::Zero, column));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), R0);
+            jit.callStub(tryGetSuperById());
+            isDone.append(jit.branchTest64(CCallHelpers::NonZero, R0));
+            jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
+            tablesDoNotSay.link(&jit);
+        }
+        if (trap == TrapOfProxy::Has) {
+            JumpList operationAsks;
+            operationAsks.append(jit.branchIfNotUndefined(R0));
+            jit.load16(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot) + Slot::offsetOfLocation()), name);
+            operationAsks.append(jit.branchTest32(CCallHelpers::Zero, name));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), R0);
+            isDone.append(jit.jump());
+            operationAsks.link(&jit);
+        }
+        callWithWords(operations.withoutFunction);
+        isDone.append(jit.jump());
+
+        runTimeDoesAll.link(&jit);
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), operationArgumentGPR(1));
+        jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), operationArgumentGPR(2));
+        if (isStore) {
+            jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), operationArgumentGPR(3));
+            jit.load32(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)), operationArgumentGPR(4));
+        }
+        callOperation(operations.whole);
+
+        isDone.link(&jit);
+        jit.addPtr(TrustedImm32(sizeof(ProxyAccessWords)), sp);
+    });
 }
 
 struct ReadSlotExitTraits {
@@ -433,6 +638,8 @@ static void emitUncachedReadById(StubAssembler& jit, GPRReg receiver, GPRReg ide
     JumpList needsOperation;
     needsOperation.append(jit.branchIfNotCell(receiver));
     needsOperation.append(jit.branchIfNotObject(receiver));
+    // Its handler answers, and only the operation asks it.
+    needsOperation.append(jit.branchIfType(receiver, ProxyObjectType));
     loadIdentifier(jit, identifierNumber, uid, needsOperation);
     // No slot says what the read finds, as where a getter lies in a field of an object above the receiver. The objects themselves say it.
     JumpList objectsDoNotSay;

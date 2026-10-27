@@ -1,6 +1,7 @@
 # The strict comparison of a value with a text is one call of a stub that has the text in a register or gets its number: no cell is made or fetched for the text
 # FORM: Selected
 # RUN: generate-code calls
+# OPTIONS: heat=OnlyLoopsAreHot
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="shortTextAsValue" parameters=[{type=anything}] results=[{type=boolean}] {

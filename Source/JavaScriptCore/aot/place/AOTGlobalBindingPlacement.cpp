@@ -44,7 +44,7 @@ struct NumberedBinding {
 static Vector<FirstUse> findFirstUses(const PlacementContext& context, std::span<const GlobalBindingSite> sites)
 {
     Vector<uint32_t> ranks(FillWith { }, context.program.functions.size(), UINT32_MAX);
-    std::span<const FunctionID> hottestFirst = context.inputs.heat.hottestFirst();
+    std::span<const FunctionID> hottestFirst = context.inputs.heat.hottestFirst().predicted();
     for (uint32_t rank = 0; rank < hottestFirst.size(); ++rank) {
         if (hottestFirst[rank].index() < ranks.size())
             ranks[hottestFirst[rank].index()] = rank;
@@ -141,7 +141,7 @@ void encodeGlobalBindingTable(TableEncoder& encoder)
     auto& bindings = encoder.placement.globalBindings().bindings;
     encoder.setTable(ProgramTableIndex::globalBindings, Vector<uint32_t>(bindings.size(), [&](size_t index) {
         const PlacedGlobalBinding& binding = bindings[index];
-        uint32_t word = encoder.identifierNumber(binding.key.key);
+        uint32_t word = encoder.identifierNumber(binding.key.key, "a global name with a binding record"_s);
         if (binding.key.seesScriptBindings)
             word |= GlobalBindingTable::seesScriptBindingsFlag;
         if (binding.isStoredByName)

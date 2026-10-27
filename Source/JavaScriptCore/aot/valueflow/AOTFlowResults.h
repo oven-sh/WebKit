@@ -40,10 +40,15 @@ struct FlowIndirectCall {
     AccessSiteID site;
     FunctionID callee;
     FlowIndirectCallKind kind { FlowIndirectCallKind::Host };
-    BuiltinCallbackTimes times { BuiltinCallbackTimes::Later };
+    // Read off the built-ins that were seen at the site.
+    Expected<BuiltinCallbackTimes> times { BuiltinCallbackTimes::Later };
     bool isInCycle { false };
+    bool isAlwaysConstruction { false };
 
-    friend bool operator==(const FlowIndirectCall&, const FlowIndirectCall&) = default;
+    friend bool operator==(const FlowIndirectCall& a, const FlowIndirectCall& b)
+    {
+        return a.caller == b.caller && a.site == b.site && a.callee == b.callee && a.kind == b.kind && a.times.isSamePredictionAs(b.times) && a.isInCycle == b.isInCycle && a.isAlwaysConstruction == b.isAlwaysConstruction;
+    }
 };
 
 struct FlowBoundFunctionUse {
@@ -159,17 +164,32 @@ struct FlowFunctionTables {
     BitVector functionsSeeingOnlyFinishedObjects;
     BitVector functionsWhoseClosuresAreNeverCompared;
     BitVector functionsWithOneClosure;
+    BitVector functionsWhoseClosuresMayBeRenamed;
+    BitVector functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees;
+    BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
+    BitVector functionsWhoseClosuresAreGivenDisplayName;
+    BitVector functionsWhoseClosuresAreMadeOnce;
+};
+
+struct WrittenPositionOfSite {
+    AccessSiteID site;
+    uint32_t position { 0 };
 };
 
 struct FlowSiteTables {
     Vector<AccessSite> accessSites;
+    // Sorted by site. The location of a site is where an error is reported; only a site that the source text has elsewhere is listed.
+    Vector<WrittenPositionOfSite> writtenPositionsOfSites;
     Vector<FlowSiteLoss> accessSiteLosses;
     Vector<bool> callsOfBoundFunctions;
+    // Empty where no array has such a kind.
+    Vector<bool> receiversThatMayHaveDecidedStorage;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
     BitVector sitesOfObjectsThatNeverChange;
+    BitVector layoutsNeverHeldWeakly;
     Vector<FlowSinkOperand> sinkOperands;
     Vector<FlowTypedResultCall> typedResultCalls;
     Vector<AllocationSiteID> typedResultSites;
@@ -178,8 +198,14 @@ struct FlowSiteTables {
 
 struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> locations;
+    // One record for each place in the source that writes a location, by holder, key and place.
+    Vector<BuiltinLocationFlow> writesOfLocations;
     BitVector constantMembers;
     BitVector intactHolders;
+    // The image locks these when the program starts. What is said of them rests on that.
+    BitVector membersLockedAtStartUp;
+    // An operation that lists own keys is handed one of these, by canonical ID.
+    BitVector holdersWithListedKeys;
     Vector<BuiltinUseRecord> uses;
     Vector<FeatureUseRecord> featureUses;
     BitVector builtinsThatMayBeTrimmed;
@@ -253,6 +279,9 @@ public:
     bool runsAtMostOnce(const Program&, FunctionID) const;
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
     bool closuresAreNeverCompared(FunctionID) const;
+    bool closuresGoUnnoticed(FunctionID) const;
+    // No WeakRef, FinalizationRegistry, WeakMap or WeakSet takes an object of the layout.
+    bool objectsAreNeverHeldWeakly(LayoutID layout) const { return m_tables.sites.layoutsNeverHeldWeakly.get(layout.index()); }
     bool hasOneClosure(FunctionID id) const { return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index()); }
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
@@ -277,9 +306,16 @@ public:
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
+    bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
+    void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
+    // The fields whose types were taken back as the results were applied. Their reads have no checks yet.
+    std::span<const FieldReference> fieldsTakenBack() const LIFETIME_BOUND { return m_fieldsTakenBack.span(); }
+    void setFieldsTakenBack(Vector<FieldReference>&& fields) { m_fieldsTakenBack = WTF::move(fields); }
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
+    const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtins.membersLockedAtStartUp; }
+    std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }
     std::span<const AllocationSite> allocationSites() const LIFETIME_BOUND { return m_tables.sites.allocationSites.span(); }
@@ -288,19 +324,34 @@ public:
     unsigned numberOfAllocationSites() const { return m_tables.sites.allocationSites.size(); }
     unsigned numberOfAllocationClasses() const { return m_tables.sites.allocationClasses.size(); }
     const AccessSite& at(AccessSiteID) const LIFETIME_BOUND;
+    Wire::SourceLocation writtenLocationOf(AccessSiteID) const;
     const AllocationSite& at(AllocationSiteID) const LIFETIME_BOUND;
     const AllocationClass& at(AllocationClassID) const LIFETIME_BOUND;
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }
     bool objectsNeverChange(AllocationSiteID site) const { return m_tables.sites.sitesOfObjectsThatNeverChange.get(site.index()); }
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
+    // By code that flow has seen.
+    bool closuresMayBeRenamed(FunctionID closureFunction) const;
+    // They may be, and no statement is seen to do it: what renames one goes through the run time, which knows the function object.
+    bool closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const;
+    // No statement is seen to name one, and they go where nobody follows them.
+    bool closuresGoOutOfSightUnnamed(FunctionID closureFunction) const;
+    // By a statement that is seen to reach the closure and writes that key or a key nobody knows.
+    bool closuresAreGivenDisplayName(FunctionID closureFunction) const;
+    // By one operation that runs once, or by the first read of the variable that starts with the function.
+    bool closureIsMadeOnce(FunctionID closureFunction) const;
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
+    // By a statement that is seen to reach the closures and names the key.
+    bool closuresAreStoredUnder(FunctionID closureFunction, PropertyKeyID) const;
     bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
     bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     bool mayCallBoundFunction(AccessSiteID) const;
-    // A prediction: the caller must test the value at run time.
-    std::span<const FlowBoundFunctionAtSite> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
+    // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
+    // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.
+    bool mayChangeStorageOfReceiver(AccessSiteID) const;
+    Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
     std::span<const LayoutID> typedResultLayouts(AccessSiteID call) const LIFETIME_BOUND;
@@ -350,6 +401,8 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
+    Vector<FieldReference> m_fieldsTakenBack;
+    bool m_mayListKeysOfEveryHolder { false };
     bool m_unseenCodeCanRun { true };
     bool m_unseenScriptsCanRun { true };
     UnknownRecords m_unknown { };

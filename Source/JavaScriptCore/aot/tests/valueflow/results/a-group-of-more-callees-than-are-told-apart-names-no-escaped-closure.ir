@@ -3,6 +3,7 @@
 # Up to as many callees as are told apart the list says what the site enters. Past that it names no closure that has escaped: whether the rule of the read was still shown such a closure when it last ran
 # hangs on the order of the rounds, and a hundred entries out of one site would make a hundred functions as hot as the site.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:2
+# LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-results
 # CHECK: function f1 cause=ReachesNativeCode
 # CHECK: function f2 cause=ReachesNativeCode

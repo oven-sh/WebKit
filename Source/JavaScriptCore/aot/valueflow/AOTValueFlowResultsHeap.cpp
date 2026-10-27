@@ -8,7 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPrototypesAtCreation.h"
+#include "AOTSort.h"
 #include "AOTThreshold.h"
+#include <algorithm>
+#include <optional>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -46,6 +51,9 @@ ValueFlowNodesAskedFor::ValueFlowNodesAskedFor(const ValueFlowResultInputs& inpu
 }
 
 ValueFlowHeapIndex::ValueFlowHeapIndex(const ValueFlowResultInputs& inputs)
+#if ASSERT_ENABLED
+    : m_program(inputs.program)
+#endif
 {
     collectNodesWritten(inputs);
     collectCalls(inputs);
@@ -78,8 +86,8 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             const ValueFlowNodeKey& key = *solver.keyOfMadeNode(node);
             switch (key.kind) {
             case ValueFlowMadeNodeKind::Written:
-                if (ValueSetID value = solver.valueOf(node); value != ValueSets::nothing)
-                    found.written.append({ numberOf(key.name()), node.index(), { key.set, value } });
+                if (ValueSetID value = solver.possibleValuesOf(node); value != ValueSets::nothing)
+                    found.written.append({ numberOf(key.name()), node.index(), { key.set, value, solver.seenValuesOf(node) } });
                 break;
             case ValueFlowMadeNodeKind::CallGroup:
                 if (solver.firstOfMadeNodesAt(solver.indexOfMadeNodes(key)) == node)
@@ -179,8 +187,8 @@ ValueFlowHeapView::ValueFlowHeapView(const ValueFlowResultInputs& inputs)
     , m_index(inputs.heapIndex ? *inputs.heapIndex : *m_ownIndex)
     , m_makerPool(inputs.makerPool())
     , m_maker(m_makerPool.take())
-    , m_escaped(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()))
-    , m_lost(inputs.solver().valueOf(ValueFlowProgramNodes::lost()))
+    , m_escaped(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()))
+    , m_lost(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()))
     , m_escapedAndWritable(m_maker.intersect(m_escaped, ValueSets::complement(unseenCodeChangesRealm(inputs.solution) ? inputs.universe().lockedObjects() : inputs.universe().objectsOfRealm())))
 {
 }
@@ -194,16 +202,16 @@ static ValueSetID valueSeenByRulesAt(const ValueFlowResultInputs& inputs, ValueS
 {
     ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
     if (operand.node)
-        value = maker.unite(value, inputs.solver().valueOf(operand.node));
+        value = maker.unite(value, inputs.solver().possibleValuesOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, inputs.solver(), maker);
 }
 
-ValueSetID ValueFlowHeapView::valueOf(const ValueFlowOperand& operand)
+ValueSetID ValueFlowHeapView::possibleValuesOf(const ValueFlowOperand& operand)
 {
-    return valueOf(m_maker, operand);
+    return possibleValuesOf(m_maker, operand);
 }
 
-ValueSetID ValueFlowHeapView::valueOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
+ValueSetID ValueFlowHeapView::possibleValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
 {
     return valueSeenByRulesAt(m_inputs, maker, operand);
 }
@@ -296,95 +304,11 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
 
 void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vector<ValueFlowObjectID, 8>& prototypes) const
 {
-    const Program& program = m_inputs.program;
-    const BuiltinTable& builtins = program.builtins();
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    auto appendPrototypeOf = [&](BuiltinClassID builtinClass) {
-        if (!builtinClass)
-            return;
-        BuiltinID prototype = builtins.at(builtinClass).prototype;
-        prototypes.append(prototype ? universe.objectOf(prototype) : ValueFlowUniverse::unknownObject());
-    };
-    auto hasHeritage = [&](LayoutID layout) {
-        return layout && program.at(layout).has(LayoutFlags::HasHeritage);
-    };
-
-    switch (universe.kindOf(object)) {
-    case ValueFlowObjectKind::Builtin:
-    case ValueFlowObjectKind::ModuleBuiltin: {
-        const Builtin& entry = builtins.at(universe.builtinOf(object));
-        switch (entry.prototypeLink) {
-        case BuiltinPrototypeLink::Unknown:
-            prototypes.append(ValueFlowUniverse::unknownObject());
-            return;
-        case BuiltinPrototypeLink::Null:
-            return;
-        case BuiltinPrototypeLink::Builtin:
-            prototypes.append(universe.objectOf(entry.inheritsFrom));
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    case ValueFlowObjectKind::Closure: {
-        const Function& function = program.at(universe.closureFunction(object));
-        if (!hasHeritage(function.constructedClass))
-            appendPrototypeOf(classOfFunctionObject(function));
-        return;
-    }
-    case ValueFlowObjectKind::Instance:
-        prototypes.append(universe.prototypeOf(universe.layoutOf(object)));
-        return;
-    case ValueFlowObjectKind::CoroutineResult:
-    case ValueFlowObjectKind::RestArray:
-    case ValueFlowObjectKind::FunctionPrototype:
-        appendPrototypeOf(universe.classOf(object));
-        return;
-    case ValueFlowObjectKind::ConstructedObject:
-        return;
-    case ValueFlowObjectKind::Prototype: {
-        LayoutID layout = universe.classLayoutOf(object);
-        if (hasHeritage(layout))
-            return;
-        FunctionID constructor = program.at(layout).constructor;
-        appendPrototypeOf(constructor ? classAbovePrototypeProperty(program.at(constructor)) : BuiltinClasses::Object);
-        return;
-    }
-    case ValueFlowObjectKind::Site: {
-        const ValueFlowSite& site = *universe.siteOf(object);
-        if (site.builtinClass)
-            appendPrototypeOf(site.builtinClass == BuiltinClasses::Arguments ? BuiltinClasses::Object : site.builtinClass);
-        if (!site.layout) {
-            if (!site.builtinClass)
-                prototypes.append(ValueFlowUniverse::unknownObject());
-            return;
-        }
-        switch (program.at(site.layout).kind) {
-        case LayoutKind::Record:
-        case LayoutKind::Container:
-        case LayoutKind::BuiltinResult:
-            if (!site.namesPrototype)
-                appendPrototypeOf(BuiltinClasses::Object);
-            return;
-        case LayoutKind::Instance:
-            prototypes.append(universe.prototypeOf(site.layout));
-            return;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    case ValueFlowObjectKind::Namespace:
-        return;
-    case ValueFlowObjectKind::Primitive:
-    case ValueFlowObjectKind::UnknownObject:
-    case ValueFlowObjectKind::ResultOfBuiltin:
-    case ValueFlowObjectKind::Key:
+    forEachPrototypeAtCreation(m_inputs.program, m_inputs.universe(), object, [&](ValueFlowObjectID prototype) {
+        prototypes.append(prototype);
+    }, [&](SilentAboutPrototype) {
         prototypes.append(ValueFlowUniverse::unknownObject());
-        return;
-    }
+    });
 }
 
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetID objects)
@@ -401,6 +325,27 @@ ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID
         appendPrototypesAtCreation(object, atCreation);
     });
     return expand(maker, maker.unite(maker.of(atCreation.span()), maker.intersect(writtenUnder(maker, heirs, prototypeLinkName), m_inputs.universe().objects())));
+}
+
+// What lies above a set is what lies above its members. Large sets share most of their members, so each member is asked once for all of them.
+ValueSetID ValueFlowHeapView::prototypesOfEachHeir(ValueSetMaker& maker, ValueSetID heirs) const
+{
+    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 8);
+    const ValueSets& sets = m_inputs.sets();
+    if (sets.size(heirs) < fewestHeirsAskedOneByOne)
+        return prototypesOfHeirs(maker, heirs);
+    Vector<ValueFlowObjectID, 64> onlyPrototypes;
+    Vector<ValueSetID, 8> severalPrototypes;
+    sets.forEachMember(heirs, [&](ValueFlowObjectID heir) {
+        ValueSetID above = prototypesOf(maker, maker.of(heir));
+        if (ValueFlowObjectID prototype = sets.onlyMember(above))
+            onlyPrototypes.append(prototype);
+        else if (above != ValueSets::nothing && (severalPrototypes.isEmpty() || severalPrototypes.last() != above))
+            severalPrototypes.append(above);
+    });
+    AOT::sort(severalPrototypes);
+    removeRepeatedElements(severalPrototypes);
+    return maker.unite(maker.of(onlyPrototypes.span()), maker.uniteAll(severalPrototypes.span()));
 }
 
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID objects) const
@@ -434,7 +379,7 @@ ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID obje
             otherHeirs = maker.intersect(otherHeirs, ValueSets::complement(placeholder.prototypes.heirs));
             prototypes = maker.unite(prototypes, placeholder.prototypes.prototypes);
         }
-        prototypes = maker.unite(prototypes, prototypesOfHeirs(maker, otherHeirs));
+        prototypes = maker.unite(prototypes, prototypesOfEachHeir(maker, otherHeirs));
         if (m_inputs.build.options().verifiesAfterEveryPass)
             RELEASE_ASSERT(prototypes == prototypesOfHeirs(maker, heirs));
         return prototypes;
@@ -539,6 +484,15 @@ ValueSetID ValueFlowHeapView::chainOf(ValueSetMaker& maker, ValueSetID objects) 
             }
         };
 
+        // All that a step has added, and whether what lies above it was new as a whole: then the chain of the step is the step and the chain of the next one.
+        struct Step {
+            ValueSetID added;
+            bool meetsNothingWalked;
+        };
+        AOT_THRESHOLD(size_t, fewestStepsToKeep, 8);
+        Vector<Step, 16> steps;
+        ValueSetID chainOfLastStep = ValueSets::nothing;
+
         takeInChainsOfPlaceholdersIn(objects);
         while (true) {
             takeInChainsOfPlaceholdersIn(chain);
@@ -547,11 +501,31 @@ ValueSetID ValueFlowHeapView::chainOf(ValueSetMaker& maker, ValueSetID objects) 
             ValueSetID frontier = maker.intersect(chain, ValueSets::complement(walked));
             if (frontier == ValueSets::nothing)
                 break;
+            if (std::optional<ValueSetID> known = frontier != objects ? m_index.chainsOfSets().find(frontier.index()) : std::nullopt) {
+                chain = maker.unite(chain, *known);
+                if (ValueSets::isComplement(chain))
+                    return chainWalkedInFull(maker, objects);
+                chainOfLastStep = *known;
+                break;
+            }
             walked = maker.unite(walked, chain);
-            chain = maker.unite(chain, prototypesOf(maker, frontier));
+            ValueSetID above = prototypesOf(maker, frontier);
+            steps.append({ frontier, !sets.meet(above, chain) });
+            chain = maker.unite(chain, above);
         }
         if (m_inputs.build.options().verifiesAfterEveryPass)
             RELEASE_ASSERT(chain == chainWalkedInFull(maker, objects));
+        bool hasTakenInPlaceholder = std::ranges::any_of(placeholders, &Placeholder::isTakenIn);
+        if (steps.size() < fewestStepsToKeep || hasTakenInPlaceholder)
+            return chain;
+        for (size_t index = steps.size(); index-- > 1 && steps[index].meetsNothingWalked;) {
+            chainOfLastStep = maker.unite(chainOfLastStep, steps[index].added);
+            m_index.chainsOfSets().ensure(steps[index].added.index(), [&] {
+                return chainOfLastStep;
+            });
+            if (m_inputs.build.options().verifiesAfterEveryPass && index == steps.size() / 2)
+                RELEASE_ASSERT(chainOfLastStep == chainWalkedInFull(maker, steps[index].added));
+        }
         return chain;
     });
 }
@@ -593,19 +567,7 @@ BuiltinCallMode ValueFlowBuiltinApplication::mode() const
 
 static bool statementCallsValue(const ValueFlowStatement& statement)
 {
-    if (statement.kind != ValueFlowStatementKind::Operation)
-        return false;
-    switch (statement.opcode) {
-    case Opcode::Call:
-    case Opcode::CallList:
-    case Opcode::Construct:
-    case Opcode::ConstructList:
-    case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList:
-        return true;
-    default:
-        return false;
-    }
+    return statement.kind == ValueFlowStatementKind::Operation && flowRuleOf(statement.opcode) == FlowRule::Call;
 }
 
 static bool passesAnyOf(const ValueFlowBuiltinApplication& application, SetsMeetingOneSet* wanted)
@@ -633,9 +595,9 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
     const ValueFlowUniverse& universe = inputs.universe();
     std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
     bool hasSecondOperand = !isConstruction(application.kind) || !!inputs.program.at(call.function).at(call.site).operand(1);
-    application.thisValue = heap.valueOf(maker, operands[hasSecondOperand ? 1 : 0]);
+    application.thisValue = heap.possibleValuesOf(maker, operands[hasSecondOperand ? 1 : 0]);
     if (passesList(call.opcode)) {
-        ValueSetID lists = heap.valueOf(maker, operands[2]);
+        ValueSetID lists = heap.possibleValuesOf(maker, operands[2]);
         bool mayBeListOfUnseenCode = inputs.sets().contains(lists, ValueFlowUniverse::unknownObject());
         if (mayBeListOfUnseenCode)
             lists = maker.intersect(lists, ValueSets::complement(universe.unknownObjectAlone()));
@@ -644,7 +606,7 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
             application.otherArguments = maker.unite(application.otherArguments, maker.unite(universe.anyPrimitive(), universe.unknownObjectAlone()));
     } else {
         for (const ValueFlowOperand& argument : operands.subspan(2))
-            application.arguments.append(heap.valueOf(maker, argument));
+            application.arguments.append(heap.possibleValuesOf(maker, argument));
     }
 }
 
@@ -729,6 +691,7 @@ static void forEachBuiltinAppliedByOperation(const ValueFlowResultInputs& inputs
     application.kind = kindOfCallBy(call);
     application.function = call.function;
     application.site = call.site;
+    application.statement = &call;
     if (knownOperands) {
         application.thisValue = knownOperands->thisValue;
         application.otherArguments = knownOperands->otherArguments;
@@ -767,10 +730,10 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     ValueFlowCallGroup group = callGroupAt(first);
     bool isAccessorCall = kind == ValueFlowCallKind::Get || kind == ValueFlowCallKind::Set;
     ValueFlowBuiltinApplication application;
-    application.thisValue = solver.valueOf(isConstruction(kind) ? group.newTarget : group.thisValue);
+    application.thisValue = solver.possibleValuesOf(isConstruction(kind) ? group.newTarget : group.thisValue);
     for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
-        application.arguments.append(solver.valueOf(group.argument(index)));
-    application.otherArguments = maker.unite(solver.valueOf(group.otherArguments), solver.valueOf(group.laterArguments));
+        application.arguments.append(solver.possibleValuesOf(group.argument(index)));
+    application.otherArguments = maker.unite(solver.possibleValuesOf(group.otherArguments), solver.possibleValuesOf(group.laterArguments));
     if (passesAnyOf(application, wantedOperands)) {
         inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
             bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);
@@ -841,7 +804,7 @@ static void forEachBuiltinAppliedByProtocol(const ValueFlowResultInputs& inputs,
     ValueSetID everyObject = inputs.universe().objects();
     ValueSetID stored = heap.writtenUnder(maker, everyObject, unknownKeyName);
     for (BuiltinName name : { BuiltinNames::iteratorSymbol, BuiltinNames::asyncIteratorSymbol, BuiltinNames::next, BuiltinNames::returnKeyword, BuiltinNames::throwKeyword, BuiltinNames::then })
-        stored = maker.unite(stored, heap.writtenUnder(maker, everyObject, ValueFlowName::property(inputs.program.keyOf(name))));
+        stored = maker.unite(stored, heap.writtenUnder(maker, everyObject, ValueFlowName::property(inputs.program, inputs.program.keyOf(name))));
     inputs.sets().forEachMember(maker.intersect(maker.intersect(stored, inputs.universe().builtinFunctionsOfProtocols()), amongFunctions), [&](ValueFlowObjectID callee) {
         byProtocol.builtin = inputs.universe().builtinOf(callee);
         functor(byProtocol);

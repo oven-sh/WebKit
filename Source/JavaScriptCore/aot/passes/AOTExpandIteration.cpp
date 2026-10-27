@@ -21,10 +21,12 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTEffectsOfProtocols.h"
 #include "AOTExpandOwnKeysInternal.h"
 #include "AOTFlowApply.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFuseGeneratorLoops.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccess.h"
@@ -63,7 +65,7 @@ static_assert(static_cast<uint32_t>(StepArrayIteratorResult::Value) == static_ca
 namespace {
 
 enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
-enum class IterationOrigin : uint8_t { Source, Spread };
+enum class IterationOrigin : uint8_t { Source, Spread, Delegation };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
 // Proven: the plan has one arm, the arm has no test, and closing does nothing.
 enum class ExpandedIterations : uint8_t { All, OnlyProven };
@@ -180,6 +182,7 @@ struct ArmState {
     ValueID nextMethod;
     ValueID isSteppedWithoutCall;
     bool callsSharedFunctions { false };
+    bool storageIsUndecided { false };
     std::optional<StateVariable> position;
     std::optional<StateVariable> table;
 };
@@ -209,11 +212,13 @@ struct IterationExpansion {
     SSARepair* repair;
     IterationOrigin origin { IterationOrigin::Source };
     const IRBuilder::Expansion* operation { nullptr };
+    // What the operation holds while the function is suspended in it.
+    std::span<const ValueID> held { };
     ValueID positionInFrontOfStep { };
     ValueID positionBehindStep { };
 
     bool isMakingSharedFunction() const { return !pass; }
-    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency == BlockFrequency::Normal; }
+    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency.predicted() == BlockFrequency::Normal; }
     StateVariable addVariable(ValueID initialDefinition) { return { repair->addVariable(initialDefinition), initialDefinition }; }
 
     void define(const StateVariable& variable, ValueID definition)
@@ -269,14 +274,21 @@ struct IterationExpansion {
     ValueID appendBuiltin(BuiltinID id) { return builder.append(makeWith(Opcode::Builtin, { }, &Value::setBuiltin, id)); }
     ValueID appendPropGet(ValueID object, auto name) { return builder.append(makeWith(Opcode::PropGet, { object }, &Value::setKey, keyOf(name))); }
     ValueID appendLength(ValueID object) { return builder.append(Opcode::ToLength, { appendPropGet(object, BuiltinNames::length) }); }
-    ValueID appendElement(ValueID object, ValueID index) { return builder.append(makeWith(Opcode::ElemGet, { object, index }, &Value::setKeyIsIntegral, true)); }
+    ValueID appendElement(const ArmState& state, ValueID index)
+    {
+        Value read = makeWith(Opcode::ElemGet, { state.subject, index }, &Value::setKeyIsIntegral, true);
+        read.setStorageIsUndecided(state.storageIsUndecided);
+        return builder.append(WTF::move(read));
+    }
     ValueID appendRequireObject(ValueID value, RuntimeErrorKind kind) { return builder.append(makeWith(Opcode::RequireObject, { value }, &Value::setRuntimeError, kind)); }
     ValueID appendUnspecifiedLike(ValueID model) { return builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, function.at(model).type)); }
-    ValueID appendAwaitIfAsync(IteratorKind kind, ValueID value) { return kind == IteratorKind::Async ? appendAwait(builder, value) : value; }
-    ValueID appendIteratorMethodCall(ValueID method, ValueID iterable) { return appendRequireObject(appendCall(method, iterable, { }), RuntimeErrorKind::IteratorIsNotAnObject); }
+    ValueID appendAwait(ValueID value) { return Typed::appendAwait(builder, value, held); }
+    ValueID appendAwaitIfAsync(IteratorKind kind, ValueID value) { return kind == IteratorKind::Async ? appendAwait(value) : value; }
+    ValueID appendIteratorMethodCall(ValueID method, ValueID iterable, RuntimeErrorKind errorKind = RuntimeErrorKind::IteratorIsNotAnObject) { return appendRequireObject(appendCall(method, iterable, { }), errorKind); }
     IRBuilder::ProvenBranch branchOnInRange(const ArmState& state, ValueID length) { return builder.emitBranchWithProof(builder.append(Opcode::Less, { state.position->anyDefinition, length })); }
     IRBuilder::BranchBlocks branchOnNotStepped(ValueID status) { return builder.emitBranch(appendIsEqualToInteger(status, GeneratorStepStatus::NotStepped), BlockFrequency::Rare, BlockFrequency::Normal); }
-    void emitThrowOfMissingThrowMethod() { builder.emitThrow(builder.append(makeWith(Opcode::NewRuntimeError, { }, &Value::setRuntimeError, RuntimeErrorKind::IteratorWithoutThrowMethod))); }
+    void emitThrow(RuntimeErrorKind kind) { builder.emitThrow(builder.append(makeWith(Opcode::NewRuntimeError, { }, &Value::setRuntimeError, kind))); }
+    void emitThrowOfMissingThrowMethod() { emitThrow(RuntimeErrorKind::IteratorWithoutThrowMethod); }
 
     ValueID appendCall(ValueID callee, ValueID thisValue, std::span<const ValueID> arguments)
     {
@@ -302,7 +314,7 @@ struct IterationExpansion {
         return kind == JSC::IterationKind::Keys ? key : value;
     }
 
-    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal)
+    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, Expected<BlockFrequency> taken = BlockFrequency::Normal, Expected<BlockFrequency> notTaken = BlockFrequency::Normal)
     {
         return builder.emitBranchWithProof(builder.appendTypeTest(value, type), 0, taken, notTaken);
     }
@@ -339,10 +351,10 @@ static BitVector blockSetOf(const Function& function, std::span<const BlockID> b
 
 static ValueID addParameterLike(FunctionPassContext& pass, IRBuilder& builder, BlockID block, ValueID model)
 {
-    TypeID expected = pass.function.at(model).expected();
+    TypeID expected = pass.function.at(model).expected().predicted();
     ValueID parameter = builder.addParameter(block, pass.function.at(model).type);
     if (expected) {
-        pass.function.edit(parameter, ValueEdit::Type).setExpected(expected);
+        pass.function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(expected));
         pass.analyses.didChangeValues();
     }
     return parameter;
@@ -393,6 +405,8 @@ static Vector<Iteration> collectIterations(FunctionPassContext& pass)
     Vector<Iteration> iterations;
     forEachValueSite(pass.analyses, function, { Opcode::IteratorOpen }, [&](const ValueSite& open) {
         Iteration iteration { .open = open.value, .kind = function.at(open.value).iteratorKind() };
+        if (function.at(open.value).isDelegating())
+            iteration.origin = IterationOrigin::Delegation;
         for (const Use& use : pass.analyses.useLists().usesOf(open.value)) {
             if (use.kind == Use::Kind::BlockSubject) {
                 RELEASE_ASSERT(function.at(use.block).role == BlockRole::IterationCleanup);
@@ -428,7 +442,7 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
         return IterationForm::Set;
-    if (isTypedView(builtins.at(id).typedArrayType))
+    if (isTypedView(builtins.typedArrayTypeOf(id)))
         return IterationForm::TypedArray;
     return std::nullopt;
 }
@@ -450,6 +464,20 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
     return findMethod(WellKnownSymbol::Iterator).isConstant();
 }
 
+// An object whose layout has nothing under @@iterator is not iterated: whoever expects only such objects has looked at what else is done with the value.
+static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Type& expected, IteratorKind kind)
+{
+    const Program& program = pass.program;
+    if (!expected.layouts || expected.anyObject || expected.anyFunction || !expected.classes.isEmpty() || !expected.functions.isEmpty() || !expected.builtins.isEmpty())
+        return false;
+    auto hasMethod = [&](LayoutID layout, WellKnownSymbol symbol) {
+        return hasMemberToFindUnder(program, layout, program.keyOf(program.builtins().nameOf(symbol)));
+    };
+    return std::ranges::none_of(pass.types.at(expected.layouts).seen().predicted(), [&](LayoutID layout) {
+        return hasMethod(layout, WellKnownSymbol::Iterator) || (kind == IteratorKind::Async && hasMethod(layout, WellKnownSymbol::AsyncIterator));
+    });
+}
+
 static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& planned)
 {
     const BuiltinTable& builtins = pass.program.builtins();
@@ -466,8 +494,8 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             .form = *form,
             .kind = form == IterationForm::Map ? JSC::IterationKind::Entries : JSC::IterationKind::Values,
             .builtinClass = part.builtinClass,
-            .typedArrayType = builtins.at(part.builtinClass).typedArrayType,
-            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.contents.span())),
+            .typedArrayType = builtins.typedArrayTypeOf(part.builtinClass),
+            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.writtenContents.span())),
             .awaitsEachValue = planned.kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
         });
     };
@@ -477,14 +505,17 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
         addClass(part);
     };
 
-    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
-    for (const Type* type : { &expected, &pass.program.typeOf(pass.function, planned.value) }) {
+    const Type& proven = pass.program.typeOf(pass.function, planned.value);
+    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value).predicted();
+    for (const Type* type : { &expected, &proven }) {
         for (const ClassPart& part : type->classes)
             addClass(part);
         if (planned.kind == IteratorKind::Sync && type->primitives & Primitive::AnyString && !type->withPrimitives(Primitive::UndefinedOrNull).isAnything())
             add(IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
     }
-    if (!expected.anyObject)
+    // An iteration over undefined or null throws: whoever expects nothing else says nothing about what is iterated.
+    bool expectsNothingIterable = expected.isUndefinedOrNull() || namesOnlyLayoutsWithoutIterator(pass, expected, planned.kind);
+    if (!(expectsNothingIterable ? proven : expected).anyObject)
         return candidates;
 
     // What an iterable that nobody knows anything about is tested for. Of the classes with an arm only a generator does anything with what it is sent.
@@ -578,7 +609,7 @@ static std::optional<BypassedIterator> findBypassedIterator(FunctionPassContext&
         .form = *form,
         .kind = static_cast<JSC::IterationKind>(implementation.inlineParameters[0]),
         .builtinClass = part->builtinClass,
-        .typedArrayType = builtins.at(part->builtinClass).typedArrayType,
+        .typedArrayType = builtins.typedArrayTypeOf(part->builtinClass),
         .testedType = pass.function.at(receiver).type,
         .classIsProven = true,
         .namesAreProven = true,
@@ -793,9 +824,9 @@ static FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID 
         return { };
 
     const Function& method = program.at(plan.member.method);
-    if (method.results.size() != 1 || method.results[0].flags.contains(PositionFlags::IsExpected))
+    if (method.results.size() != 1 || method.results[0].isExpected())
         return { };
-    const Type& made = program.at(method.results[0].type);
+    const Type& made = program.at(*method.results[0].established());
     bool isUnchangedGenerator = made.isSubsetOf(Type::builtinClass(BuiltinClasses::Generator), program) && pristineAspectsProvenBy(made, BuiltinClasses::Generator).contains(PristineAspects::Names);
     return isUnchangedGenerator && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }) ? plan.member.method : FunctionID();
 }
@@ -871,6 +902,10 @@ static void emitIndexedOpen(IterationExpansion& expansion, ArmState& state)
     // The call that makes an iterator validates the view. The @@iterator method of that iterator validates nothing.
     if (state.arm.form == IterationForm::TypedArray && !state.arm.bypassesIterator)
         builder.append(Opcode::RequireAttachedTypedArray, { state.subject });
+    if (expansion.origin == IterationOrigin::Spread && state.arm.form == IterationForm::TypedArray)
+        builder.append(Opcode::RequireLengthFitsList, { state.subject, builder.append(makeWith(Opcode::GetTypedArrayLength, { state.subject }, &Value::setTypedArrayType, state.arm.typedArrayType)) });
+    if (expansion.origin == IterationOrigin::Spread && state.arm.form == IterationForm::String && expansion.program.typeOf(expansion.function, state.subject).isString())
+        builder.append(Opcode::RequireLengthFitsList, { state.subject, builder.append(Opcode::GetStringLength, { state.subject }) });
 
     // A step is typed from the definition it names, before SSARepair picks the one that reaches it: every definition lies in the type of this one.
     ValueID zero = builder.appendInteger(0);
@@ -897,7 +932,7 @@ static void emitElementStep(IterationExpansion& expansion, const ArmState& state
         read.setKeyIsIntegral(true);
         element = builder.append(WTF::move(read));
     } else if (state.arm.kind != JSC::IterationKind::Keys)
-        element = expansion.appendElement(state.subject, index);
+        element = expansion.appendElement(state, index);
     expansion.define(*state.position, expansion.appendIncrement(index, 1));
     ValueID done = builder.appendBoolean(false);
     expansion.finishStep(done, expansion.appendValueOfKind(state.arm.kind, index, element));
@@ -910,8 +945,13 @@ static void emitStringStep(IterationExpansion& expansion, const ArmState& state)
     IRBuilder::ProvenBranch branch = expansion.branchOnInRange(state, builder.append(Opcode::GetStringLength, { state.subject }));
     ValueID index = branch.provenOnTaken;
 
-    ValueID codePointAt = expansion.appendBuiltin(Builtins::StringPrototypeCodePointAt);
-    ValueID codePoint = expansion.appendCall(codePointAt, state.subject, singleElementSpan(index));
+    TypingContext typing { expansion.program, expansion.function, expansion.types };
+    BuiltinOperandTypes operands = operandTypesOf(typing, state.subject, singleElementSpan(index));
+    OverloadMatch match = matchOverload({ typing, Builtins::StringPrototypeCodePointAt, BuiltinCallMode::Call, operands, operands });
+    bool isResolved = match.state == BuiltinMatchState::Proven && match.requirements.isEmpty();
+    ValueID codePoint = isResolved
+        ? builder.append(makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { state.subject, { index } }, { }))
+        : expansion.appendCall(expansion.appendBuiltin(Builtins::StringPrototypeCodePointAt), state.subject, singleElementSpan(index));
     ValueID isAstral = builder.append(Opcode::Greater, { codePoint, builder.appendInteger(0xFFFF) });
 
     BlockID merge = expansion.addSiblingBlock();
@@ -943,8 +983,8 @@ static void emitOwnEntriesStep(IterationExpansion& expansion, const ArmState& st
 {
     IRBuilder::ProvenBranch branch = expansion.branchOnInRange(state, expansion.appendLength(state.subject));
     ValueID index = branch.provenOnTaken;
-    ValueID key = expansion.appendElement(state.subject, index);
-    ValueID value = expansion.appendElement(state.subject, expansion.appendIncrement(index, 1));
+    ValueID key = expansion.appendElement(state, index);
+    ValueID value = expansion.appendElement(state, expansion.appendIncrement(index, 1));
     expansion.define(*state.position, expansion.appendIncrement(index, 2));
     expansion.finishStep(expansion.builder.appendBoolean(false), expansion.appendPair(key, value));
     expansion.finishStepAsDoneIn(branch.notTaken);
@@ -963,7 +1003,7 @@ static bool tryNarrowToContentsOfEntry(IterationExpansion& expansion, const ArmS
         TypeID castType = expansion.types.intern(*contents);
         if (expansion.pass->build.validates())
             expansion.builder.append(makeValidateType(result, castType));
-        result = expansion.builder.append(makeAssumeType(result, castType));
+        result = expansion.builder.append(makeAssumeType(result, Proven::byConstruction(castType)));
     }
     return expansion.function.at(result).type != TypeTable::never;
 }
@@ -1057,10 +1097,13 @@ static bool isOpenedBySharedFunction(IterationExpansion& expansion, ValueID iter
     return !expansion.program.typeOf(expansion.function, iterable).layouts;
 }
 
-static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable)
+enum class SyncIteratorUse : uint8_t { Stepped, WrappedForAsyncIteration };
+
+static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
 {
     IRBuilder& builder = expansion.builder;
-    if (isOpenedBySharedFunction(expansion, iterable)) {
+    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
+    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
         ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
         return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
     }
@@ -1069,11 +1112,27 @@ static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID it
     IRBuilder::ProvenBranch branch = expansion.branchOnType(expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
 
     builder.moveToEndOf(branch.notTaken);
-    builder.append(makeWith(Opcode::ThrowNotIterable, { iterable }, &Value::setIsSpread, expansion.origin == IterationOrigin::Spread));
-    builder.emitUnreachable();
+    if (isWrapped)
+        expansion.emitThrow(RuntimeErrorKind::NoSyncIteratorForAsyncIteration);
+    else if (expansion.origin == IterationOrigin::Delegation) {
+        expansion.appendCall(branch.provenOnNotTaken, iterable, { });
+        expansion.emitThrow(RuntimeErrorKind::IteratorIsNotAnObject);
+    } else {
+        builder.append(makeWith(Opcode::ThrowNotIterable, { iterable }, &Value::setIsSpread, expansion.origin == IterationOrigin::Spread));
+        builder.emitUnreachable();
+    }
 
     builder.moveToEndOf(branch.taken);
-    ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable);
+    if (!isWrapped && expansion.origin != IterationOrigin::Source) {
+        // The engine's spread and `yield*` read `next` of whatever the method returns, and call it.
+        IRBuilder::ProvenBranch made = expansion.branchOnType(expansion.appendCall(branch.provenOnTaken, iterable, { }), TypeTable::object, BlockFrequency::Normal, BlockFrequency::Rare);
+        builder.moveToEndOf(made.notTaken);
+        expansion.appendCall(expansion.appendPropGet(made.provenOnNotTaken, BuiltinNames::next), made.provenOnNotTaken, { });
+        expansion.emitThrow(RuntimeErrorKind::IteratorIsNotAnObject);
+        builder.moveToEndOf(made.taken);
+        return { made.provenOnTaken, expansion.appendPropGet(made.provenOnTaken, BuiltinNames::next), { } };
+    }
+    ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable, isWrapped ? RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject : RuntimeErrorKind::IteratorIsNotAnObject);
     return { iterator, expansion.appendPropGet(iterator, BuiltinNames::next), { } };
 }
 
@@ -1081,7 +1140,7 @@ static ValueID openWrappedIterator(IterationExpansion& expansion, ValueID iterab
 {
     if (isOpenedBySharedFunction(expansion, iterable))
         return appendCallOfSharedFunction(expansion, OutlinedIteration::OpenWrappedIterator, singleElementSpan(iterable));
-    OpenedIterator sync = openSyncIterator(expansion, iterable);
+    OpenedIterator sync = openSyncIterator(expansion, iterable, SyncIteratorUse::WrappedForAsyncIteration);
     return expansion.builder.append(Opcode::CreateAsyncFromSyncIterator, { sync.iterator, sync.next });
 }
 
@@ -1123,6 +1182,8 @@ static OpenedIterator openAsyncIterator(IterationExpansion& expansion, ValueID i
 static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, IteratorKind kind)
 {
     IRBuilder& builder = expansion.builder;
+    if (expansion.origin == IterationOrigin::Spread)
+        builder.append(Opcode::RequireLengthFitsList, { state.subject });
     if (!state.arm.alsoServesStrings) {
         OpenedIterator opened = kind == IteratorKind::Async ? openAsyncIterator(expansion, state.subject) : openSyncIterator(expansion, state.subject);
         state.subject = opened.iterator;
@@ -1284,7 +1345,7 @@ static void emitProtocolStep(IterationExpansion& expansion, const ArmState& stat
         IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
         // %AsyncFromSyncIteratorPrototype%.next passes on what it was called with: where nothing is sent, the iterator's `next` is called without an argument.
         ValueID sent = request.sent ? request.sent : builder.append(Opcode::Absent, { });
-        finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(builder, state.subject, sent), request);
+        finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(builder, state.subject, sent, expansion.held), request);
         builder.moveToEndOf(blocks.notTaken);
     }
     emitStepByCall(expansion, state, request);
@@ -1322,7 +1383,7 @@ static void emitAsyncGeneratorStep(IterationExpansion& expansion, const ArmState
         return;
     }
     ValueID sent = request.sent ? request.sent : expansion.builder.appendUndefined();
-    finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(expansion.builder, state.subject, sent), request);
+    finishAsyncIteratorStep(expansion, appendAsyncIteratorStep(expansion.builder, state.subject, sent, expansion.held), request);
 }
 
 static void emitGeneratorClose(IterationExpansion& expansion, const ArmState& state, IteratorCompletion completion)
@@ -1433,13 +1494,13 @@ static Function buildSharedFunction(DerivedFunctionInputs& inputs, ASCIILiteral 
     function.kind = FunctionKind::Plain;
     function.role = FunctionRole::OutlinedBody;
     function.length = static_cast<uint32_t>(parameterTypes.size());
-    function.thisType = DeclaredType { .type = TypeTable::anything };
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (TypeID type : parameterTypes) {
-        function.parameters.append(DeclaredType { .type = type });
+        function.parameters.append(DeclaredType(Proven::byPosition(type)));
         function.derivation.parameterMap.append(ParameterOrigin { });
     }
     for (TypeID type : resultTypes)
-        function.results.append(DeclaredType { .type = type });
+        function.results.append(DeclaredType(Proven::byPosition(type)));
     function.capabilities = initialCapabilitiesOf(function);
 
     IRBuilder builder({ inputs.build, inputs.program, &inputs.flow, nullptr }, function, inputs.types);
@@ -1469,7 +1530,7 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
     switch (static_cast<OutlinedIteration>(key.node)) {
     case OutlinedIteration::AppendIterable:
         return buildSharedFunction(inputs, "appendIterable"_s, { inputs.types.intern(Type::builtinClass(BuiltinClasses::Array)), TypeTable::anything }, { TypeTable::undefined }, [&](IterationExpansion& expansion, Parameters parameters) {
-            expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(inputs.types.intern(iterablesExpectedBy(key, inputs.types)));
+            expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(ExpectedType(inputs.types.intern(iterablesExpectedBy(key, inputs.types))));
             expansion.builder.append(Opcode::AppendSpread, { parameters[0], parameters[1] });
             expansion.finishClose();
         });
@@ -1521,7 +1582,7 @@ static void emitArrayIteratorStep(IterationExpansion& expansion, ValueID iterato
 
     // An array iterator is made for an object and keeps it.
     builder.moveToEndOf(finished.notTaken);
-    ValueID iterated = convertTo(builder, appendFieldRead(JSArrayIterator::Field::IteratedObject), DeclaredType { .type = TypeTable::object });
+    ValueID iterated = convertTo(builder, appendFieldRead(JSArrayIterator::Field::IteratedObject), DeclaredType(Proven::byPosition(TypeTable::object)));
     BlockID merge = expansion.addSiblingBlock();
     ValueID length = builder.addParameter(merge, TypeTable::number);
     Value isTypedArrayView = makeWith(Opcode::HasJSType, { iterated }, &Value::setFirst, CheckedJSType::Int8ArrayType);
@@ -1969,6 +2030,7 @@ struct ArmDispatcher {
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
     IterationPlan plan { };
+    bool storageIsUndecided { false };
     bool mayBeUsedAfterDone { true };
     Vector<ProgramPoint, 2> cutsAfterLastCloses { };
     bool hasCopyPerArm { true };
@@ -1986,6 +2048,9 @@ struct ArmDispatcher {
     {
         RELEASE_ASSERT(open.placement == ValuePlacement::InBlock && function.at(head).terminator.next().arguments.isEmpty());
         plan = planIteration(pass, iteration);
+        // Flow has answered for the iterable. An arm may walk another object: the receiver of the call that made the iterator.
+        const Value& opened = function.at(iteration.open);
+        storageIsUndecided = opened.storageIsUndecided() && plan.armSources.isEmpty() && plan.source == opened.iterableOperand();
         BitVector liveRegion = blockSetOf(function, region.span());
         mayBeUsedAfterDone = findsOperationAfterDone(liveRegion);
         if (plan.arms.size() <= 1)
@@ -2120,15 +2185,20 @@ struct ArmDispatcher {
 
     void openArm(const IterationArm& arm, ValueID subject)
     {
-        states.append(ArmState { .arm = arm, .patternRead = patternReads[states.size()], .subject = subject });
+        states.append(ArmState { .arm = arm, .patternRead = patternReads[states.size()], .subject = subject, .storageIsUndecided = storageIsUndecided });
         ArmState& state = states.last();
         switch (arm.form) {
         case IterationForm::Array:
         case IterationForm::TypedArray:
         case IterationForm::String:
         case IterationForm::SplitString:
-        case IterationForm::OwnEntries:
             emitIndexedOpen(expansion, state);
+            break;
+        case IterationForm::OwnEntries:
+            // What the call of Object.entries throws is reported where the call stands.
+            builder.setOrigin(function.at(plan.replacedValues.first()).origin());
+            emitIndexedOpen(expansion, state);
+            builder.setOrigin(function.at(iteration.open).origin());
             break;
         case IterationForm::Map:
         case IterationForm::Set:
@@ -2203,7 +2273,7 @@ struct ArmDispatcher {
     }
 
     // One block for each arm, entered by the number of the arm.
-    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, BlockFrequency frequency)
+    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, Expected<BlockFrequency> frequency)
     {
         Vector<BlockID, 4> blocks;
         for (const IterationArm& arm : plan.arms)
@@ -2337,6 +2407,7 @@ struct ArmDispatcher {
             // The overload without reads looks them up in the whole function and erases them wherever they stand, which moves the points of the sites still to come.
             IRBuilder::Expansion operation = isStep ? builder.beginExpansion(site.point, site.resultReads.span()) : builder.beginExpansion(site.point);
             expansion.operation = &operation;
+            expansion.held = heldOperandsOf(original);
 
             bool tracksDone = done && isStep && (!hasCopyPerArm || states[site.copy].patternRead == PatternRead::BySteps);
             if (tracksDone) {
@@ -2375,7 +2446,7 @@ struct ArmDispatcher {
         if (original.opcode == Opcode::IteratorClose) {
             // %AsyncFromSyncIteratorPrototype%.return finds no method to call on the iterator of such an arm and answers with a fulfilled promise, which the close awaits.
             if (state.arm.awaitsEachValue)
-                appendAwait(builder, builder.appendUndefined());
+                expansion.appendAwait(builder.appendUndefined());
             if (state.arm.awaitsEachValue || !state.arm.hasMethodsToCall())
                 expansion.finishClose();
             else if (state.arm.form == IterationForm::Generator)
@@ -2396,7 +2467,7 @@ struct ArmDispatcher {
         } else if (state.patternRead == PatternRead::ByIndex) {
             ValueID index = builder.appendInteger(*original.stepIndex());
             ValueID isPastEnd = builder.append(Opcode::LogicalNot, { builder.append(Opcode::Less, { index, expansion.appendLength(state.subject) }) });
-            expansion.finishStep(isPastEnd, expansion.appendElement(state.subject, index));
+            expansion.finishStep(isPastEnd, expansion.appendElement(state, index));
         } else
             emitArmStep(expansion, state, request);
     }
@@ -2404,7 +2475,7 @@ struct ArmDispatcher {
     // %AsyncFromSyncIteratorPrototype%.next rejects its promise with what the step throws, and the loop awaits that promise: the exception arrives one turn of the job queue later.
     void emitStepOfWrappedIterator(ArmState& state)
     {
-        BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+        Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
         std::optional<Target> outer = builder.handler();
 
         IRBuilder::Expansion step { builder.addBlock(frequency), { }, outer };
@@ -2424,13 +2495,13 @@ struct ArmDispatcher {
 
         builder.moveToEndOf(thrown);
         ValueID exception = builder.append(Opcode::CatchException, { });
-        appendAwait(builder, builder.appendUndefined());
+        expansion.appendAwait(builder.appendUndefined());
         builder.emitRethrow(exception);
 
         builder.moveToEndOf(step.continuation);
         bool isInAsyncGenerator = function.role == FunctionRole::CoroutineBody ? coroutineOfBody(function).kind == CoroutineKind::AsyncGenerator : function.has(FunctionFlags::IsAsync) && function.has(FunctionFlags::IsGenerator);
         if (!isInAsyncGenerator) {
-            ValueID value = appendAwait(builder, step.results[valueResult]);
+            ValueID value = expansion.appendAwait(step.results[valueResult]);
             function.edit(value, ValueEdit::Definition).setTakesExtraTurn(true);
             expansion.finishStep(step.results[doneResult], value);
             return;
@@ -2445,10 +2516,10 @@ struct ArmDispatcher {
         builder.emitJump(awaiting);
 
         builder.moveToEndOf(awaiting);
-        builder.emitJump(awaited, { appendAwait(builder, step.results[valueResult]) });
+        builder.emitJump(awaited, { expansion.appendAwait(step.results[valueResult]) });
 
         builder.moveToEndOf(awaited);
-        appendAwait(builder, builder.appendUndefined());
+        expansion.appendAwait(builder.appendUndefined());
         expansion.finishStep(step.results[doneResult], value);
     }
 
@@ -2626,9 +2697,10 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     Vector<BlockID> cleanupBlocksToDrop;
     forEachDispatcher(&ArmDispatcher::finishCleanupBlocks, cleanupBlocksToDrop);
+    // An iteration that never opens leaves the ones behind it unreachable, and dropping a region empties every unreachable block.
+    forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     dropCleanupRegions(pass, builder, cleanupBlocksToDrop.span());
 
-    forEachDispatcher(&ArmDispatcher::eraseOpenAndReport);
     builder.setHandler(std::nullopt);
     repair.run();
     builder.emptyUnreachableBlocks();
@@ -2645,8 +2717,46 @@ static PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builde
 
 // Spreads.
 
-static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramPoint point, const IterationPlan& plan, Vector<SpreadLoop>& loops)
+// Where the protocol finds no method of the program in the operand, the effects of a spread say that it runs no code, and tests are placed by them. A call of the function that walks anything
+// counts as running any code, so nothing of such an operand goes there: a string is walked here, and the rest throws. Answers what is left to walk.
+static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, Expected<BlockFrequency> frequency)
 {
+    Type type = pass.program.typeOf(pass.function, source);
+    if (type.without(pass.types.at(TypeTable::string), pass.types).isNever() || protocolMayFindMember(pass.program, type, Protocol::Iterate))
+        return source;
+
+    ValueID string;
+    BlockID blockOfString;
+    if (!hasFailedStringTest && type.primitives & Primitive::AnyString) {
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::string), OperandIndex::TypeTest::value, frequency, BlockFrequency::Rare);
+        string = branch.provenOnTaken;
+        blockOfString = branch.taken;
+        source = branch.provenOnNotTaken;
+        builder.moveToEndOf(branch.notTaken);
+    }
+    if (pass.program.typeOf(pass.function, source).mayBeUndefinedOrNull())
+        source = builder.append(makeRequireObjectCoercible(source, IterationOrigin::Spread));
+    if (pass.function.at(source).type != TypeTable::never)
+        builder.append(makeWith(Opcode::ThrowNotIterable, { source }, &Value::setIsSpread, true));
+    builder.emitUnreachable();
+    if (string)
+        builder.moveToEndOf(blockOfString);
+    return string;
+}
+
+namespace {
+
+struct SpreadSite {
+    ProgramPoint point;
+    IterationPlan plan;
+    bool hasFailedStringTest;
+};
+
+} // anonymous namespace
+
+static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site, Vector<SpreadLoop>& loops)
+{
+    const auto& [point, plan, hasFailedStringTest] = site;
     Function& function = pass.function;
     ValueID id = function.at(point.block).values[point.index];
     ReplacedEffects replaced;
@@ -2671,7 +2781,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramP
     Value original = function.at(id);
     ValueID iterable = original.iterableOperand();
     replaced.add(pass.analyses.effectContext(), function, original);
-    BlockFrequency loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
+    Expected<BlockFrequency> loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
 
     builder.setOrigin(original.origin());
     IRBuilder::Expansion cut = builder.beginExpansion(point);
@@ -2712,6 +2822,10 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, ProgramP
     if (!loopEntry)
         return;
     builder.moveToEndOf(loopEntry);
+    source = emitThrowWhereNoMethodIsFound(pass, builder, source, hasFailedStringTest, loopFrequency);
+    if (!source)
+        return;
+    loopEntry = builder.currentBlock();
     ValueID open = builder.append(makeWith(Opcode::IteratorOpen, { source }, &Value::setIteratorKind, IteratorKind::Sync));
     builder.endExpansion(cut, std::span<const ValueID> { });
     loops.append({ open, original.arrayOperand(), loopEntry, cut.continuation, cut.handler, std::nullopt });
@@ -2737,10 +2851,11 @@ static std::optional<DerivedFunctionKey> findOutlinedLoop(FunctionPassContext& p
 static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& builder, const SpreadLoop& loop)
 {
     Function& function = pass.function;
-    RELEASE_ASSERT(function.at(loop.entry).values.size() == 1 && function.at(loop.entry).values[0] == loop.open);
+    uint32_t numberOfValues = function.at(loop.entry).values.size();
+    RELEASE_ASSERT(numberOfValues && function.at(loop.entry).values.last() == loop.open);
     ValueID source = function.at(loop.open).iterableOperand();
-    BlockFrequency frequency = function.at(loop.entry).frequency;
-    builder.beginExpansion(ProgramPoint::atHeadOf(loop.entry));
+    Expected<BlockFrequency> frequency = function.at(loop.entry).frequency;
+    builder.beginExpansion(ProgramPoint { loop.entry, numberOfValues - 1 });
 
     if (pass.program.typeOf(function, source).mayBeUndefinedOrNull()) {
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(source, TypeTable::nullish), OperandIndex::TypeTest::value, BlockFrequency::Rare, frequency);
@@ -2755,7 +2870,7 @@ static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& 
 
 static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const SpreadLoop& loop)
 {
-    BlockFrequency frequency = pass.function.at(loop.entry).frequency;
+    Expected<BlockFrequency> frequency = pass.function.at(loop.entry).frequency;
     builder.setOrigin(pass.function.at(loop.open).origin());
     builder.setHandler(loop.handler);
     BlockID header = builder.addBlock(frequency);
@@ -2778,21 +2893,22 @@ static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const Spread
 
 static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, Vector<ValueID>& opensOfSpreads)
 {
-    Vector<std::pair<ProgramPoint, IterationPlan>> sites;
+    Vector<SpreadSite> sites;
     forEachValueSite(pass.analyses, pass.function, { Opcode::AppendSpread }, [&](const ValueSite& site) {
         ValueID iterable = pass.function.at(site.value).iterableOperand();
         Arms arms = findClassArms(pass, PlannedValue { iterable, site.block, { PristineAspects::Storage, PristineAspects::Names } });
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
         arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
-        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)) });
+        bool hasFailedStringTest = pass.analyses.findEarlierTest(makeTypeTest(iterable, TypeTable::string), site.block) == EarlierTest::Failed;
+        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest });
     });
     if (sites.isEmpty())
         return PassOutcome::Unchanged;
 
-    AOT::sort(sites, std::ranges::greater { }, [](const auto& site) { return blockAndIndexOf(site.first); });
+    AOT::sort(sites, std::ranges::greater { }, [](const SpreadSite& site) { return blockAndIndexOf(site.point); });
     Vector<SpreadLoop> loops;
-    for (auto& [point, plan] : sites)
-        expandSpread(pass, builder, point, plan, loops);
+    for (const SpreadSite& site : sites)
+        expandSpread(pass, builder, site, loops);
 
     for (SpreadLoop& loop : loops)
         loop.outlinedLoop = findOutlinedLoop(pass, loop);
@@ -2927,7 +3043,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         if (!isResultRead(origin, ForInStepResult::Key) || function.at(origin.resultsOperand()).opcode != Opcode::ForInStep || !reporter.typeOf(operation->object).hasObjects())
             return;
         ValueID step = origin.resultsOperand();
-        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).hasOnlyLayouts(reporter.program()) || !reporter.typeOf(reporter.use()).isAnything()))
+        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).predicted().hasOnlyLayouts() || !reporter.typeOf(reporter.use()).isAnything()))
             return;
 
         for (const Use& read : reporter.analyses().useLists().usesOf(step)) {

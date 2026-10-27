@@ -259,8 +259,8 @@ jobs:
         run: |
           set -euo pipefail
           # `plan` made the draft this lane uploads to. It is gone if this is a re-run of only the jobs that failed,
-          # after `release` deleted it: better to find out now than after the build.
-          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. After a failed run use 'Re-run all jobs' so that plan creates it again."; exit 1; }
+          # after `release` deleted it (the run was cancelled): better to find out now than after the build.
+          gh release view "$TAG" >/dev/null 2>&1 || { echo "::error::no release for $TAG. Use 'Re-run all jobs' so that plan creates it again."; exit 1; }
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
           # Starting from the lane's toolchain image, which is in the registry: `plan` found it there or `image` put it.
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -558,10 +558,11 @@ jobs:
 
   release:
     name: release
-    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
-    # is published when every build job succeeded and every listed asset is on it. A pull request's is also published
-    # when lanes failed, with the lanes that were built, and the job fails: whoever tries the preview is not held up by
-    # a lane that they do not use. Otherwise, and when the run was cancelled, it is deleted.
+    # Runs whatever happened to the builds (also when the run was cancelled). The draft is published when every build job
+    # succeeded and every listed asset is on it. A pull request's is also published when lanes failed, with the lanes
+    # that were built, and the job fails: whoever tries the preview is not held up by a lane that they do not use. A
+    # branch's is kept when lanes failed: "Re-run failed jobs" builds those lanes onto it and runs this job again. When
+    # the run was cancelled, or nothing was uploaded, it is deleted.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -601,6 +602,10 @@ jobs:
             [ -z "$PR" ] || gh pr comment "$PR" --edit-last --create-if-none --body "Preview build of ${REF:0:8}: [\`$TAG\`]($url)" || echo "::warning::could not comment on #$PR"
             [ "$ok" = true ] || exit 1
             exit 0
+          fi
+          if [ -z "$PR" ] && [ -z "$cancelled" ] && [ -s uploaded.txt ]; then
+            echo "::error::kept the draft of $TAG with $(wc -l < uploaded.txt) assets. Use 'Re-run failed jobs' to build the rest and publish it."
+            exit 1
           fi
           # Only the draft this run created is deleted: not a published release (a re-run of a run that succeeded),
           # and not a draft that a newer run for the same tag has replaced.

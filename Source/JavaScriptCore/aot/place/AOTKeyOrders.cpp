@@ -375,6 +375,7 @@ std::pair<KeyOrders, PlacedOrderWords> collectKeyOrders(const PlacementContext& 
         return PlacedFieldCreation { use.layout, use.fields, { } };
     });
     keyOrders.firstStoreThatMayAdd = sites.firstStoreThatMayAdd;
+    keyOrders.placesOfStoresThatMayAdd = sites.placesOfStoresThatMayAdd;
     PlacedOrderWords orderWords;
     orderWords.ofAllocation.fill(0, table.allocations.size());
     orderWords.ofTest.fill(std::nullopt, tests.size());

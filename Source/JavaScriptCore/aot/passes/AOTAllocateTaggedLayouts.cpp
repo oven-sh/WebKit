@@ -17,6 +17,7 @@
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -30,18 +31,6 @@ static ValueID skipRequests(const Function& function, ValueID id)
     while (id) {
         const Value& value = function.at(id);
         if (value.opcode != Opcode::Convert && value.opcode != Opcode::Upcast)
-            break;
-        id = value.valueOperand();
-    }
-    return id;
-}
-
-// `this` of a construction is an object, which ToThis answers with.
-static ValueID skipRequestsOnConstructedObject(const Function& function, ValueID id)
-{
-    while (id) {
-        const Value& value = function.at(id);
-        if (value.opcode != Opcode::Convert && value.opcode != Opcode::Upcast && value.opcode != Opcode::ToThis)
             break;
         id = value.valueOperand();
     }
@@ -100,7 +89,7 @@ static ValueID findParameterStoredAsTag(const Program& program, const Function& 
             const Value& value = function.at(id);
             if (value.opcode != Opcode::PropSet && value.opcode != Opcode::PropDefine)
                 continue;
-            if (value.key() != tagKey || skipRequestsOnConstructedObject(function, value.objectOperand()) != object)
+            if (value.key() != tagKey || sameObjectThroughConversionsToObject(function, value.objectOperand()) != object)
                 continue;
             if (!addStore(value.valueOperand()))
                 return { };
@@ -110,7 +99,7 @@ static ValueID findParameterStoredAsTag(const Program& program, const Function& 
 }
 
 // In a block of its own, which goes on to the rest of the function with the object.
-static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfMaker, LayoutID layout, BlockFrequency frequency, BlockID rest)
+static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfMaker, LayoutID layout, Expected<BlockFrequency> frequency, BlockID rest)
 {
     BlockID block = builder.addBlock(frequency);
     builder.moveToEndOf(block);
@@ -121,7 +110,7 @@ static BlockID addAllocationBlock(IRBuilder& builder, const Value& allocationOfM
 }
 
 // In the block of the builder. Each member is allocated as the maker is, and every other tag goes on to the given block.
-static void emitSwitchOnTag(IRBuilder& builder, const TaggedFamily& family, ValueID tag, BlockID otherTag, const Value& allocationOfMaker, BlockFrequency frequency, BlockID rest)
+static void emitSwitchOnTag(IRBuilder& builder, const TaggedFamily& family, ValueID tag, BlockID otherTag, const Value& allocationOfMaker, Expected<BlockFrequency> frequency, BlockID rest)
 {
     BlockID start = builder.currentBlock();
     Vector<std::pair<int64_t, Target>> integerCases;
@@ -172,7 +161,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
             BitVector erasedIndexes(values.size());
             for (size_t index = 0; index < values.size(); ++index) {
                 const Value& value = copy.at(values[index]);
-                if (value.opcode != Opcode::ToThis || skipRequestsOnConstructedObject(copy, values[index]) != thisValue)
+                if (value.opcode != Opcode::ToThis || sameObjectThroughConversionsToObject(copy, values[index]) != thisValue)
                     continue;
                 substitution.replace(values[index], value.valueOperand());
                 erasedIndexes.set(index);
@@ -197,7 +186,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
     builder.removeParameters(entryBlock, removedParameters);
     copy.flags.remove(FunctionFlags::HasThis);
     copy.flags.add(FunctionFlags::AllocatesOwnThis);
-    copy.thisType = DeclaredType { .type = TypeTable::anything };
+    copy.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
 
     reopen(builder, entryBlock);
     Value read = IRBuilder::make(Opcode::GetConstructPrototype, { copy.at(entryBlock).parameters[*copy.newTargetParameterIndex()] });
@@ -236,7 +225,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
         builder.emitReturn(object);
     }
     TypeID constructed = types.intern(Type::forLayoutSet(program.declaredMembersOf(family.maker)));
-    copy.results[0] = DeclaredType { .type = mayReturnOtherObject ? TypeTable::object : constructed, .flags = { PositionFlags::IsFromCompiler } };
+    copy.results[0] = DeclaredType(Proven::byPosition(mayReturnOtherObject ? TypeTable::object : constructed)).with(PositionFlags::IsFromCompiler);
 
     compactFunction(copy);
     return copy;
@@ -280,8 +269,8 @@ static void enterAllocatingCopy(Program& program, BuildContext& build, TypeArena
     builder.emitTerminator(WTF::move(terminator));
 
     DeclaredType& result = function.results[0];
-    result.type = types.unionOf(result.type, copy.results[0].type);
-    result.flags.remove(PositionFlags::IsInt32Promise);
+    result.changeType(Proven::byPosition(types.unionOf(result.written(), copy.results[0].written())));
+    result.remove(PositionFlags::IsInt32Promise);
     compactFunction(function);
 }
 
@@ -380,7 +369,7 @@ static bool allocateInClassConstructor(Program& program, BuildContext& build, Ty
     RELEASE_ASSERT(function.at(own->block).values.last() == ownValue);
     function.edit(own->block, BlockEdit::Values).values.removeLast();
 
-    BlockFrequency frequency = function.at(own->block).frequency;
+    Expected<BlockFrequency> frequency = function.at(own->block).frequency;
     builder.setHandler(function.at(own->block).handler);
     BlockID otherTag = addAllocationBlock(builder, allocationOfMaker, family.maker, frequency, rest);
     BlockID ownConstruction = builder.addBlock(frequency);

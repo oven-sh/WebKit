@@ -26,6 +26,7 @@ import type {
   ClassColumns,
   ClassName,
   ConditionSpec,
+  ConstructedOperand,
   ContentsSlot,
   Conversion,
   CppClassRef,
@@ -412,6 +413,8 @@ export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnl
 export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfObjectsOnly" };
 // Native code tests that a value it means to call is callable, and keeps it.
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
+// Of the objects that it meets, native code converts those to a primitive that are made by Number, String or a class below one of them, and no other.
+export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
   { use: "Role", role: "KeysAreNotListed" },
@@ -770,7 +773,7 @@ export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnows
 // The target of a build decides which of the types it is: every run of an executable sees the same one.
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
 
-// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number, no SyntaxError for a text, no TypeError for the state of an object.
+// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number or for a text longer than a string may be, no SyntaxError for a text, no TypeError for the state of an object.
 export const propagated = "Propagated";
 
 export interface SignatureOptions extends SignatureColumns {
@@ -787,6 +790,7 @@ export interface SignatureOptions extends SignatureColumns {
 export interface UndeclaredSignature {
   otherwise: true;
   implementation?: ImplementationSpec;
+  constructs?: ConstructedOperand;
 }
 
 export const otherwise: UndeclaredSignature = { otherwise: true };
@@ -794,6 +798,11 @@ export const otherwiseBy = (implementation: ImplementationSpec): UndeclaredSigna
   otherwise: true,
   implementation,
 });
+// The signatures before it are written for one constructor in this operand. Native code constructs any other that it gets there.
+export const otherwiseConstructs = (
+  constructs: ConstructedOperand,
+  implementation?: ImplementationSpec,
+): UndeclaredSignature => ({ otherwise: true, implementation, constructs });
 
 export type FunctionField = (SignatureOptions & EntryColumns) | UndeclaredSignature;
 
@@ -996,6 +1005,7 @@ function undeclaredSignature(mode: CallMode, field: UndeclaredSignature): Signat
     throws: true,
     isUndeclared: true,
     implementation: field.implementation,
+    constructs: field.constructs,
   };
 }
 
@@ -1148,7 +1158,6 @@ export interface ClassOptions extends ClassColumns, EntryColumns {
 const classColumnKeys = [
   "extends",
   "jsType",
-  "typedArrayType",
   "sharingMode",
   "isPrimitiveWrapper",
   "isNeverPristine",
@@ -1234,7 +1243,6 @@ export function typedArrayClass(elementName: string, bytesPerElement: number): D
   return class_(`${elementName}Array`, {
     extends: "TypedArray",
     jsType: `${elementName}ArrayType`,
-    typedArrayType: `Type${elementName}`,
     constructorSignaturesOf: "TypedArray",
     lockedMembers: ["constructor", "prototype"],
     // core-js 2 keeps its copies of the methods of a class on the constructor, under their names.
@@ -1582,6 +1590,10 @@ export const seenCodeOnly = (options: {
   nativeFiles?: readonly string[];
 }): Declaration[] => [
   { declares: "SeenCodeOnly", holders: options.holders ?? [], nativeFiles: options.nativeFiles ?? [] },
+];
+
+export const instancesWithoutOwnNames = (...classes: readonly ClassName[]): Declaration[] => [
+  { declares: "InstancesWithoutOwnNames", classes },
 ];
 
 export const declarations = (...groups: readonly (readonly Declaration[])[]) => new DeclarationFile(groups.flat());

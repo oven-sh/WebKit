@@ -129,6 +129,16 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     jit.returnToCaller();
 
     isRope.link(&jit);
+    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2));
+    JumpList needsOperation;
+    load8BitCharactersOfSubstring(jit, subject, fiber, length, needsOperation);
+    jit.move(fiber, implArgument);
+    jit.load32(Address(subject, JSRopeString::offsetOfLength()), stringIndexArgument);
+    jit.move(stringIndex, length);
+    jit.callLeaf(Entry::operationAOTCharactersEqualImageString);
+    jit.returnToCaller();
+
+    needsOperation.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringEqualsLiteral, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = subject, .thirdArgumentIn = stringIndex });
 }
 
@@ -214,12 +224,7 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
 
     isRope.link(&jit);
     isNotEqual.append(jit.branch32(CCallHelpers::NotEqual, Address(subject, JSRopeString::offsetOfLength()), TrustedImm32(length)));
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    loadSubstringBaseAndOffset(jit, subject, fiber, offsetInBase);
-    jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
-    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), characters);
-    jit.addPtr(offsetInBase, characters);
+    load8BitCharactersOfSubstring(jit, subject, characters, offsetInBase, slowCases);
     jit.jump().linkTo(hasCharacters, &jit);
 
     isNotEqual.link(&jit);

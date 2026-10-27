@@ -15,9 +15,12 @@
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTProgramCaches.h"
+#include "AOTProgramTableEncoder.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSlotPlan.h"
+#include "AOTTypeArena.h"
+#include <optional>
 
 namespace JSC { namespace AOT {
 
@@ -48,7 +51,7 @@ struct HiddenBody {
 
 } // anonymous namespace
 
-CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context)
+CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context, ProgramTablesUse tables)
 {
     const Typed::Program& program = *pipeline.program;
 
@@ -61,7 +64,17 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
     }
     runTasksInParallel(context.parallelLoops(), {
         [&] {
-            plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context);
+            Typed::NamesInProgramTables namesInTables;
+            runTasksInParallel(context.parallelLoops(), {
+                [&] { plan.uses = collectProgramUses(pipeline, bodiesWithoutCode, context); },
+                [&] {
+                    plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context);
+                    if (tables == ProgramTablesUse::Written)
+                        namesInTables = Typed::findNamesInProgramTables(pipeline, plan.bodyFactsForTables, context);
+                },
+            });
+            plan.uses.keys.keysNamedByTables = WTF::move(namesInTables.keys);
+            plan.uses.keys.stringsNamedAsKeysByTables = WTF::move(namesInTables.texts);
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
@@ -74,7 +87,6 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
             if (!InstanceLayout::isAddressable(plan.instanceSizes))
                 context.reportLimitExceeded(LimitID::MaxStaticsSize, std::max(InstanceLayout::bytesReservedBelowInstance(plan.instanceSizes), InstanceLayout::bytesReservedFromInstance(plan.instanceSizes)));
         },
-        [&] { plan.bodyFactsForTables = Typed::collectBodyFactsForTables(program, bodiesWithoutCode, context); },
         [&] {
             plan.branchCounters = Typed::numberBranchCounters(program, context);
             plan.arrivalSites = Typed::numberArrivalSites(program, context);
@@ -258,6 +270,8 @@ struct CodeGenerationJob::State {
     Vector<FunctionID> ids;
     Vector<HiddenBody> hiddenBodies;
     GeneratedCode result;
+    std::optional<Typed::TypeInterningPhase> phase;
+    std::optional<Typed::ProgramCaches> caches;
 };
 
 CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context, const BitVector* bodiesWithoutCode)
@@ -300,46 +314,47 @@ CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, 
     forEachIndexInParallel(loops, functionsWithoutCode.size(), [&](unsigned index) {
         m_state->release(FunctionID(functionsWithoutCode[index]));
     });
+    m_state->phase.emplace(program.types, static_cast<unsigned>(m_state->batches.size()));
+    m_state->caches.emplace(program, context);
 }
 
-CodeGenerationJob::~CodeGenerationJob() = default;
+CodeGenerationJob::~CodeGenerationJob()
+{
+    m_state->caches.reset();
+    m_state->phase->discard();
+}
 
 GeneratedCode CodeGenerationJob::run()
 {
-    auto& [inputs, program, context, batches, ids, hiddenBodies, result] = *m_state;
+    auto& [inputs, program, context, batches, ids, hiddenBodies, result, phase, caches] = *m_state;
     const ParallelLoops& loops = context.parallelLoops();
     result.functions.grow(ids.size(), context);
     std::span<CompiledCode> functions = result.functions.mutableSpan();
     Vector<CodeGenerationTotals> totals(context.threadCount());
-    Typed::TypeInterningPhase phase(program.types, batches.size());
-    {
-        Typed::ProgramCaches caches(inputs.program, context);
-        forEachIndexInParallel(loops, batches.size(), [&](unsigned index, unsigned worker) {
-            Batch batch = batches[index];
-            std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
-            std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
-            for (uint32_t member = 0; member < batch.size; ++member) {
-                Typed::Function& function = program.at(idsInBatch[member]);
-                if (!function.bodyIsReleased)
-                    continue;
-                HiddenBody body = WTF::move(hiddenBodies[batch.first + member]);
-                function.editAllBlocks() = WTF::move(body.blocks);
-                function.editAllValues() = WTF::move(body.values);
-            }
-            Typed::TypeArena arena(phase, index);
-            Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);
-            for (uint32_t member = 0; member < batch.size; ++member) {
-                auto& code = functionsInBatch[member];
-                if (code.body.bytes.isEmpty())
-                    code.function = idsInBatch[member];
-                else
-                    prepareForImage(code, context);
-            }
-            for (FunctionID id : idsInBatch)
-                m_state->release(id);
-        });
-    }
-    phase.discard();
+    forEachIndexInParallel(loops, batches.size(), [&](unsigned index, unsigned worker) {
+        Batch batch = batches[index];
+        std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
+        std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
+        for (uint32_t member = 0; member < batch.size; ++member) {
+            Typed::Function& function = program.at(idsInBatch[member]);
+            if (!function.bodyIsReleased)
+                continue;
+            HiddenBody body = WTF::move(hiddenBodies[batch.first + member]);
+            function.editAllBlocks() = WTF::move(body.blocks);
+            function.editAllValues() = WTF::move(body.values);
+        }
+        Typed::TypeArena arena(*phase, index);
+        Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);
+        for (uint32_t member = 0; member < batch.size; ++member) {
+            auto& code = functionsInBatch[member];
+            if (code.body.bytes.isEmpty())
+                code.function = idsInBatch[member];
+            else
+                prepareForImage(code, context);
+        }
+        for (FunctionID id : idsInBatch)
+            m_state->release(id);
+    });
 
     for (auto& workerTotals : totals)
         result.entriesUsed.merge(workerTotals.entriesUsed);

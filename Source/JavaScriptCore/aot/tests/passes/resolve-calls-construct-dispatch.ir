@@ -18,7 +18,7 @@ function f0 name="Circle" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     Return v4
 }
 function f1 name="Square" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L1}] {
@@ -26,7 +26,7 @@ function f1 name="Square" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b1():
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = AssumeType v3 castType=L1
+    v4 = AssumeType v3 provenType=L1
     Return v4
 }
 function f2 name="Legacy" flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=undefined}] {
@@ -47,10 +47,10 @@ function f6 name="two-classes" parameters=[{type=f0|f1}, {type=anything}] result
 # CHECK-NEXT: [[isCircle]]: boolean = TypeTest v0 testedType=f0
 # CHECK-NEXT: Branch [[isCircle]] -> taken [[circleArm]](| 0), notTaken [[squareArm]](| 0)
 # CHECK: [[circleArm]]([[circle]]: f0):
-# CHECK-NEXT: : L0 = CallDirect [[circle]], v1 function=f0 [isConstruction]
+# CHECK-NEXT: : L0 = CallDirect [[circle]], v1 function=f0 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: TypeTest
 # CHECK: [[squareArm]]([[square]]: f1)
-# CHECK-NEXT: : L1 = CallDirect [[square]], v1 function=f1 [isConstruction]
+# CHECK-NEXT: : L1 = CallDirect [[square]], v1 function=f1 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 
@@ -59,10 +59,10 @@ function f7 name="two-constructor-functions" parameters=[{type=f2|f3}, {type=any
     Return v2
 # CHECK: = TypeTest v0 testedType=f2
 # CHECK: ([[legacy]]: f2):
-# CHECK-NEXT: : L2 = CallDirect [[legacy]], v1 function=[[legacyBody]] [isConstruction]
+# CHECK-NEXT: : L2 = CallDirect [[legacy]], v1 function=[[legacyBody]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: TypeTest
 # CHECK: ([[older]]: f3)
-# CHECK-NEXT: : L3 = CallDirect [[older]], v1 function=[[olderBody]] [isConstruction]
+# CHECK-NEXT: : L3 = CallDirect [[older]], v1 function=[[olderBody]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }
 
@@ -81,7 +81,7 @@ function f9 name="class-or-built-in" parameters=[{type=f0|builtin(Error)}, {type
     v2 = Construct v0, -, v1
     Return v2
 # CHECK: = TypeTest v0 testedType=f0
-# CHECK: = CallDirect {{*}}, v1 function=f0 [isConstruction]
+# CHECK: = CallDirect {{*}}, v1 function=f0 [isConstruction, calleeIsPredicted]
 # CHECK: ([[errorClass]]: builtin(Error))
 # CHECK-NEXT: : anything ~ object = Construct [[errorClass]], -, v1
 }
@@ -90,9 +90,9 @@ function f10 name="two-parents" parameters=[{type=f0|f1}, {type=f5}, {type=anyth
     v3 = SuperConstruct v0, v1, v2 layout=L4
     Return v3
 # CHECK: = TypeTest v0 testedType=f0
-# CHECK: = CallDirect v1, v2 function=f0 [isConstruction]
+# CHECK: = CallDirect v1, v2 function=f0 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: TypeTest
-# CHECK: = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK: = CallDirect v1, v2 function=f1 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: SuperConstruct
 }
 
@@ -100,8 +100,8 @@ function f11 name="two-parents-and-literal-list" parameters=[{type=f0|f1}, {type
     v3 = NewArray v2 contents=anything
     v4 = SuperConstructList v0, v1, v3 layout=L4
     Return v4
-# CHECK: = CallDirect v1, v2 function=f0 [isConstruction]
-# CHECK: = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK: = CallDirect v1, v2 function=f0 [isConstruction, calleeIsPredicted]
+# CHECK: = CallDirect v1, v2 function=f1 [isConstruction, calleeIsPredicted]
 # CHECK-NOT: SuperConstructList
 }
 
@@ -124,7 +124,7 @@ function f13 name="any-function" parameters=[{type=function}, {type=anything}] r
 }
 
 # CHECK: function [[legacyBody]] name="Legacy"{{*}}role=ConstructBody
-# CHECK: [[legacyClosure]]: f2 = AssumeType {{*}} castType=f2
+# CHECK: [[legacyClosure]]: f2 = AssumeType {{*}} provenType=f2
 # CHECK-NEXT: [[legacyPrototype]]: object = GetConstructPrototype [[legacyClosure]] layout=L2
 # CHECK-NEXT: [[legacyThis]]: L2 = NewObject [[legacyPrototype]] layout=L2
 # CHECK-NEXT: Return [[legacyThis]]

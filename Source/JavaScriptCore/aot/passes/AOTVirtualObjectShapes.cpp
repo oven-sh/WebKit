@@ -337,11 +337,33 @@ static KnownBoolean evaluateTypeTestOfShape(const ShapeContext& context, const V
 static KnownBoolean hasLayoutIn(const Program& program, const VirtualObjectDescription& description, LayoutSetID layouts)
 {
     if (description.layout)
-        return knownBoolean(std::ranges::binary_search(program.at(layouts).members, description.layout));
+        return knownBoolean(std::ranges::binary_search(program.at(layouts).completeMembers(), description.layout));
     if (description.kind != VirtualObjectKind::Opaque)
         return KnownBoolean::False;
     const Type& type = program.at(description.type);
     return type.anyObject || type.layouts ? KnownBoolean::Unknown : KnownBoolean::False;
+}
+
+FieldContents contentsOf(const ShapeContext& context, const VirtualObjectDescription& description, uint32_t field)
+{
+    return { typeOfField(context.objects, description, context.family.fieldAt(field)), context.family.mayHoldUndefinedOrNull(field) };
+}
+
+bool isWithin(const Program& program, FieldContents contents, TypeID bound)
+{
+    if (contents.mayAlsoBeUndefinedOrNull && !program.at(TypeTable::nullish).isSubsetOf(program.at(bound), program))
+        return false;
+    return contents.type == bound || program.at(contents.type).isSubsetOf(program.at(bound), program);
+}
+
+bool mayBeUndefinedOrNull(const Program& program, FieldContents contents)
+{
+    return contents.mayAlsoBeUndefinedOrNull || program.at(contents.type).mayBeUndefinedOrNull();
+}
+
+TypeID typeOf(FieldContents contents, TypeArena& types)
+{
+    return contents.mayAlsoBeUndefinedOrNull && contents.type != TypeTable::never ? types.unionOf(contents.type, TypeTable::nullish) : contents.type;
 }
 
 static bool rejectsNullishValues(const Value& test)
@@ -367,7 +389,7 @@ static KnownBoolean evaluateFieldTest(const ShapeContext& context, const Virtual
     if (field && hasStored(shape, *field) && !isPastEnd) {
         if (access.whenPresent != PresentField::IsOwnData)
             return KnownBoolean::Unknown;
-        if (rejectsNullishValues(test) && context.objects.program.at(typeOfField(context.objects, description, access.field)).mayBeUndefinedOrNull())
+        if (rejectsNullishValues(test) && mayBeUndefinedOrNull(context.objects.program, contentsOf(context, description, *field)))
             return KnownBoolean::Unknown;
         return KnownBoolean::True;
     }
@@ -530,7 +552,7 @@ ListOfNumbers classifyListOfNumbers(const Program& program, const VirtualObjectD
     ArrayStorage expected = arrayStorageAtAllocation(program, program.at(description.type));
     if (expected == ArrayStorage::Contiguous)
         return ListOfNumbers::No;
-    return program.at(description.elementType).isSubsetOf(typeOfNumbersIn(expected), program) ? ListOfNumbers::FitsByType : ListOfNumbers::MayNotFit;
+    return fitsStorageOfLiteral(expected, program.at(description.elementType)) ? ListOfNumbers::FitsByType : ListOfNumbers::MayNotFit;
 }
 
 // Nobody sees the storage of an array that is not there, and what is read from it is what was stored, so the test goes the way it was expected to.
@@ -572,9 +594,15 @@ static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const Virtua
     if (!isArray(context.family.descriptionOf(shape)))
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
-    if (position.kind() != KnownValue::Kind::Integer)
+    if (position.kind() == KnownValue::Kind::Integer)
+        return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
+    const Type& type = context.objects.program.typeOf(context.objects.function, test.positionOperand());
+    if (!type.isInteger())
         return KnownBoolean::Unknown;
-    return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
+    Range positions { 0, static_cast<int64_t>(shape.length) - 1 };
+    if (type.integers.isSubsetOf(positions))
+        return KnownBoolean::True;
+    return type.integers.intersectWith(positions).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
 static KnownBoolean evaluateBirthTest(const ShapeContext& context, const VirtualShape& shape)
@@ -591,7 +619,7 @@ static KnownBoolean evaluateBirthTest(const ShapeContext& context, const Virtual
         std::optional<uint32_t> field = key ? context.family.findField(VirtualField::named(key)) : std::nullopt;
         if (!field || !hasStored(shape, *field))
             return KnownBoolean::Unknown;
-        if (holdsRawValueFromBirth(program, { description.layout, index }) && program.at(typeOfField(context.objects, description, VirtualField::named(key))).mayBeUndefinedOrNull())
+        if (holdsRawValueFromBirth(program, { description.layout, index }) && mayBeUndefinedOrNull(program, contentsOf(context, description, *field)))
             return KnownBoolean::Unknown;
     }
     return KnownBoolean::True;
@@ -695,13 +723,14 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return CastOutcome::Unknown;
     switch (cast.opcode) {
     case Opcode::Upcast:
+    case Opcode::Expect:
     case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::FinishObject:
     case Opcode::CheckInitialized:
         return CastOutcome::Passes;
     case Opcode::Check:
-        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.castType())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
+        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.expectedType().predicted())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
     case Opcode::RequireObjectCoercible:
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:

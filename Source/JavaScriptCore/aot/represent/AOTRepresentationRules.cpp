@@ -10,13 +10,17 @@
 
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
 #include "AOTChooseCallingConventions.h"
+#include "AOTHeldOperands.h"
+#include "AOTInductionVariables.h"
 #include "AOTOperatorForms.h"
 #include "AOTPlacement.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaResultRules.h"
 #include "AOTValueIdentity.h"
+#include "TypedArrayType.h"
 #include <algorithm>
 #include <wtf/StringPrintStream.h>
 
@@ -41,10 +45,9 @@ static constexpr OpcodeSet testOperators {
 };
 static_assert((representedBitwiseOperators | testOperators | Value::opcodesWithForm) == Value::opcodesWithForm);
 static_assert(!representedBitwiseOperators.intersects(testOperators));
-static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
 
-static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::OptionalDouble };
+static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::DoubleWithPayload, Representation::ImpureDouble, Representation::OptionalDouble };
 static constexpr RepresentationSet stringSubjectRepresentations { Representation::Cell, Representation::LiteralString };
 
 static constexpr bool forwardsOperand(Opcode opcode)
@@ -157,8 +160,10 @@ static Representation wantedByKind(const RepresentationInputs& inputs, OperandKi
     case OperandKind::StringBuilder:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
+    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::JSONHolders:
     case OperandKind::BuilderCursor:
         return representationOf(*opaqueKindOf(kind));
     }
@@ -234,7 +239,7 @@ static Representation wantedByNumbers(const RepresentationInputs& inputs, const 
     }
     if (isSumOfBoxedNumbers(user))
         return type.isInt32() ? Representation::Int32 : Representation::JSValue;
-    bool takesNumberAsItIs = relations.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
+    bool takesNumberAsItIs = relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
     if (takesNumberAsItIs && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
         return Representation::Unchosen;
     if (type.isNumber())
@@ -411,7 +416,7 @@ static Representation wantedByBuiltinCall(const RepresentationInputs& inputs, co
     std::optional<uint32_t> argumentIndex = call.variadicOperandIndex(operandIndex);
     if (argumentIndex && builtin == InlineBuiltin::ArrayPush) {
         Representation wanted = wantedByNewArrayElement(inputs, call.operand(operandIndex));
-        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))) == ArrayStorage::Double;
+        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))).predicted() == ArrayStorage::Double;
         return wanted == Representation::JSValue && isPushedToDoubles && type.isNumber() ? Representation::Double : wanted;
     }
 
@@ -471,13 +476,13 @@ static Representation wantedByResults(const RepresentationInputs& inputs, const 
     const Function& function = inputs.function;
     if (function.results.size() != 1 && resultIndex < function.results.size() && isReturnedByFunction(function, results))
         return inputs.conventions.resultRepresentation(inputs.program, inputs.id, resultIndex);
-    return declaredRepresentationOf(inputs.program, DeclaredType { .type = function.at(results.valuesOperands()[resultIndex]).type });
+    return declaredRepresentationOf(inputs.program, DeclaredType(Proven::byPosition(function.at(results.valuesOperands()[resultIndex]).type)));
 }
 
 static Representation wantedByDeclaredPosition(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)
 {
     ValueID operand = user.operand(operandIndex);
-    if (!operand)
+    if (!operand || isHeldOperand(user, operandIndex))
         return Representation::Unchosen;
 
     const Placement& placement = inputs.placement;
@@ -495,6 +500,8 @@ static Representation wantedByDeclaredPosition(const RepresentationInputs& input
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.fields()[variadicIndex()]), operand);
     case Opcode::PrivateDefine:
         return Representation::JSValue;
+    case Opcode::NewArray:
+        return Representation::Unchosen;
     case Opcode::PutEnvironmentField:
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.field()), operand);
     case Opcode::PutModuleVariable: {
@@ -603,13 +610,130 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatComputeWithNumbers {
+    InlineBuiltin::MathAbs, InlineBuiltin::MathFloor, InlineBuiltin::MathCeil, InlineBuiltin::MathTrunc, InlineBuiltin::MathRound, InlineBuiltin::MathFround, InlineBuiltin::MathF16Round,
+    InlineBuiltin::MathSqrt, InlineBuiltin::MathPow, InlineBuiltin::MathMin, InlineBuiltin::MathMax, InlineBuiltin::MathFunction, InlineBuiltin::MathATan2, InlineBuiltin::MathHypot,
+};
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatInspectNumbers {
+    InlineBuiltin::MathImul, InlineBuiltin::MathClz32, InlineBuiltin::MathSign, InlineBuiltin::IsNaN, InlineBuiltin::IsFinite,
+    InlineBuiltin::NumberIsNaN, InlineBuiltin::NumberIsFinite, InlineBuiltin::NumberIsInteger, InlineBuiltin::NumberIsSafeInteger,
+};
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatMoveBytes { InlineBuiltin::DataViewGet, InlineBuiltin::DataViewSet, InlineBuiltin::BufferAccess };
+
+static std::optional<InlineBuiltin> inlineBuiltinOf(const Value& value)
+{
+    return value.opcode == Opcode::CallInline ? std::optional(value.inlineBuiltin()) : std::nullopt;
+}
+
+static std::optional<InlineBuiltin> inlineBuiltinOf(const Terminator& terminator)
+{
+    return terminator.kind == TerminatorKind::TryCallInline ? std::optional(terminator.inlineBuiltin()) : std::nullopt;
+}
+
+static bool computesWithNumbers(const Value& value)
+{
+    return hasOperatorForm(value.opcode) && value.form() == OperatorForm::Numbers && !isSumOfBoxedNumbers(value);
+}
+
+static bool computesWithNumbers(const Terminator&)
+{
+    return false;
+}
+
+bool readsDoubleOutOfBytes(const Value& value)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(value);
+    return value.opcode == Opcode::GetTypedArrayElement || (builtin && builtinsThatMoveBytes.contains(*builtin));
+}
+
+bool readsDoubleOutOfBytes(const Terminator& terminator)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(terminator);
+    return builtin && builtinsThatMoveBytes.contains(*builtin);
+}
+
+// Arithmetic hands the sign and the payload of a NaN on to its result.
+template<typename User>
+static bool handsBitsOfNaNOnToResult(const User& user)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    return computesWithNumbers(user) || (builtin && builtinsThatComputeWithNumbers.contains(*builtin));
+}
+
+// A typed array takes the bits as they are. On x86-64 no instruction converts to a Float16, and the JIT hands such a store a boxed number. An array of doubles takes no NaN, and the store boxes what it hands on.
+static bool storesAsElement(const Value& value, uint32_t operandIndex)
+{
+    if (value.opcode == Opcode::PutTypedArrayElement)
+        return value.typedArrayType() != TypeFloat16 || targetOfThisBuild().architecture != BuiltinArchitecture::X86_64;
+    return value.opcode == Opcode::PutArrayElement && OperandPosition::value(value.opcode) == operandIndex;
+}
+
+static bool storesAsElement(const Terminator&, uint32_t)
+{
+    return false;
+}
+
+// A position becomes an index, and a test asks which number it is.
+static bool keepsNoBitsOfNumber(const Value& value, uint32_t operandIndex)
+{
+    return value.opcode == Opcode::TypeTest || acceptsIntegerOrDouble(value.opcode, operandIndex);
+}
+
+static bool keepsNoBitsOfNumber(const Terminator& terminator, uint32_t)
+{
+    return terminator.kind == TerminatorKind::Switch;
+}
+
+template<typename User>
+static bool takesAnyNaN(const User& user, uint32_t operandIndex)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    if (builtin == InlineBuiltin::ArrayPush)
+        return !!user.variadicOperandIndex(operandIndex);
+    return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
+}
+
+static bool convertsOperand(const Value& value)
+{
+    return isRepresentationConversion(value.opcode);
+}
+
+static bool convertsOperand(const Terminator&)
+{
+    return false;
+}
+
+template<typename User>
+static Representation formOfDoubleMadeBy(const RepresentationInputs& inputs, const User& user)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
+    if (builtin && builtinsThatMoveBytes.contains(*builtin))
+        return Representation::ImpureDouble;
+    Representation form = Representation::Double;
+    if (!handsBitsOfNaNOnToResult(user))
+        return form;
+    user.forEachOperand([&](ValueID operand, uint32_t) {
+        Representation chosen = inputs.function.at(operand).representation;
+        if (holdsAnyNaN(chosen))
+            form = std::max(form, chosen);
+        // An operator takes undefined as its marker, which is a NaN.
+        else if (computesWithNumbers(user) && !inputs.typeOf(operand).isNumber())
+            form = std::max(form, Representation::DoubleWithPayload);
+    });
+    return form;
+}
+
 template<typename User>
 static Representation wantedByUser(const RepresentationInputs& inputs, const User& user, uint32_t operandIndex)
 {
-    Representation wanted = user.operand(operandIndex) ? wantedByOperation(inputs, user, operandIndex) : Representation::Unchosen;
-    if (wanted != Representation::Unchosen || user.operandKind(operandIndex) != OperandKind::Declared)
+    ValueID operand = user.operand(operandIndex);
+    Representation wanted = operand ? wantedByOperation(inputs, user, operandIndex) : Representation::Unchosen;
+    if (wanted == Representation::Unchosen && user.operandKind(operandIndex) == OperandKind::Declared)
+        wanted = wantedByDeclaredPosition(inputs, user, operandIndex);
+    bool takesDouble = wanted == Representation::Double || wanted == Representation::Unchosen;
+    if (!operand || !takesDouble || convertsOperand(user) || !holdsAnyNaN(inputs.function.at(operand).representation))
         return wanted;
-    return wantedByDeclaredPosition(inputs, user, operandIndex);
+    return takesAnyNaN(user, operandIndex) ? inputs.function.at(operand).representation : Representation::Double;
 }
 
 Representation wantedRepresentationOf(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)
@@ -725,19 +849,22 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return value.representation;
     if (numberOfResultsOf(inputs.program, inputs.function, value))
         return Representation::Void;
+    auto inFormOfDouble = [](Representation form, Representation representation) {
+        return representation == Representation::Double ? form : representation;
+    };
     if (hasOperatorForm(value.opcode))
-        return resultOfOperator(inputs, value);
+        return inFormOfDouble(formOfDoubleMadeBy(inputs, value), resultOfOperator(inputs, value));
 
     const Type& type = inputs.program.at(value.type);
     if (value.opcode == Opcode::GetArrayElement)
         return naturalOrDefaultRepresentation(type, elementRepresentationOf(value.arrayStorage()));
     if (value.opcode == Opcode::GetTypedArrayElement)
-        return naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType())));
+        return inFormOfDouble(Representation::ImpureDouble, naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType()))));
     if (operationsReturningBoxedValue.contains(value.opcode) || (value.opcode == Opcode::CallBuiltin && !isCompiledInline(value.builtinCallForm())))
         return Representation::JSValue;
 
     ResultRepresentationRules rules { inputs, std::nullopt };
-    return applyResultRule(rules, value, 0, ResultSide::Unproven);
+    return inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven));
 }
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& producer, uint32_t resultIndex)
@@ -759,7 +886,8 @@ Representation edgeResultRepresentationOf(const RepresentationInputs& inputs, Ed
         return Representation::Void;
     case EdgeResultKind::DeclaredResult: {
         ScratchTypeArena types(inputs.program.types);
-        return defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
+        Representation representation = defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
+        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : representation;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -773,7 +901,7 @@ static std::optional<Opcode> stepFromVoid(Representation to)
         return Opcode::Box;
     case Cell32: case LiteralString:
         return Opcode::Compress;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case Cell: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case Cell: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -785,7 +913,7 @@ static std::optional<Opcode> stepFromBoolean(Representation to)
     switch (to) {
     case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -797,7 +925,7 @@ static std::optional<Opcode> stepFromInt32(Representation to)
     switch (to) {
     case Int64:
         return Opcode::WidenInteger;
-    case Double:
+    case Double: case DoubleWithPayload: case ImpureDouble:
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
@@ -813,7 +941,7 @@ static std::optional<Opcode> stepFromInt64(Representation to)
     switch (to) {
     case Int32:
         return Opcode::NarrowInteger;
-    case Double:
+    case Double: case DoubleWithPayload: case ImpureDouble:
         return Opcode::IntegerToNumber;
     case OptionalInt64: case JSValue:
         return Opcode::Box;
@@ -829,9 +957,27 @@ static std::optional<Opcode> stepFromDouble(Representation to)
     switch (to) {
     case Int32: case Int64:
         return Opcode::NumberToInteger;
-    case OptionalDouble: case JSValue:
+    case DoubleWithPayload: case ImpureDouble: case OptionalDouble: case JSValue:
         return Opcode::Box;
     case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<Opcode> stepFromDoubleWithAnyNaN(Representation from, Representation to)
+{
+    using enum Representation;
+    switch (to) {
+    case Int32: case Int64:
+        return Opcode::NumberToInteger;
+    case Double:
+        return Opcode::Unbox;
+    case OptionalDouble: case JSValue:
+        return Opcode::Box;
+    case ImpureDouble:
+        return from == DoubleWithPayload ? std::optional(Opcode::Box) : std::nullopt;
+    case Unchosen: case Void: case Boolean: case DoubleWithPayload: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -845,7 +991,7 @@ static std::optional<Opcode> stepFromOptionalInt64(Representation to)
         return Opcode::Unbox;
     case OptionalDouble: case JSValue:
         return Opcode::Box;
-    case Unchosen: case Void: case Boolean: case Double: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case Cell: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -855,7 +1001,7 @@ static std::optional<Opcode> stepFromOptionalDouble(Representation to)
 {
     using enum Representation;
     switch (to) {
-    case Double: case OptionalInt64:
+    case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64:
         return Opcode::Unbox;
     case JSValue:
         return Opcode::Box;
@@ -873,7 +1019,7 @@ static std::optional<Opcode> stepFromCell(Representation to)
         return Opcode::Box;
     case Cell32: case LiteralString:
         return Opcode::Compress;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -885,7 +1031,7 @@ static std::optional<Opcode> stepFromEncodedCell(Representation to)
     switch (to) {
     case Cell: case JSValue:
         return Opcode::Decode;
-    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell32: case LiteralString: case RawWord:
+    case Unchosen: case Void: case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell32: case LiteralString: case RawWord:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -895,7 +1041,7 @@ static std::optional<Opcode> stepFromJSValue(Representation to)
 {
     using enum Representation;
     switch (to) {
-    case Boolean: case Int32: case Int64: case Double: case OptionalInt64: case OptionalDouble: case Cell:
+    case Boolean: case Int32: case Int64: case Double: case DoubleWithPayload: case ImpureDouble: case OptionalInt64: case OptionalDouble: case Cell:
         return Opcode::Unbox;
     case Cell32: case LiteralString:
         return Opcode::Compress;
@@ -919,6 +1065,8 @@ static std::optional<Opcode> singleStep(Representation from, Representation to)
         return stepFromInt64(to);
     case Double:
         return stepFromDouble(to);
+    case DoubleWithPayload: case ImpureDouble:
+        return stepFromDoubleWithAnyNaN(from, to);
     case OptionalInt64:
         return stepFromOptionalInt64(to);
     case OptionalDouble:
@@ -974,6 +1122,8 @@ void checkRepresentations(const RepresentationInputs& inputs, Vector<InternalErr
         if (!isLegalRepresentation(inputs.typeOf(id), value.representation))
             return false;
         Representation expected = resultRepresentationOf(inputs, value);
+        if (expected == Representation::ImpureDouble && value.representation == Representation::Double && readsDoubleOutOfBytes(value))
+            return true;
         return expected == Representation::Unchosen || expected == value.representation;
     };
     auto canConvert = [&](ValueID id, Representation wanted) {

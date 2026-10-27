@@ -39,6 +39,8 @@ namespace JSC { namespace B3 {
 struct PureFunction {
     uint64_t id;
     bool dependsOnChildren { false };
+    // Its one child is a Double, and for a whole number within int64 its result is that number.
+    bool truncatesDoubleToInt64 { false };
 
     friend bool operator==(const PureFunction&, const PureFunction&) = default;
 };

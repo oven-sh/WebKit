@@ -69,6 +69,10 @@ struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
     bool returnsValue { true };
     bool checksException { true };
+    // The stub has not written it, so it is saved with the registers of the caller or by the callee.
+    std::optional<GPRReg> cellToKeep { };
+    // Emits what stands in front of the return, where the frame is gone, the registers of the caller are back and nothing was thrown.
+    const ScopedLambda<void()>* emitBeforeReturn { nullptr };
 };
 
 void readTagsFromInstance(CCallHelpers&);
@@ -127,6 +131,8 @@ public:
     void tailCallOperation(Entry entry, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(entry, firstArgument); }
     void tailCallOperation(GPRReg offsetInRuntimeTable, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(offsetInRuntimeTable, firstArgument); }
     void callLeaf(Entry, unsigned bytesPushed = 0);
+    // In the head of a call of an operation: the call goes to this one, which takes the same arguments.
+    void jumpToOperationCallOf(Entry);
 
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
     void exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall&);
@@ -154,6 +160,9 @@ public:
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
+    // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
+    void checkStackBeforeEnteringCallee();
+    static Address limitOfCallsByValue();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
     void returnFlags32(RelationalCondition, GPRReg, TrustedImm32);
@@ -309,6 +318,7 @@ private:
 
     void emitStackAlignmentCheck();
     void emitStubCall(StubKey);
+    void pollIfBelow(Address limit, StubKey poll);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
     void checkReturnsFlags(RelationalCondition) const;

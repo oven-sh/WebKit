@@ -1,0 +1,40 @@
+# for (;;) new Helper(object).define("a");
+# A link in a loop defines the member many times at one place whatever is copied.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Sloppy
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    Jump -> next b1()
+  b1():
+    v6 = Construct v0, -, v5
+    v7 = PropGet v6 key="define"
+    v8 = String string="a"
+    v9 = Call v7, v6, v8
+    Jump -> next b1()
+}
+function f1 name="Helper" module=m0 position=10 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = ToThis v0
+    PropSet v2, v1 key="target" mode=Sloppy
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = ToThis v0
+    v3 = PropGet v2 key="target"
+    v4 = NewClosure v1 function=f3
+    ElemSet v3, v1, v4 mode=Sloppy
+    Return v2
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

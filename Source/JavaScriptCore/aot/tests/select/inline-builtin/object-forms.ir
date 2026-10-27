@@ -336,3 +336,15 @@ function f23 name="setPrototypeOfInCompactBlock" parameters=[{type=object}, {typ
 # CHECK-NOT: CallInline
 # CHECK: v2: {{*}} = CallBuiltin -, v0, v0 overload=ObjectSetPrototypeOf/0
 # CHECK-NOT: CallInline
+
+function f24 name="reflectConstruct" parameters=[{type=function}, {type=Array}, {type=function}] results=[{type=anything}] {
+    v3 = CallBuiltin -, v0, v1 overload=ReflectConstruct/0 [isDoneInPlace]
+    v4 = CallBuiltin -, v0, v1, v2 overload=ReflectConstruct/1 [isDoneInPlace]
+    Return v4
+}
+# FORMS: function f24
+# FORMS-NEXT: v3 {{*}} ReflectConstruct {{*}} TwoWay
+# FORMS-NEXT: v4 {{*}} ReflectConstruct {{*}} TwoWay
+# CHECK-LABEL: function f24 name="reflectConstruct"
+# CHECK: TryCallInline -, v0, v1 inlineBuiltin=ReflectConstruct overload=ReflectConstruct/0 -> done
+# CHECK: TryCallInline -, v0, v1, v2 inlineBuiltin=ReflectConstruct overload=ReflectConstruct/1 -> done

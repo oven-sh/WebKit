@@ -59,7 +59,7 @@ struct MovedLoad {
     std::span<const WordChange> changesThatDoNotCount { };
 };
 
-// Reads the location again and reports unless it holds what the users of the load are given. No load or store waits for it.
+// Reads the location again and reports unless it holds what the users of the load are given. No load or store waits for it, and no function gets a frame for it: the report does not come back.
 using DifferenceReport = SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>;
 JS_EXPORT_PRIVATE PatchpointValue* createMovedLoadCheck(Procedure&, const MovedLoad&, Value* address, Value* givenToUsers, RefPtr<DifferenceReport>);
 
@@ -76,6 +76,9 @@ public:
     // A copy of the value in front of a load's place has such a place behind it, if the address and what the users are given are there too.
     void didClone(Value* original, Value* clone);
     void willDelete(Value*);
+    // What stood in front of the split is in `head` now.
+    void didSplitForward(BasicBlock*, BasicBlock* head);
+    void willDelete(BasicBlock*);
     // For a phase that takes a write from its place. The log cannot tell on which side of a load it ends up.
     JS_EXPORT_PRIVATE void willMove(Value* write);
 

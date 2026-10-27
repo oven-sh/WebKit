@@ -593,7 +593,7 @@ static void testEveryRealmOfClosedProgramRefusesEvaluation()
     checkShellOutput(printsSum, "number\nfunction\nfunction\nnumber\nfunction\nfunction\n2\n"_s, evaluateInEveryRealm, { "disable=flow-results"_s });
 }
 
-#define AOT_DECLARATION_REFUSED(name) "SyntaxError: Cannot declare '" name "': compiled code treats the global '" name "' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_DECLARATION_REFUSED(name) "SyntaxError: Cannot declare '" name "': compiled code treats the global '" name "' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 static void testScriptShadowsNoConstantOfCompiledCode()
 {
@@ -610,9 +610,9 @@ static void testScriptShadowsNoConstantOfCompiledCode()
     checkShellOutput(readsGlobalsAfterScripts, expectedOutput, declareInScripts, { "validate"_s });
 }
 
-#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_LOAD_BY_NAME_REFUSED "Cannot load '/other.js': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
-#define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+#define AOT_LOADER_CHANGE_REFUSED ": imports in this executable were resolved at build time, so the module loader can't be patched. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)\n"
 
 static constexpr ASCIILiteral runOtherModule = "globalThis.name = '/other.js'; try { runCompiledEntryPoint(2); drainMicrotasks(); } catch (error) { print(error.message); }"_s;
 

@@ -10,6 +10,7 @@
 
 #include "AOTSort.h"
 #include <algorithm>
+#include <wtf/DataLog.h>
 #include <wtf/Locker.h>
 #include <wtf/MathExtras.h>
 
@@ -176,7 +177,7 @@ uint32_t ValueSets::InternedRuns::intern(Room& room, std::span<const uint64_t> w
         return found;
     }
     table.slots()[position].store(static_cast<uint64_t>(hash) << 32 | number, std::memory_order_release);
-    if (static_cast<size_t>(++shard.size) * 2 > table.numberOfSlots())
+    if (static_cast<size_t>(++shard.size) * 3 > table.numberOfSlots() * 2)
         grow(shard);
     return number;
 }
@@ -189,15 +190,61 @@ size_t ValueSets::InternedRuns::size() const
     return size;
 }
 
-size_t ValueSets::InternedRuns::memoryInBytes() const
+NEVER_INLINE void ValueFlowBytesByTable::add(ASCIILiteral table, size_t bytesInUse, size_t bytesHeld)
 {
-    size_t bytes = static_cast<size_t>(endOfNumbers()) * bytesPerUnit;
-    for (const Shard& shard : m_shards) {
-        bytes += shard.table.load(std::memory_order_relaxed).numberOfSlots() * sizeof(Slot);
-        for (Table table : shard.outgrownTables)
-            bytes += table.numberOfSlots() * sizeof(Slot);
+    for (Row& row : m_rows) {
+        if (row.table.characters() == table.characters()) {
+            row.bytesInUse += bytesInUse;
+            row.bytesHeld += bytesHeld;
+            return;
+        }
     }
-    return bytes;
+    m_rows.append(Row { table, bytesInUse, bytesHeld });
+}
+
+void ValueFlowBytesByTable::dump(ASCIILiteral nameOfSum) const
+{
+    Row all { nameOfSum };
+    auto dumpRow = [](const Row& row) {
+        dataLogLn("AOT flow bytes | ", row.table, " | in use ", row.bytesInUse / KB, " KB | held ", row.bytesHeld / KB, " KB");
+    };
+    for (const Row& row : m_rows) {
+        dumpRow(row);
+        all.bytesInUse += row.bytesInUse;
+        all.bytesHeld += row.bytesHeld;
+    }
+    dumpRow(all);
+}
+
+void ValueSets::InternedRuns::addBytesTo(ValueFlowBytesByTable& bytes, ASCIILiteral runs, ASCIILiteral index) const
+{
+    bytes.add(runs, static_cast<size_t>(endOfNumbers()) * bytesPerUnit);
+    for (const Shard& shard : m_shards) {
+        bytes.add(index, shard.size * sizeof(Slot), shard.table.load(std::memory_order_relaxed).numberOfSlots() * sizeof(Slot));
+        for (Table table : shard.outgrownTables)
+            bytes.add(index, 0, table.numberOfSlots() * sizeof(Slot));
+    }
+}
+
+void ValueSetMaker::addBytesTo(ValueFlowBytesByTable& bytes) const
+{
+    constexpr ASCIILiteral remembered = "set makers: results remembered"_s;
+    bytes.add(remembered, sizeof(m_rememberedSets));
+    bytes.addList(remembered, m_rememberedEntries);
+    bytes.addList(remembered, m_rememberedBlocks);
+    bytes.addMap(remembered, m_setOfRange);
+    auto addScratch = [&](const auto&... lists) {
+        (bytes.addList("set makers: scratch lists"_s, lists), ...);
+    };
+    addScratch(m_list, m_listOfBlocks, m_entryAtGroupOfPlaces, m_blockAtPlace, m_gatheredBlocks, m_members, m_highMembers, m_bitsOfWords, m_scatteredMembers, m_wordsTouchedAtPlace, m_placesTouched);
+}
+
+void ValueSets::addBytesTo(ValueFlowBytesByTable& bytes) const
+{
+    m_lists.addBytesTo(bytes, "sets: lists"_s, "sets: index of lists"_s);
+    m_groups.addBytesTo(bytes, "sets: groups"_s, "sets: index of groups"_s);
+    m_blocks.addBytesTo(bytes, "sets: blocks"_s, "sets: index of blocks"_s);
+    bytes.add("sets: results remembered by all threads"_s, sizeof(RememberedByAll) << m_bitsOfRememberedByAll);
 }
 
 ValueSets::ValueSets(uint32_t sizeOfUniverse)

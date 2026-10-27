@@ -39,30 +39,7 @@ static ArrayStorageFormList formsStartingWith(const ArrayStorageForm& expected)
 
 Operand ArrayStorageBuiltinEmitter::lengthResult(const InlineCall& call, Integer length)
 {
-    Representation representation = resultRepresentationOf(call);
-    switch (representation) {
-    case Representation::Void:
-        return { };
-    case Representation::Int32:
-        return low32(length);
-    case Representation::Int64:
-        return length;
-    case Representation::Double:
-        return toNumber(length);
-    case Representation::JSValue:
-        return emitter<ConversionEmitter>().boxInteger(length, Range::uint32());
-    case Representation::Unchosen:
-    case Representation::Boolean:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::LiteralString:
-    case Representation::RawWord:
-        break;
-    }
-    fail(call.context(), InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(representation);
+    return emitter<ConversionEmitter>().inRepresentation(call.context(), length, Type::integer(Range::uint32()), resultRepresentationOf(call));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayLength(const InlineCall& call)
@@ -150,7 +127,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver()));
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
@@ -263,7 +240,8 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
     m_out.appendTo(isNotInteger);
     join.add(integer(invalidArrayLength));
     Integer length = join.finish();
-    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call))));
+    bool isDoneInPlace = call.value() && (*call.value())->isDoneInPlace();
+    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call)), isDoneInPlace ? BuiltinID() : functionOf(call.overload())));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)

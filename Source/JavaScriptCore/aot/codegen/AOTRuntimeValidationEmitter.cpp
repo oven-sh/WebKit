@@ -44,9 +44,9 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
             checkGuardIsAvailable(context, operand, operandIndex);
             return;
         }
-        if (operand != ownedValue && generator().mayBeUnspecified(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
+        if (operand != ownedValue && generator().isValidatedWhereLookedAt(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
             checkIsSpecified(operand);
-        if (operand == ownedValue || generator().mayBeUnspecified(operand) || isDeferredClosure(m_function, operand))
+        if (operand == ownedValue || generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.
         const Type& type = typeOf(operand);
@@ -89,7 +89,7 @@ void RuntimeValidationEmitter::checkSlotAccessWithoutGuard(const OperationContex
 void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
-    const Type& type = m_program.at(value->castType());
+    const Type& type = m_program.at(value->provenType());
     if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
         return;
     checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);
@@ -189,7 +189,7 @@ void RuntimeValidationEmitter::validateResult(const ValueContext& value)
         const OperandInfo& info = operandInfoOf(value.opcode(), operandIndex);
         if (!info.uses.contains(OperandUse::Retains) || info.retainedIn != RetainedIn::Result)
             return;
-        if (generator().mayBeUnspecified(operand) || isDeferredClosure(m_function, operand))
+        if (generator().isValidatedWhereLookedAt(operand) || isDeferredClosure(m_function, operand))
             return;
         checkIsNotFrameCell(value, get(operand), result);
     });
@@ -391,6 +391,11 @@ void RuntimeValidationEmitter::checkBindingIsStored(const ValueContext& value, C
     failUnless(isStored, ValidationFailureKind::BindingReadBeforeStore, { }, value.id());
 }
 
+void RuntimeValidationEmitter::checkTypeTestsAgree(Condition agree, CellPointer tested)
+{
+    failUnless(agree, ValidationFailureKind::TypeTestsDiffer, tested, { });
+}
+
 void RuntimeValidationEmitter::reportFailure(ValidationFailureKind kind, Operand found, ValueID id)
 {
     callReport(kind, found, id);
@@ -425,6 +430,8 @@ Boxed RuntimeValidationEmitter::reportedValueOf(Operand found)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:

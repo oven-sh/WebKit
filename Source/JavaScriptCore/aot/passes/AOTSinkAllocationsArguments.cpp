@@ -225,7 +225,7 @@ static ValueID emitReplacement(AllocationSinking& sinking, ObjectInterpreter& in
 
     ValueID emitted = cursor.emit(WTF::move(replacement));
     Function& function = cursor.builder().function();
-    if (!function.at(emitted).expected() && function.at(emitted).type == function.at(read).type)
+    if (!function.at(emitted).expected().predicted() && function.at(emitted).type == function.at(read).type)
         function.edit(emitted, ValueEdit::Type).setExpected(function.at(read).expected());
     return emitted;
 }
@@ -276,7 +276,6 @@ static void becomeForwardingCall(Value& call, ValueID thisValue, uint32_t firstA
     call.setFirstArgument(firstArgument);
     call.setAccessSite(listCall.accessSite());
     call.setCallees(listCall.callees());
-    call.setIsDemotedTailCall(listCall.isDemotedTailCall());
 }
 
 static void becomeForwardingSuperConstruct(Value& construct, uint32_t firstArgument)
@@ -296,12 +295,12 @@ static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& pr
     CalleeSetID stamp = call.callees();
     if (!stamp)
         return std::nullopt;
-    const CalleeSet& callees = program.at(stamp);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+    std::optional<ProvenValue<Callees>> callees = program.at(stamp).all();
+    if (!callees || !callees->value().builtins.empty() || callees->value().functions.empty())
         return std::nullopt;
 
     uint32_t numberOfArguments = 0;
-    for (FunctionID callee : callees.functions) {
+    for (FunctionID callee : callees->value().functions) {
         const Function& function = program.at(callee);
         if (function.has(FunctionFlags::HasRestParameter) || function.hiddenRestParameterIndex() || function.argumentCountParameterIndex())
             return std::nullopt;
@@ -404,7 +403,7 @@ void ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object, cons
     auto replaceReadBy = [&](ValueID argument) {
         if (assumesTypeOfRead && m_sinking.context().build.validates())
             cursor().emit(makeValidateType(argument, type));
-        replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, type)) : argument);
+        replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, Proven::byRulesWithoutChecks(type))) : argument);
     };
     if (!selectsParameter) {
         replaceReadBy(emitReplacement(m_sinking, *this, read, WTF::move(*surplusRead)));
@@ -756,11 +755,11 @@ void ObjectInterpreter::passListedElements(ValueID call)
             ordinary.setCalleeOperand(cursor().emit(WTF::move(*callee)));
             ordinary.setArgumentsOperands(elements.span());
             ordinary.setAccessSite(original.accessSite());
-            ordinary.setIsDemotedTailCall(original.isDemotedTailCall());
+            ordinary.isTailCall = original.isTailCall;
             ValueID result = emitReplacement(m_sinking, *this, call, WTF::move(ordinary));
             if (m_sinking.context().build.validates())
                 cursor().emit(makeValidateType(result, original.type));
-            replaceRead(call, cursor().emit(makeAssumeType(result, original.type)));
+            replaceRead(call, cursor().emit(makeAssumeType(result, Proven::byRulesWithoutChecks(original.type))));
         }
     }
     forgetFieldsWrittenBy(call);

@@ -22,9 +22,9 @@ static bool makesRangeOfView(FunctionPassContext& context, const ValueSite& site
 {
     const Program& program = context.program;
     const Value& call = context.function.at(site.value);
-    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole || context.function.at(site.block).frequency != BlockFrequency::Normal)
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole || context.function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
         return false;
-    if (program.builtins().at(call.overload()).result.rangeOf != BuiltinOperand::receiver() || call.isDemotedTailCall())
+    if (program.builtins().at(call.overload()).result.rangeOf != BuiltinOperand::receiver() || call.isTailCall)
         return false;
     if (!isTypedView(typedArrayTypeOf(program.builtins(), program.typeOf(context.function, call.receiverOperand()))))
         return false;

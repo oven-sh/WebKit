@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCurrentWork.h"
+#include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
@@ -21,6 +23,7 @@
 #include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -188,7 +191,7 @@ static bool addOperands(AnalysisWordHasher& hasher, const Function& function, co
         if (!operand)
             continue;
         const Value& definition = function.at(operand);
-        hasher.add(definition.type.index(), definition.expected().index());
+        hasher.add(definition.type.index(), definition.expected().predicted().index());
         if (inputs == EffectInputs::DefinitionsBehindCasts && !addDefinitionBehindCasts(hasher, function, operand))
             return false;
     }
@@ -217,7 +220,7 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
     AnalysisWordHasher hasher;
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
-        hasher.add(value.type.index(), value.expected().index());
+        hasher.add(value.type.index(), value.expected().predicted().index());
     return finishStamp(hasher, function, value, inputs);
 }
 
@@ -239,10 +242,10 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
     return static_cast<uint32_t>(hasher.hash);
 }
 
-EffectsCache::EffectsCache(const EffectContext& context, const Function& function, bool verifiesAnswers)
+EffectsCache::EffectsCache(const EffectContext& context, const Function& function, Diagnostics* diagnosticsForOutdatedAnswers)
     : m_context(context)
     , m_function(function)
-    , m_verifiesAnswers(verifiesAnswers)
+    , m_diagnosticsForOutdatedAnswers(diagnosticsForOutdatedAnswers)
 {
 }
 
@@ -299,6 +302,31 @@ void EffectsCache::answerAgain(Answer& answer, EntryID& entryOfRow, const Carrie
     m_entryOfStamp.add(stamp, answer.entry);
 }
 
+// Whoever edits a function tells the analyses before it asks them again. The build goes on with the answer that a build without the check goes by.
+template<typename Carrier>
+void EffectsCache::reportIfOutdated(const Answer& answer, const Carrier& carrier, BlockID block, ValueID value)
+{
+    const EffectsOnEdges& kept = m_entries.at(answer.entry);
+    EffectsOnEdges fresh = Typed::effectsOf(m_context, m_function, carrier);
+    if (kept == fresh || m_didReportOutdatedAnswer)
+        return;
+    reportOutdatedAnswer(makeString("the pass asked for the effects of "_s, value ? makeString('v', value.index(), " ("_s, nameOf(m_function.at(value).opcode), ')') : makeString("the end of b"_s, block.index()), " after an edit that the analyses were not told of: they answered "_s, toString(kept), ", and the effects are "_s, toString(fresh)));
+}
+
+void EffectsCache::reportOutdatedAnswer(String&& detail) const
+{
+    if (std::exchange(m_didReportOutdatedAnswer, true))
+        return;
+    const CurrentWork& work = currentWork();
+    uint32_t functionPlusOne = work.functionPlusOne.load(std::memory_order_relaxed);
+    m_diagnosticsForOutdatedAnswers->add(InternalError {
+        .kind = InternalErrorKind::VerificationFailedAfterPass,
+        .function = functionPlusOne ? FunctionID(functionPlusOne - 1) : FunctionID(),
+        .pass = work.pass.load(std::memory_order_relaxed),
+        .detail = WTF::move(detail),
+    });
+}
+
 EffectsCache::EntryID EffectsCache::entryOf(ValueID id)
 {
     RELEASE_ASSERT(id.index() < m_values.size());
@@ -306,8 +334,8 @@ EffectsCache::EntryID EffectsCache::entryOf(ValueID id)
     if (answer.round != m_round) {
         const Value& value = m_function.at(id);
         answerAgain(answer, m_entryOfOpcode[static_cast<unsigned>(value.opcode)], value);
-    } else if (m_verifiesAnswers) [[unlikely]]
-        RELEASE_ASSERT(m_entries.at(answer.entry) == Typed::effectsOf(m_context, m_function, m_function.at(id)));
+    } else if (m_diagnosticsForOutdatedAnswers) [[unlikely]]
+        reportIfOutdated(answer, m_function.at(id), { }, id);
     return answer.entry;
 }
 
@@ -318,8 +346,8 @@ EffectsCache::EntryID EffectsCache::entryOfTerminator(BlockID block)
     if (answer.round != m_round) {
         const Terminator& terminator = m_function.at(block).terminator;
         answerAgain(answer, m_entryOfTerminatorKind[static_cast<unsigned>(terminator.kind)], terminator);
-    } else if (m_verifiesAnswers) [[unlikely]]
-        RELEASE_ASSERT(m_entries.at(answer.entry) == Typed::effectsOf(m_context, m_function, m_function.at(block).terminator));
+    } else if (m_diagnosticsForOutdatedAnswers) [[unlikely]]
+        reportIfOutdated(answer, m_function.at(block).terminator, block, { });
     return answer.entry;
 }
 
@@ -421,7 +449,7 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Functio
     : m_context(context)
     , m_function(function)
     , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
-    , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass)
+    , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass ? &context.build.diagnostics() : nullptr)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
     , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)
 {
@@ -452,6 +480,12 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsComputed, numberOfComputedAnswers);
     if (uint64_t numberOfKeptAnswers = m_effects.numberOfKeptAnswers())
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
+}
+
+void FunctionAnalyses::reportQuestionBeforeRepair() const
+{
+    if (m_context.build.options().verifiesProgram)
+        m_context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::QuestionBeforeRepair, .function = m_context.id, .pass = currentWork().pass.load(std::memory_order_relaxed) });
 }
 
 Subject FunctionAnalyses::subject(ValueID value) const
@@ -494,6 +528,8 @@ static constinit std::atomic<uint64_t> numberOfFormerFrequencies { 0 };
 static constinit CountsByPass useListUpdatesByChangingPass { };
 static constinit std::atomic<uint64_t> valuesOfFunctionsWithUpdatedUseLists { 0 };
 static constinit std::atomic<uint64_t> valuesReadByUseListUpdates { 0 };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> useListsMadeAnewByReason { };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> valuesOfUseListsMadeAnewByReason { };
 
 void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 {
@@ -508,8 +544,12 @@ void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 
 void FunctionAnalyses::didBringUseListsUpToDate(const UseLists::Update& update)
 {
-    if (update.hasMadeAnew) {
+    if (update.madeAnewFor != UseLists::ReasonToMakeAnew::None) {
         didBuild(FunctionAnalysis::UseLists);
+        if (m_countsBuilds) [[unlikely]] {
+            useListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(1, std::memory_order_relaxed);
+            valuesOfUseListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(update.numberOfValuesRead, std::memory_order_relaxed);
+        }
         return;
     }
     if (m_verifiesUpdates) [[unlikely]]
@@ -603,6 +643,15 @@ void FunctionAnalyses::logBuilds()
     uint64_t valuesRead = valuesReadByUseListUpdates.exchange(0, std::memory_order_relaxed);
     if (updates)
         dataLogLn("AOT analyses: use-lists | brought up to date ", updates, " | behind", changingPasses.toString(), " | in functions of ", valuesHeld, " values | ", valuesRead, " of them read again");
+    static constexpr std::array<ASCIILiteral, UseLists::numberOfReasonsToMakeAnew> reasons { ""_s, "no log"_s, "nothing was kept for an update"_s, "changes forgotten"_s, "much has changed"_s, "much is gone"_s, "a change that the log does not have"_s };
+    StringPrintStream madeAnew;
+    for (unsigned reason = 0; reason < UseLists::numberOfReasonsToMakeAnew; ++reason) {
+        uint64_t values = valuesOfUseListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed);
+        if (uint64_t count = useListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed))
+            madeAnew.print(" | ", reasons[reason], " ", count, " over ", values, " values");
+    }
+    if (madeAnew.length())
+        dataLogLn("AOT analyses: use-lists | made anew where they were held", madeAnew.toString());
 }
 
 void FunctionAnalyses::dropResultsOfFormerGraph()
@@ -655,6 +704,7 @@ CFG& FunctionAnalyses::cfg()
     dropResultsOfFormerGraph();
     if (!m_controlFlow.cfg) {
         m_controlFlow.cfg.emplace(m_function);
+        m_controlFlow.isReadByUseLists = false;
         m_controlFlow.numberOfBlocks = m_function.blocks.size();
         didBuild(FunctionAnalysis::ControlFlow);
     }
@@ -723,12 +773,14 @@ const UseLists& FunctionAnalyses::useLists()
     }
     if (!m_values.useLists) {
         willComputeValueAnalysis();
-        m_values.useLists.emplace(m_function, cfg());
+        m_values.useLists.emplace(m_function, cfg(), m_changes);
+        m_controlFlow.isReadByUseLists = true;
         m_values.didDropBesideUseLists = false;
         didBuild(FunctionAnalysis::UseLists);
     } else if (!m_values.useLists->isUpToDate()) {
         willComputeValueAnalysis();
-        UseLists::Update update = m_values.useLists->bringUpToDate(cfg());
+        const CFG& graph = cfg();
+        UseLists::Update update = m_values.useLists->bringUpToDate(graph, std::exchange(m_controlFlow.isReadByUseLists, true));
         m_values.didDropBesideUseLists = false;
         didBringUseListsUpToDate(update);
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
@@ -991,7 +1043,7 @@ AnalysisSet FunctionAnalyses::tellUseLists(void (UseLists::*didChange)(Arguments
 
 void FunctionAnalyses::didAddDetachedValue(ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didAddValues));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
     m_values.numberOfValues = m_function.values.size();
 }
 
@@ -1013,9 +1065,9 @@ void FunctionAnalyses::didChangeBlock(BlockID block)
     invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeBlock, block));
 }
 
-void FunctionAnalyses::didReplaceUses(ValueID from, ValueID to)
+void FunctionAnalyses::didReplaceUses(ValueID, ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didReplaceUses, from, to));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
 }
 
 void FunctionAnalyses::didChangeValuesButNotUses()
@@ -1029,7 +1081,7 @@ void FunctionAnalyses::didChangeControlFlow(std::span<const BlockID> changedBloc
     if (UseLists* useLists = updatingUseLists()) {
         for (BlockID block : changedBlocks)
             useLists->didChangeBlock(block);
-        useLists->didChangeControlFlow();
+        useLists->didChangeWhatTheLogSays();
         broughtUpToDate.add(FunctionAnalysis::UseLists);
     }
     invalidate(allAnalyses, broughtUpToDate);
@@ -1078,7 +1130,7 @@ void FunctionAnalyses::drop(AnalysisSet set)
     if (set.contains(FunctionAnalysis::Identities))
         m_values.identities.reset();
     if (set.contains(FunctionAnalysis::UseLists) && m_values.useLists)
-        m_values.useLists->didChangeEverything();
+        m_values.useLists->didChangeWhatTheLogSays();
     if (set.contains(FunctionAnalysis::NaturalLoops))
         m_controlFlow.naturalLoops.reset();
     if (set.contains(FunctionAnalysis::Dominators))

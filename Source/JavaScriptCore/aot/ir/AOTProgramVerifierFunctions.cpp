@@ -26,6 +26,11 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::HasOnlyDirectCallers,
     FunctionCapabilities::IsNeverCalledByHost,
     FunctionCapabilities::IsHiddenInStackTraces,
+    FunctionCapabilities::ClosuresAreReadWithoutCode,
+    FunctionCapabilities::RecordsCallee,
+    FunctionCapabilities::RecordsCalleeOnceRenamed,
+    FunctionCapabilities::NotesLooksForName,
+    FunctionCapabilities::IsLongConstructor,
 };
 
 bool isSentByFrontEnd(FunctionRole role)
@@ -35,7 +40,7 @@ bool isSentByFrontEnd(FunctionRole role)
 
 bool isUntypedPosition(const DeclaredType& declared)
 {
-    return declared == DeclaredType { .type = TypeTable::anything };
+    return declared == DeclaredType(Proven::byPosition(TypeTable::anything));
 }
 
 bool createsGenerators(const Function& function)
@@ -55,7 +60,7 @@ bool hasValidSignature(const Function& function)
 
 bool canCrossCalls(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 
@@ -89,15 +94,18 @@ std::optional<InternalError> findHeaderError(const Program& program, IRForm form
         return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .limit = LimitID::MaxCaptures, .count = id.index() };
 
     bool isAsRead = form == IRForm::AsRead && id.index() < program.numberOfFunctionsAsRead();
-    if (hasValidSignature(function)
+    bool hasValidHeader = hasValidSignature(function)
         && hasOnlyTypesThatCrossCalls(program, function)
         && nameOf(function.creator.kind()) == recordOf(function.role)
         && (!isAsRead || isSentByFrontEnd(function.role) || function.role == FunctionRole::EntryChecks)
         && function.capabilities.containsOnly(capabilitiesOf(function.role) | capabilitiesAddedByPasses)
         && hasValidConstructedClass(program, id, function)
-        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction)))
-        return std::nullopt;
-    return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction));
+    if (!hasValidHeader)
+        return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+    if (!function.blocks.isEmpty() && function.at(entryBlock).parameters.size() != function.numberOfEntryParameters())
+        return InternalError { .kind = InternalErrorKind::EntryParametersMismatch, .function = id };
+    return std::nullopt;
 }
 
 bool hasRole(const Program& program, FunctionID id, FunctionRole role)
@@ -259,6 +267,11 @@ void ProgramVerifier::verifyFunctionBodies()
             const Function& function = m_program.functions[index];
             if (!function.hasBody())
                 return;
+#if ENABLE(FUZZILLI)
+            // It is the same in every build, and a fuzzer makes millions of builds.
+            if (m_form == IRForm::AsRead && isLibraryCode(m_program, function))
+                return;
+#endif
             FunctionVerifier verifier(m_program, id, function, m_form, m_build, m_inputs);
             verifier.shareAnswers(slotsInReceivers);
             if (!verifier.run())

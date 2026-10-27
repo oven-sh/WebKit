@@ -97,12 +97,12 @@ function f5 name="castThatTests" parameters=[{type=number}] results=[{type=numbe
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f5
-    v3 = Check v2 castType=i32 site=w0
+    v3 = Check v2 expectedType=i32 site=w0
     Return v3
   b2():
     Return v0
 # CHECK-NOT: LoopHint
 # CHECK: v2: number = CallDirect v0 function=f5
-# CHECK-NEXT: = Check v2 castType=i32
+# CHECK-NEXT: = Check v2 expectedType=i32
 # CHECK-NOT: LoopHint
 }

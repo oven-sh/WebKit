@@ -41,6 +41,7 @@ static bool canDescribe(const Program& program, PropertyKeyID key)
 {
     switch (program.at(key).kind) {
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return false;
     case PropertyKeyKind::Text:

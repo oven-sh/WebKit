@@ -34,7 +34,7 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution, const Va
 {
     const ValueFlowUniverse& universe = solution.bodies().universe();
     out.print("f", statement.function.index(), " v", statement.site.index(), " ->");
-    solution.sets().forEachMember(solution.valueOf(solution.bodies().operandsOf(statement)[0]), [&](ValueFlowObjectID callee) {
+    solution.sets().forEachMember(solution.possibleValuesOf(solution.bodies().operandsOf(statement)[0]), [&](ValueFlowObjectID callee) {
         if (callee == ValueFlowUniverse::unknownObject())
             out.print(" unknown");
         else if (callee == ValueFlowUniverse::untrackedObject())
@@ -71,8 +71,8 @@ static void printProtocols(PrintStream& out, ValueFlowSolution& solution)
                     continue;
                 ++reached;
                 const ValueFlowOperand& subject = bodies.operandsOf(statement)[opcode == Opcode::AppendSpread ? 1 : 0];
-                bool looks = solution.sets().contains(solution.valueOf(subject), ValueFlowUniverse::unknownObject());
-                bool gives = statement.result && solution.sets().contains(solver.valueOf(statement.result), ValueFlowUniverse::unknownObject());
+                bool looks = solution.sets().contains(solution.possibleValuesOf(subject), ValueFlowUniverse::unknownObject());
+                bool gives = statement.result && solution.sets().contains(solver.possibleValuesOf(statement.result), ValueFlowUniverse::unknownObject());
                 looksAtUnknownObject += looks;
                 givesUnknownObject += gives;
                 if (gives && !looks)
@@ -101,6 +101,8 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
     bool printsUnseenCode = false;
     bool printsUsedBuiltins = false;
     bool printsProtocols = false;
+    bool printsNodesGivenMore = false;
+    ValueFlowSolution::CoveredMembers coveredMembers = ValueFlowSolution::CoveredMembers::StayListed;
     for (const String& word : context.arguments) {
         if (word == "calls"_s)
             printsCalls = true;
@@ -114,11 +116,15 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             printsUsedBuiltins = true;
         else if (word == "protocols"_s)
             printsProtocols = true;
+        else if (word == "given-more"_s)
+            printsNodesGivenMore = true;
+        else if (word == "proofs"_s)
+            coveredMembers = ValueFlowSolution::CoveredMembers::AreLeftOut;
         else
             return printBadArgument(context.out, word);
     }
 
-    ValueFlowSolution solution(*context.program, context.build);
+    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::None, UINT32_MAX, { }, ValueFlowSolution::WaysOfValues::AreAskedFor, coveredMembers);
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
     const ValueFlowSolver::Counters& counters = solver.counters();
@@ -154,7 +160,7 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             uint32_t builtins = 0;
             bool mayBeUnknown = false;
             bool mayBeUntracked = false;
-            solution.sets().forEachMember(solution.valueOf(bodies.operandsOf(statement)[0]), [&](ValueFlowObjectID callee) {
+            solution.sets().forEachMember(solution.possibleValuesOf(bodies.operandsOf(statement)[0]), [&](ValueFlowObjectID callee) {
                 if (callee == ValueFlowUniverse::unknownObject())
                     mayBeUnknown = true;
                 else if (callee == ValueFlowUniverse::untrackedObject())
@@ -198,24 +204,45 @@ void runValueFlowSolveTestCommand(TestCommandContext& context)
             context.out.println("held f", function.index());
     }
     if (printsUsedBuiltins) {
-        ValueSetID run = solver.valueOf(bodies.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
-        solution.sets().forEachMember(solver.valueOf(bodies.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), [&](ValueFlowObjectID object) {
+        ValueSetID run = solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
+        solution.sets().forEachMember(solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), [&](ValueFlowObjectID object) {
             context.out.println(solution.sets().contains(run, object) ? "run " : "used ", program.builtins().tokenOf(universe.builtinOf(object)));
         });
     }
     if (printsProtocols)
         printProtocols(context.out, solution);
-    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsProtocols)
+    if (printsNodesGivenMore) {
+        context.out.println("given-more ", solver.numberOfNodesGivenMore());
+        for (uint32_t index = 0; solver.input().seedOfWidening && index < program.functions.size(); ++index) {
+            if (!solver.isReached(FunctionID(index)) || !isWrittenInProgram(program.functions[index]))
+                continue;
+            for (uint32_t node = bodies.nodes().firstNodeOf(FunctionID(index)); node < bodies.nodes().endOfNodesOf(FunctionID(index)); ++node) {
+                ValueFlowSolver::GivenToNode given = solver.whatIsGivenTo(ValueFlowNodeID(node));
+                if (given == ValueFlowSolver::GivenToNode::Nothing)
+                    continue;
+                context.out.print("given f", index);
+                if (ValueID value = solver.subjectOf(ValueFlowNodeID(node)).value)
+                    context.out.print(":v", value.index());
+                else
+                    context.out.print(" +", node - bodies.nodes().firstNodeOf(FunctionID(index)));
+                if (given == ValueFlowSolver::GivenToNode::WhatAnotherNodeOfBodyHolds)
+                    context.out.println(" what +", solver.nodeWhoseValueIsGivenTo(ValueFlowNodeID(node)).index() - bodies.nodes().firstNodeOf(FunctionID(index)), " holds");
+                else
+                    context.out.println(given == ValueFlowSolver::GivenToNode::UnknownObject ? " the unknown object" : " a value nobody knows");
+            }
+        }
+    }
+    if (printsCalls || printsUnreachedFunctions || printsUnseenCode || printsUsedBuiltins || printsProtocols || printsNodesGivenMore)
         return;
 
     context.out.println("functions ", functionsWithBody, " reached ", functionsReached);
     context.out.println("calls ", calls, " one-function ", withOneFunction, " one-builtin ", withOneBuiltin, " several ", withSeveral, " unknown ", withUnknownCallee, " untracked ", withUntrackedCallee, " none ", withNoCallee);
-    ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
+    ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
     uint32_t reachedAndEscaped = 0;
     for (uint32_t index = 0; index < program.functions.size(); ++index)
         reachedAndEscaped += program.functions[index].hasBody() && solver.isReached(FunctionID(index)) && solution.sets().contains(escaped, universe.closureOf(FunctionID(index)));
     auto sizeOf = [&](ValueFlowHostNode node) {
-        return solution.sets().size(solver.valueOf(bodies.nodes().ofHost(node)));
+        return solution.sets().size(solver.possibleValuesOf(bodies.nodes().ofHost(node)));
     };
     context.out.println("escaped ", solution.sets().size(escaped), " objects ", universe.numberOfObjects(), " reached-functions-escaped ", reachedAndEscaped);
     context.out.println("used-builtins ", sizeOf(ValueFlowHostNode::UsedBuiltins), " written-builtins ", sizeOf(ValueFlowHostNode::WrittenBuiltins), " unseen-code ", sizeOf(ValueFlowHostNode::UnseenCodeRuns), " required-by-name ", sizeOf(ValueFlowHostNode::ModulesAreRequiredByName), " imported-by-name ", sizeOf(ValueFlowHostNode::ModulesAreImportedByName));

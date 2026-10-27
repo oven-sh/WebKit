@@ -86,6 +86,10 @@ public:
     WriteBarrier<Unknown>& asValue() { return m_value; }
     const WriteBarrier<Unknown>& asValue() const { return m_value; }
 
+    static constexpr ptrdiff_t offsetOfAttributes() { return OBJECT_OFFSETOF(SparseArrayEntry, m_attributes); }
+    static constexpr ptrdiff_t offsetOfIndex() { return OBJECT_OFFSETOF(SparseArrayEntry, m_index); }
+    static constexpr ptrdiff_t offsetOfValue() { return OBJECT_OFFSETOF(SparseArrayEntry, m_value); }
+
 private:
     unsigned m_attributes { 0 };
     unsigned m_index { 0 };
@@ -204,6 +208,9 @@ public:
     // Only allow const begin/end iteration.
     const_iterator begin() const { return m_set.begin(); }
     const_iterator end() const { return m_set.end(); }
+
+    static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(SparseArrayValueMap, m_set) + Set::offsetOfTable(); }
+    static constexpr ptrdiff_t offsetOfTableSizeMask() { return Set::offsetOfTableSizeMask(); }
 
 private:
     Set m_set;

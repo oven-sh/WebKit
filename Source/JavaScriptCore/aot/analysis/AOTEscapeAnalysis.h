@@ -169,6 +169,7 @@ public:
     PointsToSet pointsTo(ValueID) const LIFETIME_BOUND;
     std::optional<ObjectID> singleObject(ValueID) const;
     bool isExactUse(ObjectID, const Use&) const;
+    bool isOnlyOperandHolding(ObjectID, const Use&) const;
 
     std::span<const ValueID> aliasesOf(ObjectID) const LIFETIME_BOUND;
     std::span<const ObjectUse> usesOf(ObjectID object) const LIFETIME_BOUND

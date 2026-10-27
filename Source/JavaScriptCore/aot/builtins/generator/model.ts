@@ -498,6 +498,7 @@ export interface ModelNativeFunction {
   symbol: string;
   length: number;
   header: string | null;
+  name: string | null;
 }
 
 export interface ModelAttachments {
@@ -582,7 +583,6 @@ export interface ModelClass {
   constructor: ModelBuiltin | null;
   prototype: ModelBuiltin | null;
   jsType: string;
-  typedArrayType: string;
   instanceTest: InstanceTest;
   sharingMode: SharingMode | null;
   instanceCppClass: CppClassRef | null;
@@ -679,6 +679,7 @@ export type ModelIntrinsicMeaning =
         | "PrivateGlobal"
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
+        | "ModulePrivateName"
         | "Erased"
         | "BundleError";
     };

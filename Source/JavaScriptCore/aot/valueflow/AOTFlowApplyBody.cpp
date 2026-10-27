@@ -10,13 +10,17 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAnalysisContext.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTNarrowFieldTypes.h"
+#include "AOTPredictedValues.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -37,10 +41,29 @@ struct ListedMember {
 
 } // anonymous namespace
 
-Value makeAssumeType(ValueID operand, TypeID castType)
+// The type was cut out of the type of the value as read, which may be owed to any check in front of it.
+static ProvenType provenOfValue(const PredictedValues& predicted, ValueID value, TypeID type)
 {
-    Value value = IRBuilder::make(Opcode::AssumeType, { operand });
-    value.setCastType(castType);
+    return Proven::byFlow(type, predicted.isBehindCheck(value) ? ProofScope::BehindChecks : ProofScope::EveryVersion);
+}
+
+// What flow says of a position leaves out the primitives that the checks in front of its stores turn away. Where the value was inside the type before it came to its checks, it is so whether they stand or go.
+static ProvenType provenOfPosition(const FlowBodyApplication& body, const PredictedValues& predicted, ValueID value, TypeID type)
+{
+    if (!predicted.isBehindCheck(value))
+        return Proven::byFlow(type, ProofScope::EveryVersion);
+    const Function& function = body.function;
+    ValueID unchecked = value;
+    while (predicted.isBehindCheck(unchecked) && isCast(function.at(unchecked).opcode))
+        unchecked = function.at(unchecked).operand(0);
+    bool holdsWithoutChecks = !predicted.isBehindCheck(unchecked) && body.types.at(function.at(unchecked).type).isSubsetOf(body.types.at(type), body.program);
+    return Proven::byFlow(type, holdsWithoutChecks ? ProofScope::EveryVersion : ProofScope::BehindChecks);
+}
+
+Value makeAssumeType(ValueID operand, ProvenType proven)
+{
+    Value value;
+    value.becomeAssumeType(operand, proven);
     return value;
 }
 
@@ -58,44 +81,33 @@ Value makeValidateCallee(ValueID callee, TypeID validatedType)
     return value;
 }
 
-static void assumeCheckedType(Value& check)
+// Which checks stand in front of it is known when every answered check is gone: applyScopesOfAnsweredChecks().
+static void assumeInPlaceOfChecking(Value& check, ProvenInEveryVersion held)
 {
     RELEASE_ASSERT(check.opcode == Opcode::Check);
-    ValueID operand = check.valueOperand();
-    TypeID castType = check.castType();
-    check.become(Opcode::AssumeType);
-    check.setValueOperand(operand);
-    check.setCastType(castType);
+    check.becomeAssumeType(check.valueOperand(), held);
 }
 
-static void forgetWhatReplacedChecksProved(const FlowBodyApplication& body, std::span<const ValueID> replacedChecks)
-{
-    Function& function = body.function;
-    TypeID anyValue = body.types.withPrimitives(TypeTable::anything, Primitive::Absent);
-    for (size_t index : computeTaintedValues(function, CFG(function), replacedChecks)) {
-        if (function.values[index].opcode == Opcode::Upcast)
-            function.edit(ValueID(index)).setCastType(anyValue);
-    }
-}
-
-static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update)
+static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update, Vector<ValueID, 8>& answeredChecks)
 {
     uint64_t numberOfRemovedChecks = 0;
     if (body.provesEverything) {
         for (Value& value : body.function.editAllValues()) {
             if (value.opcode != Opcode::Check)
                 continue;
-            assumeCheckedType(value);
+            value.becomeAssumeType(value.valueOperand(), Proven::byTestingSwitch(value.expectedType()));
             ++numberOfRemovedChecks;
         }
         return numberOfRemovedChecks;
     }
 
-    Vector<ValueID, 4> replacedChecks;
+    Vector<ValueID, 4> refutedChecks;
     for (const FlowClaimUpdate& entry : update.claims) {
         Value& check = body.function.edit(entry.claim);
         if (entry.isRedundant) {
-            assumeCheckedType(check);
+            assumeInPlaceOfChecking(check, Proven::byFlowAtCheck(check.expectedType()));
+            if (!entry.holdsInEveryVersion)
+                answeredChecks.append(entry.claim);
             ++numberOfRemovedChecks;
             continue;
         }
@@ -103,15 +115,25 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
             check.setCause(CheckCause::MayFail);
             continue;
         }
+        // Nothing that arrives passes. What does arrive goes on, and the type that was declared says nothing of what is made from it.
         RELEASE_ASSERT(entry.arriving);
-        assumeCheckedType(check);
-        check.setCastType(entry.arriving);
-        replacedChecks.append(entry.claim);
+        assumeInPlaceOfChecking(check, *Proven::byFlow(entry.arriving, ProofScope::EveryVersion).inEveryVersion());
+        if (!entry.holdsInEveryVersion)
+            answeredChecks.append(entry.claim);
+        refutedChecks.append(entry.claim);
         ++numberOfRemovedChecks;
     }
-    if (!replacedChecks.isEmpty())
-        forgetWhatReplacedChecksProved(body, replacedChecks.span());
+    if (!refutedChecks.isEmpty())
+        forgetProofsBehind(body.function, CFG(body.function), body.types, refutedChecks.span(), { }, ExpectedTypes::Dropped);
     return numberOfRemovedChecks;
+}
+
+static void applyScopesOfAnsweredChecks(Function& function, const PredictedValues& predicted, std::span<const ValueID> answeredChecks)
+{
+    for (ValueID claim : answeredChecks) {
+        if (predicted.isBehindCheck(function.at(claim).valueOperand()))
+            function.edit(claim, ValueEdit::Definition).setIsBehindChecks(true);
+    }
 }
 
 static bool pointDominates(const FlowCastInsertion& insertion, const UseLists& useLists, ProgramPoint point, const Use& use)
@@ -218,6 +240,7 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
     case RequiredTypeHolder::InitializedSlot:
         return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
     case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -265,31 +288,39 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
     TypeArena& types = body.types;
     TypingContext typing { body.program, function, types, TypeLevel::Proven };
     const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
+    // Of the body with the claims of flow in it, under the numbers that typing has left its values.
+    // It is asked for in front of the first cast that goes in.
+    std::optional<PredictedValues> predictedValues;
+    auto predicted = [&]() -> const PredictedValues& {
+        if (!predictedValues)
+            predictedValues.emplace(function, insertion.analyses.cfg());
+        return *predictedValues;
+    };
     Vector<ValueID> inserted;
 
     auto hasRequiredType = [&](ValueID operand, TypeID required) {
         return typing.typeOf(operand).isSubsetOf(types.at(required), body.program);
     };
     auto insert = [&](ProgramPoint point, Origin origin, Value&& value) {
+        predicted();
         insertion.builder.setOrigin(origin);
         inserted.append(insertion.builder.insertBefore(point, WTF::move(value)));
         return inserted.last();
     };
     auto checkRequiredType = [&](ProgramPoint point, Origin origin, ValueID operand, TypeID required) {
-        DeclaredType declared;
-        declared.type = required;
+        DeclaredType declared(Proven::byPosition(required));
         ConvertResolution resolution = resolveConvert(typing, typing.typeOf(operand), declared);
         RELEASE_ASSERT(resolution.cast == CastResolution::Check);
 
         Value check = IRBuilder::make(Opcode::Check, { operand });
-        check.setCastType(resolution.castType);
+        check.setExpectedType(ExpectedType(resolution.castType));
         check.setCause(CheckCause::AddedByPass);
         ValueID checked = insert(point, origin, WTF::move(check));
 
         Type passed = typing.typeOf(operand).castTo(types.at(resolution.castType), types);
         if (passed.isSubsetOf(types.at(required), body.program))
             return checked;
-        return insert(point, origin, makeAssumeType(checked, required));
+        return insert(point, origin, makeAssumeType(checked, Proven::byFlow(required, ProofScope::BehindChecks)));
     };
     auto castDeclaredOperands = [&](ProgramPoint point) {
         ValueID user = function.at(point.block).values[point.index];
@@ -307,7 +338,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
             bool mayAssume = mayAssumeRequiredType(body, value, operandIndex);
 
             Origin origin = value.origin();
-            ValueID cast = mayAssume ? insert(point, origin, makeAssumeType(operand, required)) : checkRequiredType(point, origin, operand, required);
+            ValueID cast = mayAssume ? insert(point, origin, makeAssumeType(operand, provenOfPosition(body, predicted(), operand, required))) : checkRequiredType(point, origin, operand, required);
             function.edit(user).setOperand(operandIndex, cast);
         }
     };
@@ -316,7 +347,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
         TypeID required = requiredTypeOfOperand(typing, terminator, OperandIndex::Return::value);
         if (!required || hasRequiredType(terminator.valueOperand(), required))
             return;
-        terminator.setValueOperand(insert(pointBeforeTerminatorOf(function, block), terminator.origin(), makeAssumeType(terminator.valueOperand(), required)));
+        terminator.setValueOperand(insert(pointBeforeTerminatorOf(function, block), terminator.origin(), makeAssumeType(terminator.valueOperand(), provenOfPosition(body, predicted(), terminator.valueOperand(), required))));
     };
     auto assumeTailCallResult = [&](BlockID block) {
         Terminator& terminator = function.edit(block).terminator;
@@ -333,7 +364,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
             return;
 
         TailCast assumed;
-        assumed.declared.type = required;
+        assumed.declared.establish(Proven::byPosition(required));
         assumed.resolution = CastResolution::Assume;
         tailCasts.append(assumed);
         terminator.setCasts(tailCasts.span());
@@ -381,14 +412,14 @@ static std::optional<Type> typeOfListedCallees(const FlowBodyApplication& body, 
 {
     if (!PayloadWord::callees(call.opcode) || !call.callees())
         return std::nullopt;
-    const CalleeSet& callees = body.types.at(call.callees());
-    if (!callees.isComplete || body.results.mayCallBoundFunction(call.accessSite()))
+    std::optional<ProvenValue<Callees>> callees = body.types.at(call.callees()).all();
+    if (!callees || body.results.mayCallBoundFunction(call.accessSite()))
         return std::nullopt;
 
     Type listed;
-    for (FunctionID function : callees.functions)
+    for (FunctionID function : callees->value().functions)
         listed = listed.unionWith(Type::forFunction(function), body.types);
-    for (BuiltinID builtin : callees.builtins)
+    for (BuiltinID builtin : callees->value().builtins)
         listed = listed.unionWith(Type::forBuiltin(builtin), body.types);
 
     bool isConstruction = !!OperandPosition::newTarget(call.opcode);
@@ -405,10 +436,10 @@ static std::optional<Type> typeOfListedReceivers(const FlowBodyApplication& body
 {
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !receiverOf(access.opcode) || !access.receivers())
         return std::nullopt;
-    const LayoutSet& receivers = body.types.at(access.receivers());
-    if (!receivers.isComplete || receivers.hasMembersWithoutLayout)
+    auto receivers = body.types.at(access.receivers()).all();
+    if (!receivers)
         return std::nullopt;
-    Type listed = receivers.members.isEmpty() ? Type() : Type::forLayoutSet(access.receivers());
+    Type listed = receivers->value().empty() ? Type() : Type::forLayoutSet(access.receivers());
     return listed.withPrimitives(Primitive::All);
 }
 
@@ -442,7 +473,7 @@ static void insertRuntimeValidation(const FlowCastInsertion& insertion)
             const Value& value = function.at(function.at(block).values[index]);
             builder.setOrigin(value.origin());
             if (value.opcode == Opcode::AssumeType) {
-                builder.insertBefore({ block, index }, makeValidateType(value.valueOperand(), value.castType()));
+                builder.insertBefore({ block, index }, makeValidateType(value.valueOperand(), value.provenType()));
                 continue;
             }
             if (VariableID mark = firstTimeMarkOf(body, value)) {
@@ -464,21 +495,19 @@ static bool isNarrowerInLayouts(const Program& program, const Type& current, con
 {
     if (!narrowed.layouts)
         return false;
-    if (!current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size())
-        return true;
-    return hasMembersWithoutLayout(program, current) && !hasMembersWithoutLayout(program, narrowed);
+    return !current.layouts || membersOf(program, current).size() > membersOf(program, narrowed).size();
 }
 
-static bool hasUnknownCallees(const Program& program, const Type& type)
+static bool hasUnknownCallees(const Type& type)
 {
-    return type.anyFunction || type.anyObject || hasMembersWithoutLayout(program, type);
+    return type.anyFunction || type.anyObject;
 }
 
-static bool isNarrowerInCallees(const Program& program, const Type& current, const Type& narrowed)
+static bool isNarrowerInCallees(const Type& current, const Type& narrowed)
 {
-    if (!narrowed.mayBeFunction() || hasUnknownCallees(program, narrowed))
+    if (!narrowed.mayBeFunction() || hasUnknownCallees(narrowed))
         return false;
-    return hasUnknownCallees(program, current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
+    return hasUnknownCallees(current) || current.functions.size() > narrowed.functions.size() || current.builtins.size() > narrowed.builtins.size();
 }
 
 static bool isNarrowerInClasses(const Type& current, const Type& narrowed)
@@ -496,7 +525,7 @@ bool isWorthNarrowing(const Program& program, const Type& current, const Type& n
     return (narrowed.isNever() && !current.isNever())
         || defaultSlotRepresentationOf(current) != defaultSlotRepresentationOf(narrowed)
         || isNarrowerInLayouts(program, current, narrowed)
-        || isNarrowerInCallees(program, current, narrowed)
+        || isNarrowerInCallees(current, narrowed)
         || isNarrowerInClasses(current, narrowed);
 }
 
@@ -571,8 +600,17 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
     for (const FlowAccessStamp& stamp : update.accesses)
         function.edit(stamp.value).setReceivers(stamp.receivers);
 
+    for (ValueID open : update.opensOfUndecidedStorage)
+        function.edit(open).setStorageIsUndecided(true);
+
     for (const FlowCallStamp& stamp : update.calls)
         function.edit(stamp.value).setCallees(stamp.callees);
+
+    for (const FlowMemberKey& member : update.keysOfMembers) {
+        Value& definition = function.edit(member.definition, ValueEdit::Definition);
+        definition.setComputedKeyOperand({ });
+        definition.setKey(member.key);
+    }
 
     for (const FlowAllocationStamp& stamp : update.allocations) {
         Value& allocation = function.edit(stamp.value);
@@ -581,8 +619,10 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
             allocation.setAllocationClass(stamp.allocationClass);
         if (stamp.elements)
             allocation.setContents(stamp.elements);
-        if (allocation.opcode == Opcode::NewArray)
+        if (allocation.opcode == Opcode::NewArray) {
+            allocation.setContentsAreProven(stamp.elementsAreProven);
             allocation.setArrayStorage(stamp.arrayStorage);
+        }
         if (allocation.opcode == Opcode::NewObject && body.program.at(allocation.layout()).isEnvironment())
             stopListingStartsThatNobodyReads(body, allocation);
     }
@@ -599,15 +639,15 @@ static Vector<ListedMember> makeOrdinaryObjects(const FlowBodyApplication& body)
     DictionaryTypeRewriter rewriter { body.application };
     for (Value& value : function.editAllValues()) {
         TypeID passed = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.type) : TypeID();
-        TypeID tested = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.castType()) : value.opcode == Opcode::TypeTest ? rewriter.typeTestedBehind(value.testedType()) : TypeID();
+        TypeID tested = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.expectedType().predicted()) : value.opcode == Opcode::TypeTest ? rewriter.typeTestedBehind(value.testedType()) : TypeID();
         rewriter(value.type);
         if (passed)
             value.type = passed;
-        TypeID expected = rewriter.typeBehind(value.expected());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = rewriter.typeBehind(value.expected().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, rewriter);
         if (value.opcode == Opcode::Check)
-            value.setCastType(tested);
+            value.setExpectedType(ExpectedType(tested));
         if (value.opcode == Opcode::TypeTest)
             value.setTestedType(tested);
     }
@@ -663,6 +703,29 @@ static bool isCheck(const TailCast& cast)
     return cast.resolution == CastResolution::Check;
 }
 
+// The result of a tail call goes to the caller and nowhere else, so nothing in this function relies on a test of it: the type is expected, and whoever receives the value tests it.
+static bool tryExpectInPlaceOfChecking(const Program& program, Function& function, TypeArena& types, BlockID block, bool resultIsProvenByFlow)
+{
+    Terminator& terminator = function.edit(block).terminator;
+    TypingContext typing { program, function, types };
+    Type returned = function.at(terminator.callOperand()).opcode == Opcode::Call ? Type::anything() : typing.typeOf(terminator.callOperand());
+    Vector<TailCast, 2> casts;
+    for (TailCast cast : terminator.casts()) {
+        // A cast that does nothing may rest on a test in front of it.
+        bool restsOnTest = cast.resolution == CastResolution::Nothing && !returned.isSubsetOf(typing.typeOf(cast.declared), program);
+        if (isCheck(cast) || restsOnTest) {
+            cast.resolution = CastResolution::Nothing;
+            cast.declared.expect(cast.declared.expected());
+        }
+        returned = returned.castTo(typing.typeOf(cast.declared), types);
+        casts.append(cast);
+    }
+    if (!resultIsProvenByFlow && !returned.isSubsetOf(typing.typeOf(function.result()), program))
+        return false;
+    terminator.setCasts(casts.span());
+    return true;
+}
+
 static bool applyTailChecks(const FlowBodyApplication& body, IRBuilder& builder, BlockID block, const FlowTailCallUpdate& entry, FlowBodyCounts& counts)
 {
     Terminator& terminator = body.function.edit(block).terminator;
@@ -674,6 +737,9 @@ static bool applyTailChecks(const FlowBodyApplication& body, IRBuilder& builder,
         return true;
 
     if (!entry.claimsAreRedundant && !body.provesEverything) {
+        const Vector<FlowPositionUpdate, 1>& results = body.application.signatures[body.id.index()].results;
+        if (tryExpectInPlaceOfChecking(body.program, body.function, body.types, block, results.size() == 1 && results[0].isProven))
+            return true;
         demoteTailCall(body, builder, block);
         return false;
     }
@@ -697,6 +763,17 @@ static void applyTailCalls(const FlowBodyApplication& body, IRBuilder& builder, 
             continue;
 
         ValueID call = terminator.callOperand();
+        // A function that is constructed stays on the stack until it has seen what its last call returns.
+        if (body.isOnlyConstructed) {
+            demoteTailCall(body, builder, block);
+            function.edit(call, ValueEdit::Definition).isTailCall = false;
+            continue;
+        }
+        // What a built-in function calls returns to that function, and the frame of the caller is the one that stands for it.
+        if (function.at(call).opcode == Opcode::Call && function.at(call).calledBuiltin()) {
+            demoteTailCall(body, builder, block);
+            continue;
+        }
         const FlowTailCallUpdate* known = findByValue(update.tailCalls.span(), call, &FlowTailCallUpdate::call);
         FlowTailCallUpdate entry = known ? *known : FlowTailCallUpdate { };
         terminator.setRequirement(TailCallRequirement::Required);
@@ -730,7 +807,7 @@ void demoteTailCallsWithChecks(const Program& program, FunctionID id, Function& 
     IRBuilder builder(context, function, types, &analyses);
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
-        if (!isTailCallWithCheck(function.at(block).terminator))
+        if (!isTailCallWithCheck(function.at(block).terminator) || tryExpectInPlaceOfChecking(program, function, types, block, false))
             continue;
         builder.demoteReturnCall(block);
         build.statistics().count(StatisticID::ReturnCallsDemoted);
@@ -748,16 +825,261 @@ static uint64_t countChecks(const Function& function)
     return numberOfChecks;
 }
 
+// The front end writes the read of a locked member as a constant.
+static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, const Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
+{
+    for (uint32_t index = 0; index < function.values.size(); ++index) {
+        const Value& constant = function.values[index];
+        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, results, constant.builtin()))
+            continue;
+        const UseLists& useLists = analyses.useLists();
+        if (useLists.locationOf(ValueID(index)).placement != ValuePlacement::InBlock)
+            continue;
+        builder.setOrigin(constant.origin());
+        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant));
+    }
+}
+
+void initializeMembersOfListedHolders(const Program& program, const FlowResults& results, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+{
+    bool namesBuiltin = std::ranges::any_of(function.values, [](const Value& value) {
+        return value.opcode == Opcode::Builtin;
+    });
+    if (!namesBuiltin)
+        return;
+
+    AnalysisContext context { build, program, nullptr, nullptr, id };
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
+    initializeMembersOfListedHolders(program.builtins(), results, function, analyses, builder);
+    builder.applyInsertions();
+}
+
+// It writes one also where nothing takes the value.
+static void eraseBuiltinConstantsWithoutUse(const FlowCastInsertion& insertion)
+{
+    const Function& function = insertion.body.function;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Block& block = function.blocks[blockIndex];
+        BitVector indexes;
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (function.at(block.values[index]).opcode == Opcode::Builtin && insertion.analyses.useLists().usesOf(block.values[index]).empty())
+                indexes.set(index);
+        }
+        if (!indexes.isEmpty())
+            insertion.builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+}
+
+static void eraseNamesTakenFromOneKey(const FlowCastInsertion& insertion, std::span<const ValueID> ascendingOperations)
+{
+    if (ascendingOperations.empty())
+        return;
+    const Function& function = insertion.body.function;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Block& block = function.blocks[blockIndex];
+        BitVector indexes;
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (std::ranges::binary_search(ascendingOperations, block.values[index]))
+                indexes.set(index);
+        }
+        if (!indexes.isEmpty())
+            insertion.builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+}
+
+bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t operandIndex)
+{
+    switch (holderOfRequiredTypes(program, store)) {
+    case RequiredTypeHolder::StoredSlot:
+        return false;
+    case RequiredTypeHolder::InitializedSlot: {
+        std::optional<uint32_t> valueIndex = store.variadicOperandIndex(operandIndex);
+        if (!valueIndex)
+            return false;
+        FieldReference field = declarationOf(program, { store.layout(), store.fields()[*valueIndex] });
+        return fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
+    }
+    case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct StoreBehindChecks {
+    ProgramPoint point;
+    // Null: the terminator of the block.
+    ValueID user;
+    uint32_t operandIndex;
+    TypeID claimed;
+};
+
+} // anonymous namespace
+
+enum class ValidatesClaims : bool { No, Yes };
+
+static void assumeClaimedTypes(Function& function, IRBuilder& builder, std::span<const StoreBehindChecks> stores, ValidatesClaims validatesClaims)
+{
+    if (stores.empty())
+        return;
+
+    for (const StoreBehindChecks& store : stores) {
+        const Instruction& user = store.user ? static_cast<const Instruction&>(function.at(store.user)) : function.at(store.point.block).terminator;
+        ValueID stored = user.operand(store.operandIndex);
+        builder.setOrigin(user.origin());
+        if (validatesClaims == ValidatesClaims::Yes)
+            builder.insertBefore(store.point, makeValidateType(stored, store.claimed));
+        ValueID assumed = builder.insertBefore(store.point, makeAssumeType(stored, Proven::byFlowOfPosition(store.claimed)));
+        Instruction& edited = store.user ? static_cast<Instruction&>(function.edit(store.user, ValueEdit::Definition)) : function.edit(store.point.block, BlockEdit::Terminator).terminator;
+        edited.setOperand(store.operandIndex, assumed);
+    }
+    builder.applyInsertions();
+}
+
+static void assumeTypesOfPositionsAtStores(const Program& program, Function& function, TypeArena& types, FunctionAnalyses& analyses, IRBuilder& builder, ValidatesClaims validatesClaims)
+{
+    PredictedValues predicted(function, analyses.cfg());
+    if (!predicted.hasChecks())
+        return;
+    // What is proven of a position that takes the very value that a check tests may rest on that check.
+    std::optional<BitVector> checkedValuesThemselves;
+    auto isCheckedValueItself = [&](ValueID value) {
+        if (!checkedValuesThemselves) {
+            Vector<ValueID, 16> checks;
+            for (BlockID block : analyses.cfg().reversePostOrder()) {
+                for (ValueID id : function.at(block).values) {
+                    if (function.at(id).opcode == Opcode::Check && mayTurnValueAway(program, function, function.at(id)))
+                        checks.append(id);
+                }
+            }
+            checkedValuesThemselves = valuesThatAre(function, analyses.cfg(), checks.span());
+        }
+        return checkedValuesThemselves->get(value.index());
+    };
+    TypingContext typing { program, function, types };
+    Vector<StoreBehindChecks, 8> found;
+
+    auto isTypedOnCredit = [&](ValueID value, TypeID claimed) {
+        if (!value || !predicted.isBehindCheck(value))
+            return false;
+        const Value& definition = function.at(value);
+        if (!types.at(definition.type).isJavaScriptValue() || !types.at(claimed).isJavaScriptValue())
+            return false;
+        // An allocation and a direct call are typed by their own words, whatever their operands are.
+        const Value& producer = definition.opcode == Opcode::ResultAt ? function.at(definition.resultsOperand()) : definition;
+        if (resultRuleOf(definition.opcode) == ResultRule::Allocation || definition.opcode == Opcode::NewClosure || producer.opcode == Opcode::CallDirect)
+            return false;
+        return definition.opcode != Opcode::AssumeType || definition.isBehindChecks() || !types.at(definition.provenType()).isSubsetOf(types.at(claimed), program);
+    };
+    auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
+        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required))
+            return;
+        bool mayRestOnCheckOfStoredValue = !user || holderOfRequiredTypes(program, function.at(user)) != RequiredTypeHolder::ContentsOfLiteral;
+        if (mayRestOnCheckOfStoredValue && isCheckedValueItself(stored))
+            return;
+        found.append({ point, user, operandIndex, required });
+    };
+
+    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
+    bool hasOneResult = function.results.size() == 1 && !function.isUnsplitCoroutine();
+    TypeID requiredResult = hasOneResult ? typing.typeIDOf(function.result()) : TypeID();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Block& contents = function.at(block);
+        uint32_t numberOfValues = contents.values.size();
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
+            ValueID user = contents.values[index];
+            const Value& value = function.at(user);
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (value.operandKind(operandIndex) != OperandKind::Declared)
+                    return;
+                TypeID required = requiredTypeOfOperand(typing, value, operandIndex);
+                if (takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    return visit({ block, index }, user, operand, operandIndex, required);
+                // Of the slot of an object that a store tests flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
+                if (required && holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot && types.at(required) != types.at(required).withoutClassProofs())
+                    visit({ block, index }, user, operand, operandIndex, types.withPrimitives(required, Primitive::All));
+            });
+        }
+        const Terminator& terminator = contents.terminator;
+        if (terminator.kind == TerminatorKind::Return)
+            visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);
+        if (terminator.kind != TerminatorKind::ReturnCall || !requiredResult || requiredResult == TypeTable::anything || !predicted.isBehindCheck(terminator.callOperand()))
+            continue;
+        // The casts of a tail call are no operands. What a direct call answers is the word of its callee.
+        bool isAnsweredByCallee = function.at(terminator.callOperand()).opcode == Opcode::CallDirect && typing.typeOf(terminator.callOperand()).isSubsetOf(types.at(requiredResult), program);
+        if (isAnsweredByCallee || std::ranges::any_of(terminator.casts(), [&](TailCast cast) { return isClaimOfResult(function, cast); }))
+            continue;
+        Vector<TailCast, 2> casts;
+        for (TailCast cast : terminator.casts())
+            casts.append(cast);
+        casts.append(TailCast { DeclaredType(Proven::byFlowOfPosition(requiredResult)), CastResolution::Assume });
+        function.edit(block, BlockEdit::Terminator).terminator.setCasts(casts.span());
+    }
+    assumeClaimedTypes(function, builder, found.span(), validatesClaims);
+}
+
+void assumeTypesOfPositionsAtStores(const Program& program, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+{
+    AnalysisContext context { build, program, nullptr, nullptr, id };
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
+    assumeTypesOfPositionsAtStores(program, function, types, analyses, builder, build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
+}
+
+bool assumeTypesOfPositionsAtStoresInCopy(IRBuilder& builder, Function& function, TypeArena& types, std::span<const BlockID> copiedBlocks)
+{
+    const Program& program = builder.context().program;
+    TypingContext typing { program, function, types };
+    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
+    Vector<StoreBehindChecks, 8> found;
+    auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
+        if (stored && required && !typing.typeOf(stored).isSubsetOf(types.at(required), program))
+            found.append({ point, user, operandIndex, required });
+    };
+    for (BlockID block : copiedBlocks) {
+        const Block& contents = function.at(block);
+        uint32_t numberOfValues = contents.values.size();
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
+            ValueID user = contents.values[index];
+            const Value& value = function.at(user);
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (value.operandKind(operandIndex) == OperandKind::Declared && takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    visit({ block, index }, user, operand, operandIndex, requiredTypeOfOperand(typing, value, operandIndex));
+            });
+        }
+        if (contents.terminator.kind == TerminatorKind::Return)
+            visit({ block, numberOfValues }, { }, contents.terminator.valueOperand(), OperandIndex::Return::value, requiredTypeOfOperand(typing, contents.terminator, OperandIndex::Return::value));
+    }
+    assumeClaimedTypes(function, builder, found.span(), builder.context().build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
+    return !found.isEmpty();
+}
+
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
-    applyStamps(body, update);
     FlowBodyCounts counts;
-    counts.removedChecks = applyCheckUpdates(body, update);
-    Vector<ListedMember> listedMembers = makeOrdinaryObjects(body);
-
+    Vector<ValueID, 8> answeredChecks;
+    counts.removedChecks = applyCheckUpdates(body, update, answeredChecks);
     AnalysisContext context { body.build, body.program, nullptr, nullptr, body.id };
     FunctionAnalyses analyses(context, body.function);
+    // What a rule has answered for a value that is put in holds where all values are typed behind that.
+    TypingMemo typingMemo;
+    analyses.setTypingMemo(&typingMemo);
+    std::optional<PredictedValues> predicted;
+    if (!answeredChecks.isEmpty() || std::ranges::any_of(update.proofs, [](const FlowValueProof& proof) { return !proof.holdsInEveryVersion; }))
+        predicted.emplace(body.function, analyses.cfg());
+    if (!answeredChecks.isEmpty())
+        applyScopesOfAnsweredChecks(body.function, *predicted, answeredChecks.span());
+    applyStamps(body, update);
+    Vector<ListedMember> listedMembers = makeOrdinaryObjects(body);
+
     IRBuilder builder(context, body.function, body.types, &analyses);
     applyTailCalls(body, builder, update, counts);
     defineListedMembers(body.function, builder, listedMembers.span());
@@ -765,8 +1087,8 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     FlowCastInsertion insertion { body, analyses, builder };
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;
-    }, [](const FlowValueProof& proof) {
-        return makeAssumeType(proof.value, proof.type);
+    }, [&](const FlowValueProof& proof) {
+        return makeAssumeType(proof.value, proof.holdsInEveryVersion ? Proven::byFlow(proof.type, ProofScope::EveryVersion) : provenOfValue(*predicted, proof.value, proof.type));
     });
     insertBehindDefinitions(insertion, update.symbolConstants, &FlowSymbolConstant::call, [](const FlowSymbolConstant&) {
         return false;
@@ -776,9 +1098,12 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
         return constant;
     });
     replaceDefinedValues(insertion, update);
+    initializeMembersOfListedHolders(body.program.builtins(), body.results, body.function, analyses, builder);
     builder.applyInsertions();
+    eraseBuiltinConstantsWithoutUse(insertion);
+    eraseNamesTakenFromOneKey(insertion, update.namesTakenFromOneKey.span());
 
-    TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build };
+    TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build, &typingMemo };
     TypePropagationOutcome typing = typeValuesFromNever(inputs);
 
     Vector<ValueID> casts = insertCastsForRequiredTypes(insertion);
@@ -788,6 +1113,8 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     }
     if (!typing.waitsToCutCode)
         body.function.setValuesAreTypedAsDefined();
+    // insertRuntimeValidation() validates every claim that it finds.
+    assumeTypesOfPositionsAtStores(body.program, body.function, body.types, analyses, builder, ValidatesClaims::No);
     if (body.build.validates())
         insertRuntimeValidation(insertion);
 

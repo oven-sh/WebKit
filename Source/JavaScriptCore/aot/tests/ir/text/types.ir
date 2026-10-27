@@ -106,12 +106,6 @@
 # CHECK-NEXT: variable g99 module=m0 declared={type=Array<string>|Promise<undefined>}
 # CHECK-NEXT: variable g100 module=m0 declared={type=absent|classtoken}
 # CHECK-NEXT: variable g101 module=m0 declared={type="\u{e9}"}
-# CHECK-NEXT: variable g102 module=m0 declared={type=L0|nolayout}
-# CHECK-NEXT: variable g103 module=m0 declared={type=null|L0|L1|nolayout}
-# CHECK-NEXT: variable g104 module=m0 declared={type=nolayout}
-# CHECK-NEXT: variable g105 module=m0 declared={type=L0|L(m0)|nolayout}
-# CHECK-NEXT: variable g106 module=m0 declared={type=L0|L1|nolayout}
-# CHECK-NEXT: variable g107 module=m0 declared={type=object}
 # CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: function f0 name="f" module=m0 thisType={type=anything} results=[{type=undefined}]
 # CHECK-NEXT: function f1 name="g" module=m0 thisType={type=anything} results=[{type=undefined}]
@@ -120,7 +114,8 @@
 # CHECK-NEXT:     v0: guard = Unspecified valueType=guard
 # CHECK-NEXT:     v1: flatstring = Unspecified valueType=flatstring
 # CHECK-NEXT:     v2: codeaddress = Unspecified valueType=codeaddress
-# CHECK-NEXT:     v3: buildercursor = Unspecified valueType=buildercursor
+# CHECK-NEXT:     v3: jsonholders = Unspecified valueType=jsonholders
+# CHECK-NEXT:     v4: buildercursor = Unspecified valueType=buildercursor
 # CHECK-NEXT:     Return
 # CHECK-NEXT: }
 # CHECK-NEXT: round trip: same
@@ -227,12 +222,6 @@ variable g98 module=m0 declared={type=Map<anything, anything>}
 variable g99 module=m0 declared={type=Promise<undefined>|Array<string>}
 variable g100 module=m0 declared={type=classtoken|absent}
 variable g101 module=m0 declared={type="\xc3\xa9"}
-variable g102 module=m0 declared={type=L0|nolayout}
-variable g103 module=m0 declared={type=null|L0|L1|nolayout}
-variable g104 module=m0 declared={type=nolayout}
-variable g105 module=m0 declared={type=L0|L(m0)|nolayout}
-variable g106 module=m0 declared={type=nolayout|L1|L0}
-variable g107 module=m0 declared={type=object|nolayout}
 layout L0
 layout L1
 layout L2 kind=Environment
@@ -243,6 +232,7 @@ function f2 name="local" module=m0 thisType={type=anything} results=[{type=undef
     v0 = Unspecified valueType=guard
     v1 = Unspecified valueType=flatstring
     v2 = Unspecified valueType=codeaddress
-    v3 = Unspecified valueType=buildercursor
+    v3 = Unspecified valueType=jsonholders
+    v4 = Unspecified valueType=buildercursor
     Return
 }

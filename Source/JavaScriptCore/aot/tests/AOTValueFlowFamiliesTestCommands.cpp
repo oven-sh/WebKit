@@ -69,11 +69,11 @@ static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
     std::array<Counts, numberOfPositionKinds> countsOf;
 
     auto familyOf = [&](const DeclaredType& declared) -> const Family* {
-        auto result = families.add(declared.type.index(), nullptr);
+        auto result = families.add(declared.written().index(), nullptr);
         if (!result.isNewEntry)
             return result.iterator->value.get();
 
-        const Type& type = program.at(declared.type);
+        const Type& type = program.at(declared.written());
         auto family = makeUnique<Family>();
         for (LayoutID member : membersOf(program, type))
             family->members.set(member.index());
@@ -99,7 +99,7 @@ static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
 
         auto leaveOutWhatIsCovered = [&](ValueFlowObjectID placeholder, ValueFlowNodeID covered) {
             if (solution.sets().contains(arrived, placeholder))
-                arrived = maker.unite(maker.intersect(arrived, ValueSets::complement(maker.intersect(solver.valueOf(covered), universe.knownObjects()))), maker.of(placeholder));
+                arrived = maker.unite(maker.intersect(arrived, ValueSets::complement(maker.intersect(solver.possibleValuesOf(covered), universe.knownObjects()))), maker.of(placeholder));
         };
         leaveOutWhatIsCovered(ValueFlowUniverse::unknownObject(), ValueFlowProgramNodes::escaped());
         leaveOutWhatIsCovered(ValueFlowUniverse::untrackedObject(), ValueFlowProgramNodes::lost());
@@ -154,13 +154,13 @@ static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
         std::optional<unsigned> thisParameter = function.thisParameterIndex();
         for (unsigned parameter = 0; parameter < function.numberOfEntryParameters(); ++parameter) {
             if (const DeclaredType* declared = function.declaredEntryParameter(parameter))
-                count({ thisParameter == parameter ? PositionKind::This : PositionKind::Parameter, index, parameter }, *declared, solver.valueOf(nodes.entryParameter(id, parameter)));
+                count({ thisParameter == parameter ? PositionKind::This : PositionKind::Parameter, index, parameter }, *declared, solver.possibleValuesOf(nodes.entryParameter(id, parameter)));
         }
         for (unsigned result = 0; result < function.results.size(); ++result)
-            count({ PositionKind::Result, index, result }, function.results[result], solver.valueOf(nodes.result(id, result)));
+            count({ PositionKind::Result, index, result }, function.results[result], solver.possibleValuesOf(nodes.result(id, result)));
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index)
-        count({ PositionKind::Variable, index, 0 }, program.variables[index].declared, solver.valueOf(nodes.variable(VariableID(index))));
+        count({ PositionKind::Variable, index, 0 }, program.variables[index].declared, solver.possibleValuesOf(nodes.variable(VariableID(index))));
 
     HashMap<uint64_t, ValueSetID> arrivedAt;
     Vector<LayoutID, 16> layouts;
@@ -168,7 +168,7 @@ static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(node));
         if (!key || key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Property)
             continue;
-        ValueSetID value = solver.valueOf(ValueFlowNodeID(node));
+        ValueSetID value = solver.possibleValuesOf(ValueFlowNodeID(node));
         if (value == ValueSets::nothing)
             continue;
         layouts.shrink(0);
@@ -266,7 +266,7 @@ constexpr unsigned numberOfExpectedReceivers = 6;
 
 static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFlowSolution& solution, const Function& function, ValueID receiver)
 {
-    const Type& type = program.at(function.at(receiver).expectedOrType());
+    const Type& type = program.at(function.at(receiver).expectedOrType().predicted());
     if (type.isAnything())
         return ExpectedReceiver::Anything;
     if (type.anyObject)
@@ -309,7 +309,7 @@ static void printReceivers(PrintStream& out, ValueFlowSolution& solution)
             bool hasObjectWithoutLayout = false;
             LayoutID first;
             bool hasSeveralLayouts = false;
-            solution.sets().forEachMember(solution.valueOf(solution.bodies().operandsOf(statement)[0]), [&](ValueFlowObjectID object) {
+            solution.sets().forEachMember(solution.possibleValuesOf(solution.bodies().operandsOf(statement)[0]), [&](ValueFlowObjectID object) {
                 if (!universe.isObject(object))
                     return;
                 if (object == ValueFlowUniverse::unknownObject()) {
@@ -361,7 +361,7 @@ constexpr unsigned numberOfWrittenAtCallees = 3;
 
 static ExpectedCallee expectedCalleeOf(const Program& program, const Function& function, ValueID callee)
 {
-    const Type& type = program.at(function.at(callee).expectedOrType());
+    const Type& type = program.at(function.at(callee).expectedOrType().predicted());
     if (type.isAnything())
         return ExpectedCallee::Anything;
     if (type.anyObject)
@@ -438,7 +438,7 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution)
             if (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList && statement.opcode != Opcode::Construct && statement.opcode != Opcode::ConstructList)
                 continue;
             ++counts.calls;
-            ValueSetID callees = solution.valueOf(solution.bodies().operandsOf(statement)[0]);
+            ValueSetID callees = solution.possibleValuesOf(solution.bodies().operandsOf(statement)[0]);
             counts.withUntrackedCallee += solution.sets().contains(callees, ValueFlowUniverse::untrackedObject());
             if (!solution.sets().contains(callees, ValueFlowUniverse::unknownObject()))
                 continue;

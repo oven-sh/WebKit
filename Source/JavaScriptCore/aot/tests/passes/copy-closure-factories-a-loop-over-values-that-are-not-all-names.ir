@@ -1,0 +1,30 @@
+# for (const name of ["a", 1]) object[name] = function () { return name; };
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+data d0 root=Array{contents=number|string elements=[String{value="a"}, Number{value=1}]} module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Data data=d0
+    v2 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    v3 = IteratorResume v2
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v6 = NewClosure v5 function=f1
+    ElemSet v0, v5, v6
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

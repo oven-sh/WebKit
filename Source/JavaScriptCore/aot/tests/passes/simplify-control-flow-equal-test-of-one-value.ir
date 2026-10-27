@@ -26,7 +26,7 @@ function f0 name="behindTheTestThatPassed" parameters=[{type=anything}, {type=fu
     Return v1
 # CHECK: Branch v2 -> taken b1(), notTaken b4()
 # CHECK: = RequireObjectCoercible v0 name="length"
-# CHECK: [[text]]: string = AssumeType v4 castType=string
+# CHECK: [[text]]: string = AssumeType v4 provenType=string
 # CHECK: = GetStringLength [[text]]
 # CHECK-NOT: = Call v1, -,
 }
@@ -47,7 +47,7 @@ function f1 name="behindTheTestThatFailed" parameters=[{type=number|string}, {ty
   b4():
     Return v1
 # CHECK: Branch v2 -> taken b4(), notTaken b1()
-# CHECK: [[number]]: number = AssumeType v0 castType=number
+# CHECK: [[number]]: number = AssumeType v0 provenType=number
 # CHECK: = Negate [[number]]
 # CHECK-NOT: GetStringLength
 }

@@ -120,13 +120,13 @@ struct Server {
         if (timesOfHandlers)
             flow = createFlowResults(*program, *timesOfHandlers, unseenCode);
         callGraph = buildCallGraph(*program, flow, build);
-        graph = buildHeatGraph(*program, callGraph, flow, effects, build);
+        graph = buildHeatGraph(*program, callGraph, flow, effects, build, nullptr, nullptr, nullptr, &graphOfClasses);
         activations = estimateActivations(graph);
     }
 
     double activationsOf(FunctionID function) const { return activations[function.index()]; }
 
-    std::optional<double> callsFrom(HeatNodeID caller, HeatNodeID callee) const
+    static std::optional<double> callsIn(const HeatGraph& graph, HeatNodeID caller, HeatNodeID callee)
     {
         std::span<const HeatNodeID> successors = graph.successors(caller);
         for (unsigned index = 0; index < successors.size(); ++index) {
@@ -136,9 +136,12 @@ struct Server {
         return std::nullopt;
     }
 
+    std::optional<double> callsFrom(HeatNodeID caller, HeatNodeID callee) const { return callsIn(graph, caller, callee); }
+
     std::optional<double> callsFromFunction(FunctionID caller, FunctionID callee) const { return callsFrom(graph.nodeOf(caller), graph.nodeOf(callee)); }
     std::optional<double> callsFromHost(FunctionID callee) const { return callsFrom(graph.hostNode(), graph.nodeOf(callee)); }
     std::optional<double> callsFromUnknownCode(FunctionID callee) const { return callsFrom(graph.unknownCodeNode(), graph.nodeOf(callee)); }
+    std::optional<double> callsFromHostWhereClassesAreEstimated(FunctionID callee) const { return callsIn(graphOfClasses, graphOfClasses.hostNode(), graphOfClasses.nodeOf(callee)); }
 
     BuildContext build { makeDefaultCompileOptions() };
     std::unique_ptr<Program> program { parseProgram(serverText, IRForm::Prepared, build) };
@@ -146,6 +149,7 @@ struct Server {
     EffectSummaries effects;
     CallGraph callGraph;
     HeatGraph graph;
+    HeatGraph graphOfClasses;
     Vector<double> activations;
 };
 
@@ -175,9 +179,11 @@ static void heatGraphGivesCodeThatRunsOnceOneActivation()
     Server server(BuiltinCallbackTimes::PerEvent);
 
     AOT_TEST_CHECK(server.callsFrom(server.graph.nodeOf(moduleBody), server.graph.unknownCodeNode()) == 1.0);
-    AOT_TEST_CHECK(server.graph.successors(server.graph.unknownCodeNode()).size() == 1);
-    AOT_TEST_CHECK(server.callsFromUnknownCode(escaped) == 1.0 && server.callsFromHost(escaped) == 1.0);
-    AOT_TEST_CHECK(server.activationsOf(escaped) == 2);
+    AOT_TEST_CHECK(server.graph.successors(server.graph.unknownCodeNode()).empty());
+    AOT_TEST_CHECK(server.callsFromHost(escaped) == 1.0);
+    AOT_TEST_CHECK(server.activationsOf(escaped) == 1);
+    AOT_TEST_CHECK(server.callsFromHostWhereClassesAreEstimated(escaped) == frequencyConstants.iterationsPerLoop);
+    AOT_TEST_CHECK(server.callsFromHostWhereClassesAreEstimated(moduleBody) == 1.0 && !server.callsFromHostWhereClassesAreEstimated(setUp));
 
     AOT_TEST_CHECK(server.callsFromHost(moduleBody) == 1.0);
     AOT_TEST_CHECK(server.activationsOf(moduleBody) == 1);
@@ -203,11 +209,11 @@ static void heatRanksHandlersAboveLoopsAtStart()
     const Program& program = *server.program;
     Heat heat = estimateHeat(program, server.callGraph, server.flow, server.build);
 
-    AOT_TEST_CHECK(hasElements(heat.hottestFirst().first(5), { fetch, route, respond, onMessage, registerRoute }));
-    AOT_TEST_CHECK(heat.percentileOf(program, fetch) == heat.percentileOf(program, onMessage));
-    AOT_TEST_CHECK(heat.percentileOf(program, respond) > heat.percentileOf(program, registerRoute));
-    AOT_TEST_CHECK(heat.percentileOf(program, registerRoute) > heat.percentileOf(program, job));
-    AOT_TEST_CHECK(heat.of(program, moduleBody) == HeatClass::RunsOnce && heat.of(program, setUp) == HeatClass::RunsOnce);
+    AOT_TEST_CHECK(hasElements(heat.hottestFirst().predicted().first(5), { fetch, route, respond, onMessage, registerRoute }));
+    AOT_TEST_CHECK((heat.percentileOf(program, fetch) == heat.percentileOf(program, onMessage)).predicted());
+    AOT_TEST_CHECK((heat.percentileOf(program, respond) > heat.percentileOf(program, registerRoute)).predicted());
+    AOT_TEST_CHECK((heat.percentileOf(program, registerRoute) > heat.percentileOf(program, job)).predicted());
+    AOT_TEST_CHECK(heat.of(program, moduleBody).predicted() == HeatClass::RunsOnce && heat.of(program, setUp).predicted() == HeatClass::RunsOnce);
 }
 
 static void heatGraphCountsOneCallOfCallbackCalledLater()
@@ -218,7 +224,7 @@ static void heatGraphCountsOneCallOfCallbackCalledLater()
         AOT_TEST_CHECK(server.callsFromFunction(moduleBody, callback) == 1.0);
     for (FunctionID callback : { fetch, onMessage }) {
         AOT_TEST_CHECK(server.callsFromHost(callback) == 1.0);
-        AOT_TEST_CHECK(server.callsFromUnknownCode(callback) == 1.0 / 3);
+        AOT_TEST_CHECK(!server.callsFromUnknownCode(callback));
     }
     for (FunctionID function : { fetch, route, respond, onMessage, job })
         AOT_TEST_CHECK(server.activationsOf(function) < server.activationsOf(registerRoute));
@@ -233,7 +239,8 @@ static void heatGraphWithoutFlowResultsGoesByOperandUses()
     AOT_TEST_CHECK(server.callsFromFunction(moduleBody, job) == HeatModel::callsOfRepeatedCallback);
     AOT_TEST_CHECK(!server.callsFromFunction(moduleBody, fetch));
     AOT_TEST_CHECK(server.callsFromHost(fetch) == 1.0 && server.callsFromHost(setUp) == 1.0);
-    AOT_TEST_CHECK(server.callsFromUnknownCode(moduleBody) && server.callsFromUnknownCode(setUp));
+    for (FunctionID function : { moduleBody, setUp })
+        AOT_TEST_CHECK(server.callsFromHostWhereClassesAreEstimated(function) == frequencyConstants.iterationsPerLoop);
 }
 
 #define FOR_EACH_AOT_HEAT_GRAPH_TEST(v) \

@@ -5,7 +5,7 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = TypeTest v0 testedType=number|string
@@ -14,7 +14,7 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
     v3 = Integer integer=1
     Jump -> next b3(v3)
   b3(v4):
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     Return v5
   b4():
     v6 = Integer integer=0
@@ -26,6 +26,6 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b3(v4: number|string):
-# CHECK-NEXT: v5: number = Check v4 castType=number
+# CHECK-NEXT: v5: number = Check v4 expectedType=number
 # CHECK-NEXT: Return v5
 }

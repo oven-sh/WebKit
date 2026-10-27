@@ -96,9 +96,9 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCal
 {
     BuiltinClassID constructedClass = m_builtins.at(m_builtins.at(call.overload()).builtin).instanceClass;
     RELEASE_ASSERT(constructedClass);
-    TypedArrayType type = m_builtins.at(constructedClass).typedArrayType;
-    RELEASE_ASSERT(isTypedView(type));
-    StubCallResult view = callStub(call.context(), newTypedArray(), { word32(type).value(), numberOperand(call.argument(0)).value() });
+    TypedArrayType type = m_builtins.typedArrayTypeOf(constructedClass);
+    RELEASE_ASSERT(isTypedView(type) && m_builtins.typedArrayClassOf(constructedClass) == constructedClass);
+    StubCallResult view = callStub(call.context(), newTypedArray(), { word32(type).value(), numberOperand(call.argument(0)).value() }, { .calledBuiltin = functionOf(call.overload()) });
     finish(call, CellPointer(view.first));
 }
 
@@ -141,7 +141,11 @@ void ArrayBufferViewBuiltinEmitter::generateArrayFrom(const InlineCall& call)
         m_out.branch(below(index, count).value(), normalEdge(copy), normalEdge(copied));
 
         m_out.appendTo(copy);
-        Operand element = inRepresentation(call.context(), rawRepresentation, loadElement(source, vector, index, arrayType), elementType);
+        Operand loaded = loadElement(source, vector, index, arrayType);
+        // A NaN leaves for the operation.
+        if (loaded.is<ImpureNumber>() && rawRepresentation == Representation::Double)
+            loaded = Number(loaded.value);
+        Operand element = inRepresentation(call.context(), rawRepresentation, loaded, elementType);
         if (element.is<Number>() && !elementType.isInteger())
             branchUnless(equal(element.as<Number>(), element.as<Number>()), outOfLine);
         elementAccess.storeRawElement(form, elements, index, element);

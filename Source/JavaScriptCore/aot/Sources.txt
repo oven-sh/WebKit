@@ -5,6 +5,7 @@ aot/analysis/AOTBorrowedParameters.cpp
 aot/analysis/AOTCFG.cpp
 aot/analysis/AOTCallGraph.cpp
 aot/analysis/AOTDefinitions.cpp
+aot/analysis/AOTDescriptorLiteral.cpp
 aot/analysis/AOTDominators.cpp
 aot/analysis/AOTEscapeAnalysis.cpp
 aot/analysis/AOTFailedTests.cpp
@@ -22,8 +23,10 @@ aot/analysis/AOTIRBuilderExpansion.cpp
 aot/analysis/AOTInductionVariables.cpp
 aot/analysis/AOTIntegerRelations.cpp
 aot/analysis/AOTLiveness.cpp
+aot/analysis/AOTObservableOperations.cpp
 aot/analysis/AOTParameterUses.cpp
 aot/analysis/AOTPointsToSolver.cpp
+aot/analysis/AOTPredictedValues.cpp
 aot/analysis/AOTPropertyAccess.cpp
 aot/analysis/AOTPropertyAccessElements.cpp
 aot/analysis/AOTPropertyAccessMembers.cpp
@@ -134,6 +137,7 @@ aot/codegen/AOTGuardEmitter.cpp
 aot/codegen/AOTHeaps.cpp
 aot/codegen/AOTImpliedBranchMerging.cpp
 aot/codegen/AOTInlineBuiltinEmitter.cpp
+aot/codegen/AOTInnerPointerValidation.cpp
 aot/codegen/AOTIntegerUpdatesInMemory.cpp
 aot/codegen/AOTNarrowReferenceValidation.cpp
 aot/codegen/AOTOperationEmitter.cpp
@@ -434,6 +438,7 @@ aot/support/AOTDiagnostics.cpp
 aot/support/AOTLosses.cpp
 aot/support/AOTPhaseTimes.cpp
 aot/support/AOTStatistics.cpp
+aot/support/AOTSystemResources.cpp
 aot/support/AOTThreads.cpp
 aot/valueflow/AOTFlowApplication.cpp
 aot/valueflow/AOTFlowApply.cpp
@@ -447,6 +452,10 @@ aot/valueflow/AOTFlowParts.cpp
 aot/valueflow/AOTFlowReport.cpp
 aot/valueflow/AOTFlowReportAccesses.cpp
 aot/valueflow/AOTFlowResults.cpp
+aot/valueflow/AOTLedgerFields.cpp
+aot/valueflow/AOTLedgerOfBuiltinObjects.cpp
+aot/valueflow/AOTLedgerOfClassesAndClosures.cpp
+aot/valueflow/AOTLedgerVariables.cpp
 aot/valueflow/AOTValueFlowAnalysis.cpp
 aot/valueflow/AOTValueFlowBodies.cpp
 aot/valueflow/AOTValueFlowBodiesLink.cpp
@@ -467,8 +476,8 @@ aot/valueflow/AOTValueFlowResultsExecutions.cpp
 aot/valueflow/AOTValueFlowResultsFields.cpp
 aot/valueflow/AOTValueFlowResultsFunctions.cpp
 aot/valueflow/AOTValueFlowResultsHeap.cpp
-aot/valueflow/AOTValueFlowResultsLocations.cpp
 aot/valueflow/AOTValueFlowResultsObjects.cpp
+aot/valueflow/AOTValueFlowResultsOperationsWithoutValue.cpp
 aot/valueflow/AOTValueFlowResultsOrder.cpp
 aot/valueflow/AOTValueFlowResultsPlaces.cpp
 aot/valueflow/AOTValueFlowResultsSinks.cpp
@@ -477,7 +486,6 @@ aot/valueflow/AOTValueFlowResultsTypes.cpp
 aot/valueflow/AOTValueFlowResultsUnknown.cpp
 aot/valueflow/AOTValueFlowResultsUnseenCode.cpp
 aot/valueflow/AOTValueFlowResultsUses.cpp
-aot/valueflow/AOTValueFlowResultsVariablesOnObjects.cpp
 aot/valueflow/AOTValueFlowRuleContext.cpp
 aot/valueflow/AOTValueFlowRules.cpp
 aot/valueflow/AOTValueFlowRulesArithmetic.cpp
@@ -493,4 +501,5 @@ aot/valueflow/AOTValueFlowRulesPromises.cpp
 aot/valueflow/AOTValueFlowSolver.cpp
 aot/valueflow/AOTValueFlowTypedResults.cpp
 aot/valueflow/AOTValueFlowUnobservedDefinitions.cpp
+aot/valueflow/AOTValueFlowWidenedSolve.cpp
 aot/valueflow/AOTValueSets.cpp

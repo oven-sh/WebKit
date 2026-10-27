@@ -1,0 +1,39 @@
+# function Made(v) { if (!(this instanceof Made)) return new Made(v); this.kept = v }   Object.defineProperty(Made, Symbol.hasInstance, { value: always })   Made(1)   in code that is not strict
+# A function of the program answers the test. So the global object may pass the test, and the store behind it may meet the global object.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: function f1 name="Made"
+# CHECK: PropSet {{*}}key="kept" {{*}}receivers=[L0, ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" constructor=f1 fields=[{key="kept" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Environment fields=[{key="Made" declared={type=f1 flags=[IsFromCompiler]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    v1 = NewClosure v0 function=f1
+    PutEnvironmentField v0, v1 layout=L1
+    v3 = NewClosure function=f2
+    PropDefine v1, v3 key=@@hasInstance
+    v5 = Integer integer=1
+    v6 = Call v1, -, v5
+    Return v6
+}
+function f1 name="Made" flags=[IsSloppy, HasThis] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: env L1, v1: anything, v2: anything):
+    v3 = ToThis v1
+    v4 = GetEnvironmentField v0 layout=L1
+    v5 = InstanceOf v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v2 key="kept" mode=Sloppy
+    v7 = Undefined
+    Return v7
+  b2():
+    v8 = Construct v4, -, v2
+    Return v8
+}
+function f2 name="always" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    Return v1
+}

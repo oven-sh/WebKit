@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTNarrowFieldTypes.h"
+#include "AOTThreshold.h"
 #include "AOTTypeClosure.h"
 #include "AOTVector.h"
 #include "AOTVerifierInternal.h"
@@ -251,10 +252,14 @@ bool Reader::setConstructedClasses()
         FunctionID constructor = m_program.layouts[index].constructor;
         if (!constructor)
             continue;
-        LayoutID& constructedClass = m_program.at(constructor).constructedClass;
-        if (constructedClass)
+        Function& function = m_program.at(constructor);
+        if (function.constructedClass)
             return report({ .kind = InternalErrorKind::InvalidClass, .layout = LayoutID(index) });
-        constructedClass = LayoutID(index);
+        function.constructedClass = LayoutID(index);
+        // The body as it was written: no pass has changed it yet, and blanks and comments are not in it.
+        AOT_THRESHOLD(uint32_t, mostValuesOfShortConstructor, 77);
+        if (function.values.size() > mostValuesOfShortConstructor)
+            function.capabilities.add(FunctionCapabilities::IsLongConstructor);
     }
     return true;
 }
@@ -285,7 +290,7 @@ void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
 
 void RecordChecker::didRead(DeclaredType& declared)
 {
-    require(!declared.flags.containsAll({ PositionFlags::IsExpected, PositionFlags::IsInt32Promise }), InternalErrorKind::InvalidDeclaredType);
+    require(!declared.isExpected() || !declared.has(PositionFlags::IsInt32Promise), InternalErrorKind::InvalidDeclaredType);
 }
 
 void RecordChecker::didRead(PropertyKey& key)
@@ -319,6 +324,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
     if (!reader.run())
         return nullptr;
     program->copyBorrowedLineStarts(build.parallelLoops());
+    program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;
 }

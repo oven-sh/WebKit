@@ -4,7 +4,8 @@
 # RUN: pass ExpandOwnKeys
 # STATISTIC: OwnKeyWalksExpanded = 1
 
-module m0 path="main.js" displayPath="main.js"
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
 layout L0 name="Eight" fields=[{key="f0" declared={type=number}}, {key="f1" declared={type=number}}, {key="f2" declared={type=number}}, {key="f3" declared={type=number}}, {key="f4" declared={type=number}}, {key="f5" declared={type=number}}, {key="f6" declared={type=number}}, {key="f7" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4, 5, 6, 7]}]}
 layout L1 name="Nine" fields=[{key="f0" declared={type=number}}, {key="f1" declared={type=number}}, {key="f2" declared={type=number}}, {key="f3" declared={type=number}}, {key="f4" declared={type=number}}, {key="f5" declared={type=number}}, {key="f6" declared={type=number}}, {key="f7" declared={type=number}}, {key="f8" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4, 5, 6, 7, 8]}]}
 
@@ -22,4 +23,18 @@ function f1 name="copyOfNineFields" parameters=[{type=anything}] results=[{type=
 # CHECK-NOT: NewObject
 # CHECK: v1: object = CopyObject v0
 # CHECK-NOT: NewObject
+}
+
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1 function=f0
+    v5 = CallDirect v1 function=f1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
 }

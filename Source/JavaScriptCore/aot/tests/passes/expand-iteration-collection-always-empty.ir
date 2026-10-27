@@ -23,7 +23,7 @@ function f0 name="emptySet" parameters=[{type=Set<never, proven, pristine[Names]
 # CHECK-NEXT: [[element0]]: undefined = ResultAt [[step0]] index=2
 # CHECK-NEXT: Branch [[hasEntry0]] -> taken [[found0]](), notTaken [[end0]]()
 # CHECK: [[found0]]():
-# CHECK-NEXT: : never = AssumeType [[element0]] castType=never
+# CHECK-NEXT: : never = AssumeType [[element0]] provenType=never
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: [[end0]]():
 # CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
@@ -46,7 +46,7 @@ function f1 name="emptyMap" parameters=[{type=Map<never, never, proven, pristine
 # CHECK: [[key1]]: undefined = ResultAt [[step1]] index=2
 # CHECK: Branch {{*}} -> taken [[found1]](), notTaken [[end1]]()
 # CHECK: [[found1]]():
-# CHECK-NEXT: : never = AssumeType [[key1]] castType=never
+# CHECK-NEXT: : never = AssumeType [[key1]] provenType=never
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: [[end1]]():
 # CHECK-NOT: NewArray
@@ -67,7 +67,7 @@ function f2 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
 # CHECK: [[element2]]: undefined|number = ResultAt [[step2]] index=2
 # CHECK: Branch {{*}} -> taken [[found2]](), notTaken [[end2]]()
 # CHECK: [[found2]]():
-# CHECK-NEXT: [[number2]]: number = AssumeType [[element2]] castType=number
+# CHECK-NEXT: [[number2]]: number = AssumeType [[element2]] provenType=number
 # CHECK-NEXT: = CollectionTable v0
 # CHECK: [[no2]]: false = Boolean
 # CHECK-NEXT: Jump -> next {{*}}([[no2]], [[number2]],

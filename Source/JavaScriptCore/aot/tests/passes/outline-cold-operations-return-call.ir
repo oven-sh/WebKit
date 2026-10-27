@@ -1,4 +1,4 @@
-# The call of a tail call stays with its terminator, and a demoted one in the frame that its mark hides: neither is moved into a shared body
+# The call of a tail call stays with its terminator, and a demoted one in the frame of its function: neither is moved into a shared body
 # FORM: Selected
 # OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
 # RUN: pass OutlineColdOperations
@@ -46,7 +46,7 @@ function f2 name="demotedTailCalls" parameters=[{type=number}, {type=anything}, 
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:
     v%(i*2+1) = String string="fatal"
-    v%(i*2+2) = Call v1, -, v%(i*2+1), v%(i*2+1), v%(i*2+1), v%(i*2+1), v2 [isDemotedTailCall]
+    v%(i*2+2) = Call v1, -, v%(i*2+1), v%(i*2+1), v%(i*2+1), v%(i*2+1), v2 @0 tail
     Return v%(i*2+2)
 # END REPEAT
   b7():

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableRealm.h"
+#include "AOTFlowPrototypes.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -62,7 +63,7 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     MemberSite site { .receiver = receiver, .key = key };
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
-        TypeID expectedType = inputs.function.at(receiver).expected();
+        TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)
             return std::nullopt;
         Type expected = inputs.types.at(expectedType).intersectWith(present, inputs.types).withoutNullish();
@@ -119,7 +120,7 @@ bool mayFindProvenAccess(const BuiltinUseInputs& inputs, const Value& access)
     }
     if (!builtinMemberNameOf(program, access.key()))
         return false;
-    return mayBeKnownReceiver(receiverType) || receiverType.hasOnlyLayouts(program);
+    return mayBeKnownReceiver(receiverType) || receiverType.hasOnlyLayouts();
 }
 
 static const Type& receiverTypeAt(const BuiltinUseInputs& inputs, const MemberSite& site)
@@ -146,6 +147,39 @@ static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite&
     });
 }
 
+// The closures of async functions inherit from a prototype of their own, which takes no name. Where an instance of that class finds the same member,
+// a receiver that can only be such a closure takes the test of that class, and one that may be or is expected to be such a closure takes the test that the closures of both classes pass.
+static PristineRequirement testThatFindsMember(const BuiltinUseInputs& inputs, const MemberSite& site)
+{
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinClassID start = site.start.builtinClass;
+    PristineRequirement names { start, aspectThatFindsMember(table, start, site.answer.member) };
+    if (pristineTestOf(table, start) != PristineTest::ClosureAsCreated)
+        return names;
+    BuiltinClassID below = classBelowWithTestedStructure(table, start);
+    if (!below)
+        return names;
+    BuiltinMemberLookup found = table.findForInstance(below, table.at(site.answer.member).name);
+    if (found.outcome != BuiltinMemberLookup::Outcome::Found || table.canonicalID(found.member) != table.canonicalID(site.answer.member))
+        return names;
+
+    auto isClosureOfClassBelow = [&](FunctionID function) {
+        return classOfFunctionObject(inputs.program.at(function)) == below;
+    };
+    const Type& receiver = receiverTypeAt(inputs, site);
+    if (!receiver.anyFunction && receiver.classes.isEmpty() && !receiver.functions.isEmpty()) {
+        if (std::ranges::all_of(receiver.functions, isClosureOfClassBelow))
+            return { below, PristineAspects::Names };
+        if (std::ranges::any_of(receiver.functions, isClosureOfClassBelow))
+            return { start, PristineAspects::NamesKeptBelow };
+        return names;
+    }
+    TypeID expected = inputs.function.at(site.receiver).expected().predicted();
+    if (expected && std::ranges::any_of(inputs.types.at(expected).functions, isClosureOfClassBelow))
+        return { start, PristineAspects::NamesKeptBelow };
+    return names;
+}
+
 static bool isClosureChangedByProgram(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.start.builtinClass != BuiltinClasses::Function)
@@ -169,7 +203,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
 
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isInherited && !isClosureAsCreated(inputs, site)) {
-        PristineRequirement names { site.start.builtinClass, aspectThatFindsMember(table, site.start.builtinClass, site.answer.member) };
+        PristineRequirement names = testThatFindsMember(inputs, site);
         if (pristineProofOf(inputs.pristine(), site.receiver, names, point) != PristineProof::Proven) {
             if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses || isClosureChangedByProgram(inputs, site)) {
                 isPossible = false;
@@ -457,8 +491,20 @@ static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const Me
     return plan;
 }
 
+// The run time notes such a look.
+static bool looksForNameThatFramesTellOf(const BuiltinUseInputs& inputs, const MemberSite& site)
+{
+    if (site.answer.member != inputs.program.builtins().canonicalID(Builtins::FunctionPrototypeName))
+        return false;
+    return std::ranges::any_of(receiverTypeAt(inputs, site).functions, [&](FunctionID function) {
+        return inputs.program.at(function).framesTellWhetherNameWasLookedFor();
+    });
+}
+
 static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use, BuiltinCallMode mode, ProgramPoint point)
 {
+    if (looksForNameThatFramesTellOf(inputs, site))
+        return { };
     bool isRead = mode == BuiltinCallMode::Get;
     if (isRead) {
         if (BuiltinUsePlan plan = planReadOfClosureProperty(inputs, site, use))
@@ -499,7 +545,7 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
     if (BuiltinName symbol = table.nameOfSymbol(plan.member))
         plan.key = program.keyOf(symbol);
-    else if (!tryMakeBuiltinConstant(program, plan.member))
+    else if (std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member); !constant || (constant->opcode != Opcode::Builtin && firstReadChangesListedKeys(table, inputs.flow, plan.member)))
         return { };
 
     bool isPossible = addLocationRequirement(inputs, site, location, plan);
@@ -543,7 +589,7 @@ static BuiltinUsePlan planInheritedMember(const BuiltinUseInputs& inputs, ValueI
     const BuiltinTable& table = program.builtins();
     const Value& access = inputs.function.at(use);
     const Type& receiverType = program.typeOf(inputs.function, access.objectOperand());
-    if (!receiverType.hasOnlyLayouts(program) || hasOnlyNeverAllocatedLayouts(program, receiverType))
+    if (!receiverType.hasOnlyLayouts() || hasOnlyNeverAllocatedLayouts(program, receiverType))
         return { };
 
     Access lookup = mode == BuiltinCallMode::Get ? Access::Read : Access::Store;

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTRefusedContents.h"
@@ -25,6 +26,9 @@ public:
     using ListID = SharedLayoutLists::ListID;
 
     AOT_CLASS_THRESHOLD(size_t, fewestLayouts, 8);
+    AOT_CLASS_THRESHOLD(size_t, fewestClassesAbove, 4);
+    AOT_CLASS_THRESHOLD(size_t, fewestFields, 8);
+    AOT_CLASS_THRESHOLD(size_t, classesBetweenFieldsKept, 4);
     static constexpr ListID noList = ~0ull;
 
     template<typename Key, typename Value>
@@ -101,6 +105,38 @@ public:
 
     using ProvenNamedAccess = Answer<ProvenAccessKey, ProvenAccess>;
 
+    struct InheritedMemberKey {
+        LayoutID declaredClass;
+        BuiltinClassID builtinClass;
+        bool isOfInstances { false };
+        PropertyKeyID key;
+        Access access { Access::Read };
+        const FlowResults* flow { nullptr };
+
+        friend bool operator==(const InheritedMemberKey&, const InheritedMemberKey&) = default;
+    };
+
+    using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
+    using BuiltinBase = Answer<LayoutID, BuiltinClassID>;
+    using FilledAtBirth = Answer<LayoutID, bool>;
+
+    struct FieldAboveKey {
+        LayoutID layout;
+        PropertyKeyID key;
+        BaseChain chain { BaseChain::Proven };
+
+        friend bool operator==(const FieldAboveKey&, const FieldAboveKey&) = default;
+    };
+
+    using FieldAbove = Answer<FieldAboveKey, std::optional<FieldReference>>;
+
+    struct CodeOfOperand {
+        TypeID operand;
+        OperandBehavior behavior;
+        bool calledUnknownCode { false };
+        EffectDescription added;
+    };
+
     struct MethodsOfName {
         BuiltinName name;
         Vector<MemberOfClasses, 4> methods;
@@ -117,6 +153,11 @@ public:
     SharedMemo<Optionality> optionalities;
     SharedMemo<ProvenNamedAccess> provenAccesses;
     SharedMemo<MethodsOfName> methodsByName;
+    SharedMemo<CodeOfOperand> codeOfOperands;
+    SharedMemo<InheritedMember> inheritedMembers;
+    SharedMemo<BuiltinBase> builtinBases;
+    SharedMemo<FilledAtBirth> layoutsFilledAtBirth;
+    SharedMemo<FieldAbove> fieldsAbove;
     RefusedContents refusedContents;
     bool checksAnswers { false };
 };

@@ -35,7 +35,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 
 function f1 name="calledInInnerLoop" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w0
+    v1 = Check v0 expectedType=number site=w0
     v2 = Add v1, v1
     Return v2
 }
@@ -43,9 +43,9 @@ function f1 name="calledInInnerLoop" module=m0 position=5 flags=[IsChecked] leng
 
 function f2 name="coldByTheLimit" module=m0 position=6 flags=[IsChecked] length=1 parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w1
+    v1 = Check v0 expectedType=number site=w1
     v2 = Add v1, v1
     Return v2
 }
 # CHECK-LABEL: function f2 name="coldByTheLimit" module=m0 position=6 flags=[IsChecked]
-# CHECK: = Check v0 castType=number
+# CHECK: = Check v0 expectedType=number

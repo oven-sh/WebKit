@@ -40,7 +40,7 @@ enum class SlotExitReason : uint8_t { Delete, Redefinition, StoreOfOtherType };
 
 using PropertyWalk::isCompiledObject;
 
-// What the slot of one field may hold: a value of the field's type, or undefined or null where the slot has a marker for it.
+// What RuntimeLayoutTable::slotAdmits() lets into the slot of one field.
 class AcceptedValue {
 public:
     static AcceptedValue provenAtBuildTime(JSValue value) { return AcceptedValue(value); }
@@ -210,8 +210,8 @@ public:
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
-    // The keys are strings and the functions are the getters, in pairs. True if all of them now lie in slots. Otherwise the object is as it was.
-    bool tryDefineGettersOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndGetters, uint32_t enumerable);
+    // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
+    bool tryDefineAccessorsOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -227,6 +227,7 @@ public:
     JSObject* extraProperties() const { return hasExtraProperties() ? extraPropertiesSlow() : nullptr; }
     JSObject* extraPropertiesSlow() const;
     JSObject* ensureExtraProperties(VM&);
+    void adoptExtraProperties(VM&, JSObject* filled);
     void setExtraProperties(VM&, JSObject*, CompiledStructure* withExtraProperties);
     struct ExtraProperty {
         UniquedStringImpl* name;
@@ -291,7 +292,7 @@ public:
     Vector<UniquedStringImpl*, 16> extraKeyNames() const;
     // For removeExtraKeyFromOrder(): a number that is below the count of exactly those entries of the key order that count the key. Nothing: no entry counts it.
     std::optional<uint32_t> extraKeyOrdinal(PropertyName) const;
-    bool hasPositionAmongKeys(UniquedStringImpl*) const;
+    bool keyOrderCountsExtraKeys() const;
     void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
     // The key that extraKeyOrdinal() was last asked for is gone from the extra properties, and from the key order if that counted it.
     void didRemoveExtraKey(State&);
@@ -311,7 +312,7 @@ public:
     JSValue readListedField(const FieldAsProperty&) const;
     const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSValue readPropertyListEntry(const PropertyListEntry&, JSObject* extraProperties) const;
-    JSCellButterfly* keys(VM&) const;
+    JSCellButterfly* keys(VM&, KeyListKind = KeyListKind::Strings) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
     JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject*);
@@ -438,7 +439,7 @@ ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
         if constexpr (std::same_as<Unboxed, bool>)
             return jsBoolean(value);
         else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(purifyNaN(value));
+            return jsNumber(withoutPayload(value));
         else if constexpr (std::same_as<Unboxed, int32_t>)
             return jsNumber(value);
         else

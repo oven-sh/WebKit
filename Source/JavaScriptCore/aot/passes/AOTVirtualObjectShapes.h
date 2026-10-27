@@ -79,6 +79,9 @@ public:
     bool hasUnprovenFields() const { return m_hasUnprovenFields; }
     bool refusesUnprovenValues() const { return m_refusesUnprovenValues; }
     void refuseUnprovenValues() { m_refusesUnprovenValues = true; }
+    // A store has given the field a value that may be undefined or null, for which its slot has room beside the values of its type.
+    bool mayHoldUndefinedOrNull(uint32_t field) const { return m_fieldsThatMayHoldUndefinedOrNull.get(field); }
+    bool addFieldThatMayHoldUndefinedOrNull(uint32_t field) { return !m_fieldsThatMayHoldUndefinedOrNull.set(field); }
     const VirtualField& fieldAt(uint32_t field) const LIFETIME_BOUND { return m_fields[field]; }
     uint32_t numberOfFields() const { return m_fields.size(); }
 
@@ -99,6 +102,7 @@ private:
     Vector<VirtualField, 8> m_fields;
     bool m_hasUnprovenFields { false };
     bool m_refusesUnprovenValues { false };
+    BitVector m_fieldsThatMayHoldUndefinedOrNull;
     Vector<VirtualShape, 4> m_shapes;
     UncheckedKeyHashMap<uint64_t, uint8_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_tagBits;
     unsigned m_numberOfTagBits { 0 };
@@ -112,6 +116,16 @@ struct ShapeContext {
     const VirtualFamily& family;
     const KeyOrderTable& orders;
 };
+
+// What a field carries: a value of the type, or undefined or null beside those. Whoever stores into a field, reads it, tests it, hands it on or builds the object from it asks for this and not for typeOfField().
+struct FieldContents {
+    TypeID type;
+    bool mayAlsoBeUndefinedOrNull { false };
+};
+FieldContents contentsOf(const ShapeContext&, const VirtualObjectDescription&, uint32_t field);
+bool isWithin(const Program&, FieldContents, TypeID bound);
+bool mayBeUndefinedOrNull(const Program&, FieldContents);
+TypeID typeOf(FieldContents, TypeArena&);
 
 TypeID typeOfShape(const ShapeContext&, const VirtualShape&);
 bool hasStored(const VirtualShape&, uint32_t field);

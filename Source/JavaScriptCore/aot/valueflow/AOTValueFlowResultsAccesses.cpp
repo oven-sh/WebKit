@@ -47,16 +47,19 @@ static Vector<ValueFlowStatementID> findEscapesOfObjects(const ValueFlowResultIn
     }
 
     HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lowestOfSets;
-    solver.graph().forEachPredecessor(escaped, [&](ValueFlowNodeID from) {
-        ValueSetID held = solver.valueOf(from);
-        if (ValueSets::isComplement(held))
-            return;
-        ValueFlowStatementID logger = solver.statementThatLogged({ from, escaped });
-        if (!logger)
-            logger = loggersOfEdgesIntoRetiredNodes.get(from.index());
-        if (logger && hasFunction(witnessOfStatement(inputs.program, solver.statementAt(logger))))
-            keepLowerStatement(solver, lowestOfSets.add(held.index(), ValueFlowStatementID()).iterator->value, logger);
-    });
+    // What is carried out escapes through a node of its own.
+    for (ValueFlowNodeID taking : { escaped, inputs.bodies().nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut) }) {
+        solver.graph().forEachPredecessor(taking, [&](ValueFlowNodeID from) {
+            ValueSetID held = solver.possibleValuesOf(from);
+            if (ValueSets::isComplement(held))
+                return;
+            ValueFlowStatementID logger = solver.statementThatLogged({ from, taking });
+            if (!logger)
+                logger = loggersOfEdgesIntoRetiredNodes.get(from.index());
+            if (logger && hasFunction(witnessOfStatement(inputs.program, solver.statementAt(logger))))
+                keepLowerStatement(solver, lowestOfSets.add(held.index(), ValueFlowStatementID()).iterator->value, logger);
+        });
+    }
     for (auto& [set, statement] : lowestOfSets) {
         solver.sets().forEachMember(ValueSetID(set), [&](ValueFlowObjectID object) {
             if (!inputs.universe().isObject(object) || ValueFlowResultInputs::isPlaceholder(object))
@@ -82,7 +85,7 @@ static Vector<ValueFlowStatementID> findEscapesOfObjects(const ValueFlowResultIn
             const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(node));
             if (!key || (key->kind != ValueFlowMadeNodeKind::Written && key->kind != ValueFlowMadeNodeKind::WrittenUnderKind) || !key->set || ValueSets::isComplement(key->set))
                 continue;
-            ValueSetID held = solver.valueOf(ValueFlowNodeID(node));
+            ValueSetID held = solver.possibleValuesOf(ValueFlowNodeID(node));
             if (held == ValueSets::nothing || ValueSets::isComplement(held))
                 continue;
             functor(index++, *key, held);
@@ -176,7 +179,7 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         auto holdsBuiltin = [&](ValueSetID set) {
             return set && !ValueSets::isComplement(set) && inputs.sets().meet(set, inputs.universe().builtinFunctions());
         };
-        return holdsBuiltin(callee.constant) || (callee.node && holdsBuiltin(solver.valueOf(callee.node)));
+        return holdsBuiltin(callee.constant) || (callee.node && holdsBuiltin(solver.possibleValuesOf(callee.node)));
     };
     for (uint32_t function = 0; function < inputs.program.functions.size(); ++function) {
         if (!inputs.isReached(FunctionID(function)))
@@ -371,7 +374,7 @@ ValueFlowBirthsOfUnknownObject::ValueFlowBirthsOfUnknownObject(const ValueFlowRe
     holdsUnknownObject.ensureSize(numberOfNodes);
     for (uint32_t index = 0; index < numberOfNodes; ++index) {
         ValueFlowNodeID node(index);
-        if (!inputs.sets().contains(solver.valueOf(node), ValueFlowUniverse::unknownObject()))
+        if (!inputs.sets().contains(solver.possibleValuesOf(node), ValueFlowUniverse::unknownObject()))
             continue;
         holdsUnknownObject.quickSet(index);
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);

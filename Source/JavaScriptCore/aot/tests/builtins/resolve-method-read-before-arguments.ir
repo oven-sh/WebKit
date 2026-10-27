@@ -103,11 +103,11 @@ function f7 name="methodValueReused" parameters=[{type=string}] results=[{type=a
 
 function f8 name="checkedMethod" parameters=[{type=string}] results=[{type=anything}] {
     v1 = PropGet v0 key="toLowerCase"
-    v2 = Check v1 castType=function
+    v2 = Check v1 expectedType=function
     v3 = Call v2, v0 calleeKey="toLowerCase"
     Return v3
 # CHECK: v1: builtin(StringPrototypeToLowerCase) = Builtin builtin=StringPrototypeToLowerCase
-# CHECK-NEXT: v2: builtin(StringPrototypeToLowerCase) = Check v1 castType=function
+# CHECK-NEXT: v2: builtin(StringPrototypeToLowerCase) = Check v1 expectedType=function
 # CHECK-NEXT: v3: string = CallBuiltin v0 overload=StringPrototypeToLowerCase/0
 }
 

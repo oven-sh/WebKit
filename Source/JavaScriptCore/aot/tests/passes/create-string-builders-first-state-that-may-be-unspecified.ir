@@ -18,7 +18,7 @@ function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=n
     Return v6
   b3(v8: int[1, 2], v9: string) role=CatchHandler:
     v10 = CatchValue
-    v11 = AssumeType v9 castType=string
+    v11 = AssumeType v9 provenType=string
     Jump -> next b4(v11, v2)
   b4(v12, v13):
     LoopHint
@@ -56,7 +56,7 @@ function f1 name="firstStateIsAlwaysThere" parameters=[{type=string}, {type=numb
     Return v5
   b3(v7: int[1, 2], v8: string) role=CatchHandler:
     v9 = CatchValue
-    v10 = AssumeType v8 castType=string
+    v10 = AssumeType v8 provenType=string
     Jump -> next b4(v10, v2)
   b4(v11, v12):
     LoopHint

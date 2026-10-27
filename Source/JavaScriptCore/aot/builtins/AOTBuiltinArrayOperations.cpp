@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -96,8 +97,15 @@ static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination,
     const SourceCharacterType* source = characters.data();
     size_t length = characters.size();
     if (length <= maxLengthCopiedInPlace) {
-        for (size_t i = 0; i < length; ++i)
-            destination[i] = source[i];
+        if constexpr (sizeof(CharacterType) == 1 && sizeof(SourceCharacterType) == 1) {
+            if (length >= sizeof(uint16_t))
+                WTF::copySmallMemory<sizeof(uint16_t), maxLengthCopiedInPlace>(byteCast<uint8_t>(destination), byteCast<uint8_t>(source), length);
+            else if (length)
+                *destination = *source;
+        } else {
+            for (size_t i = 0; i < length; ++i)
+                destination[i] = source[i];
+        }
     } else
         StringImpl::copyCharacters(std::span { destination, length }, characters);
     return destination + length;
@@ -153,6 +161,15 @@ static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, uns
     return joined;
 }
 
+static bool holdsOnlyHoles(JSArray* array)
+{
+    Butterfly& butterfly = *array->butterfly();
+    unsigned length = butterfly.publicLength();
+    if (hasDouble(array->indexingType()))
+        return std::ranges::all_of(std::span { butterfly.contiguousDouble().data(), length }, [](double element) { return isHole(element); });
+    return std::ranges::all_of(std::span { butterfly.contiguous().data(), length }, [](const WriteBarrier<Unknown>& element) { return !element; });
+}
+
 static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
 {
     VM& vm = globalObject->vm();
@@ -166,6 +183,11 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
         return nullptr;
     Butterfly& butterfly = *array->butterfly();
     unsigned length = butterfly.publicLength();
+    if (length && holdsOnlyHoles(array)) {
+        if (holesMustForwardToPrototype(array))
+            return nullptr;
+        RELEASE_AND_RETURN(scope, repeatSeparator(globalObject, view, length - 1));
+    }
     switch (array->indexingType()) {
     case ALL_INT32_INDEXING_TYPES:
         RELEASE_AND_RETURN(scope, joiner.tryJoin<Int32Shape>(globalObject, butterfly.contiguous().data(), length));

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -40,11 +41,7 @@ struct DescriptorMatch {
     SelectionGroup group;
     ValueID object;
     ValueID key;
-    ValueID value;
-    ValueID getter;
-    ValueID setter;
-    ValueID closureEnvironment;
-    OptionSet<PropertyDescriptorFlags> descriptorFlags;
+    DescriptorLiteral descriptor;
 };
 
 // A descriptor that reaches its call as a parameter of the block: on every way in it is a literal of one layout, made for this call alone.
@@ -67,9 +64,6 @@ struct AccessorMatch {
 } // anonymous namespace
 
 static constexpr unsigned numberOfDescriptorCallArguments = 3;
-
-static constexpr OptionSet<PropertyDescriptorFlags> dataDescriptorFlags { PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable };
-static constexpr OptionSet<PropertyDescriptorFlags> accessorDescriptorFlags { PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet };
 
 AOT_THRESHOLD(size_t, minMembersInAccessorGroup, 2);
 static constexpr uint64_t maxKeysInAccessorMasks = std::numeric_limits<uint32_t>::digits;
@@ -115,60 +109,6 @@ static std::optional<DescriptorCallOperands> descriptorCallOperandsOf(const Prog
     return DescriptorCallOperands { arguments[*object], arguments[*key], arguments[*descriptor] };
 }
 
-static bool isDescriptorLiteral(const Program& program, const Value& literal)
-{
-    if (literal.opcode != Opcode::NewObject || literal.prototypeOperand())
-        return false;
-    return program.at(literal.layout()).kind == LayoutKind::Record && literal.fields().size() == literal.valuesOperands().size();
-}
-
-static BuiltinName propertyNameAt(const Program& program, const Value& literal, size_t index)
-{
-    PropertyKeyID key = program.at(literal.layout()).fields[literal.fields()[index]].key;
-    return key ? program.builtinNameOf(key) : BuiltinName();
-}
-
-static std::optional<bool> constantBooleanOf(const Program& program, const Function& function, ValueID id)
-{
-    std::optional<ValueID> constant = constantThroughCasts(program, function, id);
-    if (!constant || function.at(*constant).opcode != Opcode::Boolean)
-        return std::nullopt;
-    return function.at(*constant).boolean();
-}
-
-static bool addBooleanAttribute(const Program& program, const Function& function, ValueID value, PropertyDescriptorFlags isPresent, PropertyDescriptorFlags isSet, DescriptorMatch& match)
-{
-    std::optional<bool> flag = constantBooleanOf(program, function, value);
-    if (!flag)
-        return false;
-    match.descriptorFlags.add(isPresent);
-    match.descriptorFlags.set(isSet, *flag);
-    return true;
-}
-
-static bool addAttribute(const Program& program, const Function& function, BuiltinName name, ValueID value, DescriptorMatch& match)
-{
-    if (name == BuiltinNames::writable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasWritable, PropertyDescriptorFlags::IsWritable, match);
-    if (name == BuiltinNames::enumerable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasEnumerable, PropertyDescriptorFlags::IsEnumerable, match);
-    if (name == BuiltinNames::configurable)
-        return addBooleanAttribute(program, function, value, PropertyDescriptorFlags::HasConfigurable, PropertyDescriptorFlags::IsConfigurable, match);
-
-    if (name == BuiltinNames::value) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasValue);
-        match.value = value;
-    } else if (name == BuiltinNames::get) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasGet);
-        match.getter = value;
-    } else if (name == BuiltinNames::set) {
-        match.descriptorFlags.add(PropertyDescriptorFlags::HasSet);
-        match.setter = value;
-    } else
-        return false;
-    return true;
-}
-
 static ValueID findClosureMadeOnDemand(const Function& function, ValueID value)
 {
     if (!value)
@@ -182,30 +122,32 @@ static bool canCreateClosuresAtDefinition(SelectionContext& context, const Descr
 {
     const Program& program = context.program();
     const Function& function = context.function();
-    return std::ranges::all_of(std::array { match.value, match.getter, match.setter }, [&](ValueID value) {
+    const DescriptorLiteral& descriptor = match.descriptor;
+    return std::ranges::all_of(std::array { descriptor.value, descriptor.getter, descriptor.setter }, [&](ValueID value) {
         ValueID closure = findClosureMadeOnDemand(function, value);
         if (!closure)
             return true;
         const Function& callee = program.at(function.at(closure).function());
         if (callee.captures.isEmpty())
             return true;
-        if (!match.closureEnvironment || !program.at(callee.captures[0].type).environment)
+        if (!descriptor.closureEnvironment || !program.at(callee.captures[0].written()).environment)
             return false;
         FunctionAnalyses& analyses = context.analyses();
-        return analyses.dominates(match.closureEnvironment, analyses.useLists().pointOf(closure));
+        return analyses.dominates(descriptor.closureEnvironment, analyses.useLists().pointOf(closure));
     });
 }
 
 static void createClosuresAtDefinition(const Program& program, Function& function, const DescriptorMatch& match)
 {
-    for (ValueID value : { match.value, match.getter, match.setter }) {
+    const DescriptorLiteral& descriptor = match.descriptor;
+    for (ValueID value : { descriptor.value, descriptor.getter, descriptor.setter }) {
         ValueID id = findClosureMadeOnDemand(function, value);
         if (!id)
             continue;
         Value& closure = function.edit(id);
         closure.setIsMadeOnDemand(false);
         if (!program.at(closure.function()).captures.isEmpty())
-            closure.setCapturesOperands(singleElementSpan(match.closureEnvironment));
+            closure.setCapturesOperands(singleElementSpan(descriptor.closureEnvironment));
     }
 }
 
@@ -213,10 +155,10 @@ static void setDefinitionOperands(Value& definition, const DescriptorMatch& matc
 {
     definition.setOperand(OperandIndex::DefineOwnProperty::object, match.object);
     definition.setOperand(OperandIndex::DefineOwnProperty::computedKey, match.key);
-    definition.setOperand(OperandIndex::DefineOwnProperty::value, match.value);
-    definition.setOperand(OperandIndex::DefineOwnProperty::getter, match.getter);
-    definition.setOperand(OperandIndex::DefineOwnProperty::setter, match.setter);
-    definition.setDescriptorFlags(match.descriptorFlags);
+    definition.setOperand(OperandIndex::DefineOwnProperty::value, match.descriptor.value);
+    definition.setOperand(OperandIndex::DefineOwnProperty::getter, match.descriptor.getter);
+    definition.setOperand(OperandIndex::DefineOwnProperty::setter, match.descriptor.setter);
+    definition.setDescriptorFlags(match.descriptor.flags);
 }
 
 static bool hasEffectsOfDefinition(SelectionContext& context, ValueID call, const DescriptorMatch& match)
@@ -244,24 +186,13 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     if (finish.opcode != Opcode::FinishObject || context.singleUser(finishID) != id)
         return std::nullopt;
     ValueID literalID = finish.objectOperand();
-    const Value& literal = function.at(literalID);
-    if (context.singleUser(literalID) != finishID || !isDescriptorLiteral(program, literal))
+    if (context.singleUser(literalID) != finishID)
+        return std::nullopt;
+    std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literalID));
+    if (!descriptor)
         return std::nullopt;
 
-    DescriptorMatch match { .group = groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key };
-    std::optional<uint32_t> closureEnvironmentField = program.at(literal.layout()).flow.closureEnvironmentField;
-    std::span<const ValueID> values = literal.valuesOperands();
-    for (size_t index = 0; index < values.size(); ++index) {
-        if (literal.fields()[index] == closureEnvironmentField) {
-            match.closureEnvironment = values[index];
-            continue;
-        }
-        if (!addAttribute(program, function, propertyNameAt(program, literal, index), values[index], match))
-            return std::nullopt;
-    }
-
-    if (match.descriptorFlags.containsAny(dataDescriptorFlags) && match.descriptorFlags.containsAny(accessorDescriptorFlags))
-        return std::nullopt;
+    DescriptorMatch match { .group = groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key, .descriptor = *descriptor };
     if (!canCreateClosuresAtDefinition(context, match) || !hasEffectsOfDefinition(context, id, match))
         return std::nullopt;
     return match;
@@ -308,7 +239,7 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
             return std::nullopt;
         ValueID literalID = finish.objectOperand();
         const Value& literal = function.at(literalID);
-        if (uses.useCount(literalID) != 1 || !isDescriptorLiteral(program, literal) || uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
+        if (uses.useCount(literalID) != 1 || !listsMembersOfDescriptor(program, literal) || uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
             return std::nullopt;
         if (!found.literals.isEmpty()) {
             const Value& first = function.at(found.literals[0]);
@@ -431,17 +362,27 @@ static bool canJoinAccessorGroup(SelectionContext& context, ValueID id)
     return definition.key() && isOrdinaryKey(context.program(), definition.key());
 }
 
+static bool tryClaimAccessorGroup(SelectionContext& context, std::span<const ValueID> list, Vector<AccessorMatch>& matches)
+{
+    AccessorMatch match;
+    match.group.root = list.back();
+    for (ValueID definition : list)
+        match.group.members.append(GroupMember { definition });
+    if (context.tryClaim(SelectionRuleID::AccessorGroup, match.group) != ClaimResult::Claimed)
+        return false;
+    matches.append(WTF::move(match));
+    return true;
+}
+
+// Another member of the literal between two definitions keeps them apart. The list falls into the longest groups that end at its last definition, at the last one in front of that group, and so on.
 static void closeAccessorList(SelectionContext& context, std::span<const ValueID> list, Vector<AccessorMatch>& matches)
 {
-    for (; list.size() >= minMembersInAccessorGroup; list = list.subspan(1)) {
-        AccessorMatch match;
-        match.group.root = list.back();
-        for (ValueID definition : list)
-            match.group.members.append(GroupMember { definition });
-        if (context.tryClaim(SelectionRuleID::AccessorGroup, match.group) == ClaimResult::Claimed) {
-            matches.append(WTF::move(match));
-            return;
-        }
+    while (list.size() >= minMembersInAccessorGroup) {
+        size_t first = 0;
+        size_t lastStart = list.size() - minMembersInAccessorGroup;
+        while (first <= lastStart && !tryClaimAccessorGroup(context, list.subspan(first), matches))
+            ++first;
+        list = list.first(first <= lastStart ? first : list.size() - 1);
     }
 }
 

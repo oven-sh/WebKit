@@ -102,8 +102,8 @@ static bool isStoredIntoDeferringFields(const TypingContext& context, const Valu
     if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || operandIndex != OperandIndex::PutSlot::value)
         return false;
     const Function& callee = program.at(closureFunction);
-    auto& members = program.at(store.receivers()).members;
-    return !members.isEmpty() && std::ranges::all_of(members, [&](LayoutID member) {
+    std::span<const LayoutID> members = program.at(store.receivers()).completeMembers();
+    return !members.empty() && std::ranges::all_of(members, [&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(store.key());
         if (!field)
             return false;
@@ -121,7 +121,7 @@ static bool isValueOfDeferringField(const TypingContext& context, const UseLists
     const Program& program = context.program;
     const Function& function = context.function;
     std::optional<Use> use = uses.singleUse(closure);
-    while (use && use->kind == Use::Kind::Operand && function.at(use->user).opcode == Opcode::Upcast)
+    while (use && use->kind == Use::Kind::Operand && isCastThatProvesNothing(function.at(use->user).opcode))
         use = uses.singleUse(use->user);
     if (!use || use->kind != Use::Kind::Operand)
         return false;
@@ -166,8 +166,9 @@ void FunctionVerifier::verifyClosureOperation(BlockID block, ValueID id, const V
             fail(InternalErrorKind::PayloadOutOfRange, block, id, value.index());
             return;
         }
+        // The type of the closure is what says that the capture is there: the value stands behind whatever has proven it.
         ValueID closure = value.closureOperand();
-        if (typeOf(closure).singleFunction() != value.function())
+        if (typeOf(closure).singleFunction() != value.function() && !typeOf(closure).isNever())
             fail(InternalErrorKind::OperandTypeMismatch, block, id, closure.index());
         return;
     }
@@ -181,7 +182,7 @@ static bool asksOnlyForRowsOf(const Program& program, const Type& receiver, Layo
     ReceiverCandidates candidates = candidatesOf(program, receiver, nullptr, { });
     if (candidates.proof != ReceiverProof::Type || candidates.hasOtherParts || candidates.mayBeNullish)
         return false;
-    const auto& members = program.at(rows).members;
+    std::span<const LayoutID> members = program.at(rows).completeMembers();
     return std::ranges::all_of(candidates.proven, [&](LayoutID layout) {
         return std::ranges::binary_search(members, layout);
     });
@@ -319,6 +320,8 @@ void FunctionVerifier::verifySuspension(BlockID block, uint32_t, ValueID id, con
     }
     if (!isValid)
         fail(InternalErrorKind::InvalidSuspension, block, id);
+    else if (value.opcode == Opcode::AsyncGeneratorYield || value.opcode == Opcode::StepAsyncGenerator)
+        verifyProofsOfValueBesideMode(block, id);
 }
 
 void FunctionVerifier::verifyGeneratorStart()

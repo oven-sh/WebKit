@@ -267,8 +267,13 @@ static GeneratorFusionDeclineReason findMergeObstacle(FunctionPassContext& pass,
             return GeneratorFusionDeclineReason::Unknown;
     }
     Origin origin = originOfSteps(pass.program, pass.function, candidate);
+    // A step that returns runs code of the body only where a yield stands in a try statement.
+    const Function& body = bodyAnalyses.function();
+    bool returnStepRunsBody = std::ranges::any_of(bodyAnalyses.cfg().reversePostOrder(), [&](BlockID block) {
+        return body.at(block).handler && std::ranges::any_of(body.at(block).values, [&](ValueID id) { return isYield(body, id); });
+    });
     bool isRunFromOnePlace = std::ranges::all_of(candidate.sites.subspan(startSite + 1), [&](const GeneratorStepSite& site) {
-        return site.mode == ResumeMode::Return || visibleOriginOf(pass.program, pass.function, site.step) == origin;
+        return (site.mode == ResumeMode::Return && !returnStepRunsBody) || visibleOriginOf(pass.program, pass.function, site.step) == origin;
     });
     if (!isRunFromOnePlace && mayHaveItsCallersListed(bodyAnalyses, candidate))
         return GeneratorFusionDeclineReason::Unknown;
@@ -391,7 +396,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     ProgramPoint pointOfSeeds = analyses.useLists().pointAfter(candidate.generator);
     Origin origin = function.at(candidate.generator).origin();
     Origin originOfBody = originOfSteps(program, function, candidate);
-    BlockFrequency frequency = function.at(pointOfSeeds.block).frequency;
+    Expected<BlockFrequency> frequency = function.at(pointOfSeeds.block).frequency;
     builder.setOrigin(origin);
     ValueID resumePoint = builder.insertBefore(pointOfSeeds, makeInteger(0));
     ValueID returnSite = builder.insertBefore(pointOfSeeds, makeInteger(0));
@@ -534,7 +539,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     }
 
     builder.setOrigin(origin);
-    BlockFrequency frequencyWhenFinished = rarerOf(frequency, BlockFrequency::Unlikely);
+    Expected<BlockFrequency> frequencyWhenFinished = rarerOf(frequency, BlockFrequency::Unlikely);
     builder.setHandler(std::nullopt);
     BlockID finished = builder.addBlock(frequencyWhenFinished);
     BlockID stepped = builder.addBlock(frequencyWhenFinished);

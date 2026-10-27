@@ -10,6 +10,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
     aot/builtins/global.builtins.ts
     aot/builtins/holders.builtins.ts
     aot/builtins/host-roles.builtins.ts
+    aot/builtins/instances-without-own-names.builtins.ts
     aot/builtins/intl.builtins.ts
     aot/builtins/iterator.builtins.ts
     aot/builtins/json.builtins.ts

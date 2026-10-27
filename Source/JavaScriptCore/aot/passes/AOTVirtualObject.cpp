@@ -184,7 +184,7 @@ static bool isOptionalFieldOfBuiltinLayout(const Program& program, LayoutID layo
 
 static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array)
 {
-    TypeID contents = array.contentsAt(program.builtins(), ContentsSlot::Element);
+    TypeID contents = array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
     const Type& element = program.at(contents);
     if (element.primitives & Primitive::Undefined)
         return contents;
@@ -500,9 +500,11 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         return program.types.find(Type::integer(Range::uint32())).value_or(TypeTable::integer);
     case VirtualFieldKind::Capacity:
     case VirtualFieldKind::ArgumentCount:
+        return TypeTable::integer;
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
-        return TypeTable::integer;
+        // One type for the bounds of nearly every range, so that the variants of a result share their parts.
+        return program.at(typeOfInitialValue(context, description, field)).isSubsetOf(program.at(TypeTable::length), program) ? TypeTable::length : TypeTable::integer;
     case VirtualFieldKind::Prototype:
     case VirtualFieldKind::RestList:
     case VirtualFieldKind::Callee:
@@ -513,11 +515,20 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool holdsUndefinedAndNullToo(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    if (description.kind != VirtualObjectKind::Object || field.kind != VirtualFieldKind::Named)
+        return false;
+    std::optional<uint32_t> layoutField = layoutFieldOf(context.program, description, field);
+    return layoutField && slotHoldsUndefinedAndNull(context.program, { description.layout, *layoutField });
+}
+
 static bool namesPrivateMember(const Program& program, PropertyKeyID key)
 {
     switch (program.at(key).kind) {
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::WellKnownSymbol:

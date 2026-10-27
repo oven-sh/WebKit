@@ -21,6 +21,7 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/SymbolRegistry.h>
@@ -142,6 +143,7 @@ Identifier ProgramIdentifiers::create(uint32_t number) const
         RELEASE_ASSERT(text.view(string).isEmpty());
         return Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return enginePrivateName(m_vm, text.createString(string));
     case PropertyKeyKind::PrivateName:
         return Identifier::fromUid(PrivateSymbolImpl::create(*text.createString(string).impl()).get());
@@ -203,6 +205,30 @@ std::optional<uint32_t> ProgramIdentifiers::numberOf(UniquedStringImpl* uid) con
     return std::nullopt;
 }
 
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+// Names are short. The last word of each width ends where the characters end, and lies over the one in front of it where it has to.
+static ALWAYS_INLINE bool areSameCharacters(const Latin1Character* first, const Latin1Character* second, size_t length)
+{
+    ASSERT(length);
+    auto areSameAt = [&]<typename Word>(size_t offset, Word) ALWAYS_INLINE_LAMBDA {
+        return WTF::unalignedLoad<Word>(first + offset) == WTF::unalignedLoad<Word>(second + offset);
+    };
+    if (length >= sizeof(uint64_t)) {
+#pragma clang loop unroll(disable)
+        for (size_t offset = 0; offset + sizeof(uint64_t) < length; offset += sizeof(uint64_t)) {
+            if (!areSameAt(offset, uint64_t()))
+                return false;
+        }
+        return areSameAt(length - sizeof(uint64_t), uint64_t());
+    }
+    if (length >= sizeof(uint32_t))
+        return areSameAt(0, uint32_t()) && areSameAt(length - sizeof(uint32_t), uint32_t());
+    if (length >= sizeof(uint16_t))
+        return areSameAt(0, uint16_t()) && areSameAt(length - sizeof(uint16_t), uint16_t());
+    return *first == *second;
+}
+#endif
+
 std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, StringView characters, unsigned hash)
 {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
@@ -214,7 +240,18 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
         return record.hash() == hash && text.view(record) == characters;
 #else
     const UniquedStringImpl* atoms = image.text().identifierAtoms();
-    return IdentifierTable(image.programTables().identifiersByHash()).find(hash, [&](uint32_t number) {
+    return IdentifierTable(image.programTables().identifiersByHash()).find(hash, [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
+        const UniquedStringImpl& atom = atoms[number];
+        if (atom.length() != characters.length())
+            return false;
+        if (!atom.length())
+            return true;
+        if (atom.existingHash() != hash)
+            return false;
+        if (atom.is8Bit() && characters.is8Bit()) [[likely]]
+            return areSameCharacters(atom.span8().data(), characters.span8().data(), characters.length());
+        return StringView(atom) == characters;
+    }, [&](uint32_t number) {
         const UniquedStringImpl& atom = atoms[number];
         if (!atom.length())
             return characters.isEmpty();

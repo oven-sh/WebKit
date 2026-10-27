@@ -155,6 +155,37 @@ struct StoredAddedEffects {
     CompactEffects effects;
 };
 
+// What is lent is read on another thread until it is taken back, so nobody writes to it meanwhile.
+class LendableSummaries {
+public:
+    explicit LendableSummaries(EffectSummaries&& summaries)
+        : m_summaries(WTF::move(summaries))
+    {
+    }
+
+    const EffectSummaries& read() const LIFETIME_BOUND { return m_summaries; }
+    EffectSummaries& write() LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!m_isLent);
+        return m_summaries;
+    }
+    const EffectSummaries& lend() LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(!m_isLent);
+        m_isLent = true;
+        return m_summaries;
+    }
+    void takeBack()
+    {
+        RELEASE_ASSERT(m_isLent);
+        m_isLent = false;
+    }
+
+private:
+    EffectSummaries m_summaries;
+    bool m_isLent { false };
+};
+
 class BodySummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodySummaries);
     WTF_MAKE_NONCOPYABLE(BodySummaries);
@@ -173,7 +204,9 @@ public:
     bool describesFunctionsAsTheyAre(size_t numberOfFunctions) const { return m_bodies.size() == numberOfFunctions && !m_isChangedForTable.contains(1) && !m_isChangedForTableIfLowered.contains(1); }
     const BorrowedParameters& borrowedParameters() const LIFETIME_BOUND { return m_borrowed; }
     BorrowedParameters computeBorrowedParametersOfChangedBodies(const Program&, BuildContext&);
-    const EffectSummaries& seed() const LIFETIME_BOUND { return m_seed; }
+    const EffectSummaries& seed() const LIFETIME_BOUND { return m_seed.read(); }
+    const EffectSummaries& lendSeed() LIFETIME_BOUND { return m_seed.lend(); }
+    void takeSeedBack() { m_seed.takeBack(); }
 
 private:
     friend class EffectSummarizer;
@@ -207,7 +240,7 @@ private:
     Vector<uint64_t> m_stampsOfRecordsAtLatestTable;
     BorrowedParameters m_borrowed;
     Vector<uint64_t> m_parametersWhoseContentsAreCalled;
-    EffectSummaries m_seed { Ref { m_masks }, EffectSummaries::Contents::SayNothingOfBodies };
+    LendableSummaries m_seed { EffectSummaries { Ref { m_masks }, EffectSummaries::Contents::SayNothingOfBodies } };
 
     bool m_isSolved { false };
     Vector<uint8_t> m_isEnteredByUnknownCode;

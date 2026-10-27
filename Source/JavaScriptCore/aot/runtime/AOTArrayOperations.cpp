@@ -25,6 +25,7 @@
 #include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "AOTVector.h"
+#include "ArrayConstructor.h"
 #include "ButterflyInlines.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
@@ -232,8 +233,13 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     constexpr uint32_t worthOfConversion = 64;
     uint32_t& lookedAtInVain = instance->arrays.elementsLookedAtInVain;
     // The place has said which it is.
+    uint8_t& shortYoungArraysConverted = instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain) {
+        shortYoungArraysConverted = ArrayWords::maxShortYoungArraysConverted;
+        return;
+    }
     if (array->cellState() != CellState::PossiblyBlack && array->butterfly()->publicLength() < ArrayWords::minLengthThatPaysAtOnce)
-        ++instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+        ++shortYoungArraysConverted;
 
     Structure* structure = array->structure();
     bool isPlainArray = structure == globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous) && !isCopyOnWrite(array->indexingMode()) && !structure->outOfLineCapacity();
@@ -327,6 +333,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
         OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
     OPERATION_RETURN(scope, array);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance* instance, EncodedJSValue lengthOrElement))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayOfLengthOrElement);
+    OPERATION_RETURN(scope, constructArrayWithSizeQuirk(globalObject, nullptr, JSValue::decode(lengthOrElement)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instance, uint32_t lengthAndCapacity, uint32_t flags))
@@ -455,7 +467,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance*
     double number = std::bit_cast<double>(numberBits);
     if (number == number)
         array->tryMakeWritableDouble(vm);
-    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(purifyNaN(number))));
+    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(withoutPayload(number))));
 }
 
 static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* array, int64_t from, int64_t to)

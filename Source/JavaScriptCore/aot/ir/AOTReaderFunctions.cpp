@@ -226,6 +226,17 @@ void BodyDecoder::decodeParameters(Block& block, uint32_t count)
     }
 }
 
+static bool isWrittenAsReflectConstruct(const Value& value)
+{
+    return FlagMask::isDoneInPlace(value.opcode) && value.isDoneInPlace();
+}
+
+static bool constructsWhereWritten(const Value& value)
+{
+    bool callsWithNewTarget = accessClassOf(value.opcode) == AccessClass::IndirectCall && OperandPosition::newTarget(value.opcode);
+    return callsWithNewTarget || isWrittenAsReflectConstruct(value);
+}
+
 void BodyDecoder::decodeValue(Block& block)
 {
     ValueID id = allocateValueID();
@@ -233,7 +244,7 @@ void BodyDecoder::decodeValue(Block& block)
         return;
 
     auto head = nextRecord<Wire::ValueHead>();
-    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode);
+    Opcode opcode = m_checker.enumerator<Opcode>(head.opcode & ~(Wire::WrittenPositionFollows | Wire::StandsInTailPosition | Wire::WrittenPositionIsForCallers));
     adoptCheckerFailure();
     if (opcode == Opcode::Parameter)
         fail(InternalErrorKind::EngineOnlyOnWire);
@@ -242,10 +253,20 @@ void BodyDecoder::decodeValue(Block& block)
 
     Value& value = appendValue(id, opcode);
     value.position = head.position;
+    value.isTailCall = !!(head.opcode & Wire::StandsInTailPosition);
     if (uint16_t wireFlags = wireFlagsOf(opcode))
         value.flags = nextFlags(wireFlags, declaredFlagsOf(opcode));
     decodeFields(*this, value);
     adoptCheckerFailure();
+    if (head.opcode & Wire::WrittenPositionFollows) {
+        uint32_t written = next();
+        bool isForCallers = head.opcode & Wire::WrittenPositionIsForCallers;
+        if (isForCallers || constructsWhereWritten(value)) {
+            m_function.constructionStarts.append({ value.position, written, isWrittenAsReflectConstruct(value), isForCallers });
+            value.isPartOfConstruction = true;
+        } else
+            m_function.writtenPositions.append({ id, written });
+    }
     if (opcode == Opcode::Convert && !hasFailed())
         checkConvertedAllocation(value);
     if (opcode == Opcode::Builtin && !hasFailed())
@@ -262,12 +283,12 @@ void BodyDecoder::checkConvertedAllocation(const Value& conversion)
     bool isDecoded = operand.index() < m_value.index();
     if (!isDecoded || m_function.at(operand).opcode != Opcode::NewObject)
         return;
-    if (conversion.illTypedCause() != IllTypedCause::None || declared.flags.contains(PositionFlags::IsExpected))
+    if (conversion.illTypedCause() != IllTypedCause::None || declared.isExpected())
         return;
 
     const Reader& reader = m_checker.reader();
     LayoutID allocated = m_function.at(operand).layout();
-    const Type& type = reader.program().at(declared.type);
+    const Type& type = reader.program().at(declared.expected().predicted());
     if (type.anyObject || std::ranges::binary_search(membersOf(reader.program(), type), allocated))
         return;
 
@@ -418,6 +439,8 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         checkedParameters.clear();
         function.editAllBlocks().clear();
         function.editAllValues().clear();
+        function.writtenPositions.clear();
+        function.constructionStarts.clear();
         if (Failure failure = BodyDecoder(*this, id, wire.body, code, function, remap).run())
             return failure;
     }
