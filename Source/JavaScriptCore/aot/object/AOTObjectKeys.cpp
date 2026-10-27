@@ -976,24 +976,22 @@ PropertyListCache::PropertyListCache(State& state)
     state.caches->add(CacheKind::ClearedEachCollection, "property lists"_s, *this);
 }
 
-PropertyListCache::Entries& PropertyListCache::entries()
+CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
 {
     if (!m_entries)
         m_entries = makeUniqueWithoutFastMallocCheck<Entries>();
     m_writes.recordAll();
-    return *m_entries;
-}
-
-CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
-{
-    return entries().lists[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
+    return (*m_entries)[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
 }
 
 KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t orderWord, bool listsSymbols)
 {
     constexpr unsigned listsPerSet = 4;
     static_assert(!(numberOfOwnKeyLists % listsPerSet));
-    auto set = std::span { entries().ownKeys }.subspan(WTF::pairIntHash(structureID.bits(), orderWord) % (numberOfOwnKeyLists / listsPerSet) * listsPerSet, listsPerSet);
+    if (!m_ownKeyLists)
+        m_ownKeyLists = makeUniqueWithoutFastMallocCheck<OwnKeyLists>();
+    m_writes.recordAll();
+    auto set = std::span { *m_ownKeyLists }.subspan(WTF::pairIntHash(structureID.bits(), orderWord) % (numberOfOwnKeyLists / listsPerSet) * listsPerSet, listsPerSet);
     KeptOwnKeys* unused = nullptr;
     KeptOwnKeys* withoutList = nullptr;
     for (KeptOwnKeys& kept : set) {
@@ -1040,9 +1038,12 @@ void didListOwnKeys(VM& vm, const Object& object, bool listsSymbols, JSArray* li
 void PropertyListCache::clear()
 {
     m_writes.forEachRegionToClear([&](size_t, size_t) {
-        for (auto& listing : m_entries->lists)
-            listing = { };
-        m_entries->ownKeys.fill({ });
+        if (m_entries) {
+            for (auto& listing : *m_entries)
+                listing = { };
+        }
+        if (m_ownKeyLists)
+            m_ownKeyLists->fill({ });
         for (auto& cacheEntry : std::span { m_state.instance.objects.keyLists, numberOfKeyLists }) {
             if (cacheEntry.orderWord & orderWordHasExtraProperties)
                 cacheEntry = { };

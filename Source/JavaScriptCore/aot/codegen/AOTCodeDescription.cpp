@@ -433,7 +433,7 @@ static Vector<AOT::InlineFrame> describeInlineFrames(const Function& function, c
     inlineFrames.append({ 0, 0, 0, false, false });
     for (size_t index = 1; index < function.inlineFrames.size(); ++index) {
         const InlineFrame& frame = function.inlineFrames[index];
-        inlineFrames.append({ frame.parent, inlineCallSites[index], ensureCalleeIndex(body, frame.callee), frame.isTailCall, frame.isConstruction });
+        inlineFrames.append({ frame.parent, inlineCallSites[index], ensureCalleeIndex(body, frame.callee), frame.isTailCall, frame.isConstruction, frame.calledBuiltin });
     }
     return inlineFrames;
 }

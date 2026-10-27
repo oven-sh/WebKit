@@ -1,15 +1,15 @@
-# An allocation whose layout the prototype decides is built as a copy of itself, with what its operands were at the allocation: they travel with the object, and an operand that is a virtual object is built in front of it
+# An allocation whose layout the prototype decides is made where it stands, and an operand of it that is a virtual object is built in front of it
 # FORM: Prepared optimizing
 # RUN: pass SinkAllocations
 # OPTIONS: check=VerifyEachPass
-# STATISTIC: AllocationsRemoved = 2
-# STATISTIC: AllocationsSunk = 4
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: AllocationsSunk = 0
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="A" constructor=f5
 layout L1 kind=Instance name="B" base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]}
 layout L2 name="Record" fields=[{key="x" declared={type=anything}}]
-function f0 name="builtBehindJoinWithCell" parameters=[{type=boolean}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+function f0 name="joinedWithCell" parameters=[{type=boolean}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v4 = GetConstructPrototype v1 layout=L0
@@ -24,11 +24,8 @@ function f0 name="builtBehindJoinWithCell" parameters=[{type=boolean}, {type=any
   b5():
     Return v1
 # CHECK: v4: object = GetConstructPrototype v1 layout=L0
-# CHECK: Jump -> next b3({{*}}, {{*}}, v4)
-# CHECK: b3([[tag0]]: i32, [[cell0]]: object|unspecified, [[prototype0]]: object|unspecified):
-# CHECK: Switch [[tag0]]
-# CHECK: [[prototype0There]]: object = AssumeType [[prototype0]], [[filled1]] provenType=object
-# CHECK-NEXT: = NewObject [[prototype0There]] layout=L0
+# CHECK-NEXT: v5:{{*}}= NewObject v4 layout=L0
+# CHECK-NEXT: Jump -> next b3(v5)
 }
 
 function f1 name="operandIsVirtualObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
@@ -40,10 +37,10 @@ function f1 name="operandIsVirtualObject" parameters=[{type=boolean}, {type=anyt
   b2():
     Return v1
 # CHECK: b0(
-# CHECK-NEXT: Branch v0
-# CHECK: b1():
 # CHECK-NEXT: [[record1]]:{{*}}= NewObject -, v1 layout=L2 fields=[0]
 # CHECK-NEXT: [[object1]]:{{*}}= NewObject [[record1]] layout=L0
+# CHECK-NEXT: Branch v0
+# CHECK: b1():
 # CHECK-NEXT: Return [[object1]]
 }
 
@@ -58,8 +55,9 @@ function f2 name="operandIsReadOfVirtualObject" parameters=[{type=boolean}, {typ
   b2():
     Return v1
 # CHECK-NOT: layout=L2
+# CHECK: [[object2]]:{{*}}= NewObject v4 layout=L0
+# CHECK-NEXT: Branch v0
 # CHECK: b1():
-# CHECK-NEXT: [[object2]]:{{*}}= NewObject v4 layout=L0
 # CHECK-NEXT: Return [[object2]]
 }
 
@@ -67,7 +65,8 @@ function f3 name="neverUsed" parameters=[{type=anything}] results=[{type=anythin
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v0
-# CHECK-NOT: NewObject
+# CHECK: v2:{{*}}= NewObject v1 layout=L0
+# CHECK-NEXT: Return v0
 }
 
 function f4 name="usedAtOnce" parameters=[{type=anything}] results=[{type=anything}] {

@@ -134,6 +134,22 @@ ShapeContext AllocationSinking::shapeContext(VirtualObjectID object) const
     return { m_objectContext, familyOf(object), m_orders };
 }
 
+const BitVector& AllocationSinking::familiesThatMayTakePrototypeOfConstructorFunction() const
+{
+    if (!m_familiesThatMayTakePrototypeOfConstructorFunction) {
+        BitVector families;
+        for (uint32_t index = 0; index < m_families.size(); ++index) {
+            bool mayTake = std::ranges::any_of(m_families[index].descriptions(), [&](const VirtualObjectDescription& description) {
+                return mayTakePrototypeOfConstructorFunctionWhenBuilt(m_program, description);
+            });
+            if (mayTake)
+                families.set(index);
+        }
+        m_familiesThatMayTakePrototypeOfConstructorFunction = WTF::move(families);
+    }
+    return *m_familiesThatMayTakePrototypeOfConstructorFunction;
+}
+
 const VirtualObjectDescription& AllocationSinking::descriptionOf(VirtualObjectID object) const
 {
     const Candidate& candidate = at(object);

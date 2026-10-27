@@ -228,7 +228,7 @@ static void callFromNativeCode(ValueFlowRuleContext& context, ClimbingSet member
         ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::CallByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
         receivers.passReceiversOf(callees, group.thisValue);
         context.add(group.otherArguments, arguments);
-        context.connect(group.thrown, ValueFlowProgramNodes::escaped());
+        carryOut(context, group.thrown);
         if (result)
             context.connect(group.result, result);
     });
@@ -361,7 +361,7 @@ public:
             receivers.passReceiversOf(callees, group.thisValue);
             passArguments(group, arguments);
             passNoFurtherArguments(m_context, group, arguments.size());
-            m_context.connect(group.thrown, escaped());
+            carryOut(m_context, group.thrown);
             if (result)
                 m_context.connect(group.result, result);
         });
@@ -439,6 +439,7 @@ public:
 
 private:
     static constexpr ValueFlowNodeID escaped() { return ValueFlowProgramNodes::escaped(); }
+    ValueFlowNodeID valuesCarriedOut() const { return m_context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut); }
     static constexpr ValueFlowNodeID lost() { return ValueFlowProgramNodes::lost(); }
 
     BuiltinApplication& actWithoutResultOf(const BuiltinOverload& overload)
@@ -464,7 +465,7 @@ private:
                 passNoFurtherArguments(m_context, group, call.arguments.size());
             } else
                 passWhatAnnotationsSay(m_context, callees);
-            m_context.connect(group.thrown, escaped());
+            carryOut(m_context, group.thrown);
             useByHost(operandOfBuiltinAt(group.result), call.result);
         });
     }
@@ -477,7 +478,7 @@ private:
             m_context.add(group.thisValue, only(m_context, m_universe.objectOf(holder)));
         m_context.connect(value, group.argumentAt(argumentIndex));
         carryOut(m_context, group.result);
-        m_context.connect(group.thrown, escaped());
+        carryOut(m_context, group.thrown);
     }
 
     void throwValue(ValueSetID value)
@@ -609,7 +610,7 @@ private:
         if (!mayBeUnknownObject(objects))
             return;
         functor(m_context.written(unknownObjectAlone(), name));
-        functor(escaped());
+        functor(valuesCarriedOut());
     }
 
     ClimbingSet withSourcesOfCopies(ClimbingSet objects)
@@ -1873,7 +1874,10 @@ private:
         if (!target)
             return;
         forEachOperandAt(place, [&](const ValueFlowOperand& operand) {
-            m_context.connect(operand, target);
+            if (target == valuesCarriedOut())
+                carryOut(m_context, operand);
+            else
+                m_context.connect(operand, target);
         });
     }
 
@@ -1881,7 +1885,7 @@ private:
     {
         const BuiltinSlot& slot = m_builtins.at(id);
         bool holdsKeys = (slot.owner == BuiltinClasses::Map && slot.contentsSlot == ContentsSlot::Key) || (slot.owner == BuiltinClasses::Set && slot.contentsSlot == ContentsSlot::Element);
-        if (!holdsKeys || target == escaped())
+        if (!holdsKeys || target == valuesCarriedOut())
             return;
         if (m_context.holdsAnyOf(only(m_context, ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber)), target))
             m_context.add(target, only(m_context, ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
@@ -1895,7 +1899,7 @@ private:
                 normalizeKeysStoredAt(place.slot, target);
         };
         auto writeToResult = [&](ValueFlowName name) {
-            functor(m_resultObject ? m_context.written(only(m_context, m_resultObject), name) : escaped());
+            functor(m_resultObject ? m_context.written(only(m_context, m_resultObject), name) : valuesCarriedOut());
             if (m_context.meet(m_objectsMadeBySpecies, m_universe.objects()))
                 forEachNodeWrittenThrough(m_objectsMadeBySpecies, name, functor);
         };
@@ -1930,7 +1934,7 @@ private:
         case BuiltinPlaceKind::NewValue:
         case BuiltinPlaceKind::NativeMemory:
         case BuiltinPlaceKind::Member:
-            functor(escaped());
+            functor(valuesCarriedOut());
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1954,8 +1958,9 @@ private:
             adoptRejection(to, valueAt(from));
             source.isSettled = true;
         }
+        bool isReceiver = from.kind == BuiltinPlaceKind::Operand && from.operand->isReceiver();
         forEachTargetAt(to, [&](ValueFlowNodeID target) {
-            connectFrom(source, target);
+            connectFrom(source, isReceiver && target == valuesCarriedOut() ? escaped() : target);
         });
         if (to.kind == BuiltinPlaceKind::ResultSlot)
             storeNamedBunInUnknownObject(source, nameOf(to.slot));
@@ -2388,7 +2393,7 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void connectThrown(const ValueFlowCallGroup& group, BuiltinCallbackTimes times) { m_context.connect(group.thrown, isCalledAfterReturn(times) || !m_call.thrown ? escaped() : m_call.thrown); }
+    void connectThrown(const ValueFlowCallGroup& group, BuiltinCallbackTimes times) { m_context.connect(group.thrown, isCalledAfterReturn(times) || !m_call.thrown ? valuesCarriedOut() : m_call.thrown); }
 
     ValueFlowCalleeOrigin originOfOperands() const { return m_call.operation && isCodeBehindDeclaredEntries(m_program, m_call.operation->function) ? ValueFlowCalleeOrigin::OperandOfAppliedEntry : ValueFlowCalleeOrigin::Value; }
 
@@ -3409,7 +3414,7 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
                 context.connect(holdingOthers, group.thisValue);
             } else
                 context.connect(thisValue, group.thisValue);
-            context.connect(group.thrown, ValueFlowProgramNodes::escaped());
+            carryOut(context, group.thrown);
             take(group.result);
         });
     };

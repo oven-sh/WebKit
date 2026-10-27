@@ -234,6 +234,9 @@ private:
     Vector<PlaceOfParameter> m_placesOfParameters;
     Vector<uint32_t> m_componentOfValue;
     BitVector m_isSearchedCycle;
+    // In reverse post order.
+    Vector<uint32_t> m_firstBlockOfCycle;
+    Vector<BlockID> m_blocksOfCycles;
     Vector<ValueID, 32> m_membersOfComponents;
     Vector<uint32_t, 8> m_firstMemberOfComponent;
     Vector<uint32_t, 8> m_waitingComponents;

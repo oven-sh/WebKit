@@ -771,6 +771,12 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
         calledBuiltin = value->calledBuiltin();
+    // Steps of a built-in function that were expanded into its caller record the caller's site and name the function.
+    if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_function.inlineFrames[origin.inlineFrame].calledBuiltin : BuiltinID()) {
+        const auto& frame = m_function.inlineFrames[origin.inlineFrame];
+        calledBuiltin = builtinOfFrame;
+        origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isTailCall = frame.isTailCall, .isPartOfConstruction = frame.callIsPartOfConstruction };
+    }
     // No stack trace lists a function that only built-in code can name.
     if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
         calledBuiltin = { };
@@ -837,6 +843,14 @@ RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(cons
     return hasSlotOfItsOwn || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
 }
 
+void RuntimeCallEmitter::stateWhichCallsChangeSlotsOfSites()
+{
+    if (!m_heaps.isNamedByMemoryAccess(m_heaps.AOTInstance_siteCaches))
+        return;
+    for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
+        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_siteCaches, patchpoint);
+}
+
 void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)
 {
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
@@ -855,7 +869,7 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(effects.writes, writes);
     if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
-        writes.append(&m_heaps.AOTInstance_siteCaches);
+        m_callsThatMayChangeSlotsOfSites.append(patchpoint);
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes);
     if (effects.mayCollect)

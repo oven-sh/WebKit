@@ -476,7 +476,7 @@ private:
             break;
         case Opcode::InitializeBuiltin:
             appendCell(BuiltinCellKey::object(builtins.canonicalID(value.builtin())));
-            appendCell(BuiltinCellKey::value(builtins.canonicalID(value.builtin())));
+            appendCell(BuiltinCellKey::value(value.builtin()));
             break;
         case Opcode::IsBuiltinLocationUnchanged:
             appendCellsOfMember(value.member());

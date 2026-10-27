@@ -143,6 +143,7 @@ enum Sabotage {
     MergedLoadsOutlastWritesOnUnlikelyPaths
     StridedIndexesStayInRange
     SlotsOfSitesStayAsTheyAre
+    WordsReadAgainOutlastWrites
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

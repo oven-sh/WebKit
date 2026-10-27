@@ -3075,6 +3075,7 @@ static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, 
 static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalObject, AOT::StringBuilderStorage& builder, const JSObject& object, JSObject* extraProperties, const AOT::CachedPropertyList& list, Latin1Character* start, ListedPropertiesWritten written)
 {
     using Status = ListedPropertiesWritten::Status;
+    auto scope = DECLARE_THROW_SCOPE(globalObject.vm());
     uint32_t lengthBefore = builder.length();
     bool hasBrace = false;
     if (written.status == Status::FoundOtherValue && asString(written.otherValue)->isRope()) {
@@ -3082,6 +3083,7 @@ static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalOb
         written.next -= list.endsOfJSONKeys[written.index] - (written.index ? list.endsOfJSONKeys[written.index - 1] : 0);
     }
     std::optional<size_t> room = roomForListedScalars(globalObject, object, extraProperties, list, written.index);
+    EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || !room);
     while (room) {
         Latin1Character* next = written.next;
         unsigned index = written.index;
@@ -3094,6 +3096,7 @@ static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalOb
             if (AOT::maxLengthOfEscapedJSONString(characters.size()) + AOT::maxStringBuilderReservation > String::MaxLength - builder.length())
                 break;
             next = AOT::appendEscapedJSONString(&globalObject, builder, next, characters);
+            EXCEPTION_ASSERT(!scope.exception() || !next);
             if (!next)
                 break;
             *room -= 1 + characters.size() + 1;
@@ -3177,9 +3180,10 @@ bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderSt
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (value.isCell() && value.asCell()->type() == CompiledObjectType && AOT::PropertyWalk::hasExtraProperties(asObject(value))) {
-        if (tryAppendScalarsOfObjectWithExtraProperties(*globalObject, builder, *asObject(value)))
-            return true;
+        bool isAppended = tryAppendScalarsOfObjectWithExtraProperties(*globalObject, builder, *asObject(value));
         RETURN_IF_EXCEPTION(scope, false);
+        if (isAppended)
+            return true;
     }
 
     std::optional<FailureReason> failureReason;

@@ -59,7 +59,7 @@ static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
     if (member.isAddedAtFirstRead)
         return true;
     return member.kind == BuiltinKind::DataProperty
-        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.mutability != BuiltinMutability::ChangesOnItsOwn
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }

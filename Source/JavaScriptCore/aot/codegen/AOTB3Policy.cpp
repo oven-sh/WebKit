@@ -175,6 +175,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.checksKnownPropertiesAtRunTime = build.validates();
     validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
     validation.omitsStridedLimitGuard = build.isSabotaged(Sabotage::StridedIndexesStayInRange);
+    validation.overlooksWritesBehindWordsReadAgain = build.isSabotaged(Sabotage::WordsReadAgainOutlastWrites);
     return validation;
 }
 

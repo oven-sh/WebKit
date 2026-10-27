@@ -1262,7 +1262,8 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
     PropertyKeyID nameOfTrap = program.keyOf(program.builtins().at(functionOfReflect).name);
 
     IRBuilder::Expansion expansion = builder.beginExpansion(point);
-    builder.setOrigin(access.origin());
+    const BuiltinID calledBuiltin = Value::opcodesWithCalledBuiltin.contains(access.opcode) ? access.calledBuiltin() : BuiltinID();
+    builder.setOrigin(calledBuiltin ? function.enterFrameOfBuiltin(context.id, access.origin(), calledBuiltin) : access.origin());
     auto throwTypeError = [&](ASCIILiteral message) {
         Value error = IRBuilder::make(Opcode::ThrowNewError);
         error.setErrorKind(ErrorKind::TypeError);
@@ -1486,7 +1487,6 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
     } else if (asksForOwnProperty) {
         Value test = IRBuilder::make(Opcode::PropHasOwn, { target });
         test.setKey(access.key());
-        test.setCalledBuiltin(access.calledBuiltin());
         finishWith(builder.append(WTF::move(test)));
     } else if (isByName) {
         Value test = IRBuilder::make(Opcode::PropHas, { target });
@@ -1495,6 +1495,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
     } else
         finishWith(builder.append(Opcode::ElemHas, { target, key }));
 
+    builder.setOrigin(access.origin());
     if (asWritten) {
         builder.moveToEndOf(asWritten);
         ValueID written = builder.append(Value(access));

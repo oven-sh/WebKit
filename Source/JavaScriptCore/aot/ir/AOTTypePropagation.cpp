@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTFieldValueNarrowing.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGrouping.h"
 #include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
 #include "AOTResultRulesInternal.h"
@@ -1288,9 +1289,18 @@ void TypePropagation::findComponentsOf(unsigned cycle)
         }
     };
 
-    for (BlockID blockID : m_cfg.reversePostOrder()) {
-        if (m_cycles->outermostCycleOf(blockID) != cycle)
-            continue;
+    if (m_firstBlockOfCycle.isEmpty()) {
+        unsigned numberOfCycles = 0;
+        for (BlockID blockID : m_cfg.reversePostOrder())
+            numberOfCycles = std::max(numberOfCycles, m_cycles->outermostCycleOf(blockID).value_or(0) + 1);
+        groupByIndex<BlockID>(numberOfCycles, m_firstBlockOfCycle, m_blocksOfCycles, [&](const auto& add) {
+            for (BlockID blockID : m_cfg.reversePostOrder()) {
+                if (std::optional<unsigned> outermost = m_cycles->outermostCycleOf(blockID))
+                    add(*outermost, blockID);
+            }
+        });
+    }
+    for (BlockID blockID : entriesOfGroup(m_firstBlockOfCycle, m_blocksOfCycles, cycle)) {
         bool isHeader = std::ranges::any_of(m_cfg.incomingEdges(blockID), [&](Edge edge) {
             return m_cfg.reversePostOrderIndex(edge.from) >= m_cfg.reversePostOrderIndex(blockID);
         });

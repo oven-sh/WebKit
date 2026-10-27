@@ -442,6 +442,8 @@ public:
     const SinkingPolicy& policy() const { return m_policy; }
     const VirtualObjectContext& objectContext() const LIFETIME_BOUND { return m_objectContext; }
     ShapeContext shapeContext(VirtualObjectID) const;
+    // By family. Empty: none does.
+    const BitVector& familiesThatMayTakePrototypeOfConstructorFunction() const LIFETIME_BOUND;
 
     uint32_t numberOfCandidates() const { return m_candidates.size(); }
     Candidate& at(VirtualObjectID object) LIFETIME_BOUND { return m_candidates[object.index()]; }
@@ -608,6 +610,7 @@ private:
     Vector<std::optional<BitVector>> m_blocksWithLiveDefinition;
     Vector<uint64_t> m_tracesOfAllocations;
     Vector<VirtualFamily> m_families;
+    mutable std::optional<BitVector> m_familiesThatMayTakePrototypeOfConstructorFunction;
     KeyOrderTable m_orders;
     SinkingDecisions m_decisions;
     SinkingInputs m_inputs;

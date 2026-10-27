@@ -175,7 +175,7 @@ static void appendSites(Vector<uint8_t>& stream, const CompiledCode& code, std::
     stream.appendVector(siteBytes);
 }
 
-static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
+static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code, size_t numberOfFunctions)
 {
     const SiteDescription& sites = code.sites;
     std::span<const PrologueCheck> prologueChecks = code.frame.prologueChecks.span();
@@ -206,7 +206,9 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
         for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
             RELEASE_ASSERT(inlineFrames[frame].parent < frame);
             RELEASE_ASSERT(inlineFrames[frame].callSite == sites.numberOfSitesWithoutCode - (inlineFrames.size() - 1) + frame);
-            InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = code.body.callees[inlineFrames[frame].callee] }.append(frames);
+            BuiltinID calledBuiltin = inlineFrames[frame].calledBuiltin;
+            FunctionID function = calledBuiltin ? functionInFramesOf(calledBuiltin, numberOfFunctions) : code.body.callees[inlineFrames[frame].callee];
+            InlineFrameRow { .isTailCall = inlineFrames[frame].isTailCall, .isConstruct = inlineFrames[frame].isConstruct, .parent = inlineFrames[frame].parent, .function = function }.append(frames);
         }
         head.hasInlineFrames = true;
         head.numberOfInlineFrames = inlineFrameCount(sites);
@@ -216,11 +218,11 @@ static void encodeStream(Vector<uint8_t>& stream, const CompiledCode& code)
     appendSites(stream, code, returnSites.span());
 }
 
-Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, BuildContext& context)
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, size_t numberOfFunctions, BuildContext& context)
 {
     Vector<Vector<uint8_t>> streams(functions.size());
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
-        encodeStream(streams[position], functions[position]);
+        encodeStream(streams[position], functions[position], numberOfFunctions);
     });
     uint64_t largestSiteCount = 0;
     uint64_t largestInlineFrameCount = 0;

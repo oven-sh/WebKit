@@ -455,6 +455,14 @@ static KnownBoolean evaluatePrototypeTest(const ShapeContext& context, const Vir
     return prototype && hasStored(shape, *prototype) ? KnownBoolean::Unknown : KnownBoolean::True;
 }
 
+bool mayTakePrototypeOfConstructorFunctionWhenBuilt(const Program& program, const VirtualObjectDescription& description)
+{
+    if (!isLayoutObject(description))
+        return false;
+    const Layout& layout = program.at(declaredLayoutOf(program, description.layout));
+    return layout.has(LayoutFlags::IsConstructorFunction) && layout.classFlow.prototypeProperty != MemberMutability::Fixed;
+}
+
 LayoutID constructorFunctionWhosePrototypeIsTakenWhenBuilt(const ShapeContext& context, const VirtualShape& shape)
 {
     if (shape.kind != VirtualShapeKind::Fields || evaluatePrototypeTest(context, shape) != KnownBoolean::True)

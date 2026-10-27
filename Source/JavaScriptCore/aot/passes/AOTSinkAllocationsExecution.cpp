@@ -619,9 +619,15 @@ void ObjectInterpreter::buildObjectsWhosePrototypeMayBeReplacedBy(ValueID writer
     uint64_t endedGuards = m_sinking.inputs().memberGuardsEndedByValues.get(writer.index() + 1);
     if (!endedGuards)
         return;
+    const BitVector& families = m_sinking.familiesThatMayTakePrototypeOfConstructorFunction();
+    if (families.isEmpty())
+        return;
 
     Vector<VirtualObjectID, 2> objects;
     for (const ObjectEntry& entry : m_state.objects) {
+        // What is built stays as it is.
+        if (entry.state.isCell() || !families.get(m_sinking.at(entry.object).family.index()))
+            continue;
         ShapeContext context = m_sinking.shapeContext(entry.object);
         bool takesReplacedPrototype = std::ranges::any_of(entry.state.variants, [&](const ObjectVariant& variant) {
             LayoutID constructed = constructorFunctionWhosePrototypeIsTakenWhenBuilt(context, context.family.at(variant.shape));

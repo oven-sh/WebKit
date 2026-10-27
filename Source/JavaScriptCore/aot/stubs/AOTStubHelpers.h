@@ -191,6 +191,12 @@ inline Address softStackLimit()
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
 }
 
+// A trap that waits to be handled moves this limit above every stack pointer.
+inline Address trapAwareSoftStackLimit()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

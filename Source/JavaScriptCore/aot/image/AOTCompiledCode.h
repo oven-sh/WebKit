@@ -139,6 +139,8 @@ struct InlineFrame {
     uint32_t callee;
     bool isTailCall;
     bool isConstruct;
+    // Set for the frame of a built-in function whose steps were expanded into the callee.
+    BuiltinID calledBuiltin { };
 };
 
 struct FlaggedSite {

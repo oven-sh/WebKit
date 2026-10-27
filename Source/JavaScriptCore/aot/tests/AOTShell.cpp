@@ -22,6 +22,7 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "JSNativeStdFunction.h"
 #include "JSPromise.h"
 #include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
@@ -478,6 +479,37 @@ JSC_DEFINE_CUSTOM_GETTER(getChildrenOfModuleObject, (JSGlobalObject* globalObjec
     return JSValue::encode(areShown ? JSValue(children) : jsUndefined());
 }
 
+// Compiled code calls a function that the table lists under an object of the host without testing that it is there.
+static void addMissingHostFunctions(JSGlobalObject* globalObject, JSObject* object, BuiltinID holder)
+{
+    VM& vm = globalObject->vm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    for (BuiltinID member : table.membersOf(holder)) {
+        Identifier name = table.identifierOf(vm, table.at(member).name);
+        if (table.at(member).kind != BuiltinKind::Function || isValidOffset(object->getDirectOffset(vm, name)))
+            continue;
+        JSFunction* function = JSNativeStdFunction::create(vm, globalObject, 0, name.string(), [member](JSGlobalObject*, CallFrame*) -> EncodedJSValue {
+            dataLogLn("AOT: the program needs the host's ", BuiltinTable::singleton().textOf(member), ", and this realm has no host");
+            exitProcess(4);
+        });
+        addMissingHostFunctions(globalObject, function, table.canonicalID(member));
+        object->putDirect(vm, name, function);
+    }
+}
+
+void addMissingImportMetaFunctions(JSGlobalObject* globalObject, JSObject* importMeta)
+{
+    if (Image::current())
+        addMissingHostFunctions(globalObject, importMeta, Builtins::ImportMeta);
+}
+
+static JSFunction* createRequireFunction(JSGlobalObject* globalObject)
+{
+    JSFunction* require = JSFunction::create(globalObject->vm(), globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    addMissingHostFunctions(globalObject, require, Builtins::ModuleRequire);
+    return require;
+}
+
 static void createModuleObject(JSGlobalObject* globalObject, JSString* path, ModuleID number, OptionSet<ModuleObjectTrait> traits, ModuleObjects& objects)
 {
     VM& vm = globalObject->vm();
@@ -500,15 +532,16 @@ static void createModuleObject(JSGlobalObject* globalObject, JSString* path, Mod
     module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "children"_s), CustomGetterSetter::create(vm, getChildrenOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
     module->putDirect(vm, Identifier::fromString(vm, "paths"_s), paths);
     module->putDirectCustomAccessor(vm, Identifier::fromString(vm, "parent"_s), CustomGetterSetter::create(vm, getParentOfModuleObject, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly);
+    addMissingHostFunctions(globalObject, module, Builtins::ModuleObject);
 
     objects.module = module;
-    objects.require = JSFunction::create(vm, globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    objects.require = createRequireFunction(globalObject);
 }
 
 static void createRequirer(JSGlobalObject* globalObject, JSObject* importMeta, ModuleObjects& objects)
 {
     objects.module = importMeta;
-    objects.require = JSFunction::create(globalObject->vm(), globalObject, 1, "require"_s, functionRequire, ImplementationVisibility::Public);
+    objects.require = createRequireFunction(globalObject);
 }
 
 static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue specifier)

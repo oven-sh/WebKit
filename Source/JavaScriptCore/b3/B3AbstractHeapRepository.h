@@ -424,6 +424,14 @@ public:
         return { static_cast<unsigned>(m_heapForMemory.size()), static_cast<unsigned>(m_heapListForCCallWrite.size()), static_cast<unsigned>(m_heapListForPatchpointWrite.size()) };
     }
 
+    // Whether a load or a store of the procedure so far names exactly this heap.
+    bool isNamedByMemoryAccess(const AbstractHeap& heap) const
+    {
+        return std::ranges::any_of(m_heapForMemory, [&](const HeapForValue& entry) {
+            return entry.heap == &heap;
+        });
+    }
+
     template<typename Functor>
     void forEachWriteDecoratedSince(const DecorationMark& mark, const Functor& functor) const
     {

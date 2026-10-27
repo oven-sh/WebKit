@@ -99,9 +99,8 @@ public:
         program->framesOfRegisters = (m_nextRegister * sizeof(uint32_t) + sizeof(FlatFrame) - 1) / sizeof(FlatFrame);
 
         assignMemoRows();
-        // A choice whose last alternative has begun leaves a frame behind where a table is kept: see Machine::popChoice(). When that enters the failed search beside references, the groups have to
-        // hold again what they held when the search began.
-        if (!program->memoRowsBesideReferences)
+        // Machine::popChoice() can leave a RecordFailure frame behind. A capture-keyed entry needs the captures restored by the time that frame resumes.
+        if (!program->captureKeyedMemoRows)
             removeUnneededLogging(*program);
         if (!m_countsTurns)
             program->stepsPerCharacterBeforeStoppingOnFullMachine = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
@@ -268,9 +267,9 @@ private:
     void isTurnThatMayTakeNothingSince(unsigned begin, unsigned startRegister) { m_turnsThatMayTakeNothing.append({ begin, here(), startRegister }); }
     void isLoopThatCountsTurnsSince(unsigned begin, unsigned counter, unsigned bound) { m_loopsThatCountTurns.append({ begin, here(), counter, bound }); }
 
-    // Which bounds of the referenced groups some reference can read, on a way that begins at an op, before they are set again. Bit 2 i: the first bound of m_referencedGroups[i]. Bit 2 i + 1: its second.
-    // A search inside a lookahead ends with the lookahead, so for an op in there nothing counts that stands behind it.
-    Vector<uint64_t> computeBoundsStillRead()
+    // Backward liveness: the capture bounds that a backreference can read after each op before they are overwritten. Bit 2 * i is the start of m_referencedGroups[i], and bit 2 * i + 1 is its end.
+    // A search inside a lookahead stops at the end of the lookahead.
+    Vector<uint64_t> computeLiveCaptureBounds()
     {
         auto& ops = m_program->ops;
         Vector<uint64_t> result(FillWith { }, ops.size(), 0);
@@ -278,11 +277,11 @@ private:
         if (groups.isEmpty())
             return result;
 
-        auto boundsIn = [&](unsigned firstPlace, unsigned lastPlace) {
+        auto boundsInSlots = [&](unsigned firstSlot, unsigned lastSlot) {
             uint64_t bounds = 0;
             for (unsigned i = 0; i < groups.size(); ++i) {
                 for (unsigned bound = 0; bound < 2; ++bound) {
-                    if (groups[i] + bound >= firstPlace && groups[i] + bound <= lastPlace)
+                    if (groups[i] + bound >= firstSlot && groups[i] + bound <= lastSlot)
                         bounds |= 1ull << (2 * i + bound);
                 }
             }
@@ -291,33 +290,33 @@ private:
         struct Effect {
             uint64_t reads;
             uint64_t sets;
-            bool goesOnAtNextOp;
-            bool goesOnAtTarget;
+            bool fallsThrough;
+            bool jumpsToTarget;
         };
         auto effects = ops.map([&](const FlatOp& op) -> Effect {
             switch (op.kind) {
             case Kind::BackReference:
             case Kind::BackReferenceIgnoringCase:
-                return { boundsIn(op.argument, op.argument + 1), 0, true, false };
+                return { boundsInSlots(op.argument, op.argument + 1), 0, true, false };
             case Kind::DotStarEnclosure:
-                // It ends the search, or is a step backward, which always fails: see Enclosure::readBackward().
+                // This either ends the search or is a backward step, which always fails.
                 if (static_cast<FlatStepBackward>(op.registerIndex) == FlatStepBackward::BackReference)
-                    return { boundsIn(op.argument, op.argument + 1), 0, false, false };
+                    return { boundsInSlots(op.argument, op.argument + 1), 0, false, false };
                 return { 0, 0, false, false };
             case Kind::CaptureStart:
             case Kind::CaptureEnd:
             case Kind::LoggedCaptureStart:
             case Kind::LoggedCaptureEnd:
-                return { 0, boundsIn(op.argument, op.argument), true, false };
+                return { 0, boundsInSlots(op.argument, op.argument), true, false };
             case Kind::CaptureEmpty:
             case Kind::CapturedRun:
             case Kind::LoggedCaptureEmpty:
             case Kind::LoggedCapturedRun:
-                return { 0, boundsIn(op.argument, op.argument + 1), true, false };
+                return { 0, boundsInSlots(op.argument, op.argument + 1), true, false };
             case Kind::ClearCaptures:
             case Kind::LoggedClearCaptures:
-                return { 0, boundsIn(op.argument << 1, (op.target << 1) + 1), true, false };
-            // ChoiceByTable: wherever it goes on, the choices that its target leads to go on there too.
+                return { 0, boundsInSlots(op.argument << 1, (op.target << 1) + 1), true, false };
+            // Every dispatch target of a ChoiceByTable is also reachable through its chain of targets.
             case Kind::Choice:
             case Kind::ChoiceByFirst:
             case Kind::ChoiceByTable:
@@ -370,33 +369,33 @@ private:
             RELEASE_ASSERT_NOT_REACHED();
         });
 
-        // One more than the index of the innermost lookahead around an op. An inner one ends, and so is listed, before the one around it.
-        Vector<unsigned> lookaheadAround(FillWith { }, ops.size(), 0);
+        // Index + 1 into m_lookaheads, which lists inner lookaheads first.
+        Vector<unsigned> innermostLookahead(FillWith { }, ops.size(), 0);
         for (unsigned i = m_lookaheads.size(); i--;) {
             auto [begin, end] = m_lookaheads[i];
-            std::ranges::fill(lookaheadAround.mutableSpan().subspan(begin + 1, end - begin - 2), i + 1);
+            std::ranges::fill(innermostLookahead.mutableSpan().subspan(begin + 1, end - begin - 2), i + 1);
         }
-        Vector<uint64_t> stillRead(FillWith { }, ops.size(), 0);
+        Vector<uint64_t> live(FillWith { }, ops.size(), 0);
         auto solve = [&](unsigned begin, unsigned end, unsigned lookahead) {
-            std::ranges::fill(stillRead.mutableSpan().subspan(begin, end - begin), 0);
-            bool hasChanged = true;
-            while (hasChanged) {
-                hasChanged = false;
+            std::ranges::fill(live.mutableSpan().subspan(begin, end - begin), 0);
+            bool changed = true;
+            while (changed) {
+                changed = false;
                 for (unsigned i = end; i-- > begin;) {
                     const Effect& effect = effects[i];
                     uint64_t behind = 0;
-                    if (effect.goesOnAtNextOp && i + 1 < end)
-                        behind |= stillRead[i + 1];
-                    if (effect.goesOnAtTarget && ops[i].target < end)
-                        behind |= stillRead[ops[i].target];
+                    if (effect.fallsThrough && i + 1 < end)
+                        behind |= live[i + 1];
+                    if (effect.jumpsToTarget && ops[i].target < end)
+                        behind |= live[ops[i].target];
                     uint64_t here = (behind & ~effect.sets) | effect.reads;
-                    hasChanged |= here != stillRead[i];
-                    stillRead[i] = here;
+                    changed |= here != live[i];
+                    live[i] = here;
                 }
             }
             for (unsigned i = begin; i < end; ++i) {
-                if (lookaheadAround[i] == lookahead)
-                    result[i] = stillRead[i];
+                if (innermostLookahead[i] == lookahead)
+                    result[i] = live[i];
             }
         };
         solve(0, ops.size(), 0);
@@ -405,34 +404,33 @@ private:
         return result;
     }
 
-    // An attempt comes to some ops on one way only, on which every step takes a known number of units. So it comes there once, at a place of its own that no other attempt comes there at.
-    struct ReachedOnOneWay {
-        bool isReachedOnOneWay { false };
-        // The bounds that were set on the way, bits as in computeBoundsStillRead(): no two attempts come with the same.
-        uint64_t boundsOfThisAttempt { 0 };
+    // An op with a single fixed-width path from the start of an attempt runs once per attempt, at a position where no other attempt runs it.
+    struct SinglePathOp {
+        bool hasSinglePath { false };
+        // Capture bounds set along the path, which differ in every attempt. Same bits as computeLiveCaptureBounds().
+        uint64_t boundsSetOnPath { 0 };
     };
-    Vector<ReachedOnOneWay> findOpsReachedOnOneWay()
+    Vector<SinglePathOp> findSinglePathOps()
     {
         auto& ops = m_program->ops;
-        Vector<ReachedOnOneWay> result(ops.size());
-        // There a step takes one unit or two.
+        Vector<SinglePathOp> result(ops.size());
         if (m_decodesSurrogatePairs)
             return result;
-        auto boundsIn = [&](unsigned firstPlace, unsigned lastPlace) {
+        auto boundsInSlots = [&](unsigned firstSlot, unsigned lastSlot) {
             uint64_t bounds = 0;
             for (unsigned i = 0; i < m_referencedGroups.size(); ++i) {
                 for (unsigned bound = 0; bound < 2; ++bound) {
-                    if (m_referencedGroups[i] + bound >= firstPlace && m_referencedGroups[i] + bound <= lastPlace)
+                    if (m_referencedGroups[i] + bound >= firstSlot && m_referencedGroups[i] + bound <= lastSlot)
                         bounds |= 1ull << (2 * i + bound);
                 }
             }
             return bounds;
         };
-        // Where an attempt begins counts as a way too.
-        Vector<unsigned> waysTo(FillWith { }, ops.size() + 1, 0);
-        ++waysTo[0];
+        // The start of an attempt counts as a predecessor.
+        Vector<unsigned> predecessorCounts(FillWith { }, ops.size() + 1, 0);
+        ++predecessorCounts[0];
         if (m_program->laterAttemptsBeginAt)
-            ++waysTo[m_program->laterAttemptsBeginAt];
+            ++predecessorCounts[m_program->laterAttemptsBeginAt];
         for (unsigned i = 0; i < ops.size(); ++i) {
             switch (ops[i].kind) {
             case Kind::Choice:
@@ -443,25 +441,25 @@ private:
             case Kind::JumpIfBelow:
             case Kind::JumpIfNotBelow:
             case Kind::NeedsInputElseJump:
-                ++waysTo[i + 1];
-                ++waysTo[ops[i].target];
+                ++predecessorCounts[i + 1];
+                ++predecessorCounts[ops[i].target];
                 break;
             case Kind::Jump:
             case Kind::LoopBack:
             case Kind::LoopBackUnlessEmpty:
-                ++waysTo[ops[i].target];
+                ++predecessorCounts[ops[i].target];
                 break;
             default:
-                ++waysTo[i + 1];
+                ++predecessorCounts[i + 1];
                 break;
             }
         }
-        Vector<std::pair<unsigned, uint64_t>, 8> waysToFollow { { 0, 0 } };
-        while (!waysToFollow.isEmpty()) {
-            auto [i, bounds] = waysToFollow.takeLast();
-            for (bool goesOn = true; goesOn; ++i) {
+        Vector<std::pair<unsigned, uint64_t>, 8> worklist { { 0, 0 } };
+        while (!worklist.isEmpty()) {
+            auto [i, bounds] = worklist.takeLast();
+            for (bool continues = true; continues; ++i) {
                 const FlatOp& op = ops[i];
-                if (waysTo[i] > 1)
+                if (predecessorCounts[i] > 1)
                     break;
                 switch (op.kind) {
                 case Kind::Character:
@@ -483,32 +481,31 @@ private:
                 case Kind::CaptureEnd:
                 case Kind::LoggedCaptureStart:
                 case Kind::LoggedCaptureEnd:
-                    bounds |= boundsIn(op.argument, op.argument);
+                    bounds |= boundsInSlots(op.argument, op.argument);
                     break;
                 case Kind::CaptureEmpty:
                 case Kind::LoggedCaptureEmpty:
-                    bounds |= boundsIn(op.argument, op.argument + 1);
+                    bounds |= boundsInSlots(op.argument, op.argument + 1);
                     break;
-                // What stands behind the target is come to with the position of the choice. ChoiceByTable: wherever it goes on, the choices that its target leads to go on there too.
                 case Kind::Choice:
                 case Kind::ChoiceByFirst:
                 case Kind::ChoiceByTable:
                     if (isStepBackward(ops[i + 1])) {
-                        goesOn = false;
+                        continues = false;
                         break;
                     }
                     result[i] = { true, bounds };
-                    waysToFollow.append({ op.target, bounds });
+                    worklist.append({ op.target, bounds });
                     break;
                 case Kind::GreedyRun:
                 case Kind::LazyRun:
                 case Kind::GreedyRunBeforeKnownCharacters:
                 case Kind::LazyRunBeforeKnownCharacters:
                     result[i] = { true, bounds };
-                    goesOn = false;
+                    continues = false;
                     break;
                 default:
-                    goesOn = false;
+                    continues = false;
                     break;
                 }
             }
@@ -548,16 +545,15 @@ private:
             std::ranges::fill(loopAround.mutableSpan().subspan(begin, end - begin), static_cast<uint16_t>(loops.size() - 1));
             std::ranges::fill(rowsOfOp.mutableSpan().subspan(begin, end - begin), static_cast<unsigned>(rows));
         }
-        // A row is for a search that begins more than once. A choice that is reached on one way only is made once at each place. The search behind a run that is reached on one way only begins at
-        // each place once in an attempt, and in every attempt with other bounds where it depends on one that was set on the way.
-        auto boundsOfAllGroups = computeBoundsStillRead();
-        auto reachedOnOneWay = findOpsReachedOnOneWay();
+        // A row only helps if the same search can start twice. A single-path choice never repeats, and neither does a single-path run whose search depends on a bound set along the path.
+        auto liveBoundsOfAllGroups = computeLiveCaptureBounds();
+        auto singlePathOps = findSinglePathOps();
         auto canHaveRows = [&](unsigned i) {
             switch (ops[i].kind) {
             case Kind::Choice:
             case Kind::ChoiceByFirst:
             case Kind::ChoiceByTable:
-                if (reachedOnOneWay[i].isReachedOnOneWay)
+                if (singlePathOps[i].hasSinglePath)
                     return false;
                 [[fallthrough]];
             case Kind::GreedyLoopChoice:
@@ -565,7 +561,7 @@ private:
             case Kind::LazyRun:
             case Kind::GreedyRunBeforeKnownCharacters:
             case Kind::LazyRunBeforeKnownCharacters:
-                if (boundsOfAllGroups[i] & reachedOnOneWay[i].boundsOfThisAttempt)
+                if (liveBoundsOfAllGroups[i] & singlePathOps[i].boundsSetOnPath)
                     return false;
                 // The step behind such a Choice changes the position in its frame.
                 return !hasTooManyRows[i] && !isStepBackward(ops[i + 1]);
@@ -573,63 +569,63 @@ private:
                 return false;
             }
         };
-        // The table has room for the bounds of a few groups. Where more count, an op from which any counts has no row.
-        Vector<uint16_t> boundsStillRead(FillWith { }, ops.size(), 0);
-        Vector<bool> dependsOnTooManyBounds(FillWith { }, ops.size(), false);
+        // Entries hold the bounds of at most maxReferencedGroups groups. Past that, ops with live bounds get no row.
+        Vector<uint16_t> liveCaptureBounds(FillWith { }, ops.size(), 0);
+        Vector<bool> hasTooManyLiveBounds(FillWith { }, ops.size(), false);
         {
-            uint64_t readFromSomeRow = 0;
+            uint64_t liveAtSomeRow = 0;
             for (unsigned i = 0; i < ops.size(); ++i)
-                readFromSomeRow |= canHaveRows(i) ? boundsOfAllGroups[i] : 0;
-            Vector<unsigned, FlatProgram::maxReferencedGroups> groupsThatCount;
+                liveAtSomeRow |= canHaveRows(i) ? liveBoundsOfAllGroups[i] : 0;
+            Vector<unsigned, FlatProgram::maxReferencedGroups> liveGroups;
             for (unsigned group = 0; group < m_referencedGroups.size(); ++group) {
-                if ((readFromSomeRow >> (2 * group)) & 3)
-                    groupsThatCount.append(group);
+                if ((liveAtSomeRow >> (2 * group)) & 3)
+                    liveGroups.append(group);
             }
-            bool areTooMany = groupsThatCount.size() > FlatProgram::maxReferencedGroups;
+            bool hasTooManyLiveGroups = liveGroups.size() > FlatProgram::maxReferencedGroups;
             for (unsigned i = 0; i < ops.size(); ++i) {
-                if (areTooMany) {
-                    dependsOnTooManyBounds[i] = !!boundsOfAllGroups[i];
+                if (hasTooManyLiveGroups) {
+                    hasTooManyLiveBounds[i] = !!liveBoundsOfAllGroups[i];
                     continue;
                 }
-                for (unsigned index = 0; index < groupsThatCount.size(); ++index)
-                    boundsStillRead[i] |= static_cast<uint16_t>(((boundsOfAllGroups[i] >> (2 * groupsThatCount[index])) & 3) << (2 * index));
+                for (unsigned index = 0; index < liveGroups.size(); ++index)
+                    liveCaptureBounds[i] |= static_cast<uint16_t>(((liveBoundsOfAllGroups[i] >> (2 * liveGroups[index])) & 3) << (2 * index));
             }
-            if (!areTooMany) {
-                for (unsigned group : groupsThatCount)
+            if (!hasTooManyLiveGroups) {
+                for (unsigned group : liveGroups)
                     m_program->referencedGroups.append(m_referencedGroups[group]);
             }
         }
-        auto hasRowOfRestOfRun = [&](unsigned i) {
+        auto hasRunSuffixRow = [&](unsigned i) {
             switch (ops[i].kind) {
             case Kind::GreedyRun:
             case Kind::LazyRun:
             case Kind::GreedyRunBeforeKnownCharacters:
             case Kind::LazyRunBeforeKnownCharacters:
-                return ops[i].argument == quantifyInfinite && !boundsStillRead[i];
+                return ops[i].argument == quantifyInfinite && !liveCaptureBounds[i];
             default:
                 return false;
             }
         };
         Vector<unsigned> opsWithRows;
         for (unsigned i = 0; i < ops.size() && m_program->memoRows + 2 * maxRowsOfOp < maxIndexCount; ++i) {
-            if (!canHaveRows(i) || dependsOnTooManyBounds[i])
+            if (!canHaveRows(i) || hasTooManyLiveBounds[i])
                 continue;
             opsWithRows.append(i);
-            (boundsStillRead[i] ? m_program->memoRowsBesideReferences : m_program->memoRowsByPosition) += rowsOfOp[i];
-            if (hasRowOfRestOfRun(i))
-                m_program->memoRowsOfRestsOfRuns += rowsOfOp[i];
-            m_program->memoRows = m_program->memoRowsByPosition + m_program->memoRowsOfRestsOfRuns + m_program->memoRowsBesideReferences;
+            (liveCaptureBounds[i] ? m_program->captureKeyedMemoRows : m_program->positionKeyedMemoRows) += rowsOfOp[i];
+            if (hasRunSuffixRow(i))
+                m_program->runSuffixMemoRows += rowsOfOp[i];
+            m_program->memoRows = m_program->positionKeyedMemoRows + m_program->runSuffixMemoRows + m_program->captureKeyedMemoRows;
         }
         m_program->aroundMemoRow.grow(m_program->memoRows + 1);
-        unsigned nextByPosition = 1;
-        unsigned nextOfRestOfRun = nextByPosition + m_program->memoRowsByPosition;
-        unsigned nextBesideReferences = nextOfRestOfRun + m_program->memoRowsOfRestsOfRuns;
+        unsigned nextPositionKeyedRow = 1;
+        unsigned nextRunSuffixRow = nextPositionKeyedRow + m_program->positionKeyedMemoRows;
+        unsigned nextCaptureKeyedRow = nextRunSuffixRow + m_program->runSuffixMemoRows;
         for (unsigned i : opsWithRows) {
-            unsigned& next = boundsStillRead[i] ? nextBesideReferences : nextByPosition;
-            FlatProgram::AroundMemoRow around { turnAround[i], loopAround[i], isInsideLookahead[i], boundsStillRead[i], 0 };
-            if (hasRowOfRestOfRun(i)) {
-                around.rowsToRestOfRun = static_cast<uint16_t>(nextOfRestOfRun - next);
-                nextOfRestOfRun += rowsOfOp[i];
+            unsigned& next = liveCaptureBounds[i] ? nextCaptureKeyedRow : nextPositionKeyedRow;
+            FlatProgram::AroundMemoRow around { turnAround[i], loopAround[i], isInsideLookahead[i], liveCaptureBounds[i], 0 };
+            if (hasRunSuffixRow(i)) {
+                around.runSuffixRowOffset = static_cast<uint16_t>(nextRunSuffixRow - next);
+                nextRunSuffixRow += rowsOfOp[i];
             }
             ops[i].memoRow = static_cast<uint16_t>(next);
             std::ranges::fill(m_program->aroundMemoRow.mutableSpan().subspan(next, rowsOfOp[i]), around);
@@ -1793,7 +1789,7 @@ private:
         uint32_t group = term.backReferenceSubpatternId << 1;
         if (!m_referencedGroups.contains(group))
             m_referencedGroups.append(group);
-        m_searchDependsOnMoreThanPosition |= m_referencedGroups.size() > maxReferencedGroupsFollowed;
+        m_searchDependsOnMoreThanPosition |= m_referencedGroups.size() > maxTrackedReferencedGroups;
         auto emitReference = [&] {
             if (m_readsBackward) {
                 FlatOp& op = emitStepBackward(FlatStepBackward::BackReference);
@@ -1958,9 +1954,8 @@ private:
     Vector<std::tuple<unsigned, unsigned, unsigned>, 8> m_turnsThatMayTakeNothing;
     Vector<std::tuple<unsigned, unsigned, unsigned, unsigned>, 8> m_loopsThatCountTurns;
     bool m_searchDependsOnMoreThanPosition { false };
-    // The first of each group's two places in the output.
     Vector<uint32_t, 8> m_referencedGroups;
-    static constexpr unsigned maxReferencedGroupsFollowed = 32;
+    static constexpr unsigned maxTrackedReferencedGroups = 32;
     bool m_decodesSurrogatePairs { false };
     bool m_readsBackward { false };
     unsigned m_nextRegister { 0 };

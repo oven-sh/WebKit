@@ -368,6 +368,8 @@ private:
     void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
+    using ShardsInOrder = std::array<uint8_t, numberOfShards>;
+    static ShardsInOrder longestFirst(const std::array<size_t, numberOfShards>& sizes);
     void giveBackLargeBuffers();
     static void forEachListOfOneRound(auto& graph, NOESCAPE const auto& functor);
 
@@ -408,7 +410,9 @@ private:
     void connectStraightToCoveredNodes(Team&, size_t count, NOESCAPE const auto& forEachNodeToConnect);
     bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
     bool isFollowedBackThrough(const Covering& covering, uint32_t node) const { return !covering.retiresNoNodeByItself || (!(m_gates[node].flags & IsCoveredNode) && !covering.isMadeForPlaceholder(covering.contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))); }
-    void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
+    bool lengthensFlowIntoCovered(const Covering&, ValueFlowEdge) const;
+    void findEdgesThatLengthenFlowIntoCoveredNodes(Team&, std::span<const ValueFlowEdge> added);
+    void markNodesFlowingIntoCoveredNodes(std::span<const ValueFlowEdge> added);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 
     const ParallelLoops& m_loops;
@@ -471,6 +475,7 @@ private:
     Vector<std::unique_ptr<Worker>> m_workers;
     Vector<Vector<uint32_t>> m_foundInShare;
     Vector<uint32_t> m_found;
+    Vector<uint32_t> m_edgesThatLengthenFlow;
     Counters m_counters;
 };
 

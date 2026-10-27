@@ -160,8 +160,12 @@ public:
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
+    // For a frame that ends at the address in the register.
+    void checkStackBeforeEntering(GPRReg endOfFrame);
     // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
     void checkStackBeforeEnteringCallee();
+    // In a frame of this stub, ahead of the call that returns to the label. What the poll throws leaves the frame as if the callee had thrown it.
+    void pollBeforeCall(Label returnSite);
     static Address limitOfCallsByValue();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
@@ -319,6 +323,7 @@ private:
     void emitStackAlignmentCheck();
     void emitStubCall(StubKey);
     void pollIfBelow(Address limit, StubKey poll);
+    void pollAtStubEntry(StubKey poll);
     void bindEntryAt(StubKey, Label);
     Label labelOf(StubKey entry) const;
     void checkReturnsFlags(RelationalCondition) const;

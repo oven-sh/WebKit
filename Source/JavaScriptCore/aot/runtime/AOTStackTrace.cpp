@@ -50,7 +50,7 @@ static_assert(static_cast<unsigned>(TraceVisibility::Hidden) < 4 && static_cast<
 FunctionID functionInFramesOf(BuiltinID builtin)
 {
     ASSERT(builtin);
-    return FunctionID(Image::current()->programTables().numberOfFunctions() + builtin.index());
+    return functionInFramesOf(builtin, Image::current()->programTables().numberOfFunctions());
 }
 
 BuiltinID builtinOfFunctionInFrames(FunctionID function)
@@ -1112,7 +1112,7 @@ void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, Show
     for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, false });; frame = callerOfInlinedFrame(image, reader, code, frame)) {
         if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted))
             functor(TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, frame.isInlinedConstructCall, false, false, false, isCopiedForOwnFunctionObject(image, reader, code, frame) });
-        if (!frame.inlineFrame)
+        if (!frame.hasCallerInMachineFrame())
             break;
     }
 }

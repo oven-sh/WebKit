@@ -241,21 +241,18 @@ public:
     uint8_t stepsPerCharacterBeforeStoppingOnFullMachine { 0 };
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
-    // All rows: first those of memoRowsByPosition, then those of memoRowsOfRestsOfRuns, then those of memoRowsBesideReferences.
+    // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
-    // From these the search depends on the position alone.
-    unsigned memoRowsByPosition { 0 };
-    // Behind a run without an upper bound the search goes on from one place of a stretch of members after another. Once it has failed from a place and from every place of the stretch behind it,
-    // a row beside the run's own says so at that place, and holds the turns of all those searches: a run that comes to stand there has failed. So a stretch in which a run begins at many places
-    // is walked once, not once from each of them. These rows are the first to go where the subject is too long for the table.
-    unsigned memoRowsOfRestsOfRuns { 0 };
-    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too, as far as a reference can read that before it is set again:
-    // AroundMemoRow::boundsStillRead. For a row that has such bounds the table has an entry for each set of them.
-    unsigned memoRowsBesideReferences { 0 };
-    // The groups that have such bounds: the first of each group's two places in the output.
+    unsigned positionKeyedMemoRows { 0 };
+    // An unbounded run retries its continuation at every position of a stretch of matching characters. A run-suffix row marks the positions from which every later retry in the stretch has failed,
+    // with the turns those retries used, so runs that overlap scan the stretch once. These rows are dropped first when the table would be too large.
+    unsigned runSuffixMemoRows { 0 };
+    // Rows whose search also depends on capture bounds that a backreference can still read. See AroundMemoRow::liveCaptureBounds.
+    unsigned captureKeyedMemoRows { 0 };
+    // The output index of the start of each group that has live bounds.
     Vector<uint32_t> referencedGroups;
     static constexpr unsigned maxReferencedGroups = 8;
-    unsigned memoSlotSizeBesideReferences() const { return 2 + 2 * referencedGroups.size(); }
+    unsigned captureKeyedSlotSize() const { return 2 + 2 * referencedGroups.size(); }
     // Inside a turn of a group that may take nothing, the rest of the search depends on the position alone only once the turn has taken something: once the register that holds where the turn began
     // differs from the position. An op's row names the innermost such turn around it, which names the next one out. 0: none.
     struct TurnThatMayTakeNothing {
@@ -273,15 +270,15 @@ public:
     Vector<LoopThatCountsTurns> loopsThatCountTurns;
     // Inside a lookahead a search ends in a third way: the lookahead is through, and what is left of the search is dropped. So a place there is entered in the table when the search from it
     // has failed, not when it begins.
-    // Every row of an op has the same.
+    // Every row of an op shares one value.
     struct AroundMemoRow {
         uint16_t turnThatMayTakeNothing { 0 };
         uint16_t loopThatCountsTurns { 0 };
         bool isInsideLookahead { false };
-        // Bit 2 i: the first bound of referencedGroups[i]. Bit 2 i + 1: its second.
-        uint16_t boundsStillRead { 0 };
-        // How far behind this row the row of memoRowsOfRestsOfRuns is that belongs to it. 0: it has none.
-        uint16_t rowsToRestOfRun { 0 };
+        // Bit 2 * i is the start of referencedGroups[i], and bit 2 * i + 1 is its end.
+        uint16_t liveCaptureBounds { 0 };
+        // The distance to this row's run-suffix row, or 0 if it has none.
+        uint16_t runSuffixRowOffset { 0 };
     };
     Vector<AroundMemoRow> aroundMemoRow;
     unsigned recordFailureOp { 0 };

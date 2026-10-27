@@ -134,10 +134,9 @@ static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, O
                 return list;
         } else if (kind != OwnKeysKind::Symbols) {
             bool listsSymbols = kind == OwnKeysKind::All;
-            compiled.ensureStructureForExtraProperties(vm);
-            JSCellButterfly* keys = findKeptOwnKeys(compiled, listsSymbols);
+            JSCellButterfly* keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
             if (!keys)
-                keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
+                keys = findKeptOwnKeys(compiled, listsSymbols);
             if (keys)
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
             JSArray* list = tryListKeysAsCreated(globalObject, compiled, extra, kind);

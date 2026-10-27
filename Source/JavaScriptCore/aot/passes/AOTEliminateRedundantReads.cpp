@@ -1386,7 +1386,7 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
         BuiltinID builtin;
         BlockID block;
     };
-    const BuiltinTable& builtins = context.program.builtins();
+    // Two names of one object are two members: each is added where it is first read.
     Function& function = context.function;
     Vector<BuiltinID, 8> initializedBuiltins;
     bool hasRepeatedBuiltin = false;
@@ -1395,7 +1395,7 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
             const Value& value = function.at(id);
             if (value.opcode != Opcode::InitializeBuiltin)
                 continue;
-            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            BuiltinID builtin = value.builtin();
             hasRepeatedBuiltin |= initializedBuiltins.contains(builtin);
             initializedBuiltins.append(builtin);
         }
@@ -1415,7 +1415,7 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
             const Value& value = function.at(values[index]);
             if (value.opcode != Opcode::InitializeBuiltin)
                 continue;
-            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            BuiltinID builtin = value.builtin();
             bool isDone = std::ranges::any_of(done, [&](const Initialization& earlier) {
                 return earlier.builtin == builtin && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
             });

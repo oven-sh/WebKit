@@ -299,7 +299,7 @@ static void checkInlineFrame(InlineFrameReader& reader, const BodiesImage& built
     const InlineFrameRecord& record = reader.at(built.table(), built.image.indexOf(1), frame);
     AOT_TEST_CHECK(record.parent == shape.parent);
     AOT_TEST_CHECK(record.callSite == CallSiteIndex(callSite));
-    AOT_TEST_CHECK(record.function == FunctionID(shape.callee));
+    AOT_TEST_CHECK(record.function == (shape.calledBuiltin ? functionInFramesOf(shape.calledBuiltin, built.table().programTables().numberOfFunctions()) : FunctionID(shape.callee)));
     AOT_TEST_CHECK(record.isConstruct == shape.isConstruct);
     AOT_TEST_CHECK(record.isTailCall == shape.isTailCall);
 }
@@ -313,6 +313,20 @@ static void testCallSitesInlineFrames()
     InlineFrameReader reader;
     for (unsigned frame : { 3u, 1u, 2u })
         checkInlineFrame(reader, built, frame, chainedFrames[frame - 1], 1 + frame);
+}
+
+static void testCallSitesInlineFrameOfBuiltin()
+{
+    const std::array<InlineFrameShape, 3> frames { { { 0, 2, false, false }, { 1, 2, true, false, BuiltinID(300) }, { 2, 3, false, false } } };
+    const std::array<unsigned, 4> framesByCall { 0, 1, 3, 1 };
+    SiteBody body = bodyWithInlineFrames(1, 0, frames, framesByCall);
+    Vector<SitePosition> positions = body.code.sites.positions;
+    BodiesImage built(5, bodies(WTF::move(body.code)));
+    checkCallSites(built.image, 1, body.sites);
+    checkPositionsOf(built, 1, positions);
+    InlineFrameReader reader;
+    for (unsigned frame : { 3u, 2u, 1u })
+        checkInlineFrame(reader, built, frame, frames[frame - 1], frame);
 }
 
 static void testCallSitesManyInlineFrames()
@@ -686,6 +700,7 @@ std::span<const NativeTest> siteTableTests()
         { "image/call-sites/two-reads-across-checkpoint"_s, testCallSitesTwoReadsAcrossCheckpoint },
         { "image/call-sites/reads-without-sites"_s, testCallSitesReadsWithoutSites },
         { "image/call-sites/inline-frames"_s, testCallSitesInlineFrames },
+        { "image/call-sites/inline-frame-of-a-built-in"_s, testCallSitesInlineFrameOfBuiltin },
         { "image/call-sites/many-inline-frames"_s, testCallSitesManyInlineFrames },
         { "image/call-sites/site-frames"_s, testCallSitesSiteFrames },
         { "image/call-sites/site-frames-without-code"_s, testCallSitesSiteFramesWithoutCode },

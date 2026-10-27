@@ -12,6 +12,7 @@
 #include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include <algorithm>
+#include <numeric>
 #include <optional>
 #if OS(LINUX)
 #include <sys/mman.h>
@@ -732,7 +733,16 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
                 m_edgesByTarget[part * numberOfShards + shardOf(edge.to.index())].append(edge);
             }
         });
-        team.run(numberOfShards, [&](unsigned number, unsigned) {
+        std::array<size_t, numberOfShards> numberOfEdgesInto { };
+        for (size_t index = 0; index < m_edgesByTarget.size(); ++index)
+            numberOfEdgesInto[index % numberOfShards] += m_edgesByTarget[index].size();
+        for (const Covering& covering : m_coverings) {
+            for (const Vector<ValueFlowEdge>& onlyToLink : m_edgesOnlyToLink)
+                numberOfEdgesInto[shardOf(covering.covered)] += onlyToLink.size();
+        }
+        ShardsInOrder shardsInOrder = longestFirst(numberOfEdgesInto);
+        team.run(numberOfShards, [&](unsigned position, unsigned) {
+            unsigned number = shardsInOrder[position];
             Shard& shard = *m_shards[number];
             size_t numberOfMessages = 0;
             for (const Covering& covering : m_coverings) {
@@ -974,23 +984,28 @@ void ValueFlowGraph::connectPredecessorsOfRetiredNodes(Team& team)
     });
 }
 
-void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<const ValueFlowEdge> added)
+bool ValueFlowGraph::lengthensFlowIntoCovered(const Covering& covering, ValueFlowEdge edge) const
 {
-    Vector<uint32_t, 16> toVisit;
-    auto lengthensFlowInto = [&](const Covering& covering, ValueFlowEdge edge) {
-        uint32_t to = edge.to.index();
-        return flowsIntoCovered(covering, to) && !flowsIntoCovered(covering, edge.from.index()) && (to == covering.covered || passesEverythingOn(to)) && isFollowedBackThrough(covering, edge.from.index());
-    };
+    uint32_t to = edge.to.index();
+    return flowsIntoCovered(covering, to) && !flowsIntoCovered(covering, edge.from.index()) && (to == covering.covered || passesEverythingOn(to)) && isFollowedBackThrough(covering, edge.from.index());
+}
+
+void ValueFlowGraph::findEdgesThatLengthenFlowIntoCoveredNodes(Team& team, std::span<const ValueFlowEdge> added)
+{
     for (Covering& covering : m_coverings)
         noteFlowIntoCovered(covering, covering.covered);
-    Vector<uint32_t> lengthening;
-    findIndices(team, added.size(), lengthening, [&](size_t index) {
+    findIndices(&team, added.size(), m_edgesThatLengthenFlow, [&](size_t index) {
         if (!(m_gates[added[index].to.index()].coveringsFlowedInto & ~m_gates[added[index].from.index()].coveringsFlowedInto))
             return false;
         return std::ranges::any_of(m_coverings, [&](const Covering& covering) {
-            return lengthensFlowInto(covering, added[index]);
+            return lengthensFlowIntoCovered(covering, added[index]);
         });
     });
+}
+
+void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(std::span<const ValueFlowEdge> added)
+{
+    Vector<uint32_t, 16> toVisit;
     for (Covering& covering : m_coverings) {
         auto markPredecessorsOf = [&](uint32_t node) {
             forEachOther(m_predecessors[node], [&](uint32_t predecessor) {
@@ -1004,8 +1019,8 @@ void ValueFlowGraph::markNodesFlowingIntoCoveredNodes(Team* team, std::span<cons
         };
 
         m_found.shrink(0);
-        for (uint32_t index : lengthening) {
-            if (lengthensFlowInto(covering, added[index]))
+        for (uint32_t index : m_edgesThatLengthenFlow) {
+            if (lengthensFlowIntoCovered(covering, added[index]))
                 m_found.append(index);
         }
         for (uint32_t index : m_found) {
@@ -1250,6 +1265,17 @@ ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worke
     arrivals.list.shrink(0);
 }
 
+// A step lasts as long as its longest shard from the moment that one begins.
+ValueFlowGraph::ShardsInOrder ValueFlowGraph::longestFirst(const std::array<size_t, numberOfShards>& sizes)
+{
+    ShardsInOrder shards;
+    std::iota(shards.begin(), shards.end(), 0);
+    std::ranges::stable_sort(shards, std::ranges::greater(), [&](uint8_t shard) {
+        return sizes[shard];
+    });
+    return shards;
+}
+
 void ValueFlowGraph::runWave(Team& team)
 {
     AOT_THRESHOLD(size_t, fewestMessagesForThreads, 256);
@@ -1282,7 +1308,15 @@ void ValueFlowGraph::runWave(Team& team)
     }
 
     m_hasLeftMessagesWithShards = true;
-    team.run(numberOfShards, [&](unsigned number, unsigned worker) {
+    AOT_THRESHOLD(size_t, fewestMessagesToCountByShard, 4096);
+    std::array<size_t, numberOfShards> numberArriving { };
+    for (unsigned source = 0; numberWithShards >= fewestMessagesToCountByShard && source < numberOfShards; ++source) {
+        for (uint64_t shards = m_shardsWithMessagesOfShard[parity][source]; shards; shards &= shards - 1)
+            numberArriving[std::countr_zero(shards)] += m_shards[source]->messages[parity][std::countr_zero(shards)].size();
+    }
+    ShardsInOrder shardsInOrder = longestFirst(numberArriving);
+    team.run(numberOfShards, [&](unsigned position, unsigned worker) {
+        unsigned number = shardsInOrder[position];
         Shard& shard = *m_shards[number];
         if (numberWithShards) {
             for (unsigned source = 0; source < numberOfShards; ++source) {
@@ -1386,15 +1420,16 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
         }
     };
     AOT_THRESHOLD(size_t, fewestEdgesToMarkBesideWaves, 4096);
+    findEdgesThatLengthenFlowIntoCoveredNodes(team.get(), m_edgesOfSolve.span());
     if (m_loops.width() > 1 && m_edgesOfSolve.size() >= fewestEdgesToMarkBesideWaves) {
         runTasksInParallel(m_loops, {
             runWaves,
             [&] {
-                markNodesFlowingIntoCoveredNodes(nullptr, m_edgesOfSolve.span());
+                markNodesFlowingIntoCoveredNodes(m_edgesOfSolve.span());
             },
         });
     } else {
-        markNodesFlowingIntoCoveredNodes(team.ptr(), m_edgesOfSolve.span());
+        markNodesFlowingIntoCoveredNodes(m_edgesOfSolve.span());
         runWaves();
     }
     m_nodesWoken.shrink(0);
@@ -1488,7 +1523,7 @@ void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
     auto giveUp = [](auto&... lists) {
         ((lists = { }), ...);
     };
-    giveUp(m_hasMoved, m_isNewEdge, m_edgesNotInLists, m_edgesOfSolve, m_indicesBySource, m_edgesByTarget, m_straightEdgesOfShare, m_straightEdges, m_messages, m_arrivals, m_nodesWoken, m_foundInShare, m_found);
+    giveUp(m_hasMoved, m_isNewEdge, m_edgesNotInLists, m_edgesOfSolve, m_indicesBySource, m_edgesByTarget, m_straightEdgesOfShare, m_straightEdges, m_messages, m_arrivals, m_nodesWoken, m_foundInShare, m_found, m_edgesThatLengthenFlow);
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         shard->blocksOfPredecessors.release();
         giveUp(shard->edgesOfNodesWithManySuccessors, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors, shard->listedEdgesOutOfConstants, shard->arrivals, shard->messages, shard->nodesWithRecentSuccessors, shard->nodesWithRecentPredecessors);
@@ -1582,7 +1617,7 @@ void ValueFlowGraph::forEachListOfOneRound(auto& graph, NOESCAPE const auto& fun
     visitEach(edgesOfRound, graph.m_edgesOnlyToLink);
     visitEach(edgesOfRound, graph.m_straightEdgesOfShare);
     visitEach(waves, graph.m_messages);
-    visit(waves, graph.m_arrivals.nodes, graph.m_arrivals.list, graph.m_nodesWoken, graph.m_found);
+    visit(waves, graph.m_arrivals.nodes, graph.m_arrivals.list, graph.m_nodesWoken, graph.m_found, graph.m_edgesThatLengthenFlow);
     visitEach(waves, graph.m_foundInShare);
     for (auto& covering : graph.m_coverings)
         visit(waves, covering.nodesJustRetired, covering.nodesToLookAt);

@@ -2446,18 +2446,25 @@ struct ControlFlowSimplifier {
         RELEASE_ASSERT(useListsBeforeMerging);
         const Block& block = function.at(id);
         const Block& successor = function.at(next);
+        BitVector blocksWithUse(cfg.numNodes());
+        bool hasUse = false;
+        auto isArgumentOfHandler = [&](ValueID definition) {
+            bool isArgument = false;
+            for (const Use& use : useListsBeforeMerging->usesOf(definition)) {
+                isArgument |= use.kind == Use::Kind::HandlerArgument && use.block == next;
+                blocksWithUse.set(use.block.index());
+                hasUse = true;
+            }
+            return isArgument;
+        };
+        bool isArgument = std::ranges::any_of(block.values, isArgumentOfHandler)
+            || std::ranges::any_of(successor.parameters, isArgumentOfHandler)
+            || std::ranges::any_of(replacedParameters, [&](ValueID parameter) { return block.values.contains(resolve(parameter)) && isArgumentOfHandler(parameter); });
+        if (isArgument || !hasUse)
+            return isArgument;
         BitVector barrier(cfg.numNodes());
         barrier.set(id.index());
-        BitVector reachableBlocks = cfg.blocksReachableFrom(successor.handler->block, barrier);
-
-        auto isUsedOnHandlerPath = [&](ValueID definition) {
-            return std::ranges::any_of(useListsBeforeMerging->usesOf(definition), [&](const Use& use) {
-                return reachableBlocks.get(use.block.index()) || (use.kind == Use::Kind::HandlerArgument && use.block == next);
-            });
-        };
-        return std::ranges::any_of(block.values, isUsedOnHandlerPath)
-            || std::ranges::any_of(successor.parameters, isUsedOnHandlerPath)
-            || std::ranges::any_of(replacedParameters, [&](ValueID parameter) { return isUsedOnHandlerPath(parameter) && block.values.contains(resolve(parameter)); });
+        return cfg.reachesAnyOf(successor.handler->block, barrier, blocksWithUse);
     }
 
     HandlerChoice chooseHandler(const CFG& cfg, BlockID id, BlockID next) const

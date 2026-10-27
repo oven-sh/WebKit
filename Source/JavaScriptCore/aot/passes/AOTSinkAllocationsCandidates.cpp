@@ -2011,6 +2011,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
     const EscapeAnalysis& escape = m_analyses.escape();
     uint64_t maxFields = limit(LimitID::MaxVirtualObjectFields);
     Vector<AccessesLookedUp, 8> accessesLookedUp;
+    Vector<Vector<uint32_t, 1>> lookedUpOfFamily(m_families.size());
     for (uint32_t index = 0; index < described.size(); ++index) {
         Candidate& candidate = m_candidates[index];
         RELEASE_ASSERT(!candidate.isJoin);
@@ -2019,13 +2020,17 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         candidate.descriptionIndex = family.addDescription(description);
         if (candidate.isAbandoned)
             continue;
-        size_t lookedUp = accessesLookedUp.findIf([&](const AccessesLookedUp& entry) {
-            return entry.family == candidate.family && entry.kind == description.kind && entry.layout == description.layout && entry.type == description.type;
+        Vector<uint32_t, 1>& ofFamily = lookedUpOfFamily[candidate.family.index()];
+        size_t position = ofFamily.findIf([&](uint32_t lookedUp) {
+            const AccessesLookedUp& entry = accessesLookedUp[lookedUp];
+            return entry.kind == description.kind && entry.layout == description.layout && entry.type == description.type;
         });
-        if (lookedUp == notFound) {
-            lookedUp = accessesLookedUp.size();
+        if (position == notFound) {
+            position = ofFamily.size();
+            ofFamily.append(accessesLookedUp.size());
             accessesLookedUp.append(AccessesLookedUp { candidate.family, description.kind, description.layout, description.type, { } });
         }
+        size_t lookedUp = ofFamily[position];
         ensureFieldsInUse(m_objectContext, escape, description, family, maxFields, accessesLookedUp[lookedUp].users);
     }
 

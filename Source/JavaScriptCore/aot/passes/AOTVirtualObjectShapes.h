@@ -147,6 +147,8 @@ Type typeOfNumbersIn(ArrayStorage);
 KnownBoolean evaluateTest(const ShapeContext&, const VirtualShape&, const Value& test, uint32_t operandIndex);
 bool hasEveryFieldOfBirthStored(const ShapeContext&, const VirtualShape&);
 LayoutID constructorFunctionWhosePrototypeIsTakenWhenBuilt(const ShapeContext&, const VirtualShape&);
+// Whether the function above may name one for a shape of this description.
+bool mayTakePrototypeOfConstructorFunctionWhenBuilt(const Program&, const VirtualObjectDescription&);
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);
 std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, const Terminator& switchOnShape);

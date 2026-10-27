@@ -68,12 +68,11 @@ std::optional<AllocationEmitter::AllocationsByCase> AllocationEmitter::findAlloc
         uint32_t row { 0 };
     };
     Vector<Candidate, 16> candidates;
-    Vector<BlockID, 16> seen;
+    BitVector seen;
     for (uint32_t index = 0; index < cases.size(); ++index) {
         const Target& target = terminator->targets[index];
-        if (seen.contains(target.block))
+        if (seen.set(target.block.index()))
             continue;
-        seen.append(target.block);
         ValueID id = findOnlyAllocationIn(terminator.block(), target);
         if (!id)
             continue;

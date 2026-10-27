@@ -447,9 +447,9 @@ static Value makeConstant(const Program& program, const BuiltinUsePlan& plan)
 // The value of a read may be known at build time. What the read does to the holder is not undone by that.
 static std::optional<Value> tryMakeInitializationOfReadMember(const BuiltinTable& table, const FlowResults& flow, const BuiltinUsePlan& plan)
 {
-    if (plan.constant || (plan.readsPrivateAlias && onlyAddsMemberToHolder(table, plan.member)))
+    if (!plan.location || (plan.readsPrivateAlias && onlyAddsMemberToHolder(table, plan.member)))
         return std::nullopt;
-    return tryMakeInitializeBuiltin(table, flow, plan.member);
+    return tryMakeInitializeBuiltin(table, flow, plan.location);
 }
 
 static Value makeHostValueRead(const BuiltinUsePlan& plan)

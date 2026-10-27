@@ -127,7 +127,7 @@ function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CHECK: Double, Double b@[[fields]] = Patchpoint({{*}}:CallDirect)
 # CHECK-NEXT: Double b@[[x]] = Extract(b@[[fields]], <<0,
 # CHECK-NEXT: Double b@[[y]] = Extract(b@[[fields]], <<1,
-# CHECK: Int64 b@[[point]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK: Int64 b@[[point]] = Patchpoint($2(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
 # CHECK-NEXT: Store(b@[[x]], b@[[point]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK-NEXT: Store(b@[[y]], b@[[point]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK: Return(b@[[point]], Terminal)

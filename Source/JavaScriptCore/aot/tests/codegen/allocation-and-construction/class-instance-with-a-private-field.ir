@@ -134,7 +134,7 @@ function f4 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CHECK: Int64, Double b@[[fields]] = Patchpoint({{*}}:CallDirect)
 # CHECK-NEXT: Int64 b@[[brand]] = Extract(b@[[fields]], <<0,
 # CHECK-NEXT: Double b@[[count]] = Extract(b@[[fields]], <<1,
-# CHECK: Int64 b@[[counter]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK: Int64 b@[[counter]] = Patchpoint($2(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
 # CHECK-NEXT: Store(b@[[brand]], b@[[counter]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK-NEXT: Store(b@[[count]], b@[[counter]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK: Return(b@[[counter]], Terminal)

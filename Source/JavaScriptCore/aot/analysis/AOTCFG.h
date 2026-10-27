@@ -193,6 +193,8 @@ public:
     }
 
     BitVector blocksReachableFrom(BlockID start, const BitVector& barrier) const;
+    // Whether blocksReachableFrom() holds one of them. It goes no further than the first.
+    bool reachesAnyOf(BlockID start, const BitVector& barrier, const BitVector& blocks) const;
     bool isInCycleAvoiding(BlockID, BlockID avoidedBlock) const;
 
     BlockIDDump dump(BlockID block) const { return { block }; }

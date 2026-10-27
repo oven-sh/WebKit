@@ -86,7 +86,9 @@ private:
     unsigned m_frame { 0 };
 };
 
-Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, BuildContext&);
+// Frames number the built-in functions after the program's functions. An inline frame with such a number stands for a built-in function whose steps were expanded into its caller: no site with code lies in it.
+inline FunctionID functionInFramesOf(BuiltinID builtin, size_t numberOfFunctions) { return FunctionID(numberOfFunctions + builtin.index()); }
+Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, size_t numberOfFunctions, BuildContext&);
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);

@@ -1102,6 +1102,7 @@ void Modules::handGraphToLoader(FilesBeingRun& files)
         }
         scope.assertNoException();
         runStepsOfLoaderInFrontOf(fileOf(*running));
+        scope.assertNoException();
     }
     jobsOfFile->moveTasksBehind(0, queue);
 }

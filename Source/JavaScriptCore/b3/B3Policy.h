@@ -46,6 +46,7 @@ struct ValidationPolicy {
     bool overlooksWritesOnUnlikelyPaths { false };
     bool overlooksWritesBetweenReadsOfBound { false };
     bool omitsStridedLimitGuard { false };
+    bool overlooksWritesBehindWordsReadAgain { false };
 };
 
 enum class RedundancyElimination : uint8_t {

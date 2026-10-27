@@ -283,7 +283,7 @@ static bool isComputedOnceByHost(const Builtin& member)
 {
     return member.kind == BuiltinKind::DataProperty
         && member.scope == BuiltinScope::Realm
-        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.mutability != BuiltinMutability::ChangesOnItsOwn
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }
@@ -498,18 +498,25 @@ static BuiltinOverloadID findOverload(const BuiltinTable& table, BuiltinID membe
     return { };
 }
 
-static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site)
+static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use)
 {
     const Program& program = inputs.program;
     if (program.mayBeTrimmed(site.answer.member))
         return { };
     BuiltinUsePlan plan;
+    plan.member = site.answer.member;
+    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
+    // Nobody takes the value. What is left of the read is that the holder may add the member.
+    if (inputs.analyses && !inputs.useLists().useCount(use)) {
+        plan.kind = BuiltinUseKind::Constant;
+        plan.location = site.answer.location;
+        plan.constant = IRBuilder::make(Opcode::Undefined);
+        return plan;
+    }
     plan.call.overload = findOverload(program.builtins(), site.answer.member, BuiltinCallMode::Get);
     if (!plan.call.overload)
         return { };
     plan.kind = BuiltinUseKind::HostValue;
-    plan.member = site.answer.member;
-    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
     return plan;
 }
 
@@ -542,7 +549,7 @@ static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, cons
         return { };
 
     bool readsHostValue = isRead && isComputedOnceByHost(member);
-    BuiltinUsePlan plan = readsHostValue ? planHostValueRead(inputs, site) : planMemberAccess(inputs, use, site.answer.member, mode, point);
+    BuiltinUsePlan plan = readsHostValue ? planHostValueRead(inputs, site, use) : planMemberAccess(inputs, use, site.answer.member, mode, point);
     if (!plan)
         return { };
 
@@ -564,6 +571,7 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     BuiltinUsePlan plan;
     plan.kind = BuiltinUseKind::Constant;
     plan.member = site.answer.member;
+    plan.location = site.answer.location;
     BuiltinMemberName name = builtinMemberNameOf(program, site.key);
     plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, name.name);
     plan.readsPrivateAlias = name.isPrivateAlias;

@@ -386,6 +386,9 @@ struct Copier {
     UncheckedKeyHashMap<uint64_t, FunctionID> methodsOfLiterals;
     // By constant of a module: the array that the program writes out and stores there.
     UncheckedKeyHashMap<uint32_t, DataID> arraysInConstants;
+    std::optional<BitVector> modulesThatRequireMayLoad;
+    bool requiresByNameNobodyKnows { false };
+    UncheckedKeyHashMap<uint32_t, bool> variablesStoredOnEveryWayToEnd;
     unsigned numberOfValuesAsRead { 0 };
     unsigned numberOfValuesInCopiesOfFactories { 0 };
     unsigned numberOfValuesInCopiesOfMakers { 0 };
@@ -469,6 +472,75 @@ struct Copier {
         }
         auto found = functionsByConstant.find(variable.index() + 1);
         return found == functionsByConstant.end() ? FunctionID() : FunctionID(found->value);
+    }
+
+    bool mayBeLoadedByRequire(ModuleID asked)
+    {
+        if (!modulesThatRequireMayLoad) {
+            modulesThatRequireMayLoad.emplace(program.modules.size());
+            for (const Module& module : program.modules) {
+                for (const ModuleRequest& request : module.requests) {
+                    if (request.kind == ModuleRequestKind::Require)
+                        modulesThatRequireMayLoad->quickSet(request.target.index());
+                }
+            }
+            for (const Function& function : program.functions) {
+                if (!isCodeOfProgram(function) || requiresByNameNobodyKnows)
+                    continue;
+                for (const Value& value : function.values)
+                    requiresByNameNobodyKnows |= value.opcode == Opcode::RequireDynamic;
+            }
+        }
+        return requiresByNameNobodyKnows || modulesThatRequireMayLoad->quickGet(asked.index());
+    }
+
+    bool comesBackTo(ModuleID from, ModuleID asked)
+    {
+        BitVector visited(program.modules.size());
+        Vector<ModuleID, 16> pending { from };
+        while (!pending.isEmpty()) {
+            for (const ModuleRequest& request : program.at(pending.takeLast()).requests) {
+                if (request.target == asked)
+                    return true;
+                if (!visited.set(request.target.index()))
+                    pending.append(request.target);
+            }
+        }
+        return false;
+    }
+
+    // The loader runs the body of a file when every file that it imports by a statement has run to its end, unless the two lie on a cycle.
+    bool isStoredBeforeBodyStarts(VariableID variable, FunctionID callerID)
+    {
+        ModuleID exporter = program.at(variable).module;
+        ModuleID importer = program.at(callerID).module;
+        if (!importer || importer == exporter || program.at(importer).body != callerID)
+            return false;
+        FunctionID bodyID = program.at(exporter).body;
+        if (!bodyID || !program.at(bodyID).hasBody() || program.at(bodyID).has(FunctionFlags::IsAsync))
+            return false;
+        bool isImportedByStatement = std::ranges::any_of(program.at(importer).requests, [&](const ModuleRequest& request) {
+            return request.target == exporter && request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && request.completes;
+        });
+        if (!isImportedByStatement || mayBeLoadedByRequire(importer) || comesBackTo(exporter, importer))
+            return false;
+        return variablesStoredOnEveryWayToEnd.ensure(variable.index() + 1, [&] {
+            const Function& body = program.at(bodyID);
+            ValueID store;
+            forEachValueOf(body, [&](ProgramPoint, ValueID id, const Value& value) {
+                if (value.opcode == Opcode::PutModuleVariable && value.variable() == variable)
+                    store = id;
+            });
+            if (!store)
+                return false;
+            AnalysisContext context { build, program, nullptr, nullptr, bodyID };
+            FunctionAnalyses analyses(context, body);
+            for (uint32_t block = 0; block < body.blocks.size(); ++block) {
+                if (body.blocks[block].terminator.kind == TerminatorKind::Return && !analyses.dominates(store, ProgramPoint { BlockID(block), static_cast<uint32_t>(body.blocks[block].values.size()) }))
+                    return false;
+            }
+            return true;
+        }).iterator->value;
     }
 
     // `class Base { .. }`, read in another function or module.
@@ -1054,6 +1126,8 @@ struct Copier {
         auto isReadBehindItsStore = [&](VariableID variable, ProgramPoint read) {
             if (program.at(variable).initialization != VariableInitialization::Undefined)
                 return true;
+            if (!depth && program.at(variable).module != caller.module)
+                return isStoredBeforeBodyStarts(variable, callerID);
             findStores();
             ValueID store = storesToConstants.get(variable.index() + 1);
             return store && analyses.dominates(store, read);

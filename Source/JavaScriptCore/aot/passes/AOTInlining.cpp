@@ -1288,7 +1288,8 @@ void keepFrameBelowTailCalls(Function& function, std::span<const BlockID> blocks
                 function.edit(id, ValueEdit::Definition).isTailCall = false;
         }
     }
-    for (size_t index = 1; index < function.inlineFrames.size(); ++index) {
+    // A frame stands behind its parent.
+    for (size_t index = frame + 1; index < function.inlineFrames.size(); ++index) {
         if (function.inlineFrames[index].parent == frame && !function.inlineFrames[index].isConstruction)
             function.inlineFrames[index].isTailCall = false;
     }
@@ -1777,11 +1778,23 @@ static uint32_t computeFoldedBytes(FunctionPassContext& context, ValueID callID,
             foldedRanges.append(parameterSwitch.onlyOtherwise.range);
     }
 
+    // A range holds another where it holds its beginning, so what is asked is whether a number lies in one of the ranges: they are joined where they meet.
+    AOT::sort(foldedRanges, { }, &DominatedRange::begin);
+    size_t numberOfJoinedRanges = 0;
+    for (const DominatedRange& range : foldedRanges) {
+        if (range.isEmpty())
+            continue;
+        if (numberOfJoinedRanges && range.begin <= foldedRanges[numberOfJoinedRanges - 1].end)
+            foldedRanges[numberOfJoinedRanges - 1].end = std::max(foldedRanges[numberOfJoinedRanges - 1].end, range.end);
+        else
+            foldedRanges[numberOfJoinedRanges++] = range;
+    }
+    foldedRanges.shrink(numberOfJoinedRanges);
+
     uint32_t foldedBytes = 0;
     auto isFolded = [&](const BytesInRange& code) {
-        return foldedRanges.containsIf([&](const DominatedRange& folded) {
-            return folded.contains(code.range);
-        });
+        auto behind = std::ranges::upper_bound(foldedRanges, code.range.begin, { }, &DominatedRange::begin);
+        return behind != foldedRanges.begin() && std::prev(behind)->contains(code.range);
     };
     auto addIf = [&](bool condition, const BytesInRange& code) {
         if (condition)
@@ -1949,7 +1962,7 @@ static bool isLevelOfCopies(const Program& program, const Function& caller, uint
 {
     const InlineFrame& inlineFrame = caller.inlineFrames[frame];
     const Function& callee = program.at(inlineFrame.callee);
-    if (isWrapperCreatedByEngine(callee))
+    if (inlineFrame.calledBuiltin || isWrapperCreatedByEngine(callee))
         return false;
     if (callee.role != FunctionRole::ChainStep || !inlineFrame.parent)
         return true;
@@ -1974,6 +1987,8 @@ static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlin
     for (uint32_t frame = inlineFrame; frame; frame = caller.inlineFrames[frame].parent)
         framesFromInnermost.append(frame);
     for (uint32_t frame : framesFromInnermost | std::views::reverse) {
+        if (caller.inlineFrames[frame].calledBuiltin)
+            continue;
         if (!hasSingleCallSite(context, caller.inlineFrames[frame].callee, caller.inlineFrames[frame].parent, heat))
             break;
         depth -= isLevelOfCopies(context.program, caller, frame);
@@ -1998,7 +2013,7 @@ static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context
     if (entersBody && mayBeEnteredElsewhere(context, call.function(), call.inlineFrame))
         return true;
     for (uint32_t frame = call.inlineFrame; frame; frame = caller.inlineFrames[frame].parent) {
-        if (mayBeEnteredElsewhere(context, caller.inlineFrames[frame].callee, caller.inlineFrames[frame].parent))
+        if (!caller.inlineFrames[frame].calledBuiltin && mayBeEnteredElsewhere(context, caller.inlineFrames[frame].callee, caller.inlineFrames[frame].parent))
             return true;
     }
     return false;

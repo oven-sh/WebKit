@@ -26,7 +26,8 @@ function f2 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
     PropDefine v3, v1 key="x" receivers=[L1]
     Return v3
 }
-# CHECK: f2: barrier=None{{*}} returnsFreshAggregate
+# CHECK: f2: barrier=None
+# CHECK-NOT: returnsFreshAggregate
 
 function f3 name="freshOnOnePath" role=Library parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
     v2 = ToBoolean v1

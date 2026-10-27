@@ -250,7 +250,7 @@ static LocationProof proofOfLookup(const BuiltinTable& table, const MemberAnswer
 static BuiltinMemberAnswer answerFor(const BuiltinLookupContext& context, BuiltinID start, PropertyKeyID key, const BuiltinMemberLookup& found, BuiltinMemberName name)
 {
     const BuiltinTable& table = context.program.builtins();
-    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+    BuiltinMemberAnswer answer { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     if (name.isPrivateAlias) {
         if (!answer.isFound() || !table.at(found.member).flags.contains(BuiltinFlag::HasPrivateAlias))
             return { };
@@ -280,9 +280,9 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     BuiltinMemberLookup found = table.findForInstance(builtinClass, name.name);
     bool isOwnProperty = found.member && table.at(found.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isOwnProperty && !name.isPrivateAlias)
-        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant };
+        return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant, found.member };
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
-        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
+        return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown, found.member };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
 }
 

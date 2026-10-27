@@ -61,6 +61,7 @@ struct EntryCall {
     Label ready;
     Label readyWithTestedStack;
     Label afterCall;
+    Jump stackMayNotFit;
     JumpList stackDoesNotFit;
 };
 
@@ -238,7 +239,7 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
     emitLoadArgumentRegisters(jit, arguments);
 
     call.ready = jit.label();
-    call.stackDoesNotFit.append(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit()));
+    call.stackMayNotFit = jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit());
     call.readyWithTestedStack = jit.label();
     toCodeAddress(jit, word, jit.reuseScratch(StubRegister::T13), StackIsTested::Yes);
     jit.call(word, JSEntryPtrTag);
@@ -348,7 +349,7 @@ static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)
         emitLocateOutOfLineArguments(jit, copy.source, copy.value, copy.index);
     emitCopyStackWords(jit, copy, call.stackDoesNotFit);
     emitLoadArgumentRegisters(jit, call.arguments);
-    jit.jump().linkTo(call.readyWithTestedStack, &jit);
+    jit.jump().linkTo(call.ready, &jit);
     if (!call.isInAdapterFrame)
         return;
 
@@ -357,6 +358,14 @@ static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)
     emitRelocateFrameAboveStackWords(jit, call, copy);
     emitLoadArgumentRegisters(jit, call.arguments);
     jit.jump().linkTo(call.ready, &jit);
+}
+
+static void emitPollPath(StubAssembler& jit, EntryCall& call)
+{
+    call.stackMayNotFit.link(&jit);
+    call.stackDoesNotFit.append(jit.branchPtr(CCallHelpers::Below, sp, softStackLimit()));
+    jit.pollBeforeCall(call.afterCall);
+    jit.jump().linkTo(call.readyWithTestedStack, &jit);
 }
 
 static void emitThrowFromAdapter(StubAssembler& jit, Label afterCall, StubKey target)
@@ -408,6 +417,7 @@ void generateEnterClosure(StubAssembler& jit)
     emitAdapterEpilogue(jit);
 
     emitRareArgumentPaths(jit, entryCall);
+    emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
 }
 
@@ -554,6 +564,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
     createThisThrew.link(&jit);
     emitThrowFromAdapter(jit, entryCall.afterCall, handleException(false));
     emitRareArgumentPaths(jit, entryCall);
+    emitPollPath(jit, entryCall);
     emitStackOverflowPath(jit, entryCall);
     emitFindConstructWord(jit, word, needsConstructWord, hasConstructWord, Address(fp, AdapterFrame::offsetOfNewTarget), jit.reuseScratch(StubRegister::T9));
 }
@@ -636,6 +647,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     jit.jumpToExceptionHandler();
 
     emitRareArgumentPaths(jit, entryCall);
+    emitPollPath(jit, entryCall);
     entryCall.stackDoesNotFit.link(&jit);
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);

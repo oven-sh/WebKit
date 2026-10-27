@@ -232,6 +232,8 @@ LogicalFrame innermostLogicalFrame(const Image& image, InlineFrameReader& reader
     if (!site.inlineFrame)
         return { image.rootFunctionOf(site.code.index()), site.callSite, 0, false, site.isTailDeleted };
     const InlineFrameRecord& record = reader.at(image, site.code.index(), site.inlineFrame);
+    if (record.function.index() >= image.programTables().numberOfFunctions()) [[unlikely]]
+        return { record.function, record.callSite, record.parent, false, false, true, record.isTailCall };
     return { record.function, site.callSite, site.inlineFrame, record.isConstruct, site.isTailDeleted };
 }
 
@@ -605,11 +607,16 @@ void CompiledFrameIterator::advance()
     }
     LogicalFrame current { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
     LogicalFrame caller = callerOfInlinedFrame(*m_image, m_inlineFrames, m_frame.code, current);
+    m_frame.calledBuiltin = { };
+    if (caller.isOfCalledBuiltin) [[unlikely]] {
+        if (!m_cursor.isAmongFramesThatWait)
+            m_frame.calledBuiltin = builtinOfFunctionInFrames(caller.function);
+        caller = callerOfInlinedFrame(*m_image, m_inlineFrames, m_frame.code, caller);
+    }
     m_frame.function = caller.function;
     m_frame.callSite = caller.callSite;
     m_frame.inlineFrame = caller.inlineFrame;
     m_frame.isTailDeleted = caller.isTailDeleted;
-    m_frame.calledBuiltin = { };
     m_frame.visibility = m_cursor.isAmongFramesThatWait ? TraceVisibility::Hidden : FunctionDescription(caller.function).visibility();
     m_isInlinedConstructCall = caller.isInlinedConstructCall;
 }

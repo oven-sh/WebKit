@@ -53,6 +53,8 @@ struct BuiltinMemberAnswer {
     BuiltinMemberLookup::Outcome outcome { BuiltinMemberLookup::Outcome::Unknown };
     BuiltinID member;
     LocationProof proof { LocationProof::Unknown };
+    // The entry under the name that was looked for. `member` is the object that it holds, which other names may hold too.
+    BuiltinID location { };
 
     bool isFound() const { return outcome == BuiltinMemberLookup::Outcome::Found; }
     bool isConstant() const { return isFound() && proof == LocationProof::Constant; }

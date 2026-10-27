@@ -334,7 +334,8 @@ void FunctionVerifier::verifyInlineFrames()
         const InlineFrame& frame = m_function.inlineFrames[index];
         bool isValidFrame = frame.parent < index
             && isValid(frame.callee)
-            && frame.module == m_program.at(frame.callee).module;
+            && frame.module == m_program.at(frame.callee).module
+            && !(frame.calledBuiltin && m_function.inlineFrames[frame.parent].calledBuiltin);
         if (!isValidFrame) {
             fail(InternalErrorKind::InvalidInlineFrame, { }, { }, index);
             return;

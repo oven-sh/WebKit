@@ -2,10 +2,9 @@
 //@ runDefault("--useRegExpImageMode=1")
 //@ runDefault
 
-// A run without an upper bound that begins at many places of one stretch goes on from the same places again and again. The table of failed searches says where the whole rest of such a run has failed.
-// Beside references a search depends only on the bounds that a reference can still read: none inside a lookahead that holds no reference. And what is entered when a search has failed is entered
-// under the bounds that the groups held when it began. The validation runs the flat programs beside the bytecode on every match, with the table from the start, and stops where the results or the
-// turns differ.
+// Unbounded runs that start at many positions of one stretch of matching characters, with and without backreferences. The flat program memoizes where the rest of such a run has failed, keys its
+// entries only by the capture bounds that a backreference can still read, and records a failed search under the bounds it started with. Validation runs the flat programs next to the bytecode
+// interpreter on every match, with memoization on from the start, and crashes if the results or the turn counts differ.
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);
@@ -18,7 +17,7 @@ const bodies = [
     "\\[(.+?)\\]\\(\\1#", "\\[(.+)\\]\\(\\1#", "\\[(.*?)\\]\\(\\1\\]", "(\\[|a)(.+?)\\]\\(\\1#", "(?:\\[|a)(.+?)\\]\\(\\1#", "(['\\[]).*?\\1#", "(?:(\\[)|(a)).+?\\1\\2#",
     "\\[.+?\\]\\(#", "\\[.+\\]\\(#", "\\[.*?\\].*?#", "\\[.*\\].*#", "\\[.{2,}?\\]\\(#", "\\[.{2,}\\]\\(#", "\\[.{0,5}?\\]\\(#", "\\[[^\\n]*?\\]$", "\\[[^]*?\\]\\(#", "\\[[^]*\\]\\(#", "a.*?\\b#", ".*?#", ".*#", ".+?x$",
 ];
-// The bytecode takes a time that doubles with each link of the subject over these.
+// The bytecode interpreter takes exponential time on these.
 const bodiesOfRepeatedGroups = [
     "(?:\\[.+?\\]\\(#?)*x#", "(?:\\[.+?\\]\\()+#", "(?:\\[.+\\]\\()+?#", "(?:\\[.*?\\]\\(){2,3}#", "(?:\\[.*\\]\\(){2,}#", "(?:.*?\\])*#", "(?:.*\\])*?#", "(.*?)*#", "(.*)*#", "(?:a*?)*#", "(?:(?:\\[.+?\\])+\\()+#", "(?:.*?\\(|.*?\\[)+#",
     "(?:(a)+?)\\1(c)", "(?:(a)+?)\\1c", "(?:(a|\\[)+?)\\1c", "(?:(a)|\\[)+?\\1c", "(?:(a)+)\\1(c)", "(?:(a){1,3}?)\\1(c)", "(?:(a)??)\\1(c)", "(?:(a+?)+?)\\1c", "(?:(a)+?|(\\[)+?)\\1\\2c", "(?:(a)+?(?=\\1))+?c",
@@ -47,11 +46,13 @@ for (const flags of ["", "s", "i", "u", "g"]) {
 shouldBe(matches > 2000, true, "matches");
 
 const links = "[a](".repeat(300);
-shouldBe(new RegExp(lookaheads(4)).exec(links + "x"), null, "four lookaheads that find nothing");
-shouldBe(new RegExp(lookaheads(4)).exec(links + "[b](&")[4], "a](".concat("[a](".repeat(299), "[b](&"), "the fourth lookahead finds its text");
-shouldBe(new RegExp(lookaheads(12)).exec(links + "[b](<").index, 0, "the twelfth lookahead finds its text");
-shouldBe(new RegExp("\\[(?=(.+?\\]\\(#))\\1").exec(links + "\n[b](#").index, 1201, "a line ends the run");
-shouldBe(new RegExp("\\[.*\\]\\(#").exec(links + "x"), null, "as much as possible");
-shouldBe(new RegExp("\\[(.+?)\\]\\(\\1#").exec(links + "a#").index, 1196, "a reference behind the run");
-shouldBe(new RegExp("(?:(a)+?)\\1(c)").exec("aaaa"), null, "a group that is repeated as seldom as possible");
-shouldBe(new RegExp("(?:(a)+?)\\1(c)").exec("aaaac").index, 0, "a group that is repeated as seldom as possible, and its match");
+shouldBe(new RegExp(lookaheads(4)).exec(links + "x"), null, "four lookaheads without a match");
+shouldBe(new RegExp(lookaheads(4)).exec(links + "[b](&")[4], "a](".concat("[a](".repeat(299), "[b](&"), "the fourth lookahead matches");
+shouldBe(new RegExp(lookaheads(12)).exec(links + "[b](<").index, 0, "the twelfth lookahead matches");
+shouldBe(new RegExp("\\[(?=(.+?\\]\\(#))\\1").exec(links + "\n[b](#").index, 1201, "a newline ends the run");
+shouldBe(new RegExp("\\[.*\\]\\(#").exec(links + "x"), null, "a greedy run");
+shouldBe(new RegExp("\\[(.+?)\\]\\(\\1#").exec(links + "a#").index, 1196, "a backreference after the run");
+shouldBe(new RegExp("(?:(a)+?)\\1(c)").exec("aaaa"), null, "a lazy group without a match");
+shouldBe(new RegExp("(?:(a)+?)\\1(c)").exec("aaaac").index, 0, "a lazy group with a match");
+shouldBe(new RegExp(Array.from({ length: 40 }, (_, index) => "(" + String.fromCharCode(97 + index % 26) + ")?").join("")).exec("abc!")[0], "abc", "forty optional groups");
+shouldBe(new RegExp("^(?:.*/)?(?:.*/)?(?:.*/)?(?:.*/)?end$").exec("a/".repeat(24) + "x"), null, "greedy runs in four optional groups");

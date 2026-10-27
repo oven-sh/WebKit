@@ -259,6 +259,8 @@ struct Function : FunctionRecord {
 
     Wire::SourceLocation locationOf(ValueID) const;
     Wire::SourceLocation locationOf(Origin) const;
+    // Adds a frame for a built-in function whose call is expanded into its steps, and returns the origin of those steps. A stack trace lists the function between what the steps call and the caller.
+    Origin enterFrameOfBuiltin(FunctionID self, Origin call, BuiltinID);
     std::optional<uint32_t> writtenPositionOf(ValueID) const;
     Wire::SourceLocation writtenLocationOf(ValueID) const;
     Wire::SourceLocation declarationLocation() const;

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
+#include "AOTEdgeResults.h"
 #include "AOTInductionVariables.h"
 #include "AOTInlineCopy.h"
 #include "AOTInlineCostModel.h"
@@ -17,6 +18,7 @@
 #include "AOTOperatorForms.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRepresentation.h"
+#include "AOTSort.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -42,7 +44,15 @@ struct BoundedCounter {
     Edge stayingEdge;
 };
 
+// In the order of their parameters.
 using BoundedCounters = Vector<BoundedCounter, 2>;
+
+// What the search for bounded counters finds once for the whole function.
+struct KnownOfCounters {
+    BitVector isComparisonWithTestedBound;
+    // By the parameter of the counter: 1 where it is only reckoned with, 2 where not.
+    Vector<uint8_t> isOnlyReckonedWith;
+};
 
 } // anonymous namespace
 
@@ -248,9 +258,11 @@ static Expected<bool> isOnlyReckonedWith(TestSiteReporter& reporter, const Natur
 }
 
 // `i < bytes.length; i++`. On this side of a bound that is an integer the counter is one, which ConvertCountersToIntegers finds out behind the rounds. A bound for which a rule in front of this one has just asked for tests may be an integer behind them. Below an int32 a test for int32 does no harm: it is proven then, and goes.
-static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, std::span<const ValueID> comparisonsWithTestedBound)
+static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, KnownOfCounters& known)
 {
     BoundedCounters counters;
+    if (known.isOnlyReckonedWith.isEmpty())
+        known.isOnlyReckonedWith.fill(0, reporter.function().values.size());
     for (const LoopInduction& loop : reporter.analyses().inductionVariables().loops()) {
         for (const InductionVariable& variable : loop.variables) {
             if (variable.step.kind != InductionStepKind::Constant || !variable.start || !reporter.typeOf(variable.start).isInteger())
@@ -259,36 +271,43 @@ static BoundedCounters findBoundedCounters(TestSiteReporter& reporter, std::span
             for (const InductionTest& test : variable.tests) {
                 if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
                     continue;
-                if (std::ranges::contains(comparisonsWithTestedBound, test.comparison)) {
+                if (known.isComparisonWithTestedBound.get(test.comparison.index())) {
                     counters.append({ variable.parameter, test.comparison, test.stayingEdge });
                     continue;
                 }
                 const Type& bound = reporter.typeOf(test.bound);
                 if (!(bound.isInteger() && !bound.isInt32()) && !reporter.isClaimed(reporter.analyses().identityOf(test.bound)))
                     continue;
-                if (!isEligible)
-                    isEligible = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter).predicted();
+                if (!isEligible) {
+                    uint8_t& answer = known.isOnlyReckonedWith[variable.parameter.index()];
+                    if (!answer)
+                        answer = isOnlyReckonedWith(reporter, reporter.analyses().naturalLoops().loop(loop.loopIndex), variable.parameter).predicted() ? 1 : 2;
+                    isEligible = answer == 1;
+                }
                 if (*isEligible)
                     counters.append({ variable.parameter, test.comparison, test.stayingEdge });
             }
         }
     }
+    AOT::stableSort(counters, { }, &BoundedCounter::parameter);
     return counters;
 }
 
 // An operator takes an integer as it is, so none of these needs a test. One for int32 that is placed here stays in the loop for good: a view may be longer than that, and nothing proves that this one is not.
-static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& value, const TestedOperands& isTested, std::optional<BoundedCounters>& boundedCounters, std::span<const ValueID> comparisonsWithTestedBound)
+static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& value, const TestedOperands& isTested, std::optional<BoundedCounters>& boundedCounters, KnownOfCounters& known)
 {
     // Behind the rounds the counters that could be converted have been.
     if (reporter.context().isBehindRounds || !reporter.analyses().blockCycles().innermostCycleOf(reporter.point().block))
         return false;
     if (!boundedCounters)
-        boundedCounters = findBoundedCounters(reporter, comparisonsWithTestedBound);
-    return std::ranges::any_of(*boundedCounters, [&](const BoundedCounter& counter) {
-        for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
-            if (isTested[operandIndex] && reporter.analyses().identityOf(value.operand(operandIndex)) != counter.parameter)
-                return false;
-        }
+        boundedCounters = findBoundedCounters(reporter, known);
+    // Every tested operand has to be the counter.
+    std::span<const BoundedCounter> counters = boundedCounters->span();
+    for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+        if (isTested[operandIndex])
+            counters = std::span(std::ranges::equal_range(counters, reporter.analyses().identityOf(value.operand(operandIndex)), { }, &BoundedCounter::parameter));
+    }
+    return std::ranges::any_of(counters, [&](const BoundedCounter& counter) {
         return reporter.use() == counter.comparison || dominatesAfterSplit(reporter.analyses(), counter.stayingEdge, reporter.point().block);
     });
 }
@@ -381,6 +400,25 @@ static bool staysCall(TestSiteReporter& reporter, BlockID block, ValueID call)
     return decision != InlineDecision::Inline && decision != InlineDecision::InlineHead;
 }
 
+static void forEachValueNarrowedByBranchOn(const Function& function, const UseLists& useLists, ValueID test, ValueID operand, NOESCAPE const Invocable<void(ValueID)> auto& functor)
+{
+    for (const Use& use : useLists.usesOf(test)) {
+        if (use.kind != Use::Kind::TerminatorOperand || !function.at(use.block).terminator.isConditionalBranch())
+            continue;
+        const Terminator& branch = function.at(use.block).terminator;
+        for (uint32_t targetIndex = 0; targetIndex < branch.targets.size(); ++targetIndex) {
+            const Target& target = branch.targets[targetIndex];
+            if (target.proofs.isEmpty())
+                continue;
+            uint32_t firstParameter = firstEdgeResultParameter(function, use.block, targetIndex);
+            for (uint32_t index = 0; index < target.proofs.size(); ++index) {
+                if (operandNarrowedOnEdge(function, { use.block, targetIndex, index }) == operand)
+                    functor(function.at(target.block).parameters[firstParameter + index]);
+            }
+        }
+    }
+}
+
 // Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function, or into a call: an integer stays in its register around the call and takes one instruction to become a value of any type. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
 static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
 {
@@ -404,6 +442,10 @@ static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const Operat
                 isTested[use.operandIndex] = true;
                 if (isBetterForm(user.opcode, chooseOperatorForm(site, user), chooseFormUnderTests(reporter, site, user, tested, isTested)))
                     return true;
+                forEachValueNarrowedByBranchOn(function, reporter.analyses().useLists(), use.user, names[index], [&](ValueID narrowed) {
+                    if (!names.contains(narrowed) && names.size() < maxNamesOfCounter)
+                        names.append(narrowed);
+                });
                 continue;
             }
             OperandKind kind = user.operandKind(use.operandIndex);
@@ -465,7 +507,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
     OperatorSite site { typing, reporter.analyses().effectContext(), CodeShape::Fast };
 
     std::optional<BoundedCounters> boundedCounters;
-    Vector<ValueID, 2> comparisonsWithTestedBound;
+    KnownOfCounters knownOfCounters;
     reporter.forEachCandidate([&](const Value& value) {
         if (!hasOperatorForm(value.opcode) || reporter.takesAwaySitesInColdCode())
             return;
@@ -474,7 +516,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
         if (std::optional<uint32_t> bound = findNumberThatBoundsCounter(reporter, site, value)) {
             reporter.report({ makeTypeTest(value.operand(*bound), TypeTable::int32) }, chooseOperatorForm(site, value).effects.normal);
-            comparisonsWithTestedBound.append(reporter.use());
+            knownOfCounters.isComparisonWithTestedBound.set(reporter.use().index());
             boundedCounters = std::nullopt;
             return;
         }
@@ -496,7 +538,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
         std::optional<OperatorTests> found = findFewestTests(reporter, site, value, tested);
         if (!found)
             return;
-        if (testsOnlyBoundedCounter(reporter, value, found->isTested, boundedCounters, comparisonsWithTestedBound.span())) {
+        if (testsOnlyBoundedCounter(reporter, value, found->isTested, boundedCounters, knownOfCounters)) {
             reporter.putOffUse();
             return;
         }

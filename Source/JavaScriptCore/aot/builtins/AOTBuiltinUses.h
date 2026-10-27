@@ -51,6 +51,8 @@ struct UseRequirement {
 struct BuiltinUsePlan {
     BuiltinUseKind kind { BuiltinUseKind::None };
     BuiltinID member;
+    // Of a read: the entry under the name that is read, which its holder may add at that moment. Another name of the same object stays as it is.
+    BuiltinID location;
     PropertyKeyID key;
     std::optional<Value> constant;
     BuiltinCallPlan call;

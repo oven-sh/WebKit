@@ -933,7 +933,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     removeFinalJumps(result.functions, result.layout.fallsIntoNext, finalJumps.span(), context);
     times.didFinish("remove final jumps"_s);
 
-    Vector<Vector<uint8_t>> callSites = encodeCallSites(functions, context);
+    Vector<Vector<uint8_t>> callSites = encodeCallSites(functions, reinterpret_cast<const ProgramTables*>(inputs.programTables.span().data())->numberOfFunctions(), context);
     times.didFinish("encode call sites"_s);
     if (diagnostics.hasErrors())
         return result;

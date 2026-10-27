@@ -69,15 +69,12 @@ public:
     void clear();
 
 private:
-    struct Entries {
-        std::array<CachedPropertyList, numberOfEntries> lists;
-        std::array<KeptOwnKeys, numberOfOwnKeyLists> ownKeys;
-    };
-
-    Entries& entries();
+    using Entries = std::array<CachedPropertyList, numberOfEntries>;
+    using OwnKeyLists = std::array<KeptOwnKeys, numberOfOwnKeyLists>;
 
     State& m_state;
     std::unique_ptr<Entries> m_entries;
+    std::unique_ptr<OwnKeyLists> m_ownKeyLists;
     unsigned m_numberOfOwnKeyListsReplaced { 0 };
     RememberedSlotSet m_writes;
 };
