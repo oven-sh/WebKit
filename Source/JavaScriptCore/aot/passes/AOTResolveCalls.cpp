@@ -103,6 +103,14 @@ static CalleeCandidates calleeCandidatesOf(const Program& program, const Functio
     return result;
 }
 
+// Flow counts a function among the callers of whatever it has followed to one of the calls in it. What flow says is stored ahead of every caller of a function holds in those, and a test may pass in another.
+static bool isFollowedTo(const Program& program, const Value& operation, FunctionID callee)
+{
+    if (!Value::opcodesWithCallees.contains(operation.opcode))
+        return true;
+    return operation.callees() && std::ranges::binary_search(program.at(operation.callees()).followed().value(), callee);
+}
+
 // `object.method(..)` where some objects have a property of their own under the name: the ways meet in front of the arguments, one with the closure of the method, the other with what the property holds.
 static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& context, ValueID callee)
 {
@@ -326,6 +334,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
     call.setCallsOwnFunctionObject(request.callsOwnFunctionObject);
+    call.setCalleeIsPredicted(request.calleeIsPredicted);
     call.setOrigin(insertion.origin);
     call.isTailCall |= request.isTailCall;
     return call;
@@ -1642,6 +1651,7 @@ struct CallResolver {
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
+            .calleeIsPredicted = !isFollowedTo(program, original, arm.closureFunction),
         });
     }
 
@@ -2225,6 +2235,7 @@ struct CallResolver {
                 .isAlwaysInlined = original.isAlwaysInlined(),
                 .isTailCall = !!original.isTailCall,
                 .callsOwnFunctionObject = callsOwnFunctionObject,
+                .calleeIsPredicted = !isFollowedTo(program, original, only),
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
             becomeUpcast(function, site.position.value, result);
@@ -3558,6 +3569,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         BuiltinID calledBuiltin = call.calledBuiltin();
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
+        bool calleeIsPredicted = !isFollowedTo(context.program, call, function);
         Vector<ValueID, 8> arguments(call.variadicOperands());
 
         Vector<ValueID, 8> captures;
@@ -3575,6 +3587,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             .calledBuiltin = calledBuiltin,
             .isNeverInlined = isNeverInlined,
             .isTailCall = isTailCall,
+            .calleeIsPredicted = calleeIsPredicted,
         });
         break;
     }
@@ -3591,7 +3604,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             AccessRewriter(context, insert).rewrite(use->site, use->operands);
             break;
         }
-        becomeDirectCall({ .callee = use->site.plan.member.accessorFor(use->site.query.access), .thisValue = use->operands.receiver, .arguments = std::span(&use->operands.stored, use->operands.stored ? 1 : 0), .accessSite = use->stamp.accessSite });
+        becomeDirectCall({ .callee = use->site.plan.member.accessorFor(use->site.query.access), .thisValue = use->operands.receiver, .arguments = std::span(&use->operands.stored, use->operands.stored ? 1 : 0), .accessSite = use->stamp.accessSite, .calleeIsPredicted = true });
         break;
     }
     case Opcode::SuperGet:
@@ -3606,7 +3619,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             use.become(Opcode::Undefined);
         else {
             ValueID stored = use.opcode == Opcode::SuperSet ? use.valueOperand() : ValueID();
-            becomeDirectCall({ .callee = access.function, .thisValue = use.receiverOperand(), .arguments = std::span(&stored, use.opcode == Opcode::SuperSet ? 1 : 0), .accessSite = use.accessSite() });
+            becomeDirectCall({ .callee = access.function, .thisValue = use.receiverOperand(), .arguments = std::span(&stored, use.opcode == Opcode::SuperSet ? 1 : 0), .accessSite = use.accessSite(), .calleeIsPredicted = true });
         }
         break;
     }

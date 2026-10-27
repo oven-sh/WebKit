@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFlowResults.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"

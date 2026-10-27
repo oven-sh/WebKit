@@ -10,6 +10,7 @@
 #include "AOTCFG.h"
 #include "AOTEffects.h"
 #include "AOTEscapeAnalysis.h"
+#include "AOTUseLists.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <memory>
@@ -17,7 +18,9 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -69,6 +72,10 @@ ProofSet proofsOfAllocation(const Program&, const Function&, const Value& alloca
 bool allocationProves(const Program&, const Function&, const Value& allocation, const Value& test);
 ValueID guardedOperandOf(const Value& user);
 ProofSet proofsNeededFromGuard(const Program&, const Function&, const Value& user);
+using ParameterLocator = ScopedLambda<ValueLocation(ValueID parameter)>;
+using GuardOriginVisitor = ScopedLambda<IterationStatus(Proof, const GuardOrigin&)>;
+void forEachGuardOrigin(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, ValueID guard, NOESCAPE const GuardOriginVisitor&);
+bool hasGuardForElementProofs(const Program&, const Function&, const CFG&, NOESCAPE const ParameterLocator&, const Value& access);
 bool haveSameCondition(FunctionAnalyses&, const Value& test, const Value& otherTest, uint32_t firstComparedOperand = 0);
 Vector<MemoryLocation, 2> locationsReadBy(const Value& test);
 Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof);

@@ -177,8 +177,11 @@ static ObjectCreation describeCreation(const ValueFlowResultInputs& inputs, cons
     return creation;
 }
 
-static OptionSet<ObjectMutation> possibleMutationsOf(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, ValueFlowObjectID object)
+// A mark is the report of somebody who was seen. Whoever has not accounted for the object may do anything to it.
+static OptionSet<ObjectMutation> possibleMutationsOf(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, ValueFlowObjectID object, ClassesAbove classesAbove = ClassesAbove::MayListNoOwnNames)
 {
+    if (!actorsOpenOn(inputs, object, classesAbove).isEmpty())
+        return allObjectMutations;
     OptionSet<ObjectMutation> possible = markedMutationsOf(inputs, object) | mutationsWithoutMark;
     return links.mayBeLinkedAbove(object) ? possible | ObjectMutation::BecomePrototype : possible;
 }
@@ -242,12 +245,13 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
     }
 
     ValueSetMakers makers(inputs);
+    ValueFlowHeapView heap(inputs);
     Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfObjects(), [&](unsigned index, ValueSetMaker& maker, Vector<Found>& found) {
         ValueFlowObjectID object(index);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object))
             return;
         LayoutID layout = universe.layoutOf(object);
-        OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object);
+        OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, object, links.classesAbove(heap, maker, object));
         ObjectCreation creation = describeCreation(inputs, links, maker, object, layout);
         found.append({ layout, 0, creation.mayHaveOtherPrototype ? possible | ObjectMutation::ChangePrototype : possible });
         if (creation.layoutSelectors == ValueSets::nothing)

@@ -120,16 +120,19 @@ ConstantKey constantKeyOf(const Program& program, const Type& key)
     return { };
 }
 
+bool isSymbolCreatedByLibrary(const Program& program, PropertyKeyID key)
+{
+    const PropertyKey& symbol = program.at(key);
+    if (symbol.kind != PropertyKeyKind::CreatedSymbol || !symbol.module)
+        return false;
+    const Module& creator = program.at(symbol.module);
+    return creator.kind == ModuleKind::RuntimeSource || creator.flags.contains(ModuleFlags::IsLibrary);
+}
+
 ConstantKey constantNameOf(const Program& program, const Function& writtenIn, const Type& key)
 {
     ConstantKey constantKey = constantKeyOf(program, key);
-    if (constantKey.kind != ConstantKeyKind::Symbol || isLibraryCode(program, writtenIn))
-        return constantKey;
-    const PropertyKey& symbol = program.at(constantKey.symbol);
-    if (symbol.kind != PropertyKeyKind::CreatedSymbol || !symbol.module)
-        return constantKey;
-    const Module& creator = program.at(symbol.module);
-    if (creator.kind == ModuleKind::RuntimeSource || creator.flags.contains(ModuleFlags::IsLibrary))
+    if (constantKey.kind == ConstantKeyKind::Symbol && !isLibraryCode(program, writtenIn) && isSymbolCreatedByLibrary(program, constantKey.symbol))
         return { };
     return constantKey;
 }

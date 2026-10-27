@@ -32,7 +32,7 @@ function f1 name="fewTestsFailIntoOneAnother" parameters=[{type=boolean}, {type=
   b10() frequency=Rare:
     v5 = Call v2, -, v3
     Return v5
-# CHECK: = CallDirect v1 function=f0 [callsOwnFunctionObject]
+# CHECK: = CallDirect v1 function=f0 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v2, -, v3
 }
 

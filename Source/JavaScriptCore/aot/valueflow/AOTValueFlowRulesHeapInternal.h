@@ -91,6 +91,7 @@ public:
     void runPropertyAction(const BuiltinPropertyAction&, const ValueFlowPropertyActionOperands&);
     ClimbingSet objectsHeldFromCreation(ClimbingSet objects);
     void readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey&, ValueFlowNodeID result);
+    void readPropertiesNobodyWroteOnSourcesOfCopies(const HeapChain&, const HeapKey&, ValueFlowNodeID result);
     void readOwnPropertiesNobodyWrote(ClimbingSet holders, std::optional<PropertyKeyID> key, ValueFlowNodeID result) { readOwnPropertiesNobodyWrote(holders, key ? keyNamed(*key) : unknownHeapKey, result); }
     ClimbingSet prototypesOf(ClimbingSet start, ValueSetID atCreation = { });
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
@@ -340,14 +341,22 @@ void HeapRule::forEachKey(const ValueFlowOperand& property, NOESCAPE const Invoc
         HeapKeyReceivers receiversOfSymbols = receiversOfSymbolNobodyKnows(otherKeys, use);
         if (receiversOfSymbols == HeapKeyReceivers::AllButBuiltinObjects) {
             functor(unknownHeapKey);
-            if (!use.isRead)
+            if (!use.isRead || !property.node)
                 return;
+            auto forEachKeyListedAmong = [&](ValueSetID all, NOESCAPE const Invocable<void(const HeapKey&)> auto& take) {
+                ClimbingSet listed(all);
+                if (!holdsAnything(m_context.membersMissingFrom(property.node, listed)))
+                    return;
+                m_context.forEachMember(m_context.valueWithin(listed, property.node), [&](ValueFlowObjectID constant) {
+                    take(keyNamed(m_universe.keyOf(constant)));
+                });
+            };
             // A key nobody knows names no member of Bun. A name that comes beside it does. Any string holds every name, and names none.
-            ClimbingSet names(m_tables.keysOfMembersOfBun());
-            if (!property.node || !holdsAnything(m_context.membersMissingFrom(property.node, names)))
-                return;
-            m_context.forEachMember(m_context.valueWithin(names, property.node), [&](ValueFlowObjectID constant) {
-                functor(keyNamed(m_universe.keyOf(constant)));
+            forEachKeyListedAmong(m_tables.keysOfMembersOfBun(), functor);
+            // Nor does it name a member of an object of the library that is found by name alone. A symbol that comes beside it does.
+            forEachKeyListedAmong(m_context.maker().intersect(m_universe.symbols(), m_universe.keys()), [&](const HeapKey& key) {
+                if (holdsAnything(m_context.holdersOfLibraryExportsWrittenUnder(key.name)))
+                    functor(key);
             });
             return;
         }

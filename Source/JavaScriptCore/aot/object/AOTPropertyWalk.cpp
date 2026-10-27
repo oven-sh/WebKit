@@ -433,14 +433,15 @@ void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsig
     uncheckedDowncast<Object>(object)->putDirectFromNativeCode(vm, name, value, attributes);
 }
 
+void prepareForFreeze(JSObject* object)
+{
+    ASSERT(isCompiledObject(object));
+    prepareForWalk(object->structure()->realm(), object);
+}
+
 void setIntegrity(VM& vm, JSObject* object, Integrity level)
 {
     ASSERT(isCompiledObject(object));
-    if (level == Integrity::Frozen) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        prepareForWalk(object->structure()->realm(), object);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
     DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     uncheckedDowncast<Object>(object)->setIntegrity(object->structure()->realm(), objectIntegrity(level));

@@ -230,6 +230,8 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             verifyClosureOperation(block, id, value);
         else if (opcode == Opcode::Builtin || opcode == Opcode::ModuleBuiltin)
             verifyBuiltinOperation(block, id, value);
+        else if (opcode == Opcode::Data)
+            verifyElementOperation(block, id, value);
         else if (opcode == Opcode::KeyConstant && isPrivateKind(m_program.at(value.key()).kind))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;

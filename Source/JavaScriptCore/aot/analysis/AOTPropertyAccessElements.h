@@ -43,6 +43,7 @@ ConstantKey constantKeyOf(const Program&, const Type& key);
 // The same, where an operation that stands in the text of the function may name a property by it. A symbol that a module of the library creates is a name in the text of the library alone.
 // Anywhere else it is a key like any other value, and the run time sees each look under it: PropertyCaches::prepareHoldersBeforeLookupsUnder().
 ConstantKey constantNameOf(const Program&, const Function& writtenIn, const Type& key);
+bool isSymbolCreatedByLibrary(const Program&, PropertyKeyID);
 TypeID testedNumberTypeContaining(const Type& expectedNumber);
 PropertyKeyID internKey(TypeArena&, const ConstantKey&);
 void becomeNamedAccess(Value& elementAccess, PropertyKeyID);

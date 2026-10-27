@@ -364,9 +364,11 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         }
     }
     if (m_input.nodes && m_input.universe) {
-        m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), [](const void* solver, ValueFlowNodeID node) {
-            return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
-        }, this);
+        for (ValueFlowHostNode taking : { ValueFlowHostNode::ClosuresThatStatementsMayRename, ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach }) {
+            m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(taking), [](const void* solver, ValueFlowNodeID node) {
+                return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
+            }, this);
+        }
     }
     constexpr size_t operandsInStretch = 1 << 16;
     Vector<Vector<uint32_t>> masksInStretches((m_input.operands.size() + operandsInStretch - 1) / operandsInStretch);
@@ -4168,6 +4170,7 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
             }
         },
         [&] {
@@ -4175,6 +4178,10 @@ bool ValueFlowSolver::solve()
             if (m_input.nodes && m_input.universe && m_input.escaped) {
                 ValueFlowNodeID carriedOut = m_input.nodes->ofHost(ValueFlowHostNode::ValuesCarriedOut);
                 ValueFlowEdge onward[] { { carriedOut, m_input.escaped }, { carriedOut, m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues) } };
+                m_graph.addInitialEdges(onward);
+            }
+            if (m_input.nodes && m_input.universe) {
+                ValueFlowEdge onward[] { { m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.nodes->ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed) } };
                 m_graph.addInitialEdges(onward);
             }
         },

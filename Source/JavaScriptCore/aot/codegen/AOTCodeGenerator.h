@@ -255,6 +255,7 @@ private:
     void finishProcedure();
 
     void generate(const ValueContext&);
+    void verifyElementGuard(const ValueContext&);
     void defineValue(ValueID, Operand);
     void passArguments(Edge, const Target&, std::span<const Operand> declaredResults);
     void passArgument(ValueID parameter, const IncomingOperand&);

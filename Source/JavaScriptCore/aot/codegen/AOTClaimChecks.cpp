@@ -236,7 +236,7 @@ static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionI
     return changed;
 }
 
-void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const StackSlots& slotsOfCells, bool entersOnlyAtRoot)
+void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const SlotsOfCells& slotsOfCells, bool entersOnlyAtRoot)
 {
     policy.clientPhases.append(B3::ClientPhase {
         B3::ClientPhase::Point::AfterSinking,

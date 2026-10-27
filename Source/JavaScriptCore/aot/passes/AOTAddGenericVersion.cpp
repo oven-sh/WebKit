@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCFG.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionEditing.h"
@@ -2364,7 +2365,7 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
 }
 
 // What a call that begins again has made is made a second time. So it is made behind the test: from the first value of the block that allocates on, whatever the test does not ask for.
-// Nothing that may throw is passed on the way, and a result stays with the operation that it is a result of.
+// Nothing that may throw is passed on the way, a result stays with the operation that it is a result of, and what takes the caught value stays at the head of its handler.
 static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, BlockID restart)
 {
     Function& function = pass.function;
@@ -2400,6 +2401,7 @@ static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, Blo
             if (!firstThatMayMove && pass.analyses.effectsOf(value).normal.mayExitSideways())
                 firstThatMayMove = index + 1;
         }
+        firstThatMayMove = std::max(firstThatMayMove, indexAfterCaughtValues(function, block));
         for (ValueID value : std::exchange(moved, { }))
             isMoved.quickClear(value.index());
         bool everyValueCompletes = true;

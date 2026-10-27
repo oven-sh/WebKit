@@ -67,7 +67,7 @@ inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
 }();
 
 // EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it and a test for a brand that the object has taken. A body that holds none of these gives it nothing to do.
-inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::PrivateGet };
+inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin, Opcode::InitializeBuiltin, Opcode::PrivateGet };
 
 enum class ExpansionStep : uint8_t {
     ForInPositions = 1 << 0,
@@ -126,6 +126,14 @@ inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opc
 inline constexpr OpcodeSet lookupsHoistedWhereTheyRunNoCode { Opcode::PropGet };
 // Whether a value is truthy never changes.
 inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHoistedWhereTheyRunNoCode | OpcodeSet { Opcode::ToBoolean };
+
+inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
+
+// Up to the first operation of this kind, the first turn of a loop is sure to go on, and it finds in every variable what was there ahead of the loop.
+constexpr bool mayLeaveOrStoreToVariable(const Effects& effects)
+{
+    return effects.mayThrowByRule() || effects.mayRunOtherCode() || !effects.writes.restrictedTo(heapsOfVariables).isEmpty();
+}
 
 // These convert a number to int32, which costs nothing where the number is an integer.
 inline constexpr OpcodeSet operatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };

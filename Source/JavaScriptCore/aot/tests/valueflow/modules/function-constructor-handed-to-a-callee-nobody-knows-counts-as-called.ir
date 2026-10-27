@@ -1,9 +1,9 @@
 # input(Function); input(function () {}.constructor)
-# `Function` is the `constructor` of every function, so whoever holds a function holds it. That it is in unknown hands says no more than that a closure has escaped: only a call of it is an event.
-# The run time refuses an evaluator that no reached call applies. function-constructor-that-is-called-is-an-event.ir is the twin that calls it
+# The program hands `Function` itself to a callee nobody knows, and calls a value nobody knows: `Function` counts as called.
+# a-closure-in-unknown-hands-whose-constructor-is-read-is-no-event.ir hands over a closure alone. function-constructor-that-is-called-is-an-event.ir is the twin that calls it
 # RUN: valueflow-solve unseen
-# CHECK-NOT: unseen EvaluatesText
-# CHECK: unseen-code no
+# CHECK: unseen EvaluatesText Function
+# CHECK: unseen-code yes
 # RUN(WHY): valueflow-why escaped-builtin=Function
 # WHY: escaped-builtin=Function
 # WHY-NEXT: n0 escaped

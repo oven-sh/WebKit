@@ -362,6 +362,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> usesOfHeap;
     Ledger ledger(inputs);
     std::unique_ptr<LedgerOfVariables> ledgerOfVariables = makeUnique<LedgerOfVariables>(program);
+    std::unique_ptr<LedgerPart> ledgerOfBuiltinObjects;
     inputs.ledger = &ledger;
     inputs.ledgerOfVariables = ledgerOfVariables.get();
     std::unique_ptr<ValueFlowNumbersOfValues> numbersOfValues;
@@ -472,7 +473,8 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         computeOrderResults(inputs, calls, tables);
     }, TaskPriority::Background);
     auto builtins = add("built-ins"_s, { stampedCalls }, [&](PhaseTimes&) {
-        writesUnderNewNames = computeBuiltinResults(inputs, tables);
+        writesUnderNewNames = computeBuiltinResults(inputs, tables, ledgerOfBuiltinObjects);
+        ledger.install(LedgerPartKind::BuiltinLocations, *ledgerOfBuiltinObjects);
     }, TaskPriority::Background);
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
@@ -539,6 +541,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     inputs.ledger = nullptr;
     inputs.ledgerOfVariables = nullptr;
     build.destroyLater(WTF::move(ledgerOfVariables));
+    build.destroyLater(WTF::move(ledgerOfBuiltinObjects));
     build.destroyLater(WTF::move(solution));
     return FlowResults(WTF::move(tables));
 }

@@ -2010,9 +2010,7 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         builder.emitTerminator(WTF::move(copy));
     };
 
-    builder.setOrigin(unit.items.first().originIn(body));
-    builder.moveToEndOf(builder.addBlock());
-    for (ValueID id : unit.repeated) {
+    auto repeat = [&](ValueID id) {
         // A cast comes behind what it casts. The test for a dead zone has passed where it stands.
         Vector<ValueID, 4> chain;
         for (ValueID link = id; link && !values.contains(link.index()); link = body.at(link).numberOfOperands() ? body.at(link).operand(0) : ValueID())
@@ -2025,17 +2023,38 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
             builder.setOrigin(body.at(link).origin());
             values.add(link.index(), assumeType(builder, copyIn(values, body.at(link).operand(0)), body.at(link).type));
         }
-    }
+    };
+    // What is done again is done where it is first taken, as in the body. All of it at the top would be held from there to its use, and a long initializer has more of it than there are registers.
+    // The place is one that every run of the function passes, so what is done there is there for whatever takes it later.
+    BitVector isRepeated(body.values.size());
+    for (ValueID id : unit.repeated)
+        isRepeated.quickSet(id.index());
+    auto repeatWhatIsTakenBy = [&](const auto& user) {
+        user.forEachChild([&](ValueID operand) {
+            if (operand && isRepeated.quickGet(operand.index()))
+                repeat(operand);
+        });
+    };
+
+    builder.setOrigin(unit.items.first().originIn(body));
+    builder.moveToEndOf(builder.addBlock());
     for (const ValueOfVariable& taken : unit.valuesOfVariables)
         readInPlaceOf(taken.value, taken.variable);
 
     ValueID stored;
     for (const Item& item : unit.items) {
         if (!item.isRegion()) {
+            repeatWhatIsTakenBy(body.at(item.value));
             copyValue(item.value);
             if (body.at(item.value).opcode == Opcode::PutModuleVariable)
                 stored = copyIn(values, body.at(item.value).valueOperand());
             continue;
+        }
+        repeatWhatIsTakenBy(body.at(item.block).terminator);
+        for (BlockID block : item.blocks) {
+            for (ValueID id : body.at(block).values)
+                repeatWhatIsTakenBy(body.at(id));
+            repeatWhatIsTakenBy(body.at(block).terminator);
         }
         for (BlockID block : item.blocks)
             addBlockLike(block);
@@ -2049,6 +2068,8 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         }
         builder.moveToEndOf(copyIn(blocks, item.join));
     }
+    for (ValueID id : unit.repeated)
+        repeat(id);
     for (const ValueOfVariable& added : unit.addedVariables) {
         stored = copyIn(values, added.value);
         builder.append(makeVariableAccess(Opcode::PutModuleVariable, added.variable, { stored }));

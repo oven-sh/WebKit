@@ -43,6 +43,7 @@ struct PrintedParts {
     Vector<StatisticID> statistics;
     bool calls { false };
     bool units { false };
+    bool removesGuardOperands { false };
 };
 
 } // anonymous namespace
@@ -57,6 +58,10 @@ static std::optional<PrintedParts> parsePrintedParts(TestCommandContext& context
         }
         if (word == "units"_s) {
             parts.units = true;
+            continue;
+        }
+        if (word == "remove-guard-operands"_s) {
+            parts.removesGuardOperands = true;
             continue;
         }
         std::optional<StatisticID> statistic = parseEnum<StatisticID>(word);
@@ -369,6 +374,18 @@ static void checkScratchRegisters(const CompiledCode& code)
 }
 #endif
 
+static void removeGuardOperands(Program& program)
+{
+    for (Function& function : program.functions) {
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (OperandPosition::guard(function.at(id).opcode) && function.at(id).guardOperand())
+                    function.edit(id).setGuardOperand({ });
+            }
+        }
+    }
+}
+
 static void runGenerateCode(TestCommandContext& context)
 {
     std::optional<PrintedParts> parts = parsePrintedParts(context);
@@ -380,6 +397,8 @@ static void runGenerateCode(TestCommandContext& context)
         context.form = context.program->form();
         return;
     }
+    if (parts->removesGuardOperands)
+        removeGuardOperands(*output->program);
 
     BuildContext& build = context.build;
     CodeGenerationPlan plan = prepareCodeGeneration(*output, build, context.form == IRForm::AsRead ? ProgramTablesUse::Written : ProgramTablesUse::NeverWritten);

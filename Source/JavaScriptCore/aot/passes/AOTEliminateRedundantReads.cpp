@@ -1367,6 +1367,54 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+// A member of a built-in object that has been added to its holder stays there, whatever runs in between.
+static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
+        return PassOutcome::Unchanged;
+
+    struct Initialization {
+        BuiltinID builtin;
+        BlockID block;
+    };
+    const BuiltinTable& builtins = context.program.builtins();
+    Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Initialization, 8> done;
+    Vector<size_t, 16> numberDoneAtEntry;
+    Vector<std::pair<BlockID, BitVector>> erased;
+    dominators.walkTree([&](BlockID block) {
+        numberDoneAtEntry.append(done.size());
+        const BlockValues& values = function.at(block).values;
+        BitVector erasedIndexes;
+        for (size_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::InitializeBuiltin)
+                continue;
+            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
+            bool isDone = std::ranges::any_of(done, [&](const Initialization& earlier) {
+                return earlier.builtin == builtin && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
+            });
+            if (isDone)
+                erasedIndexes.set(index);
+            else
+                done.append({ builtin, block });
+        }
+        if (!erasedIndexes.isEmpty())
+            erased.append({ block, WTF::move(erasedIndexes) });
+    }, [&](BlockID) {
+        done.shrink(numberDoneAtEntry.takeLast());
+    });
+    if (erased.isEmpty())
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    for (auto& [block, erasedIndexes] : erased)
+        builder.eraseValues(block, erasedIndexes);
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 } // anonymous namespace
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
@@ -1374,12 +1422,12 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome = RedundantReadElimination { context }.run();
-    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context);
+    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context) | dropRepeatedInitializations(context);
 }
 
 namespace {
 
-constexpr AbstractHeapSet carriedHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
+constexpr AbstractHeapSet carriedHeaps = heapsOfVariables;
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -1539,9 +1587,15 @@ struct VariableCarrier : LoopEditor {
     bool isReadBy(const CarriedVariable& variable, Opcode opcode)
     {
         const UseLists& uses = m_analyses.useLists();
-        return std::ranges::any_of(variable.reads, [&](ValueID read) {
-            return std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
+        auto isUsedBy = [&](ValueID value) {
+            return std::ranges::any_of(uses.usesOf(value), [&](const Use& use) {
                 return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == opcode;
+            });
+        };
+        // A read that gives a word which may be anything is looked at through the cast that names the fact.
+        return std::ranges::any_of(variable.reads, [&](ValueID read) {
+            return isUsedBy(read) || std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
+                return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == Opcode::AssumeType && m_function.at(use.user).factOperand() && isUsedBy(use.user);
             });
         });
     }
@@ -1607,8 +1661,7 @@ struct VariableCarrier : LoopEditor {
             if (!firstWayOut)
                 beginsBeforeAnyWayOut.set(block.index());
             for (uint32_t index = 0; index < values.size() && !firstWayOut; ++index) {
-                Effects effects = m_analyses.effectsOf(values[index]).onAnyEdge();
-                if (effects.mayThrowByRule() || effects.mayRunOtherCode() || !effects.writes.restrictedTo(carriedHeaps).isEmpty())
+                if (mayLeaveOrStoreToVariable(m_analyses.effectsOf(values[index]).onAnyEdge()))
                     firstWayOut = ProgramPoint { block, index };
             }
             BlockID next;
@@ -1908,7 +1961,11 @@ struct VariableCarrier : LoopEditor {
     // The variable has its declared type ahead of the loop where a fact that one of the reads names is defined there, where one of them needs none, or where the first turn is sure to get to one of them.
     FactAheadOfLoop findFactAheadOfLoop(const CarriedVariable& variable, ProgramPoint aheadOfLoop)
     {
-        if (!holdsDeclaredTypeOnlyBehindEntry(m_program, m_function.at(variable.reads.first())))
+        // A read of an environment field names no fact: the copy of it ahead of the loop says what the read says.
+        bool someReadLeansOnFact = std::ranges::any_of(variable.reads, [&](ValueID id) {
+            return m_function.at(id).opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
+        });
+        if (!someReadLeansOnFact)
             return { };
         for (ValueID id : variable.reads) {
             const Value& read = m_function.at(id);
@@ -1942,7 +1999,7 @@ struct VariableCarrier : LoopEditor {
                 if (value.opcode != Opcode::GetCapture)
                     return false;
                 ValueID closure = m_analyses.definitionThroughUpcasts(value.operand(0));
-                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type)
+                if (loops.belongsTo(useLists.locationOf(closure).block, loop))
                     return false;
                 value.setOperand(0, closure);
                 hoisted.append(id);

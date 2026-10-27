@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayoutData.h"
@@ -323,6 +324,28 @@ bool PlannedLayout::keepsZero(uint32_t offset, uint32_t width) const
         return false;
     const ReservedBytes& entry = *std::prev(next);
     return width <= entry.width && offset - entry.offset <= entry.width - width;
+}
+
+BitVector PlannedLayout::padding() const
+{
+    BitVector padding(size);
+    if (!hasSlots())
+        return padding;
+    for (uint32_t offset = storage == LayoutStorage::Environment ? offsetOfFirstEnvironmentVariable : offsetOfFirstField; offset < size; ++offset)
+        padding.quickSet(offset);
+    auto occupy = [&](uint32_t offset, uint32_t width) {
+        for (uint32_t end = offset + width; offset < end; ++offset)
+            padding.quickClear(offset);
+    };
+    for (const PlacedSlot& slot : slots) {
+        if (slot.storage == SlotStorage::Inline)
+            occupy(slot.offset, slot.width());
+    }
+    for (ReservedBytes bytes : bytesKeptZero)
+        occupy(bytes.offset, bytes.width);
+    if (isEscapedOffset)
+        occupy(*isEscapedOffset, sizeof(bool));
+    return padding;
 }
 
 SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, std::span<const LayoutID> members) const

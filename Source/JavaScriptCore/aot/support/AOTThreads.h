@@ -269,7 +269,7 @@ template<typename T, typename Less>
 void sortOnPool(const ParallelLoops& loops, std::span<T> list, const Less& isLess)
 {
     size_t count = list.size();
-    if constexpr (movesAsBytes<T>) {
+    if constexpr (sortsAsBytes<T>) {
         std::decay_t<Less> order = isLess;
         std::identity identity;
         sortRunsAndMerge(loops, OrderedSteps<T, std::decay_t<Less>, std::identity>(order, identity).stepsOfSortAndMerge(), reinterpret_cast<char*>(list.data()), count);

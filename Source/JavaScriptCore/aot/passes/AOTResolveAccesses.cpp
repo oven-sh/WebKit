@@ -453,7 +453,7 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
             ASSERT(plan.operation != Opcode::PutModuleVariable || variable.declared.isExpected() || program.typeOf(function, operands.stored).isSubsetOf(program.at(variable.declared.written()), program));
             // In a frame of another function the program reads here, and what the variable holds is known from here on.
             ValueID entered;
-            if (plan.operation == Opcode::GetModuleVariable && value->inlineFrame && holdsDeclaredTypeOnlyBehindEntry(variable.flow)) {
+            if (plan.operation == Opcode::GetModuleVariable && value->inlineFrame && holdsDeclaredTypeOnlyBehindEntry(variable.flow, liesInCopyOfPredictedCallee(function, value->inlineFrame))) {
                 Value fact = IRBuilder::make(Opcode::Entered);
                 fact.setFunction(function.inlineFrames[value->inlineFrame].callee);
                 entered = insertBeforeAccess(WTF::move(fact));
@@ -871,6 +871,7 @@ static ValueID appendCallOfGetterInSlot(FunctionPassContext& context, IRBuilder&
             .thisValue = object,
             .calleeValue = program.at(callee).has(FunctionFlags::TakesCallee) ? getter : ValueID(),
             .accessSite = stamp.accessSite,
+            .calleeIsPredicted = stamp.level != KnowledgeLevel::Proven,
         });
     }
     Value call = IRBuilder::make(Opcode::Call);
@@ -997,6 +998,7 @@ static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& con
                 .thisValue = object,
                 .calleeValue = context.program.at(getter).has(FunctionFlags::TakesCallee) ? branch.provenOnTaken : ValueID(),
                 .accessSite = stamp.accessSite,
+                .calleeIsPredicted = true,
             }));
             builder.moveToEndOf(branch.notTaken);
         }

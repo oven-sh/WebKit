@@ -206,6 +206,8 @@ static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context
         context.connect(context.readWhatWasWritten(others, ValueFlowName::of(kind)), context.nodes().ofHost(node));
         context.connect(context.readWhatWasWritten(prototypeObjects, ValueFlowName::of(kind)), context.nodes().ofHost(ValueFlowHostNode::MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses));
     }
+    for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter })
+        context.connect(context.readWhatWasWritten(prototypeObjects, { kind, 0 }), ValueFlowProgramNodes::escaped());
     return context.restrict(objects, ValueSets::complement(universe.objectsOfLibraryFoundByNameAlone()));
 }
 

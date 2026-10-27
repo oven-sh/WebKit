@@ -196,6 +196,13 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
             }
         }
     }
+    if (value.opcode == Opcode::Data && value.arrayStorage() != ArrayStorage::Other) {
+        const auto* array = m_program.at(value.data()).root.tryAs<DataNode::Array>();
+        if (!array || arrayStorageOfData(m_program, *array) != value.arrayStorage()) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+            return;
+        }
+    }
     if (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) {
         if (!hasArrayStorageForm(value.arrayStorage())) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);

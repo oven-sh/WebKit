@@ -1,0 +1,43 @@
+# An array of constant data may name the storage that it is born with, and its type then names it too. The name is the storage that the constants give the array, and only an array has one
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="record" fields=[{key="x" declared={type=anything}}]
+data d0 root=Array{contents=i32 elements=[Number{value=1}, Number{value=2}]} module=m0
+data d1 root=Array{contents=i32|fractional elements=[Number{value=1.5}, Number{value=2}]} module=m0
+data d2 root=Array{contents=string elements=[String{value="a"}]} module=m0
+data d3 root=Object{layout=L0 members=[{key="x" value=Null}]} module=m0
+function f0 name="integersNamedDoubles" results=[{type=anything}] {
+    v0 = Data data=d0 arrayStorage=Double
+    Return v0
+}
+function f1 name="fractionsNamedIntegers" results=[{type=anything}] {
+    v0 = Data data=d1 arrayStorage=Int32
+    Return v0
+}
+function f2 name="stringsNamedIntegers" results=[{type=anything}] {
+    v0 = Data data=d2 arrayStorage=Int32
+    Return v0
+}
+function f3 name="objectNamedContiguous" results=[{type=anything}] {
+    v0 = Data data=d3 arrayStorage=Contiguous
+    Return v0
+}
+function f4 name="integers" results=[{type=Array<i32, Int32>}] {
+    v0 = Data data=d0 arrayStorage=Int32
+    Return v0
+}
+function f5 name="fractions" results=[{type=Array<i32|fractional, Double>}] {
+    v0 = Data data=d1 arrayStorage=Double
+    Return v0
+}
+function f6 name="strings" results=[{type=Array<string, Contiguous>}] {
+    v0 = Data data=d2 arrayStorage=Contiguous
+    Return v0
+}
+function f7 name="nothingNamed" results=[{type=Array<i32>}] {
+    v0 = Data data=d0
+    Return v0
+}

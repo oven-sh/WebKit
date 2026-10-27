@@ -57,6 +57,8 @@ public:
     bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_base < m_size; }
 
     void* tryAllocateAligned(size_t alignment, size_t);
+    // On the thread of the VM, where tryAllocateAligned() found no room and releaseLastReserve() has said that there is a reserve beside the range.
+    void* tryAllocateAlignedFromSharedReserve(size_t alignment, size_t);
     void* tryAllocate(size_t);
     void* tryReallocate(void*, size_t);
     void free(void*);
@@ -70,6 +72,7 @@ public:
 
     void keepReserveOnceHalfFull();
     bool releaseReserve();
+    // The last of the reserve of this VM. A VM that has none uses the one that is kept for all VMs of its range.
     bool releaseLastReserve();
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
     void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
@@ -127,11 +130,15 @@ public:
 private:
     void didAllocate(const void*, size_t);
     bool tryKeepReleasedReserveAgain();
+    bool releaseOwnLastReserve();
+    bool tryUseSharedReserve();
 
     ReservedRangeHeap* m_range { nullptr };
     uintptr_t m_base { 0 };
     size_t m_size { 0 };
     bool m_sharesRange { false };
+    bool m_isInFirstRange { false };
+    bool m_usesSharedReserve { false };
     bool m_hasReleasedReserve { false };
     bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };
@@ -140,7 +147,7 @@ private:
     bool m_allocationsAreInfallible { false };
     void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
-    size_t m_numberOfBlocksTaken { 0 };
+    std::atomic<size_t> m_numberOfBlocksTaken { 0 };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };

@@ -660,7 +660,11 @@ static void testLeafOperationsAnswerByIndex(LoadedProgram& program)
         JSObject* object = realms.object(program.realm(), source);
         Structure* structure = object->structure();
         AOT_TEST_CHECK_FOR_SOURCE(isNumber(get(object, 0), 10) && isNumber(get(object, 2), 12) && has(object, 2) == LeafPresence::Own, source);
-        AOT_TEST_CHECK_FOR_SOURCE(!get(object, 3) && has(object, 3) == LeafPresence::TakeSlowPath, source);
+        // Nothing above a pristine array has elements, so the leaf answers for an index that it lacks.
+        if (object->type() == ArrayType && !hasAnyArrayStorage(object->indexingType()) && structure->hasPristineElements())
+            AOT_TEST_CHECK_FOR_SOURCE(get(object, 3).isUndefined() && has(object, 3) == LeafPresence::Absent, source);
+        else
+            AOT_TEST_CHECK_FOR_SOURCE(!get(object, 3) && has(object, 3) == LeafPresence::TakeSlowPath, source);
         AOT_TEST_CHECK_FOR_SOURCE(put(object, 2, jsNumber(13)) == LeafAnswer::Yes && isNumber(object->getIndexQuickly(2), 13), source);
         AOT_TEST_CHECK_FOR_SOURCE(put(object, 100000, jsNumber(1)) == LeafAnswer::TakeSlowPath && !object->canGetIndexQuickly(100000u), source);
         for (SlotAccess access : { SlotAccess::Read, SlotAccess::Store })

@@ -453,6 +453,7 @@ aot/valueflow/AOTFlowReport.cpp
 aot/valueflow/AOTFlowReportAccesses.cpp
 aot/valueflow/AOTFlowResults.cpp
 aot/valueflow/AOTLedgerFields.cpp
+aot/valueflow/AOTLedgerOfBuiltinObjects.cpp
 aot/valueflow/AOTLedgerOfClassesAndClosures.cpp
 aot/valueflow/AOTLedgerVariables.cpp
 aot/valueflow/AOTValueFlowAnalysis.cpp

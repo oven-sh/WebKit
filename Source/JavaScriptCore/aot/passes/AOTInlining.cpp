@@ -1122,18 +1122,92 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     return builder.append(WTF::move(cast));
 }
 
-bool takesFactOfEntry(const Program& program, const Value& value)
+bool takesFactOfEntry(const Program& program, const Value& value, bool calleeIsPredicted)
 {
-    return holdsDeclaredTypeOnlyBehindEntry(program, value) && !value.factOperand() && !value.mayPrecedeItsStore();
+    const LocationFlow* flow = flowOfVariableReadBy(program, value);
+    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, calleeIsPredicted) && !namesFactOrGivesWordThatMayBeAnything(value);
+}
+
+ValueID readWordAndAssumeInPlace(Function& function, TypeArena& types, ValueID id, ValueID fact)
+{
+    Value word = function.at(id);
+    word.setMayPrecedeItsStore(true);
+    word.type = types.intern(types.at(word.type).withPrimitives(Primitive::Unspecified));
+    word.setExpected({ });
+    ValueID read = function.add(WTF::move(word));
+
+    Value& value = function.edit(id, ValueEdit::Definition);
+    value.becomeAssumeType(read, Proven::behindFact(value.type));
+    value.setFactOperand(fact);
+    return read;
+}
+
+void nameFactOfEntry(const Program& program, Function& function, TypeArena& types, std::span<const BlockID> blocks, ValueID fact, bool calleeIsPredicted)
+{
+    for (BlockID block : blocks) {
+        bool readsEnvironment = false;
+        for (ValueID id : function.at(block).values) {
+            if (!takesFactOfEntry(program, function.at(id), calleeIsPredicted))
+                continue;
+            if (function.at(id).opcode == Opcode::GetModuleVariable)
+                function.edit(id).setFactOperand(fact);
+            else
+                readsEnvironment = true;
+        }
+        if (!readsEnvironment)
+            continue;
+        BlockValues values;
+        values.reserveInitialCapacity(function.at(block).values.size() + 1);
+        for (ValueID id : function.at(block).values) {
+            if (takesFactOfEntry(program, function.at(id), calleeIsPredicted))
+                values.append(readWordAndAssumeInPlace(function, types, id, fact));
+            values.append(id);
+        }
+        function.edit(block, BlockEdit::Values).values = WTF::move(values);
+    }
+}
+
+void nameFactsWhereReadsStand(const Program& program, Function& function, TypeArena& types)
+{
+    if (function.inlineFrames.size() <= 1)
+        return;
+    auto needsFact = [&](ValueID id) {
+        const Value& value = function.at(id);
+        return value.inlineFrame && holdsDeclaredTypeOnlyBehindEntry(program, function, value) && !namesFactOrGivesWordThatMayBeAnything(value);
+    };
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        BlockID block(index);
+        if (std::ranges::none_of(function.at(block).values, needsFact))
+            continue;
+        BlockValues values;
+        values.reserveInitialCapacity(function.at(block).values.size() + 2);
+        for (ValueID id : function.at(block).values) {
+            if (needsFact(id)) {
+                Value fact = IRBuilder::make(Opcode::Entered);
+                fact.setFunction(function.inlineFrames[function.at(id).inlineFrame].callee);
+                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
+                fact.setOrigin(function.at(id).origin());
+                ValueID entered = function.add(WTF::move(fact));
+                values.append(entered);
+                if (function.at(id).opcode == Opcode::GetModuleVariable)
+                    function.edit(id).setFactOperand(entered);
+                else
+                    values.append(readWordAndAssumeInPlace(function, types, id, entered));
+            }
+            values.append(id);
+        }
+        function.edit(block, BlockEdit::Values).values = WTF::move(values);
+    }
 }
 
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
 {
     const Program& program = builder.context().program;
     const Function& source = cloner.source();
+    bool calleeIsPredicted = liesInCopyOfPredictedCallee(builder.function(), firstFrame);
     bool needsFact = std::ranges::any_of(region, [&](BlockID block) {
         return std::ranges::any_of(source.at(block).values, [&](ValueID id) {
-            return takesFactOfEntry(program, source.at(id));
+            return takesFactOfEntry(program, source.at(id), calleeIsPredicted);
         });
     });
     ValueID entered;
@@ -1144,11 +1218,11 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
     }
     cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
         clone.inlineFrame += firstFrame;
-        if (entered && takesFactOfEntry(program, clone))
-            clone.setFactOperand(entered);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
+    if (entered)
+        nameFactOfEntry(program, builder.function(), builder.types(), cloner.clonedBlocks(), entered, calleeIsPredicted);
 }
 
 // No program writes a construction in tail position. One that stands there begins the construction of the frame again, in place of the frame.
@@ -1332,6 +1406,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .isConstruction = call.isConstruction(),
         .callIsPartOfConstruction = !!call.isPartOfConstruction,
         .callsOwnFunctionObject = call.callsOwnFunctionObject(),
+        .calleeIsPredicted = call.calleeIsPredicted(),
         .module = callee.module,
     }, callee);
     IRBuilder::Expansion expansion = resultReads ? builder.beginExpansion(point, *resultReads) : builder.beginExpansion(point);
@@ -1938,6 +2013,47 @@ static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const Inli
     return returnsFreshAggregateAskedOnce(summary, AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee });
 }
 
+// A field that nothing reads goes in the end, and an allocation that is stored nowhere else goes with it. A call would stay.
+static bool isStoredOnlyInFieldsThatNothingReads(FunctionPassContext& context, ValueID value)
+{
+    return std::ranges::all_of(context.analyses.useLists().usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& holder = context.function.at(use.user);
+        if (isCast(holder.opcode))
+            return isStoredOnlyInFieldsThatNothingReads(context, use.user);
+        if (holder.opcode != Opcode::NewObject)
+            return false;
+        std::optional<uint32_t> position = holder.variadicOperandIndex(use.operandIndex);
+        if (!position || *position >= holder.fields().size())
+            return false;
+        const LocationFlow& location = fieldAt(context.program, { holder.layout(), holder.fields()[*position] }).flow.location;
+        return location.writers == WriterState::AllKnown && location.storeNaming == StoreNaming::EveryStoreNamesLocation && location.reads == ReadState::NeverRead;
+    });
+}
+
+// Code that runs once has no time to win, so a copy there is worth the bytes that it takes off. The wrapper makes the object whose parts its worker returns, and that takes more code than the call.
+// It goes to such a place where the caller does without the object: it takes the object apart, or keeps it where nothing reads. And it goes where the calls are so few that they and the one body
+// which they need take more than a copy at each place. That body is the wrapper with its worker, which other places may enter by itself.
+static bool wouldOnlyMoveAllocationIntoCodeThatRunsOnce(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call, Expected<HeatClass> heat)
+{
+    FunctionID callee = context.function.at(call).function();
+    if (heat.predicted() != HeatClass::RunsOnce || context.program.at(callee).creator.kind() != CreatorRecord::Kind::ResultWrapper)
+        return false;
+    const InliningSummaries& inlining = context.inputs.inlining;
+    FunctionID worker = context.program.at(callee).creator.as<CreatorRecord::ResultWrapper>().worker;
+    if (!inlining.contains(worker))
+        return false;
+    uint64_t bytesThatCallsSave = uint64_t { context.inputs.callGraph.numberOfCallSites(callee) } * (InlineModel::allocationCallBytes - CodeSize::directCall);
+    if (bytesThatCallsSave <= uint64_t { summary.codeBytes } + inlining.of(context.program, worker).codeBytes)
+        return false;
+    if (isStoredOnlyInFieldsThatNothingReads(context, call))
+        return false;
+    return !sinkableAllocationsAfterInlining(context, block, call, [&] {
+        return calleeReturnsFreshAggregate(context, summary, callee);
+    }).predicted();
+}
+
 static FunctionID functionAsWritten(const Program& program, FunctionID id)
 {
     while (FunctionID source = program.at(id).derivation.source)
@@ -2002,7 +2118,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
     bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
     bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
-    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody);
+    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
         verdict.decision = InlineDecision::Inline;

@@ -1,0 +1,40 @@
+# function one() {}; list = [one]; a = {}; b = {}; Object.defineProperties(a, Object.getOwnPropertyDescriptors(one)); Object.defineProperties(b, Object.getOwnPropertyDescriptors(list)), as the front end writes the pair
+# A function has its name and its length, and a list its length, since they were made: no statement wrote them. The definition brings them as it brings what was written.
+# So a read of `a.name`, `a.length` or `b.length` may answer more than undefined (primitive 0), and a read of `a.other` answers nothing else.
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v13 -> primitive0 primitive{{*}}
+# CHECK: f0 v15 -> primitive0 primitive{{*}}
+# CHECK: f0 v17 -> primitive0 primitive{{*}}
+# CHECK: f0 v19 -> primitive0
+# CHECK-NOT: f0 v19 -> primitive0 {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Second"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v5 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+    v6 = Call v4, -, v0
+    v7 = Call v5, -, v2, v6, v0
+    v8 = Call v4, -, v1
+    v9 = Call v5, -, v3, v8, v1
+    v10 = Undefined
+    v11 = Undefined
+    v12 = PropGet v2 key="name"
+    v13 = Call v12
+    v14 = PropGet v2 key="length"
+    v15 = Call v14
+    v16 = PropGet v3 key="length"
+    v17 = Call v16
+    v18 = PropGet v2 key="other"
+    v19 = Call v18
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

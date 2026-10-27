@@ -145,6 +145,7 @@ private:
     macro(ValueSetID, arraysThatOperationsAllocate) \
     macro(ValueSetID, objectsWithoutPropertiesOfNativeCode) \
     macro(ValueSetID, objectsThatTheirClassAnswersFor) \
+    macro(ValueSetID, objectsMadeWithPropertiesListedAboveThem) \
     macro(ValueSetID, prototypeObjectsOfClassesThatListNoOwnNames) \
     macro(ValueSetID, objectsHoldingOnlyWhatWasWritten) \
     macro(ValueFlowObjectID, undescribedNativeCode) \

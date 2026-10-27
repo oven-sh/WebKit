@@ -282,6 +282,7 @@ public:
     Layout& at(LayoutID);
     // The tables by class and by name, after classes were added or have another base.
     void indexClassesAndNames(const ParallelLoops&);
+    void setDeclaredMembers(LayoutID, LayoutSetID);
     Field& at(FieldReference);
     Layout& atForHiddenFields(LayoutID);
 

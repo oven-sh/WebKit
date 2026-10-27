@@ -859,6 +859,19 @@ void HeapRule::readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey& 
         connect(m_context.lookup(others, key.keyClass == HeapKeyClass::Unknown ? everyOwnPropertyHeldName : foundName(key, HeapPropertyPart::Value)), result);
 }
 
+// The source of a copy is on the chain without the objects above it, and the table lists there what a function, a list or an instance of a built-in class holds since it was made.
+void HeapRule::readPropertiesNobodyWroteOnSourcesOfCopies(const HeapChain& chain, const HeapKey& key, ValueFlowNodeID result)
+{
+    if (!m_context.meet(chain.objects, m_tables.objectsMadeWithPropertiesListedAboveThem()))
+        return;
+    ValueFlowNodeID sources = readWhereWritten(known(chain.objects), copiedFromName);
+    if (!sources)
+        return;
+    ClimbingSet holders = m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sources))), m_tables.objectsMadeWithPropertiesListedAboveThem());
+    if (holdsAnything(holders))
+        readOwnPropertiesNobodyWrote(holders, key, result);
+}
+
 bool HeapRule::isMemberOfBunUsedByNameAlone(BuiltinID member) const
 {
     if (!isMemberOfBun(member))
@@ -1358,6 +1371,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     forEachNodeStoredThroughPlaceholdersInto(chain.writableObjects, getter, takeGetters);
 
     readPropertiesAtCreation(chain.objects, key, result);
+    readPropertiesNobodyWroteOnSourcesOfCopies(chain, key, result);
     readMembers(chain.objects, chain.start, key, result, builtinGetters);
     if (key.namesEnumerableProperty && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
@@ -1415,7 +1429,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.constructorKey())) {
             ValueFlowNodeID constructors = m_context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
             connect(m_context.masked(constructors, ValueSets::complement(m_universe.builtinObjects())), result);
-            connect(m_context.masked(constructors, m_universe.builtinObjects()), ValueFlowProgramNodes::escaped());
+            connect(m_context.masked(constructors, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(m_tables.objectsThatLetInUnseenCode()))), ValueFlowProgramNodes::escaped());
         }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;

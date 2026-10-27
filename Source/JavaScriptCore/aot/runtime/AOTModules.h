@@ -363,6 +363,7 @@ private:
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
+    std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*) const;
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     bool isAnythingBeingLoaded() const;

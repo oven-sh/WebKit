@@ -640,6 +640,18 @@ static bool computesWithNumbers(const Terminator&)
     return false;
 }
 
+bool readsDoubleOutOfBytes(const Value& value)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(value);
+    return value.opcode == Opcode::GetTypedArrayElement || (builtin && builtinsThatMoveBytes.contains(*builtin));
+}
+
+bool readsDoubleOutOfBytes(const Terminator& terminator)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(terminator);
+    return builtin && builtinsThatMoveBytes.contains(*builtin);
+}
+
 // Arithmetic hands the sign and the payload of a NaN on to its result.
 template<typename User>
 static bool handsBitsOfNaNOnToResult(const User& user)
@@ -1110,6 +1122,8 @@ void checkRepresentations(const RepresentationInputs& inputs, Vector<InternalErr
         if (!isLegalRepresentation(inputs.typeOf(id), value.representation))
             return false;
         Representation expected = resultRepresentationOf(inputs, value);
+        if (expected == Representation::ImpureDouble && value.representation == Representation::Double && readsDoubleOutOfBytes(value))
+            return true;
         return expected == Representation::Unchosen || expected == value.representation;
     };
     auto canConvert = [&](ValueID id, Representation wanted) {

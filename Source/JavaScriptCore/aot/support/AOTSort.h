@@ -19,7 +19,6 @@
 #include <utility>
 #include <wtf/Compiler.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/VectorTraits.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -141,11 +140,7 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
 }
 
 template<typename T>
-inline constexpr bool movesAsBytes = alignof(T) <= alignof(uint64_t) && ((std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) || VectorTraits<T>::canMoveWithMemcpy);
-
-// FreeBSD's libc++ gives std::pair a copy constructor of its own.
-template<typename First, typename Second>
-inline constexpr bool movesAsBytes<std::pair<First, Second>> = alignof(std::pair<First, Second>) <= alignof(uint64_t) && movesAsBytes<First> && movesAsBytes<Second>;
+inline constexpr bool sortsAsBytes = alignof(T) <= alignof(uint64_t) && movesAsBytes<T>;
 
 template<typename T, typename IsLess, typename Projection>
 class OrderedSteps {
@@ -306,7 +301,7 @@ void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projecti
 {
     if (size < 2)
         return;
-    if constexpr (!movesAsBytes<T>) {
+    if constexpr (!sortsAsBytes<T>) {
         SortedIndices indices = indicesInOrder(size);
         auto isLessAt = [&](uint32_t first, uint32_t second) -> bool {
             return std::invoke(isLess, std::invoke(projection, elements[first]), std::invoke(projection, elements[second]));

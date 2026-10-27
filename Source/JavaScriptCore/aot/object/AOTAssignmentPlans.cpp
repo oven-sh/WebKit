@@ -118,6 +118,7 @@ NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* tar
     plan.target = target->structureID();
     plan.source = source.object->structureID();
     plan.sourcePropertyStorage = source.propertyStorageStructureID();
+    plan.sourceStructureNamesPropertyStorage = !source.compiledObject || source.compiledObject->compiledStructure().extraPropertiesStructureID() == plan.sourcePropertyStorage;
     plan.extraPropertiesBefore = extraProperties ? extraProperties->structureID() : StructureID();
     plan.sourceOrderWord = source.orderWord;
     plan.servesDefinitionsOnly = source.defines;

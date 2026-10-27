@@ -509,7 +509,19 @@ void generateThroughProxy(StubAssembler& jit)
         loadStructure(jit, target, scratch);
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(operations.bitsOfTargetThatMayBind)));
         // The Structure of a compiled object says yes for all of them. What was done to one object stands in the object, and what its fields are born with in the layout.
-        runTimeFinishes.append(jit.branchIfNotType(target, CompiledObjectType));
+        Jump isCompiledObject = jit.branchIfType(target, CompiledObjectType);
+        if (trap == TrapOfProxy::Has) {
+            // Whoever hands over no slot asks for the text of an index. The elements of an extensible array in plain storage are configurable.
+            static_assert(Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && UndecidedShape < ContiguousShape && ArrayStorageShape > ContiguousShape);
+            runTimeFinishes.append(jit.branchIfNotType(target, ArrayType));
+            runTimeFinishes.append(jit.branchTest64(CCallHelpers::NonZero, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot))));
+            runTimeFinishes.append(jit.branchTest32(CCallHelpers::NonZero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_didPreventExtensionsBits)));
+            jit.load8(Address(target, JSCell::indexingTypeAndMiscOffset()), scratch);
+            jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+            bindsNothing.append(jit.branch32(CCallHelpers::BelowOrEqual, scratch, TrustedImm32(ContiguousShape)));
+        }
+        runTimeFinishes.append(jit.jump());
+        isCompiledObject.link(&jit);
         runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable))));
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
         // What the trap has thrown is seen in front of the return. Until then nothing looks at the answer but the tests above, and only the operation must not run.

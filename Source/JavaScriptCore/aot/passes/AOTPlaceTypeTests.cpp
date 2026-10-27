@@ -33,6 +33,7 @@
 #include <limits>
 #include <ranges>
 #include <tuple>
+#include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
@@ -1066,6 +1067,10 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     std::span<const StretchRange> ranges = stretches.ranges();
     BitVector isBehindCopiedRange = findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
     if (isBehindCopiedRange.isEmpty())
+        return;
+    // How soon the copy comes back follows from expected types, and is shuffled with them.
+    const RecordedOptions& options = context.build.recordedOptions();
+    if (options.has(TestingSwitch::ShuffleExpectedTypes) && WTF::pairIntHash(options.layoutSeed, context.id.index()) % 2) [[unlikely]]
         return;
     for (BlockID block : cfg.reversePostOrder()) {
         if (isBehindCopiedRange.get(block.index()) && block != cfg.root() && !function.at(block).isHandlerBlock() && mayRejoinAt(ProgramPoint::atHeadOf(block)))

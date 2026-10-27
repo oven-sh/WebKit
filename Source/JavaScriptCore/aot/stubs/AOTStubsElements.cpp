@@ -327,12 +327,14 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     jit.returnToCaller();
 }
 
-void loadTextOfIndexForTrap(StubAssembler& jit, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText)
+void loadTextOfIndexForTrap(StubAssembler& jit, BaseOfTrappedIndex known, GPRReg base, GPRReg key, GPRReg storage, GPRReg index, GPRReg text, JumpList& hasNoText)
 {
     static_assert(sizeof(NumericStrings::StringWithJSString) == 2 * sizeof(void*));
-    hasNoText.append(jit.branchIfNotCell(base));
-    hasNoText.append(jit.branchIfNotType(base, ProxyObjectType));
-    hasNoText.append(jit.branch64(CCallHelpers::Below, key, numberTag));
+    if (known == BaseOfTrappedIndex::IsAnything) {
+        hasNoText.append(jit.branchIfNotCell(base));
+        hasNoText.append(jit.branchIfNotType(base, ProxyObjectType));
+        hasNoText.append(jit.branch64(CCallHelpers::Below, key, numberTag));
+    }
     jit.zeroExtend32ToWord(key, index);
     hasNoText.append(jit.branch32(CCallHelpers::AboveOrEqual, index, TrustedImm32(NumericStrings::cacheSize)));
     jit.lshift64(TrustedImm32(1), index);
@@ -413,7 +415,7 @@ void generateGetByVal(StubAssembler& jit)
         static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, slotPayloadRegister, slotHeaderRegister, StubRegister::T11) && slotHeaderRegister == StubRegister::T12 && slotPayloadRegister == StubRegister::T13);
         RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(noHeader));
         JumpList operationReads;
-        loadTextOfIndexForTrap(jit, base, key, storage, index, text, operationReads);
+        loadTextOfIndexForTrap(jit, BaseOfTrappedIndex::IsAnything, base, key, storage, index, text, operationReads);
         jit.move(TrustedImm32(0), noHeader);
         jit.jumpToStub(throughProxy(TrapOfProxy::Get));
         operationReads.link(&jit);
@@ -762,7 +764,7 @@ void generatePutByVal(StubAssembler& jit)
         static_assert(areDistinctOnEveryISA(StubRegister::R0, StubRegister::A1, StubRegister::A2, slotPayloadRegister, valueStoredThroughProxyRegister, StubRegister::T14, StubRegister::T11, StubRegister::T12));
         RELEASE_ASSERT(noOverlap(base, key, value, text, storedValue, isStrict, registers.storage, registers.index));
         JumpList operationStores;
-        loadTextOfIndexForTrap(jit, base, key, registers.storage, registers.index, text, operationStores);
+        loadTextOfIndexForTrap(jit, BaseOfTrappedIndex::IsAnything, base, key, registers.storage, registers.index, text, operationStores);
         jit.move(value, storedValue);
         jit.move(TrustedImm32(mode.isStrict() ? 1 : 0), isStrict);
         jit.jumpToStub(throughProxy(TrapOfProxy::Set));

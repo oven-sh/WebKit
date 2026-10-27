@@ -951,7 +951,7 @@ static void writeRepresentations(FunctionPassContext& pass, const Representation
 }
 
 // A double read out of the bytes of a buffer may be a NaN with any sign and payload, and so may whatever is computed from it or is a copy of it. The marker of undefined leaves its payload in what is computed from it.
-static void findDoublesWithAnyNaN(FunctionPassContext& pass, const RepresentationInputs& inputs)
+static bool findDoublesWithAnyNaN(FunctionPassContext& pass, const RepresentationInputs& inputs, const BitVector& keptWithTheOneNaN)
 {
     Function& function = pass.function;
     Vector<ValueID, 16> worklist;
@@ -960,7 +960,7 @@ static void findDoublesWithAnyNaN(FunctionPassContext& pass, const Representatio
         return representation == Representation::Double || representation == Representation::DoubleWithPayload;
     };
     auto widen = [&](ValueID id, Representation form) {
-        if (!holdsAnyNaN(form) || !canBeWidened(id) || function.at(id).representation >= form)
+        if (!holdsAnyNaN(form) || !canBeWidened(id) || function.at(id).representation >= form || keptWithTheOneNaN.get(id.index()))
             return;
         function.edit(id, ValueEdit::Type).representation = form;
         worklist.append(id);
@@ -994,7 +994,7 @@ static void findDoublesWithAnyNaN(FunctionPassContext& pass, const Representatio
         markResultsOfTerminator(block);
     }
     if (worklist.isEmpty())
-        return;
+        return false;
 
     Vector<std::pair<ValueID, ValueID>, 8> narrowedCopies;
     for (BlockID block : blocks) {
@@ -1033,6 +1033,142 @@ static void findDoublesWithAnyNaN(FunctionPassContext& pass, const Representatio
             }
         }
     }
+    return true;
+}
+
+// A NaN out of bytes becomes the one NaN where it leaves arithmetic. Where each run of a read is followed by one such place, the read does it, at the same price, and so does the edge that brings a payload.
+static BitVector findDoublesKeptWithTheOneNaN(FunctionPassContext& pass, const RepresentationInputs& inputs)
+{
+    const Function& function = pass.function;
+    const CFG& cfg = pass.analyses.cfg();
+    const UseLists& useLists = pass.analyses.useLists();
+    auto isImpure = [&](ValueID id) {
+        return function.at(id).representation == Representation::ImpureDouble;
+    };
+    auto dropsBitsOfNaN = [](Representation wanted) {
+        return wanted == Representation::Double || wanted == Representation::OptionalDouble || wanted == Representation::JSValue;
+    };
+
+    BitVector result;
+    BitVector isVisited;
+    BitVector blocksOfReads;
+    BitVector blocksWhereBitsAreDropped;
+    Vector<ValueID, 16> web;
+    Vector<std::pair<ValueID, BlockID>, 4> reads;
+    auto visitWebOf = [&](ValueID first) {
+        web.shrink(0);
+        reads.shrink(0);
+        blocksOfReads.clearAll();
+        blocksWhereBitsAreDropped.clearAll();
+        bool isFree = true;
+        bool computes = false;
+        auto add = [&](ValueID id) {
+            if (!isVisited.set(id.index()))
+                web.append(id);
+        };
+        auto addInput = [&](ValueID input) {
+            if (isImpure(input))
+                add(input);
+            else if (holdsAnyNaN(function.at(input).representation) || (inputs.typeOf(input).isJavaScriptValue() && !inputs.typeOf(input).isNumber()))
+                isFree = false;
+        };
+        auto addRead = [&](ValueID read, BlockID block) {
+            reads.append({ read, block });
+            if (blocksOfReads.set(block.index()))
+                isFree = false;
+        };
+        add(first);
+        for (size_t index = 0; index < web.size(); ++index) {
+            ValueID id = web[index];
+            ValueLocation location = useLists.locationOf(id);
+            if (location.placement != ValuePlacement::InBlock) {
+                for (Edge edge : cfg.incomingEdges(location.block)) {
+                    IncomingValue incoming = incomingValueOf(function, edge, location.index);
+                    if (incoming.kind == IncomingValue::Kind::Argument && incoming.argument && function.at(incoming.argument).representation == Representation::DoubleWithPayload && !edge.isHandlerEdge() && function.at(edge.from).terminator.kind == TerminatorKind::Jump)
+                        addRead(id, edge.from);
+                    else if (incoming.kind == IncomingValue::Kind::Argument && incoming.argument)
+                        addInput(incoming.argument);
+                    else if (incoming.kind == IncomingValue::Kind::EdgeResult && readsDoubleOutOfBytes(function.at(edge.from).terminator) && edgeResultAt(function, incoming.result).kind == EdgeResultKind::DeclaredResult)
+                        addRead(id, location.block);
+                    else
+                        isFree = false;
+                }
+            } else if (const Value& value = function.at(id); readsDoubleOutOfBytes(value))
+                addRead(id, location.block);
+            else {
+                value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    addInput(operand);
+                    computes |= !isForwardedOperand(value, operandIndex);
+                });
+            }
+
+            for (const Use& use : useLists.usesOf(id)) {
+                Representation wanted = Representation::Unchosen;
+                switch (use.kind) {
+                case Use::Kind::Operand: {
+                    const Value& user = function.at(use.user);
+                    if (isImpure(use.user) && !readsDoubleOutOfBytes(user)) {
+                        add(use.user);
+                        continue;
+                    }
+                    wanted = wantedRepresentationOf(inputs, user, use.operandIndex);
+                    break;
+                }
+                case Use::Kind::TerminatorOperand: {
+                    const Terminator& terminator = function.at(use.block).terminator;
+                    if (!terminator.targets.isEmpty())
+                        isFree = false;
+                    wanted = wantedRepresentationOf(inputs, terminator, use.operandIndex);
+                    break;
+                }
+                case Use::Kind::EdgeArgument:
+                case Use::Kind::HandlerArgument: {
+                    ValueID parameter = function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex];
+                    if (isImpure(parameter)) {
+                        add(parameter);
+                        continue;
+                    }
+                    if (function.at(use.block).terminator.kind == TerminatorKind::Jump && use.kind == Use::Kind::EdgeArgument)
+                        wanted = function.at(parameter).representation;
+                    break;
+                }
+                case Use::Kind::BlockSubject:
+                    isFree = false;
+                    break;
+                }
+                if (dropsBitsOfNaN(wanted))
+                    blocksWhereBitsAreDropped.set(use.block.index());
+            }
+        }
+        if (!isFree || !computes)
+            return;
+
+        for (auto [read, block] : reads) {
+            for (size_t steps = 0; !blocksWhereBitsAreDropped.get(block.index()); ++steps) {
+                const Terminator& terminator = function.at(block).terminator;
+                if (terminator.kind != TerminatorKind::Jump || steps == function.blocks.size())
+                    return;
+                block = terminator.targets[0].block;
+                if (blocksOfReads.get(block.index()))
+                    return;
+            }
+        }
+        for (auto [read, block] : reads)
+            result.set(read.index());
+    };
+
+    for (BlockID id : cfg.reversePostOrder()) {
+        const Block& block = function.at(id);
+        for (ValueID parameter : block.parameters) {
+            if (isImpure(parameter) && !isVisited.get(parameter.index()))
+                visitWebOf(parameter);
+        }
+        for (ValueID value : block.values) {
+            if (isImpure(value) && !isVisited.get(value.index()))
+                visitWebOf(value);
+        }
+    }
+    return result;
 }
 
 static std::optional<Value> makeOnlyValueOf(const Type& type)
@@ -1214,7 +1350,16 @@ PassOutcome chooseRepresentations(FunctionPassContext& pass)
 
     RepresentationInputs inputs { pass.program, pass.id, function, *pass.inputs.placement, *pass.inputs.callingConventions };
     writeRepresentations(pass, inputs);
-    findDoublesWithAnyNaN(pass, inputs);
+    BitVector keptWithTheOneNaN;
+    if (findDoublesWithAnyNaN(pass, inputs, keptWithTheOneNaN))
+        keptWithTheOneNaN = findDoublesKeptWithTheOneNaN(pass, inputs);
+    if (!keptWithTheOneNaN.isEmpty()) {
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            if (holdsAnyNaN(function.at(ValueID(index)).representation))
+                function.edit(ValueID(index), ValueEdit::Type).representation = Representation::Double;
+        }
+        findDoublesWithAnyNaN(pass, inputs, keptWithTheOneNaN);
+    }
 
     ConversionInserter inserter { inputs, pass, builder };
     inserter.run(pass.analyses.cfg().reversePostOrder());

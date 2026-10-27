@@ -202,6 +202,8 @@ struct FlowBuiltinTables {
     Vector<BuiltinLocationFlow> writesOfLocations;
     BitVector constantMembers;
     BitVector intactHolders;
+    // The image locks these when the program starts. What is said of them rests on that.
+    BitVector membersLockedAtStartUp;
     // An operation that lists own keys is handed one of these, by canonical ID.
     BitVector holdersWithListedKeys;
     Vector<BuiltinUseRecord> uses;
@@ -312,6 +314,7 @@ public:
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
+    const BitVector& builtinMembersLockedAtStartUp() const LIFETIME_BOUND { return m_tables.builtins.membersLockedAtStartUp; }
     std::span<const BuiltinLocationFlow> writesOfBuiltinLocations() const LIFETIME_BOUND { return m_tables.builtins.writesOfLocations.span(); }
 
     std::span<const AccessSite> accessSites() const LIFETIME_BOUND { return m_tables.sites.accessSites.span(); }

@@ -790,6 +790,19 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
         context.add(statement.thrown, unknown);
 }
 
+static void forEachFormInImage(const Program& program, ModuleID outside, NOESCAPE const Invocable<void(ModuleID)> auto& functor)
+{
+    if (program.at(outside).kind != ModuleKind::External)
+        return;
+    std::span<const uint8_t> path = program.string(program.at(outside).path);
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        std::span<const uint8_t> pathOfForm = program.string(module.path);
+        if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
+            functor(ModuleID(index));
+    }
+}
+
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -810,14 +823,21 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         connect(context, namespaceOf(context, operation.module(), operation.phase()), statement.result);
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
-    case Opcode::ImportModule:
+    case Opcode::ImportModule: {
         escapeOperands(statement, context);
-        noteRequest(context, statement.function, operation.module());
-        evaluateModule(context, operation.module());
-        context.connect(context.lookup(valueOf(context, namespaceOf(context, operation.module())), awaitedValueName), settledValueOfPromiseAt(statement, context));
-        connect(context, evaluationErrorsOf(context, operation.module()), reasonOfPromiseAt(statement, context));
-        connect(context, evaluationErrorsOf(context, operation.module()), ValueFlowProgramNodes::escaped());
+        auto import = [&](ModuleID module) {
+            noteRequest(context, statement.function, module);
+            evaluateModule(context, module);
+            context.connect(context.lookup(valueOf(context, namespaceOf(context, module)), awaitedValueName), settledValueOfPromiseAt(statement, context));
+            connect(context, evaluationErrorsOf(context, module), reasonOfPromiseAt(statement, context));
+            connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
+        };
+        import(operation.module());
+        // The attributes say as what a module outside of the image is loaded, and the image may hold it as that.
+        if (!context.operandsOf(statement).empty())
+            forEachFormInImage(program, operation.module(), import);
         break;
+    }
     case Opcode::RequireModule:
         requireModule(statement, context, operation.module());
         return;

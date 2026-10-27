@@ -442,6 +442,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTValueFlowSolveTestCommands.cpp
     aot/tests/AOTValueFlowTestCommands.cpp
     aot/tests/AOTValueFlowWhyTestCommands.cpp
+    aot/tests/AOTValueFlowWidenedReport.cpp
     aot/tests/AOTVerifierTests.cpp
     aot/tests/AOTWaiterOrderProgramTests.cpp
     aot/tests/AOTWebAssemblyImageTests.cpp

@@ -1,0 +1,75 @@
+# The first read of a member of a built-in object may add the member to its holder. It stays there, whatever runs in between: the same read again, behind the first on every way, has nothing left to do.
+# A read of another member stays, and so does one that the first stands in front of on one way only, or in a block whose handler it is read in.
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="repeated" parameters=[{type=anything}] results=[{type=anything}] {
+    InitializeBuiltin builtin=JSONStringify
+    v2 = Call v0
+    InitializeBuiltin builtin=JSONStringify
+    InitializeBuiltin builtin=JSONParse
+    v5 = Call v0
+    InitializeBuiltin builtin=JSONStringify
+    InitializeBuiltin builtin=JSONParse
+    Return v5
+# CHECK: InitializeBuiltin builtin=JSONStringify
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: InitializeBuiltin builtin=JSONParse
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Return
+}
+
+function f1 name="onOneWay" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    InitializeBuiltin builtin=JSONStringify
+    InitializeBuiltin builtin=JSONStringify
+    Jump -> next b2()
+  b2():
+    InitializeBuiltin builtin=JSONStringify
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: InitializeBuiltin builtin=JSONStringify
+# CHECK-NEXT: Jump
+# CHECK: b2():
+# CHECK-NEXT: InitializeBuiltin builtin=JSONStringify
+}
+
+function f2 name="inBothArms" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    InitializeBuiltin builtin=JSONStringify
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    InitializeBuiltin builtin=JSONStringify
+    Jump -> next b3()
+  b2():
+    InitializeBuiltin builtin=JSONStringify
+    Jump -> next b3()
+  b3():
+    InitializeBuiltin builtin=JSONStringify
+    Return v0
+# CHECK: InitializeBuiltin builtin=JSONStringify
+# CHECK-NOT: InitializeBuiltin
+}
+
+function f3 name="inTheHandler" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = Call v0
+    InitializeBuiltin builtin=JSONStringify
+    Jump -> next b2()
+  b2():
+    InitializeBuiltin builtin=JSONStringify
+    Return v0
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    InitializeBuiltin builtin=JSONStringify
+    Return v4
+# CHECK: b1() handler=b3():
+# CHECK: InitializeBuiltin builtin=JSONStringify
+# CHECK: b2():
+# CHECK-NEXT: Return v0
+# CHECK: = CatchValue
+# CHECK-NEXT: InitializeBuiltin builtin=JSONStringify
+}

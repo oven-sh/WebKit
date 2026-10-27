@@ -535,7 +535,8 @@ void HeapRule::notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& obj
 {
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
         return;
-    add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), object.node));
+    // A retired node takes none of them. The node of the operand hands on those that come to it, whether before it is retired or after.
+    connect(object.node, m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach));
     // A lookup above the unknown object lets every prototype object of the language escape. Only one that was carried out comes back as a value.
     if (isInProgramCode())
         add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), m_context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut)));

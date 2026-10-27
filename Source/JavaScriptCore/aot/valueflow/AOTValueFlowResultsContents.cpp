@@ -872,9 +872,20 @@ private:
         return type;
     }
 
-    static OptionSet<Actor> actorsOpenOnContentsOf(const Container& container)
+    // Whoever makes a container lists what it lays into each slot: an operation by its operands, the row of a built-in by the type of its result, a coroutine by its body. Nobody has the object before it is handed out.
+    bool makerListsContentsOf(ValueFlowObjectID object) const
     {
-        OptionSet<Actor> open;
+        return m_inputs.universe().kindOf(object) == ValueFlowObjectKind::CoroutineResult || m_inputs.universe().siteOf(object);
+    }
+
+    OptionSet<Actor> actorsOpenOnContentsOf(const Container& container) const
+    {
+        OptionSet<Actor> open = actorsOpenOn(m_inputs, container.object) & actorsThatCanWrite(PlaceKind::Elements);
+        if (makerListsContentsOf(container.object)) {
+            open.remove({ Actor::Creation, Actor::Table });
+            if (!m_inputs.isHeldByNativeCode(container.object))
+                open.remove(Actor::NativeCode);
+        }
         if (container.possibleMutations.contains(ObjectMutation::ReachUnknownJavaScript))
             open.add(Actor::UnseenCode);
         if (container.possibleMutations.contains(ObjectMutation::ReachNativeCode))

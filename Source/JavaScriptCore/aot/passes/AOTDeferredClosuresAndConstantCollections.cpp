@@ -2406,9 +2406,12 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
     auto becomeReadOfData = [&](ValueID id, Opcode operation, DataID data) -> Value& {
         Value& value = function.edit(id);
         AllocationSiteID allocationSite = value.allocationSite();
+        ArrayStorage arrayStorage = operation == Opcode::Data ? value.arrayStorage() : ArrayStorage::Other;
         value.become(operation);
         value.setData(data);
         value.setAllocationSite(allocationSite);
+        if (operation == Opcode::Data)
+            value.setArrayStorage(arrayStorage);
         value.type = resultTypeOf(context.program, function, value, types);
         return value;
     };

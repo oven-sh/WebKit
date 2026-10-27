@@ -475,7 +475,6 @@ static void testReachableEvaluatorLeavesTheProgramClosed()
     AOT_TEST_CHECK(flagsOf(callsUnknownFunction) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorsFromUnknownCode) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKey) == closed);
-    AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == closed);
     AOT_TEST_CHECK(flagsOf(evaluatorUnderUnknownKeyOfGlobalObject) == closed);
 }
 
@@ -486,6 +485,7 @@ static void testCallThatStartsUnseenCodeAdmitsNothingElse()
     AOT_TEST_CHECK(flagsOf(installsPlugin) == runsText);
     AOT_TEST_CHECK(flagsOf(evaluatesTextBesideOtherModule) == runsText);
     AOT_TEST_CHECK(flagsOf(unseenCodeMayCallLoader) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatorComesBackFromUnknownCode) == runsText);
 }
 
 static void testUncompiledModuleOpensTheProgram()
@@ -579,9 +579,9 @@ static void testEvaluatorUnderUnknownKeyIsRefused()
     checkShellOutput(evaluatorUnderUnknownKey, refusal(1), "globalThis.text = '1 + 1'; globalThis.holder = globalThis; globalThis.name = 'ev' + 'al';"_s);
 }
 
-static void testEvaluatorThatComesBackFromUnknownCodeIsRefused()
+static void testEvaluatorThatComesBackFromUnknownCodeRuns()
 {
-    checkShellOutput(evaluatorComesBackFromUnknownCode, refusal(1), "globalThis.text = '1 + 1'; globalThis.keep = value => { globalThis.kept = value; };"_s);
+    checkShellOutput(evaluatorComesBackFromUnknownCode, "number\n"_s, "globalThis.text = '1 + 1'; globalThis.keep = value => { globalThis.kept = value; };"_s);
 }
 
 static void testEveryRealmOfClosedProgramRefusesEvaluation()
@@ -675,7 +675,7 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/evaluation/program-that-evaluates-text-keeps-every-evaluator"_s, testProgramThatEvaluatesTextKeepsEveryEvaluator },
         { "closed-world/evaluation/option-keeps-every-evaluator"_s, testOptionKeepsEveryEvaluator },
         { "closed-world/evaluation/evaluator-under-unknown-key-is-refused"_s, testEvaluatorUnderUnknownKeyIsRefused },
-        { "closed-world/evaluation/evaluator-that-comes-back-from-unknown-code-is-refused"_s, testEvaluatorThatComesBackFromUnknownCodeIsRefused },
+        { "closed-world/evaluation/evaluator-that-comes-back-from-unknown-code-runs"_s, testEvaluatorThatComesBackFromUnknownCodeRuns },
         { "closed-world/evaluation/every-realm-of-closed-program-refuses-evaluation"_s, testEveryRealmOfClosedProgramRefusesEvaluation },
         { "closed-world/declarations/script-shadows-no-constant-of-compiled-code"_s, testScriptShadowsNoConstantOfCompiledCode },
         { "closed-world/modules/closed-program-finds-no-module-by-name"_s, testClosedProgramFindsNoModuleByName },

@@ -1,0 +1,46 @@
+# class Base { constructor() { this.a = 1 } }  class Sub extends Base { constructor() { super(); this.b = 2 } }  Object.setPrototypeOf(Sub, Base)  Object.setPrototypeOf(Sub.prototype, globalThis[someName].prototype)
+# The class object is given a parent behind its definition, and what lies above its instances is an object that nobody knows: no class answers for what the constructor at the top lays on them.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: class [[base]] layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript,
+# CHECK: class [[sub]] layout=L1 cause=ReachesUnknownJavaScript
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Sub" base=L0 constructor=f2 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = NewClosure function=f2
+    v5 = ResolveHeritage v3
+    v6 = NewClass v4, v3, v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Builtin builtin=Object
+    v9 = Builtin builtin=ObjectSetPrototypeOf
+    v10 = Call v9, v8, v7, v3
+    v11 = PropGet v7 key="prototype"
+    v12 = PropGet v0 key="someName" [isFreeName]
+    v13 = ElemGet v0, v12
+    v14 = PropGet v13 key="prototype"
+    v15 = Call v9, v8, v11, v14
+    v16 = Construct v7
+    v17 = PropGet v16 key="b"
+    Return v17
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="a" mode=Strict
+    Return v2
+}
+function f2 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b" mode=Strict
+    Return v3
+}

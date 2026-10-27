@@ -87,7 +87,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     const PlacedAllocation& allocation = m_placement.allocation(id);
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
     if (!isObjectLayout(m_program.at(allocation.layout).kind))
-        return cellAllocation.allocateInFrame(layout.size);
+        return cellAllocation.allocateInFrame(layout.size, &layout);
 
     LBasicBlock hasNoRecord = newBlock();
     Join<Integer> headerOfHeapCells(m_out);
@@ -101,7 +101,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     headerOfHeapCells.add(callOperation<Integer>(value, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true }));
     Integer header = headerOfHeapCells.finish();
 
-    CellPointer cell = cellAllocation.allocateInFrame(layout.size);
+    CellPointer cell = cellAllocation.allocateInFrame(layout.size, &layout);
     CodeGenerator::InitializationScope scope(generator());
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.orderWord)));

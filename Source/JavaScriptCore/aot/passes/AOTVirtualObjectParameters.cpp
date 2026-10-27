@@ -853,22 +853,23 @@ static void showOperationsInFrameOfBody(const Program& program, TypeArena& types
     }
 
     ValueID entered;
-    for (const Block& block : wrapper.blocks) {
-        for (ValueID id : block.values) {
-            if (!takesFactOfEntry(program, wrapper.at(id)))
+    Vector<BlockID, 8> blocks;
+    for (uint32_t index = 0; index < wrapper.blocks.size(); ++index) {
+        blocks.append(BlockID(index));
+        for (ValueID id : wrapper.blocks[index].values) {
+            if (entered || !takesFactOfEntry(program, wrapper.at(id), false))
                 continue;
-            if (!entered) {
-                Value fact = IRBuilder::make(Opcode::Entered);
-                fact.setFunction(body);
-                fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
-                fact.setOrigin(wrapper.at(id).origin());
-                entered = wrapper.add(WTF::move(fact));
-            }
-            wrapper.edit(id).setFactOperand(entered);
+            Value fact = IRBuilder::make(Opcode::Entered);
+            fact.setFunction(body);
+            fact.type = types.intern(Type::forOpaque(OpaqueKind::Fact));
+            fact.setOrigin(wrapper.at(id).origin());
+            entered = wrapper.add(WTF::move(fact));
         }
     }
-    if (entered)
-        wrapper.edit(entryBlock, BlockEdit::Values).values.insert(0, entered);
+    if (!entered)
+        return;
+    nameFactOfEntry(program, wrapper, types, blocks.span(), entered, false);
+    wrapper.edit(entryBlock, BlockEdit::Values).values.insert(0, entered);
 }
 
 static void convertToWrapper(const AnalysisContext& context, TypeArena& types, Promotion& promotion, FunctionID body)

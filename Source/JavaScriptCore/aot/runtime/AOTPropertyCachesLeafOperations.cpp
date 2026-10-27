@@ -310,6 +310,9 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key)
         JSValue value = object->tryGetIndexQuickly(name.index);
         if (!value)
             value = readSparseElement(object, name.index);
+        // Nothing above a pristine array has elements.
+        if (!value && object->type() == ArrayType && !hasAnyArrayStorage(object->indexingType()) && object->structure()->hasPristineElements())
+            return { jsUndefined(), LeafPresence::Absent };
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name:

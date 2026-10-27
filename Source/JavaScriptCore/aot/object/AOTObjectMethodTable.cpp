@@ -17,6 +17,7 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
@@ -28,6 +29,7 @@
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
+#include "ProxyObject.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
 
@@ -801,6 +803,44 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
     return true;
 }
 
+// A store for another receiver ends in a definition on the receiver. A proxy asks its handler for two traps and, where it has neither, hands the question and the definition on to its target.
+static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
+        return false;
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
+    if (!proxy->handler().isObject() || proxy->target() != target)
+        return false;
+    JSObject* handler = asObject(proxy->handler());
+    State& state = target->state();
+    for (const Identifier* trap : { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) {
+        UniquedStringImpl* uid = trap->impl();
+        if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
+            if (filed->kind == Slot::Kind::Absent)
+                continue;
+            // The layout has a field of the name, and this object may lack it.
+            if (filed->kind != Slot::Kind::Field || !filed->has(Slot::absentIsUndefined) || handler->type() != CompiledObjectType)
+                return false;
+            const Object* compiledHandler = uncheckedDowncast<Object>(handler);
+            const FieldData* field = compiledHandler->fieldNamed(state, uid);
+            if (!field || findFieldProperty(vm, *compiledHandler, *field))
+                return false;
+            continue;
+        }
+        // The question files its answer for the next time. It runs no code unless a proxy is asked.
+        for (JSObject* object = handler; object; object = object->getPrototypeDirect().getObject()) {
+            if (object->type() == ProxyObjectType || object->structure()->typeInfo().overridesGetPrototype())
+                return false;
+        }
+        bool isFound = hasPropertyAndCache(&state.instance, handler, { uid, std::nullopt });
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isFound)
+            return false;
+    }
+    return true;
+}
+
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
@@ -822,6 +862,14 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
     bool isWritableInSlot = field && !(field->flags & (fieldIsReadOnly | fieldIsAccessor)) && !(object->orderWord() & orderWordIntegrityBits);
     if (isWritableInSlot && slot.thisValue() == JSValue(object) && object->readInline(*field) && object->tryStore(vm, *field, value))
         return true;
+    if (isWritableInSlot && slot.thisValue() != JSValue(object) && object->readInline(*field)) {
+        bool definesHere = isProxyThatDefinesOnTarget(vm, slot.thisValue(), object);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (definesHere && object->tryStore(vm, *field, value))
+            return true;
+        // The field is a writable data property, and no field is named by an index.
+        RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));
+    }
     if (slot.thisValue() != JSValue(object) || parseIndex(name)) [[unlikely]]
         RELEASE_AND_RETURN(scope, ordinarySet(globalObject, object, name, value, slot));
     if (field) {

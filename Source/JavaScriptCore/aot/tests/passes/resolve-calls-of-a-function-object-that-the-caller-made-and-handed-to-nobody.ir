@@ -18,8 +18,8 @@ function f2 name="onlyCalls" parameters=[{type=number}, {type=anything}] results
     v5 = Call v4, -, v3
     Return v5
 # CHECK-NOT: AreFunctionNamesUnchanged
-# CHECK: = CallDirect v0, v1 function=f0 [callsOwnFunctionObject]
-# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = CallDirect v0, v1 function=f0 [callsOwnFunctionObject, calleeIsPredicted]
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 }
 
 function f3 name="handsOnOnTheOtherSide" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -38,7 +38,7 @@ function f3 name="handsOnOnTheOtherSide" parameters=[{type=boolean}, {type=anyth
   b4(v9: anything):
     Return v9
 # CHECK: LoopHint
-# CHECK-NEXT: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK-NEXT: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v2, -, v3
 }
 
@@ -99,7 +99,7 @@ function f8 name="oneEdgeOfTheBranchCarriesIt" parameters=[{type=boolean}, {type
   b2(v5: f1) frequency=Rare:
     v6 = Call v2, -, v5
     Return v6
-# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v2, -, v5
 }
 
@@ -117,7 +117,7 @@ function f9 name="theEdgeLeadsWhereAnotherWayLeadsToo" parameters=[{type=boolean
   b4(v7: f1) frequency=Rare:
     v8 = Call v3, -, v7
     Return v8
-# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v3, -, v7
 }
 
@@ -129,7 +129,7 @@ function f11 name="callsTheTestsAtTheHead" parameters=[{type=anything}] results=
     v1 = NewClosure function=f10
     v2 = Call v1, -, v0
     Return v2
-# CHECK: = CallDirect v0 function=f10 [callsOwnFunctionObject]
+# CHECK: = CallDirect v0 function=f10 [callsOwnFunctionObject, calleeIsPredicted]
 }
 
 function f12 name="handsOnBehindTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -175,7 +175,7 @@ function f15 name="makesAnotherInEveryTurn" parameters=[{type=anything}, {type=a
   b3() frequency=Rare:
     v7 = Call v0, -, v4
     Return v7
-# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v0, -,
 }
 
@@ -199,7 +199,7 @@ function f16 name="handsOnWhereOneOfSeveralTestsFails" parameters=[{type=boolean
   b6(v9: anything):
     Return v9
 # CHECK: LoopHint
-# CHECK-NEXT: = CallDirect {{*}} function=f1 [callsOwnFunctionObject]
+# CHECK-NEXT: = CallDirect {{*}} function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = Call v2, -, v3
 }
 

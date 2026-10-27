@@ -121,6 +121,13 @@ struct AssignmentPlan {
         return source == structure && sourceOrderWord == orderWord && sourcePropertyStorage == (propertyStorageOrNull ? propertyStorageOrNull->structureID() : StructureID());
     }
 
+    bool readsFrom(const Object& from) const
+    {
+        if (sourceStructureNamesPropertyStorage)
+            return source == from.structureID() && sourceOrderWord == from.orderWord();
+        return readsFrom(from.structureID(), from.orderWord(), from.extraProperties());
+    }
+
     bool leavesOutRun(uint32_t numberPlusOne) const { return (excludedList ? excludedList->runNumberPlusOne() : 0) == numberPlusOne && excludedNames.isEmpty(); }
 
     bool isFor(StructureID targetID, StructureID extraPropertiesID, const AssignmentSource& from) const
@@ -132,7 +139,7 @@ struct AssignmentPlan {
     bool fillsEmptySlotsOf(const Object& targetObject, const Object& sourceObject, uint32_t excludedRunNumberPlusOne) const
     {
         return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID()
-            && readsFrom(sourceObject.structureID(), sourceObject.orderWord(), sourceObject.extraProperties()) && leavesOutRun(excludedRunNumberPlusOne);
+            && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
     }
 
     bool runsAsBeforeOn(const Object& targetObject, const AssignmentSource& from, uint32_t excludedRunNumberPlusOne) const
@@ -165,6 +172,7 @@ struct AssignmentPlan {
     const ExcludedNameList* excludedList { nullptr };
     Vector<RefPtr<UniquedStringImpl>, 2> excludedNames;
     bool isUsable { false };
+    bool sourceStructureNamesPropertyStorage { false };
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };

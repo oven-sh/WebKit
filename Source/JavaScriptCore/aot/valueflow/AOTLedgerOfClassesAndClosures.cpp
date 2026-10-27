@@ -513,6 +513,58 @@ ValueSetID LedgerOfClassesAndClosures::linkedPrototypes(ValueSetMaker& maker, Va
     return links;
 }
 
+bool LedgerOfClassesAndClosures::everyMakerListsOwnNames(LayoutID layout) const
+{
+    const Program& program = m_inputs.program;
+    const BuiltinTable& builtins = program.builtins();
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    Vector<LayoutID, 8> visited;
+    Vector<LayoutID, 8> classesToVisit { declaredLayoutOf(program, layout) };
+    while (!classesToVisit.isEmpty()) {
+        LayoutID current = classesToVisit.takeLast();
+        if (visited.contains(current))
+            continue;
+        visited.append(current);
+        if (!program.at(current).has(LayoutFlags::HasHeritage))
+            continue;
+        if (!program.at(current).constructor)
+            return false;
+        auto links = writersOfPrototypeLink(universe.closureOf(program.at(current).constructor)).all();
+        if (!links || links->value().empty())
+            return false;
+        for (const Write& link : links->value()) {
+            if (link.form != WriteForm::AtCreation || ValueSets::isComplement(link.arrives))
+                return false;
+            bool everyParentIsKnown = true;
+            m_inputs.sets().forEachMember(link.arrives, [&](ValueFlowObjectID parent) {
+                if (universe.kindOf(parent) == ValueFlowObjectKind::Builtin) {
+                    BuiltinID constructor = builtins.canonicalID(universe.builtinOf(parent));
+                    BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
+                    BuiltinID constructorOfClass = instanceClass ? builtins.at(instanceClass).constructor : BuiltinID();
+                    everyParentIsKnown &= constructorOfClass && builtins.canonicalID(constructorOfClass) == constructor && builtins.at(instanceClass).listsNamesDefinedOnNewInstances;
+                    return;
+                }
+                FunctionID function = universe.closureFunction(parent);
+                if (!function)
+                    everyParentIsKnown = false;
+                else if (LayoutID constructed = program.at(function).constructedClass)
+                    classesToVisit.append(constructed);
+            });
+            if (!everyParentIsKnown)
+                return false;
+        }
+    }
+    return true;
+}
+
+ClassesAbove LedgerOfClassesAndClosures::classesAbove(const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueFlowObjectID object) const
+{
+    LayoutID layout = m_inputs.universe().layoutOf(object);
+    if (layout && m_inputs.program.at(layout).kind == LayoutKind::Instance && everyMakerListsOwnNames(layout))
+        return ClassesAbove::ListOwnNames;
+    return Typed::classesAbove(m_inputs, heap, maker, object);
+}
+
 const LedgerOfClassesAndClosures::WritesOfHolder* LedgerOfClassesAndClosures::findWritesOf(ValueFlowObjectID holder) const
 {
     auto found = std::ranges::lower_bound(m_writesOfHolders, holder.index(), { }, &WritesOfHolder::holder);

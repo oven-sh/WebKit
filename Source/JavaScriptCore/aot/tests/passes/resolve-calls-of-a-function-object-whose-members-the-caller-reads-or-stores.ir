@@ -90,7 +90,7 @@ function f9 name="readsOnTheOtherSide" parameters=[{type=boolean}, {type=anythin
   b2() frequency=Rare:
     v4 = PropGet v2 key="member"
     Return v4
-# CHECK: = CallDirect v1 function=f0 [callsOwnFunctionObject]
+# CHECK: = CallDirect v1 function=f0 [callsOwnFunctionObject, calleeIsPredicted]
 # CHECK: = PropGet {{*}} key="member"
 }
 
@@ -100,7 +100,7 @@ function f10 name="onlyTests" parameters=[{type=anything}] results=[{type=anythi
     v3 = StrictEq v1, v0
     v4 = Call v1, -, v0
     Return v4
-# CHECK: = CallDirect v0 function=f0 [callsOwnFunctionObject]
+# CHECK: = CallDirect v0 function=f0 [callsOwnFunctionObject, calleeIsPredicted]
 }
 
 function f11 name="readsMemberOfOneThatIsReadWithoutCode" parameters=[{type=anything}] results=[{type=anything}] {
@@ -109,7 +109,7 @@ function f11 name="readsMemberOfOneThatIsReadWithoutCode" parameters=[{type=anyt
     v3 = Call v1, -, v0
     Return v3
 # CHECK: = PropGet {{*}} key="member"
-# CHECK-NEXT: = CallDirect v0 function=f1 [callsOwnFunctionObject]
+# CHECK-NEXT: = CallDirect v0 function=f1 [callsOwnFunctionObject, calleeIsPredicted]
 }
 
 function f12 name="storesMemberBehindTheCall" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {

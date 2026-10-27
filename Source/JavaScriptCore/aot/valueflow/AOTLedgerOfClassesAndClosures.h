@@ -49,6 +49,10 @@ public:
     bool covers(ValueSetID, ValueFlowObjectID) const;
     ValueSetID linkedPrototypes(ValueSetMaker&, ValueFlowObjectID) const;
     bool mayBeLinkedAbove(ValueFlowObjectID object) const { return covers(m_objectsLinkedAbove, object); }
+    // The constructor at the top of its classes makes an instance: a function of the program, or a built-in whose class lists in the table what it lays on a new instance.
+    // Which one that is stands fast where each class object keeps the parent that it was defined with.
+    bool everyMakerListsOwnNames(LayoutID) const;
+    ClassesAbove classesAbove(const ValueFlowHeapView&, ValueSetMaker&, ValueFlowObjectID) const;
     ValueSetID classPrototypes() const { return m_classPrototypes; }
     ValueSetID functionsWithNonObjectPrototype() const { return m_functionsWithNonObjectPrototype; }
     ValueFlowNodeID nodeOfMark(ObjectMutation mutation) const { return m_nodesOfMarks.get(static_cast<uint32_t>(mutation)); }

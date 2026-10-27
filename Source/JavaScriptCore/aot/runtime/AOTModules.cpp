@@ -771,7 +771,21 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 
     const Identifier& key = resolvedKey(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    if (std::optional<ModuleID> found = findWithAttributes(key, fetchParameters->get()))
+        RELEASE_AND_RETURN(scope, startImport(*found, asyncEvaluationOrder(referrer)));
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
+}
+
+std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters) const
+{
+    if (!fetchParameters)
+        return std::nullopt;
+    // A module of the library has one form.
+    if (std::optional<ModuleID> module = m_table.findByPath(key.string()); module && data(*module).registryID())
+        return module;
+    if (!host().findModuleWithAttributes)
+        return std::nullopt;
+    return host().findModuleWithAttributes(m_instance.globalObject, key.string(), *fetchParameters);
 }
 
 JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
@@ -1344,7 +1358,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         return fetchParameters.error();
     Identifier key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    if (std::optional<ModuleID> found = *fetchParameters ? std::nullopt : m_table.findByPath(key.string())) {
+    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : m_table.findByPath(key.string())) {
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         // An import() that names a file in its text names the face of the file.
@@ -1814,6 +1828,12 @@ std::optional<ModuleID> findModule(StringView publicPath)
         notFound.paths[place] = { image, WTF::move(copy) };
     }
     return found;
+}
+
+bool holdsFormThatAttributeAsksFor(StringView publicPath)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && table->holdsFormThatAttributeAsksFor(publicPath);
 }
 
 // Each frame of each stack trace asks.

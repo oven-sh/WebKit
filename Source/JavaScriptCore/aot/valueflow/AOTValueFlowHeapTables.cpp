@@ -568,7 +568,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             if (builtinClass.origin == BuiltinOrigin::Engine && reachesPrograms)
                 prototypeObjectsOfLanguage.append(prototype);
-            if (builtinClass.origin == BuiltinOrigin::Engine && !builtinClass.isPrimitiveWrapper)
+            if (!builtinClass.isPrimitiveWrapper)
                 prototypeObjectsThatListingDoesNotName.append(prototype);
             if (builtins.typedArrayTypeOf(builtinClass.id) != NotTypedArray)
                 prototypesOfTypedArrays.append(prototype);
@@ -1055,6 +1055,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_objectsHoldingOnlyWhatWasWritten = maker.of(objectsHoldingOnlyWhatWasWritten.span());
     m_objectsWithoutPropertiesOfNativeCode = maker.unite(maker.unite(maker.of(ordinaryObjects.span()), universe.closures()), maker.unite(m_argumentsObjects, m_arraysThatOperationsAllocate));
     m_objectsThatTheirClassAnswersFor = without(knownObjectsOfProgram, maker.unite(m_objectsWithoutPropertiesOfNativeCode, universe.namespaces()));
+    m_objectsMadeWithPropertiesListedAboveThem = without(universe.knownObjects(), maker.unite(maker.of(ordinaryObjects.span()), m_prototypeObjects));
 }
 
 } } } // namespace JSC::AOT::Typed

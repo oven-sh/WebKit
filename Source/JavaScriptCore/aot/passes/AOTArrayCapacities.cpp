@@ -20,6 +20,7 @@
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTGuardAvailability.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineBuiltinForms.h"
@@ -1387,9 +1388,23 @@ static bool isBranchedOnIn(const Function& function, BlockID block, ValueID test
     return terminator.isConditionalBranch() && terminator.conditionOperand() == test;
 }
 
-// The proof of the test, the proofs made from it, and the reads that rely on them. Nothing else may: a store has other forms.
-static bool collectReadsRelyingOn(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
+static bool isStorageProvenOnlyBy(FunctionAnalyses& analyses, ValueID test, const Value& read)
 {
+    auto locate = [&](ValueID parameter) {
+        return analyses.useLists().locationOf(parameter);
+    };
+    bool hasOtherOrigin = false;
+    forEachGuardOrigin(analyses.program(), analyses.function(), analyses.cfg(), locate, read.guardOperand(), [&](Proof proof, const GuardOrigin& origin) {
+        hasOtherOrigin = proof == Proof::ArrayStorage && (origin.source != GuardSource::Test || origin.test != test);
+        return hasOtherOrigin ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return !hasOtherOrigin;
+}
+
+// The proof of the test, the proofs made from it, and the reads that rely on them. Nothing else may: a store has other forms.
+static bool collectReadsRelyingOn(FunctionPassContext& context, ValueID testID, ReadsBehindStorageTest& found)
+{
+    const Value& test = context.function.at(testID);
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
     struct PassedProof {
@@ -1419,7 +1434,7 @@ static bool collectReadsRelyingOn(FunctionPassContext& context, const Value& tes
                     found.proofs.append(use.user);
                 continue;
             }
-            if (!readsNamingArrayStorage.contains(user.opcode) || user.arrayOperand() != test.arrayOperand() || user.arrayStorage() != test.arrayStorage())
+            if (!readsNamingArrayStorage.contains(user.opcode) || user.arrayOperand() != test.arrayOperand() || user.arrayStorage() != test.arrayStorage() || !isStorageProvenOnlyBy(context.analyses, testID, user))
                 return false;
             if (found.reads.contains(use.user))
                 continue;
@@ -1637,7 +1652,7 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     if (other == ArrayStorage::Contiguous && !holdsNumbersInAnyStorage(context, test.arrayOperand()))
         return { };
     found.guard = function.at(found.passed).parameters.last();
-    if (!collectReadsRelyingOn(context, test, found))
+    if (!collectReadsRelyingOn(context, function.at(tested).terminator.conditionOperand(), found))
         return { };
     collectTestsRepeatedForValidation(context, test, found);
     Vector<ValueID, 8> testsInFrontOfReads;

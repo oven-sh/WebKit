@@ -89,8 +89,12 @@ Type typeOfConstant(const TypingContext& context, const Value& value)
     case Opcode::Builtin:
     case Opcode::ModuleBuiltin:
         return typeOfBuiltinEntry(context, value.builtin());
-    case Opcode::Data:
-        return typeOfData(context, context.program.at(value.data()).root);
+    case Opcode::Data: {
+        Type type = typeOfData(context, context.program.at(value.data()).root);
+        if (!type.classes.isEmpty())
+            type.classes[0].arrayStorage = value.arrayStorage();
+        return type;
+    }
     case Opcode::NewClosure:
         return Type::forFunction(value.function());
     case Opcode::KeyConstant:
@@ -491,6 +495,8 @@ Type ResultRules::declared(const Value& value, LayoutID layout, uint32_t field)
     const Vector<Field>& fields = context.program.at(layout).fields;
     if (field >= fields.size())
         return Type::anything();
+    if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+        return context.typeOf(fields[field].declared).withPrimitives(Primitive::Unspecified);
     if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
         return context.typeOf(fields[field].declared);
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), fields[field].key));
@@ -871,6 +877,8 @@ struct ResultRulesWithoutType {
         const Vector<Field>& fields = context.program.at(layout).fields;
         if (field >= fields.size())
             return TypeTable::anything;
+        if (value.opcode == Opcode::GetEnvironmentField && value.mayPrecedeItsStore())
+            return { };
         if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
             return idInArena(context.typeIDOf(fields[field].declared));
         return { };

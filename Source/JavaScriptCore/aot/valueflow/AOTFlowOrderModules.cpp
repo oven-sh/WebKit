@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTEffectsCache.h"
 #include "AOTGrouping.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -51,6 +52,13 @@ bool FlowModuleOrder::completesBefore(ModuleID first, ModuleID second) const
     return firstComponent != secondComponent && componentsCompletedBefore[secondComponent].get(firstComponent);
 }
 
+static bool mayRunOtherCode(const Function& body)
+{
+    return std::ranges::any_of(body.values, [](const Value& value) {
+        return effectFactsOf(value.opcode).traits.atMost.mayRunOtherCode();
+    });
+}
+
 // An edge says: while the first is unfinished the second may begin.
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
 {
@@ -79,6 +87,13 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
             if (request.kind == ModuleRequestKind::Import && !modulesVisitedByLoader.set(request.target.index()))
                 pending.append(request.target.index());
         }
+    }
+
+    // The host gets a turn only inside an operation that leaves the code of the file.
+    BitVector modulesThatLetTheHostRun(numberOfModules);
+    for (size_t module : inputs.evaluatedModules) {
+        if (mayRunOtherCode(program.at(program.modules[module].body)))
+            modulesThatLetTheHostRun.quickSet(module);
     }
 
     BitVector somebodySaysWhenItBegins(numberOfModules);
@@ -197,7 +212,7 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
             if (!isEvaluationByLoader)
                 addEdge(nodeOf(call.caller), nodeOf(call.callee));
         }
-        for (size_t module : inputs.evaluatedModules)
+        for (size_t module : modulesThatLetTheHostRun)
             addEdge(static_cast<uint32_t>(module), anyTime);
     });
     StronglyConnectedComponents components = computeStronglyConnectedComponents(numberOfNodes, [&](unsigned node) {

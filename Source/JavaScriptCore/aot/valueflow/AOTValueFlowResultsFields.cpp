@@ -904,14 +904,61 @@ struct FieldResults {
         return !mayGainName;
     }
 
+    // The constructor at the top makes what is constructed below other classes: an operation of the program, or a built-in class. Such a class has accounted for what it makes where it lists the own names of its instances, as does every class above it.
+    bool makerAboveClassesHasAccountedFor(LayoutID id) const
+    {
+        bool hasAccounted = program.at(id).has(LayoutFlags::HasHeritage);
+        forEachOnProvenChain(application, id, [&](LayoutID current) {
+            const LayoutFlow& flow = application.layouts[current.index()].flow;
+            switch (flow.baseState) {
+            case BaseState::Layout:
+            case BaseState::None:
+                return;
+            case BaseState::BuiltinClass:
+                for (BuiltinClassID builtinClass = flow.baseClass; builtinClass; builtinClass = program.builtins().at(builtinClass).parent)
+                    hasAccounted &= program.builtins().at(builtinClass).listsNamesDefinedOnNewInstances;
+                return;
+            case BaseState::Unknown:
+                hasAccounted = false;
+                return;
+            }
+        });
+        return hasAccounted;
+    }
+
+    // A row that answers with objects of a layout lays the fields that the layout lists and nothing else. An operation of the program makes the others.
+    bool isMadeByRowsThatNameLayout(ValueSetID objects) const
+    {
+        return !sets.anyMember(objects, [&](ValueFlowObjectID object) {
+            const ValueFlowSite* site = inputs.universe().siteOf(object);
+            bool isMadeByRowThatNamesLayout = site && site->origin == ValueFlowSiteOrigin::TypedResult;
+            return !isMadeByRowThatNamesLayout && !sets.contains(inputs.universe().builtinTables().heap().objectsWithoutPropertiesOfNativeCode(), object);
+        });
+    }
+
+    // What a built-in makes has from its makers the own names that the classes above it list.
+    bool everyClassAboveListsOwnNames(ValueSetID objects) const
+    {
+        BorrowedValueSetMaker maker(inputs.makerPool());
+        ValueSetID above = heap.chainOf(maker.get(), heap.prototypesOf(maker.get(), objects));
+        return !ValueSets::isComplement(above) && !sets.meet(above, inputs.universe().placeholdersAlone()) && !sets.meet(above, inputs.universe().builtinTables().heap().prototypeObjectsOfClassesThatListNoOwnNames());
+    }
+
     // Who has not accounted for the objects of a layout.
     OptionSet<Actor> actorsOpenOnObjectsWith(LayoutID id) const
     {
-        OptionSet<Actor> open;
+        constexpr OptionSet<Actor> makers { Actor::Creation, Actor::Table, Actor::NativeCode };
+        ValueSetID objects = layoutsOfObjects.objectsWith(id);
+        OptionSet<Actor> open = actorsOpenOn(inputs, objects) & actorsThatCanWrite(PlaceKind::Field);
+        if (open.containsAny(makers) && (isMadeByRowsThatNameLayout(objects) || makerAboveClassesHasAccountedFor(id) || everyClassAboveListsOwnNames(objects)))
+            open.remove(makers);
+        // No row describes the native code that holds an object.
+        if (sets.anyMember(objects, [&](ValueFlowObjectID object) { return inputs.isHeldByNativeCode(object); }))
+            open.add(Actor::NativeCode);
         // Nobody lists where the objects are made.
         if (application.layouts[id.index()].flow.allocationClasses.isEmpty())
             open.add(Actor::Creation);
-        if (possibleMutationsOf(id).contains(ObjectMutation::ReachUnknownJavaScript))
+        if (possibleMutationsOf(id).contains(ObjectMutation::ReachUnknownJavaScript) || stores.hasObjectOfCodeWithoutSolve(id))
             open.add(Actor::UnseenCode);
         // A copy brings names that nobody lists, and what it brings under them is not followed.
         if (stores.getsCopiedProperties(id))
@@ -1125,7 +1172,8 @@ struct FieldResults {
             LayoutID id(index);
             if (!hasObjects(id) || application.layouts[index].flow.allocationClasses.isEmpty() || !build.isEnabled(FlowResultKind::ObjectUses, index))
                 return false;
-            if (!isSeenByFollowedCodeAlone(id) || possibleMutationsOf(id).contains(ObjectMutation::BecomePrototype) || uses.mayBeEnumerated(layoutsOfObjects.objectsWith(id)))
+            // A copy into an object lists none of the keys that the object has.
+            if (!(actorsOpenOnObjectsWith(id) - Actor::KeysNobodyKnows).isEmpty() || !isSeenByFollowedCodeAlone(id) || possibleMutationsOf(id).contains(ObjectMutation::BecomePrototype) || uses.mayBeEnumerated(layoutsOfObjects.objectsWith(id)))
                 return false;
             // The loader reads the members in the order of the keys, which shows where a read runs a getter.
             return !uses.mayBeExportedByCommonJSModule(layoutsOfObjects.objectsWith(id)) || !mayHaveAccessor(id);
@@ -1538,7 +1586,7 @@ struct FieldResults {
             LayoutKind kind = program.layouts[index].kind;
             if (!hasObjects(id) || flow.allocationClasses.isEmpty() || (kind != LayoutKind::Record && kind != LayoutKind::Instance))
                 return;
-            bool listsEveryName = !stores.getsNameNobodyLists(id) && !isConstructedByNativeCode.quickGet(index) && !possibleMutationsOf(id).contains(ObjectMutation::ReachUnknownJavaScript);
+            bool listsEveryName = actorsOpenOnObjectsWith(id).isEmpty() && !stores.getsNameNobodyLists(id) && !isConstructedByNativeCode.quickGet(index);
             Vector<PropertyKeyID> addedKeys;
             bool mayGainSharedKey = false;
             if (listsEveryName) {
@@ -1575,6 +1623,9 @@ struct FieldResults {
             const Field& field = layout.fields[index];
             if (field.flags.contains(FieldFlags::IsInherited) || application.layouts[id.index()].fields[index].flow.location.initialization == InitializationState::SetAtCreation)
                 continue;
+            // The initializer of the class defines the brand where the object has none, and nothing else does.
+            if (field.flags.contains(FieldFlags::IsBrand))
+                continue;
             if (!field.key || hasNodeOfItsOwn(field) || stores.isStoredAfterCreation(id, field.key))
                 return false;
         }
@@ -1593,7 +1644,7 @@ struct FieldResults {
             createsOwnFields[index] = hasObjects(LayoutID(index)) && build.isEnabled(FlowResultKind::ConstructorFieldOrders, index) && createsOwnFieldsAtConstruction(layoutsOfObjectsWithoutListedOrder, LayoutID(index));
         });
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-            bool isCreatedAtConstruction = true;
+            bool isCreatedAtConstruction = !hasObjects(LayoutID(index)) || actorsOpenOnObjectsWith(LayoutID(index)).isEmpty();
             forEachOnProvenChain(application, LayoutID(index), [&](LayoutID current) {
                 BaseState baseState = application.layouts[current.index()].flow.baseState;
                 bool createsFieldsInObjectsBelow = current != LayoutID(index) && !hasObjects(current) && constructions.createsFieldsOnlyInListedOrders(current);

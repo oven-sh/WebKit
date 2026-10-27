@@ -281,7 +281,15 @@ enum class LocationStability : uint8_t { Unknown, ChangedByOwnStores, UnchangedD
 LocationStability stabilityOf(const Program&, const Value& access, const MemoryAccess&);
 // The location has been stored to wherever a function that reads it is entered, and not sooner. In the function's own body that is everywhere. A copy of the body in another function names a fact that says where it begins.
 bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&);
-bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Value& read);
+// What is stored ahead of every caller of its readers is stored ahead of the callers that flow has followed. The copy of a callee that was predicted may stand in another function, where no more holds than that the callee is entered.
+bool holdsDeclaredTypeOnlyBehindEntry(const LocationFlow&, bool calleeIsPredicted);
+bool holdsDeclaredTypeOnlyBehindEntry(const Program&, const Function&, const Value& read);
+// What flow says of the variable of a module or of an enclosing function that the operation reads. Null for any other operation, and for a field that holds no value of the program.
+const LocationFlow* flowOfVariableReadBy(const Program&, const Value&);
+// A read of a module variable names the fact. A read of an environment field has no room for one: it says that the word may be anything, and the cast behind it names the fact.
+bool namesFactOrGivesWordThatMayBeAnything(const Value& read);
+// The frame, or one around it, is the copy of a callee that was predicted.
+bool liesInCopyOfPredictedCallee(const Function&, uint32_t inlineFrame);
 
 } } } // namespace JSC::AOT::Typed
 

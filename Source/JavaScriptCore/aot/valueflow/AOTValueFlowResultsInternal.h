@@ -35,6 +35,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Ledger;
 class LedgerOfVariables;
+class LedgerPart;
 
 FlowResultTables createUnknownResultTables(const Program&, BuildContext&);
 
@@ -863,7 +864,8 @@ struct ValueFlowWriteUnderNewName {
     Witness witness;
 };
 
-Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&);
+// Hands out the part of the ledger that holds the places on the objects of the table.
+Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&, std::unique_ptr<LedgerPart>&);
 void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUsesOfHeap&, FlowBuiltinTables&);
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&, const ValueFlowHeapIndex&);
@@ -877,7 +879,6 @@ void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCal
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);
-class LedgerPart;
 const LedgerPart& ledgerOfFieldsIn(const ValueFlowUsesOfHeap&);
 struct ValueFlowWritesToContainers;
 struct ValueFlowWritesToContainersDeleter {

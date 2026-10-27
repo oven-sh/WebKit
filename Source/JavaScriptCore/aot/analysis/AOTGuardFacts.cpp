@@ -604,16 +604,19 @@ static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
     return constant && constant == integerConstantThroughCasts(analyses.program(), analyses.function(), b);
 }
 
-static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
+static bool isPositionTestForUser(const Function& function, const GuardOrigin& origin, const Value& user)
 {
     if (origin.source != GuardSource::Test)
         return false;
-    const Value& test = analyses.function().at(origin.test);
+    const Value& test = function.at(origin.test);
     if (readsPresentElement(user) && test.opcode != Opcode::IsElementPresent)
         return false;
-    if (Value::opcodesWithIsInsideView.contains(user.opcode) != (test.opcode == Opcode::IsInsideView))
-        return false;
-    return isSamePosition(analyses, test.positionOperand(), user.positionOperand());
+    return Value::opcodesWithIsInsideView.contains(user.opcode) == (test.opcode == Opcode::IsInsideView);
+}
+
+static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin& origin, const Value& user)
+{
+    return isPositionTestForUser(analyses.function(), origin, user) && isSamePosition(analyses, analyses.function().at(origin.test).positionOperand(), user.positionOperand());
 }
 
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
@@ -735,6 +738,75 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
             return provesInBoundsForUser(analyses, origin, user);
         return true;
     });
+}
+
+void forEachGuardOrigin(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, ValueID guard, NOESCAPE const GuardOriginVisitor& visitor)
+{
+    Vector<ValueID, 8> worklist { guard };
+    auto enqueue = [&](ValueID value) {
+        if (value && !worklist.contains(value))
+            worklist.append(value);
+    };
+    for (size_t index = 0; index < worklist.size(); ++index) {
+        ValueID current = worklist[index];
+        const Value& value = function.at(current);
+        if (VariadicOperandPosition::guards(value.opcode)) {
+            std::ranges::for_each(value.guardsOperands(), enqueue);
+            continue;
+        }
+        if (value.opcode != Opcode::Parameter) {
+            if (!opcodesThatMayMakeObject().contains(value.opcode))
+                continue;
+            bool stops = false;
+            proofsOfAllocation(program, function, value).forEach([&](Proof proof) {
+                stops = stops || visitor(proof, GuardOrigin { GuardSource::Allocation, current, { }, 0 }) == IterationStatus::Done;
+            });
+            if (stops)
+                return;
+            continue;
+        }
+        ValueLocation location = locate(current);
+        if (location.placement != ValuePlacement::Parameter)
+            continue;
+        for (Edge edge : cfg.incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(function, edge, location.index);
+            if (incoming.kind == IncomingValue::Kind::Argument) {
+                enqueue(incoming.argument);
+                continue;
+            }
+            std::optional<EdgeResult> result = tryGetEdgeResult(function, incoming.result);
+            if (!result || result->kind != EdgeResultKind::Guard)
+                continue;
+            GuardOrigin origin = result->caseIndex ? GuardOrigin { GuardSource::SwitchCase, { }, edge.from, *result->caseIndex } : GuardOrigin { GuardSource::Test, result->test, { }, 0 };
+            if (visitor(result->proof, origin) == IterationStatus::Done)
+                return;
+        }
+    }
+}
+
+bool hasGuardForElementProofs(const Program& program, const Function& function, const CFG& cfg, NOESCAPE const ParameterLocator& locate, const Value& access)
+{
+    bool needsStorage = namesArrayStorage(access);
+    bool needsPosition = isInsideLength(access);
+    if (!needsStorage && !needsPosition)
+        return true;
+    const Type& type = program.typeOf(function, guardedOperandOf(access));
+    if (type.isNever())
+        return true;
+    needsStorage = needsStorage && !isProvenByType(program, access, Proof::ArrayStorage, type);
+    if (!needsStorage && !needsPosition)
+        return true;
+    if (!access.guardOperand())
+        return false;
+
+    forEachGuardOrigin(program, function, cfg, locate, access.guardOperand(), [&](Proof proof, const GuardOrigin& origin) {
+        if (proof == Proof::ArrayStorage)
+            needsStorage = needsStorage && !provesArrayStorageForUser(program, function, origin, access);
+        else if (proof == Proof::InBounds)
+            needsPosition = needsPosition && !isPositionTestForUser(function, origin, access);
+        return needsStorage || needsPosition ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    return !needsStorage && !needsPosition;
 }
 
 static Vector<MemoryLocation, 2> declaredReadsOf(const auto& provingOperation, Proof proof)

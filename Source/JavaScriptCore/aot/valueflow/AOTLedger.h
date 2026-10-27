@@ -71,7 +71,10 @@ inline WriteForm formOf(const ValueFlowStatement& statement, ValueFlowName name)
 // THE ONE RELATION, asked of one object: the actors that have not accounted for it. An object that no claim takes out is open.
 // Statements, KeysNobodyKnows and ReceiversNobodyKnows are seen writes: the solve has listed each of them, so they are open on nothing but the two objects that stand for others.
 // A part that does not follow a write through one of the two to the objects that it stands for says so itself.
-inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
+// `classesAbove`: what whoever has walked the chain of the object found there. Nobody has, unless he says so.
+enum class ClassesAbove : uint8_t { MayListNoOwnNames, ListOwnNames };
+
+inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueFlowObjectID object, ClassesAbove classesAbove = ClassesAbove::MayListNoOwnNames)
 {
     if (ValueFlowResultInputs::isPlaceholder(object))
         return everyActor;
@@ -86,7 +89,9 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
     if (FunctionID function = universe.closureFunction(object); function && (!inputs.functionsNamedByUnsolvedCode || inputs.functionsNamedByUnsolvedCode->get(function.index())))
         open.add(Actor::UnseenCode);
     bool isMadeWithoutNativeCode = universe.kindOf(object) == ValueFlowObjectKind::Namespace || inputs.sets().contains(tables.objectsWithoutPropertiesOfNativeCode(), object);
-    if (inputs.isHeldByNativeCode(object) || !isMadeWithoutNativeCode)
+    // A built-in makes the object, or the constructor at the top of its classes may be one. The table lists what each such class lays on a new instance.
+    bool isAnsweredForByClasses = classesAbove == ClassesAbove::ListOwnNames && inputs.sets().contains(tables.objectsThatTheirClassAnswersFor(), object);
+    if (inputs.isHeldByNativeCode(object) || (!isMadeWithoutNativeCode && !isAnsweredForByClasses))
         open.add(Actor::NativeCode);
 
     switch (universe.kindOf(object)) {
@@ -97,16 +102,20 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
         break;
     case ValueFlowObjectKind::ResultOfBuiltin:
     case ValueFlowObjectKind::CoroutineResult:
-        open.add({ Actor::Table, Actor::Creation });
+        if (!isAnsweredForByClasses)
+            open.add({ Actor::Table, Actor::Creation });
         break;
     case ValueFlowObjectKind::Site:
         switch (universe.siteOf(object)->origin) {
         case ValueFlowSiteOrigin::Operation:
         case ValueFlowSiteOrigin::DataNode:
             break;
-        case ValueFlowSiteOrigin::BuiltinResult:
         case ValueFlowSiteOrigin::TypedResult:
-            open.add({ Actor::Table, Actor::Creation });
+            // The rule of the call writes each declared field and what may lie under any other key, and it marks the object.
+            break;
+        case ValueFlowSiteOrigin::BuiltinResult:
+            if (!isAnsweredForByClasses)
+                open.add({ Actor::Table, Actor::Creation });
             break;
         }
         break;
@@ -125,6 +134,17 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueF
         return everyActor;
     }
     return open;
+}
+
+// A class speaks through its prototype object, which stands on the chain of whatever is made below it.
+inline ClassesAbove classesAbove(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueFlowObjectID object)
+{
+    const ValueFlowHeapTables& tables = inputs.universe().builtinTables().heap();
+    if (!inputs.sets().contains(tables.objectsThatTheirClassAnswersFor(), object))
+        return ClassesAbove::MayListNoOwnNames;
+    ValueSetID chain = heap.chainOf(maker, maker.of(object));
+    bool listOwnNames = !ValueSets::isComplement(chain) && !inputs.sets().meet(chain, tables.prototypeObjectsOfClassesThatListNoOwnNames());
+    return listOwnNames ? ClassesAbove::ListOwnNames : ClassesAbove::MayListNoOwnNames;
 }
 
 inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueSetID holders)

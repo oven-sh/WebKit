@@ -59,6 +59,8 @@ JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned
 // What a read by name finds on the compiled object itself.
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
+// May run code and throw. Object.freeze() calls it before setIntegrity(), which does neither.
+void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);
 Presence testIntegrity(JSObject*, Integrity);
 bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);

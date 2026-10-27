@@ -847,6 +847,12 @@ void ProgramEditor::indexClassesAndNames(const ParallelLoops& loops)
     m_program.indexNames(loops);
 }
 
+void ProgramEditor::setDeclaredMembers(LayoutID id, LayoutSetID members)
+{
+    m_program.familyTables().didChangeLayouts();
+    m_program.setDeclaredMembers(id, members);
+}
+
 Layout& ProgramEditor::at(LayoutID id)
 {
     m_program.familyTables().didChangeLayouts();

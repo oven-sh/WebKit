@@ -470,6 +470,7 @@ public:
     uint32_t indexOfMadeNodes(const ValueFlowNodeKey& key) const { return static_cast<uint32_t>(reinterpret_cast<const MadeNodes*>(&key) - m_madeNodes.span().data()); }
     const ValueFlowNodeKey& keyOfMadeNodesAt(uint32_t index) const LIFETIME_BOUND { return m_madeNodes[index].key; }
     ValueFlowNodeID firstOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].first; }
+    uint32_t numberOfUsesOfMadeNodesAt(uint32_t index) const { return index < m_numberOfUsers.size() ? m_numberOfUsers[index] : 0; }
     ValueFlowStatementID statementOfMadeNodesAt(uint32_t index) const { return m_madeNodes[index].statement; }
     uint32_t numberOfRecordsOfMadeNodes() const { return m_madeNodes.size(); }
 

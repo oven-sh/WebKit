@@ -29,6 +29,7 @@ class JSGlobalObject;
 class JSObject;
 class JSPromise;
 class JSString;
+class ScriptFetchParameters;
 
 namespace AOT {
 
@@ -73,11 +74,15 @@ struct ModuleHost {
     JSValue (*createLoadError)(JSGlobalObject*, const String& path);
     // A require() in the file of the module object has returned a CommonJS file: for the first time, and forEachNewChild() names the file, or once more.
     void (*showChildren)(JSGlobalObject*, JSObject* module, JSObject* requiredAgain);
+    // The module of the image that an import of the path with these attributes gets. The build has named each module by the rules of the host. Null in a host where attributes choose nothing.
+    std::optional<ModuleID> (*findModuleWithAttributes)(JSGlobalObject*, const String& path, const ScriptFetchParameters&);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
+// The image holds the file as something that only an import with an attribute gets.
+JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);

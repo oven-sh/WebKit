@@ -33,9 +33,9 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     const unsigned padding = (bytesPushed + sizeof(CPURegister)) % stackAlignmentBytes() ? sizeof(CPURegister) : 0;
     if (padding)
         subPtr(TrustedImm32(padding), stackPointerRegister);
-    loadEntry(entry, leafFunctionGPR);
+    loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), leafFunctionGPR);
     emitStackAlignmentCheck();
-    CCallHelpers::call(leafFunctionGPR, OperationPtrTag);
+    CCallHelpers::call(Address(leafFunctionGPR, offsetInRuntimeTable(entry)), OperationPtrTag);
     if (padding)
         addPtr(TrustedImm32(padding), stackPointerRegister);
 #else

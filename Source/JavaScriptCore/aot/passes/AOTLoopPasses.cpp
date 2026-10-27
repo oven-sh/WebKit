@@ -325,9 +325,8 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 
 static MemoryAccess variableAccessOf(const Function& function, const Value& value)
 {
-    constexpr AbstractHeapSet hoistableHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
     MemoryAccess access = memoryAccessOf(function, value);
-    if (!access || !hoistableHeaps.contains(access.location.heap()))
+    if (!access || !heapsOfVariables.contains(access.location.heap()))
         return { };
     return access;
 }
@@ -451,6 +450,12 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     auto canGoAheadOfItsFact = [&](const Value& value) {
         return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
     };
+    // What was entered where the first turn is sure to get to, with every variable as it is ahead of the loop, may as well be entered ahead of the loop. What names the fact follows it.
+    bool firstTurnGetsHere = true;
+    Vector<ValueID, 4> factsOfFirstTurn;
+    auto namesFactOfFirstTurn = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && factsOfFirstTurn.contains(value.factOperand());
+    };
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
@@ -489,7 +494,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         if (stability == LocationStability::Unknown && clobbers.writes.overlaps(program, access.location))
             return false;
-        return hasInvariantOperands(value) || canGoAheadOfItsFact(value);
+        return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
 
     unsigned numberOfHoistedReads = 0;
@@ -513,8 +518,12 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         remaining.reserveInitialCapacity(function.at(blockID).values.size());
         for (ValueID id : function.at(blockID).values) {
             if (!canHoist(id, blockID, followsEntry ? clobbersSinceEntry : clobbers)) {
-                if (followsEntry)
+                if (followsEntry) {
                     addClobbers(context, id, clobbersSinceEntry);
+                    firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOf(id).onAnyEdge());
+                    if (firstTurnGetsHere && function.at(id).opcode == Opcode::Entered && hasInvariantOperands(function.at(id)))
+                        factsOfFirstTurn.append(id);
+                }
                 remaining.append(id);
                 continue;
             }
@@ -523,6 +532,14 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 return 0;
             }
             ++numberOfHoistedReads;
+            if (namesFactOfFirstTurn(function.at(id))) {
+                ValueID fact = function.at(id).factOperand();
+                factsOfFirstTurn.removeFirst(fact);
+                BlockValues& valuesAroundFact = definingBlock[fact.index()] == blockID ? remaining : function.edit(definingBlock[fact.index()]).values;
+                valuesAroundFact.removeFirst(fact);
+                function.edit(preheader).values.append(fact);
+                definingBlock[fact.index()] = preheader;
+            }
             if (!hasInvariantOperands(function.at(id))) {
                 function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));
                 appendKeptReadForValidation(builder, remaining, id);
@@ -534,8 +551,10 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
                 function.edit(id).setIsValidatedWhereLookedAt(true);
         }
-        if (blockID == header)
+        if (blockID == header) {
             addEffects(context.analyses.effectsOfTerminator(header), clobbersSinceEntry);
+            firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOfTerminator(header).onAnyEdge());
+        }
         if (numberOfHoistedReads > numberOfReadsBefore)
             function.edit(blockID).values = WTF::move(remaining);
         while (definingBlock.size() < function.values.size())

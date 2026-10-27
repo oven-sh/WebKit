@@ -166,8 +166,9 @@ void FunctionVerifier::verifyClosureOperation(BlockID block, ValueID id, const V
             fail(InternalErrorKind::PayloadOutOfRange, block, id, value.index());
             return;
         }
+        // The type of the closure is what says that the capture is there: the value stands behind whatever has proven it.
         ValueID closure = value.closureOperand();
-        if (typeOf(closure).singleFunction() != value.function())
+        if (typeOf(closure).singleFunction() != value.function() && !typeOf(closure).isNever())
             fail(InternalErrorKind::OperandTypeMismatch, block, id, closure.index());
         return;
     }

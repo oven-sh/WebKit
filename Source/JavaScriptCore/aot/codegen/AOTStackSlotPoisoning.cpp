@@ -10,6 +10,7 @@
 
 #include "AOTClaimChecks.h"
 #include "AOTCodeGenerator.h"
+#include "AOTSlotPlan.h"
 #include "AirStackSlot.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
@@ -22,6 +23,7 @@
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
+#include <wtf/BitVector.h>
 #include <wtf/SharedTask.h>
 
 namespace JSC { namespace AOT {
@@ -58,18 +60,32 @@ void UnwrittenWordCheck::generate(CCallHelpers& jit, const B3::StackmapGeneratio
     });
 }
 
-static bool fillStackSlotsAtEntry(B3::Procedure& proc, const StackSlots& slots)
+static uint64_t unwrittenWordOutside(const BitVector& padding, unsigned offset)
 {
-    if (slots.isEmpty())
+    uint64_t word = unwrittenWord;
+    for (unsigned byte = 0; byte < sizeof(uint64_t); ++byte) {
+        if (padding.get(offset + byte))
+            word &= ~(0xffull << (8 * byte));
+    }
+    return word;
+}
+
+static bool fillStackSlotsAtEntry(B3::Procedure& proc, const SlotsOfCells& cells)
+{
+    if (cells.isEmpty())
         return false;
     B3::BasicBlock* root = proc.at(0);
     B3::InsertionSet insertionSet(proc);
     B3::Origin origin = root->at(0)->origin();
-    B3::Value* word = insertionSet.insert<B3::Const64Value>(0, origin, static_cast<int64_t>(unwrittenWord));
-    for (B3::Air::StackSlot* slot : slots) {
-        B3::Value* base = insertionSet.insert<B3::SlotBaseValue>(0, origin, slot);
-        for (unsigned offset = 0; offset + sizeof(uint64_t) <= slot->byteSize(); offset += sizeof(uint64_t))
+    B3::Value* wholeWord = insertionSet.insert<B3::Const64Value>(0, origin, static_cast<int64_t>(unwrittenWord));
+    for (const SlotOfCell& cell : cells) {
+        BitVector padding = cell.layout ? cell.layout->padding() : BitVector();
+        B3::Value* base = insertionSet.insert<B3::SlotBaseValue>(0, origin, cell.slot);
+        for (unsigned offset = 0; offset + sizeof(uint64_t) <= cell.slot->byteSize(); offset += sizeof(uint64_t)) {
+            uint64_t bits = unwrittenWordOutside(padding, offset);
+            B3::Value* word = bits == unwrittenWord ? wholeWord : insertionSet.insert<B3::Const64Value>(0, origin, static_cast<int64_t>(bits));
             insertionSet.insert<B3::MemoryValue>(0, B3::Store, origin, word, base, static_cast<int32_t>(offset));
+        }
     }
     insertionSet.execute(root);
     return true;
@@ -119,7 +135,7 @@ static bool checkLoads(B3::Procedure& proc, Typed::FunctionID function)
     return changed;
 }
 
-B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID function, const StackSlots& slotsOfCells, bool entersOnlyAtRoot)
+B3::ClientPhase reportReadsOfUnwrittenStackSlots(Typed::FunctionID function, const SlotsOfCells& slotsOfCells, bool entersOnlyAtRoot)
 {
     return {
         B3::ClientPhase::Point::AfterSinking,
