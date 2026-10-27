@@ -17720,7 +17720,7 @@ uint64_t to_base64_mask(block64 *b, bool *error) {
   if (default_or_url) {
     lut_lo =
         simdutf_make_uint8x16_t(0xa9, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
-                                0xf8, 0xf9, 0xf1, 0xa2, 0xa1, 0xa5, 0xa0, 0xa6);
+                                0xf8, 0xf9, 0xf1, 0xa4, 0xa1, 0xa5, 0xa0, 0xa6);
   } else if (base64_url) {
     lut_lo =
         simdutf_make_uint8x16_t(0xa9, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
@@ -17733,7 +17733,7 @@ uint64_t to_base64_mask(block64 *b, bool *error) {
 #else
   if (default_or_url) {
     lut_lo = uint8x16_t{0xa9, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
-                        0xf8, 0xf9, 0xf1, 0xa2, 0xa1, 0xa5, 0xa0, 0xa6};
+                        0xf8, 0xf9, 0xf1, 0xa4, 0xa1, 0xa5, 0xa0, 0xa6};
   } else if (base64_url) {
     lut_lo = uint8x16_t{0xa9, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
                         0xf8, 0xf9, 0xf1, 0xa0, 0xa1, 0xa5, 0xa0, 0xa2};
@@ -18145,13 +18145,13 @@ compress_decode_base64(char *dst, const char_type *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -35631,13 +35631,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -42548,13 +42548,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -51397,13 +51397,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -56311,13 +56311,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -63262,13 +63262,13 @@ compress_decode_base64(char *dst, const char_type *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0) {
+    while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
-        while (to_base64[uint8_t(*(src - 1))] == 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
