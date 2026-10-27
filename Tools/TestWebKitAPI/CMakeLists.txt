@@ -130,6 +130,7 @@ set(TestWTF_SOURCES
     Tests/WTF/ParkingLot.cpp
     Tests/WTF/PlainGregorianDateTime.cpp
     Tests/WTF/PreciseSum.cpp
+    Tests/WTF/PrimitiveHeap.cpp
     Tests/WTF/PriorityQueue.cpp
     Tests/WTF/RapidHash.cpp
     Tests/WTF/ReadWriteLock.cpp

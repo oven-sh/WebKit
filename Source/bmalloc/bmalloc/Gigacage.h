@@ -217,7 +217,12 @@ BINLINE void* basePtr(Kind)
 BINLINE size_t maxSize(Kind) { BCRASH(); return 0; }
 BINLINE size_t size(Kind) { return 0; }
 BINLINE size_t footprint(Kind) { return 0; }
+#if BUSE(MIMALLOC)
+// There is no cage, but Primitive allocations have address ranges of their own: see MimallocPrimitiveHeap.
+BEXPORT void ensureGigacage();
+#else
 BINLINE void ensureGigacage() { }
+#endif
 BINLINE bool contains(const void*) { return false; }
 BINLINE bool disablingPrimitiveGigacageIsForbidden() { return false; }
 BINLINE bool isEnabled() { return false; }
